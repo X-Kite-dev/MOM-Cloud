@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.tpm.mapper.TpmDeviceItemMapper">
+
+    <resultMap id="tpmDeviceItemMap" type="com.kitex.mom.tpm.entity.TpmDeviceItemEntity">
+        <id property="id" column="id"/>
+        <result property="deviceCode" column="device_code"/>
+        <result property="itemId" column="item_id"/>
+        <result property="type" column="type"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+
+    <select id="pageList" resultType="com.kitex.mom.tpm.entity.TpmDeviceItemEntity">
+        SELECT rela.*,
+               checktab.name,
+               checktab.code,
+               checktab.check_method,
+               checktab.check_tool,
+               checktab.judge_type,
+               checktab.standard_max,
+               checktab.standard_min
+        FROM tpm_device_item as rela
+                 INNER JOIN tpm_check_item as checktab ON rela.item_id = checktab.id
+        WHERE rela.device_code = #{query.deviceCode}
+          AND rela.type = #{query.type}
+    </select>
+
+    <select id="getDeviceItemByDeviceCode" resultType="com.kitex.mom.tpm.entity.TpmDeviceItemEntity">
+        SELECT
+        rela.*,
+        checktab.name,
+        checktab.code,
+        checktab.check_method,
+        checktab.check_tool,
+        checktab.judge_type,
+        checktab.standard_max,
+        checktab.standard_min
+        FROM
+        tpm_device_item as rela
+        INNER JOIN tpm_check_item as checktab ON rela.item_id = checktab.id
+        WHERE rela.device_code = #{deviceCode}
+        <if test="type != '' and type != null ">
+            AND rela.type = #{type}
+        </if>
+    </select>
+
+</mapper>

@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.mes.mapper.MesWarehouseFeedMapper">
+
+    <select id="queryTaskFeedList" resultType="com.kitex.mom.mes.dto.MesWarehouseFeedLeftDTO">
+        SELECT
+        feed.task_code,
+        MAX(task.mat_code) as productCode,
+        MAX(task.mat_name) as productName,
+        produceTask.route_code,
+        MAX(produceTask.route_name) as route_name,
+        feed.mat_code,
+        MAX(feed.mat_name) as mat_name,
+        MAX(feed.mat_spec) as mat_spec,
+        feed.mat_batch as batchNo,
+        MAX(feed.mat_unit) as mat_unit,
+        MAX(feed.status) as status,
+        (SUM(COALESCE(feed.feed_num, 0)) - SUM(COALESCE(feed.used_num, 0))) as leftNum,
+        MAX(feed.update_time) as lastUsedTime,
+        MAX(feed.is_lock) as is_lock,
+        MAX(feed.factory_code) as factory_code
+        FROM
+        mes_warehouse_feed feed
+        LEFT JOIN
+        mes_task task on feed.task_code = task.code
+        LEFT JOIN
+        mes_produce_task produceTask on feed.produce_task_code = produceTask.code
+        <where>
+            1 = 1
+            <if test="query.taskCode != '' and query.taskCode != null ">
+                AND feed.task_code LIKE CONCAT('%', #{query.taskCode}, '%')
+            </if>
+            <if test="query.arrangeCode != '' and query.arrangeCode != null ">
+                AND feed.arrange_code LIKE CONCAT('%', #{query.arrangeCode}, '%')
+            </if>
+            <if test="query.produceTaskCode != '' and query.produceTaskCode != null ">
+                AND feed.produce_task_code LIKE CONCAT('%', #{query.produceTaskCode}, '%')
+            </if>
+            <if test="query.productName != '' and query.productName != null ">
+                AND task.mat_name LIKE CONCAT('%', #{query.productName}, '%')
+            </if>
+            <if test="query.matCode != '' and query.matCode != null ">
+                AND feed.mat_code LIKE CONCAT('%', #{query.matCode}, '%')
+            </if>
+            <if test="query.matName != '' and query.matName != null ">
+                AND feed.mat_name LIKE CONCAT('%', #{query.matName}, '%')
+            </if>
+            <if test="query.matSpec != '' and query.matSpec != null ">
+                AND feed.mat_spec LIKE CONCAT('%', #{query.matSpec}, '%')
+            </if>
+            <if test="query.batchNo != '' and query.batchNo != null ">
+                AND feed.batch_no LIKE CONCAT('%', #{query.batchNo}, '%')
+            </if>
+            <if test="query.siteCode != '' and query.siteCode != null ">
+                AND feed.site_code = #{query.siteCode}
+            </if>
+        </where>
+        GROUP BY
+        feed.task_code, produceTask.route_code, feed.mat_code, feed.mat_batch
+        ORDER BY
+        lastUsedTime DESC
+    </select>
+
+    <select id="queryLeftPage" resultType="com.kitex.mom.mes.dto.MesWarehouseFeedLeftDTO">
+        SELECT
+        feed.task_code,
+        MAX(task.mat_code) as productCode,
+        MAX(task.mat_name) as productName,
+        produceTask.route_code,
+        MAX(produceTask.route_name) as route_name,
+        feed.mat_code,
+        MAX(feed.mat_name) as mat_name,
+        MAX(feed.mat_spec) as mat_spec,
+        feed.mat_batch as batchNo,
+        MAX(feed.mat_unit) as mat_unit,
+        MAX(feed.status) as status,
+        (SUM(COALESCE(feed.feed_num, 0)) - SUM(COALESCE(feed.used_num, 0))) as leftNum,
+        MAX(feed.update_time) as lastUsedTime,
+        MAX(feed.is_lock) as is_lock,
+        MAX(feed.factory_code) as factory_code
+        FROM
+        mes_warehouse_feed feed
+        LEFT JOIN
+        mes_task task on feed.task_code = task.code
+        LEFT JOIN
+        mes_produce_task produceTask on feed.produce_task_code = produceTask.code
+        <where>
+            1 = 1
+            <if test="query.taskCode != '' and query.taskCode != null ">
+                AND feed.task_code LIKE CONCAT('%', #{query.taskCode}, '%')
+            </if>
+            <if test="query.productName != '' and query.productName != null ">
+                AND task.mat_name LIKE CONCAT('%', #{query.productName}, '%')
+            </if>
+            <if test="query.matCode != '' and query.matCode != null ">
+                AND feed.mat_code LIKE CONCAT('%', #{query.matCode}, '%')
+            </if>
+            <if test="query.matName != '' and query.matName != null ">
+                AND feed.mat_name LIKE CONCAT('%', #{query.matName}, '%')
+            </if>
+            <if test="query.matSpec != '' and query.matSpec != null ">
+                AND feed.mat_spec LIKE CONCAT('%', #{query.matSpec}, '%')
+            </if>
+            <if test="query.batchNo != '' and query.batchNo != null ">
+                AND feed.batch_no LIKE CONCAT('%', #{query.batchNo}, '%')
+            </if>
+            <if test="query.siteCode != '' and query.siteCode != null ">
+                AND feed.site_code = #{query.siteCode}
+            </if>
+        </where>
+        GROUP BY
+        feed.task_code, produceTask.route_code, feed.mat_code, feed.mat_batch
+        HAVING
+        (SUM(COALESCE(feed.feed_num, 0)) - SUM(COALESCE(feed.used_num, 0))) > 0
+        ORDER BY
+        lastUsedTime DESC
+    </select>
+</mapper>

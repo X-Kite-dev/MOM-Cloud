@@ -1,0 +1,3 @@
+com.kitex.mom.qms.api.feign.RemoteProcedureService
+com.kitex.mom.qms.api.feign.RemotePurchaseService
+com.kitex.mom.qms.api.feign.RemoteQualityStandardService

@@ -1,0 +1,106 @@
+package com.kitex.mom.plan.entity;
+
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableName;
+import com.kitex.common.core.entity.BaseEntity;
+import com.kitex.common.core.util.TenantTable;
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+
+/**
+ * 计划需求表
+ *
+ * @author kitex
+ * @date 2025-02-05 16:46:53
+ */
+@Data
+@TenantTable
+@TableName("pln_demand")
+@EqualsAndHashCode(callSuper = true)
+@Schema(description = "计划需求表")
+public class PlnDemandEntity extends BaseEntity<PlnDemandEntity> {
+
+    /**
+     * 客户编码
+     */
+    @Schema(description = "客户编码")
+    private String customerCode;
+
+    /**
+     * 客户名称
+     */
+    @Schema(description = "客户名称")
+    private String customerName;
+
+    /**
+     * 产品编码
+     */
+    @Schema(description = "产品编码")
+    private String productCode;
+
+    /**
+     * 产品名称
+     */
+    @Schema(description = "产品名称")
+    private String productName;
+
+    /**
+     * 规格型号
+     */
+    @Schema(description = "规格型号")
+    private String specificationModel;
+
+    /**
+     * 物料属性
+     */
+    @Schema(description = "产品属性")
+    private String materialAttribute;
+
+    /**
+     * 预排需求量
+     */
+    @Schema(description = "预排需求量")
+    private BigDecimal predictDemandNum;
+
+    /**
+     * 总需求量
+     */
+    @Schema(description = "总需求量")
+    private BigDecimal totalDemandNum;
+
+    /**
+     * 可用量
+     */
+    @Schema(description = "可用量")
+    private BigDecimal availableNum;
+
+    /**
+     * 已提供比例
+     */
+    @Schema(description = "已提供比例")
+    private String providedRatio;
+
+    /**
+     * 需求时间
+     */
+    @Schema(description = "需求时间")
+    private LocalDate demandTime;
+
+    /**
+     * 发货
+     */
+    @Schema(description = "发货")
+    private String dailyDispatch;
+
+    /**
+     * 工厂编码 - 数据所属的工厂编码
+     */
+    @Schema(description = "工厂编码 - 数据所属的工厂编码")
+    @TableField(fill = FieldFill.INSERT)
+    private String factoryCode;
+}

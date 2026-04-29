@@ -1,0 +1,91 @@
+package com.kitex.mom.mdm.entity;
+
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableName;
+import com.kitex.common.core.entity.BaseEntity;
+import com.kitex.common.core.util.TenantTable;
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+import java.math.BigDecimal;
+
+/**
+ * 工艺路线-工序配置
+ *
+ * @author kitex
+ * @date 2025-09-05 17:36:15
+ */
+@Data
+@TenantTable
+@TableName("mdm_process_procedure_setting")
+@EqualsAndHashCode(callSuper = true)
+@Schema(description = "工艺路线-工序配置")
+public class MdmProcessProcedureSettingEntity extends BaseEntity<MdmProcessProcedureSettingEntity> {
+
+    /**
+     * 工艺路线编码
+     */
+    @Schema(description = "工艺路线编码")
+    private String routeCode;
+
+    /**
+     * 工序编码
+     */
+    @Schema(description = "工序编码")
+    private String processCode;
+
+    /**
+     * 是否通过重量报工
+     */
+    @Schema(description = "是否通过重量报工")
+    private Boolean isMatWeightConvert = Boolean.FALSE;
+
+    /**
+     * 报工物料重量转换
+     */
+    @Schema(description = "报工物料重量转换")
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private BigDecimal matWeightConvert;
+
+    /**
+     * 是否报工倒冲投料
+     */
+    @Schema(description = "是否报工倒冲投料")
+    private Boolean isBackFlush = Boolean.FALSE;
+
+    /**
+     * 是否通过式工序
+     */
+    @Schema(description = "是否通过式工序")
+    private Boolean isAutomate = Boolean.FALSE;
+
+    /**
+     * 默认报工数量
+     */
+    @Schema(description = "默认报工数量")
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private BigDecimal defaultReportNum;
+
+    /**
+     * 是否控制转序时间
+     */
+    @Schema(description = "是否控制转序时间")
+    private Boolean timeCheck;
+
+    /**
+     * 转序时间要求（分钟）
+     */
+    @Schema(description = "转序时间要求（分钟）")
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private BigDecimal timeVal;
+
+    /**
+     * 工厂编码
+     */
+    @Schema(description = "工厂编码")
+    @TableField(fill = FieldFill.INSERT)
+    private String factoryCode;
+}

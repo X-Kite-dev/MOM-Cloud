@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.wms.mapper.WmsInNoticeDetailMapper">
+
+    <resultMap id="wmsInNoticeDetailMap" type="com.kitex.mom.wms.entity.WmsInNoticeDetailEntity">
+        <id property="id" column="id"/>
+        <result property="noticeId" column="notice_id"/>
+        <result property="matCode" column="mat_code"/>
+        <result property="matName" column="mat_name"/>
+        <result property="matUnit" column="mat_unit"/>
+        <result property="matSpec" column="mat_spec"/>
+        <result property="matGroup" column="mat_type"/>
+        <result property="matGroupName" column="mat_type_name"/>
+        <result property="noticeInNum" column="notice_in_num"/>
+        <result property="inNum" column="in_num"/>
+        <result property="notInNum" column="not_in_num"/>
+        <result property="warehouseCode" column="warehouse_code"/>
+        <result property="warehouseName" column="warehouse_name"/>
+        <result property="matProduceDate" column="mat_produce_date"/>
+        <result property="matValidPeriod" column="mat_valid_period"/>
+        <result property="matValidEndDate" column="mat_valid_end_date"/>
+        <result property="supplierCode" column="supplier_code"/>
+        <result property="supplierName" column="supplier_name"/>
+        <result property="matBatch" column="mat_batch"/>
+        <result property="matPackSpec" column="mat_pack_spec"/>
+        <result property="operateUnit" column="operate_unit"/>
+        <result property="operateNum" column="format_num"/>
+        <result property="workshop" column="dept_code"/>
+        <result property="documentId" column="document_id"/>
+        <result property="documentTable" column="document_type"/>
+        <result property="expansion" column="expansion"/>
+    </resultMap>
+    <select id="fetchDetails" resultType="com.kitex.mom.wms.entity.WmsInNoticeDetailEntity">
+        SELECT b.state,
+        b.bill_type,
+        a.id,
+        a.notice_id,
+        a.mat_code,
+        a.mat_name,
+        a.mat_unit,
+        a.mat_spec,
+        a.mat_group,
+        a.mat_group_name,
+        a.notice_in_num,
+        a.in_num,
+        a.not_in_num,
+        a.warehouse_code,
+        a.warehouse_name,
+        a.mat_produce_date,
+        a.mat_valid_period,
+        a.mat_valid_end_date,
+        a.supplier_code,
+        a.supplier_name,
+        a.mat_batch,
+        a.mat_pack_spec,
+        a.operate_unit,
+        a.operate_num,
+        a.workshop,
+        a.document_id,
+        a.document_table,
+        a.expansion,
+        a.tenant_id,
+        a.create_by,
+        a.create_time,
+        a.update_by,
+        a.update_time,
+        a.factory_code
+        FROM wms_in_notice_detail a LEFT JOIN wms_in_notice b on a.notice_id = b.id
+        where a.del_flag = '0'
+        <if test="params.billType != null and params.billType != ''">
+            and b.bill_type = #{params.billType}
+        </if>
+        <if test="params.billTypes != null">
+            and b.bill_type in
+            <foreach collection="params.billTypes" item="item" open="(" separator="," close=")">
+                #{item}
+            </foreach>
+        </if>
+        <if test="params.state != null and params.state != ''">
+            and b.state = #{params.state}
+        </if>
+        <if test="params.warehouseCode != null and params.warehouseCode != ''">
+            and a.warehouse_code = #{params.warehouseCode}
+        </if>
+        <if test="params.noticeId != null and params.noticeId != ''">
+            and a.notice_id like concat('%', #{params.noticeId}, '%')
+        </if>
+        <if test="params.matCode != null and params.matCode != ''">
+            and a.mat_code like concat('%', #{params.matCode}, '%')
+        </if>
+        <if test="params.createBy != null and params.createBy != ''">
+            and a.create_by like concat('%', #{params.createBy}, '%')
+        </if>
+        <if test="params.createTime != null">
+            and a.create_time between #{params.createTime[0]} and #{params.createTime[1]}
+        </if>
+        <if test="ids != null">
+            and a.id in
+            <foreach collection="ids" item="item" open="(" separator="," close=")">
+                #{item}
+            </foreach>
+        </if>
+        ORDER BY state asc, create_time DESC
+    </select>
+</mapper>

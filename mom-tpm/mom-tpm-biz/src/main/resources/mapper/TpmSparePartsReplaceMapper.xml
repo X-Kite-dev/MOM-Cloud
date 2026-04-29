@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.tpm.mapper.TpmSparePartsReplaceMapper">
+
+    <resultMap id="tpmSparePartsReplaceMap" type="com.kitex.mom.tpm.entity.TpmSparePartsReplaceEntity">
+        <id property="id" column="id"/>
+        <result property="docSn" column="doc_sn"/>
+        <result property="applyCode" column="apply_code"/>
+        <result property="deviceCode" column="device_code"/>
+        <result property="deviceName" column="device_name"/>
+        <result property="sparePartCode" column="spare_part_code"/>
+        <result property="sparePartName" column="spare_part_name"/>
+        <result property="model" column="model"/>
+        <result property="replaceDate" column="replace_date"/>
+        <result property="replaceReason" column="replace_reason"/>
+        <result property="operatorId" column="operator_id"/>
+        <result property="operatorName" column="operator_name"/>
+        <result property="applicantId" column="applicant_id"/>
+        <result property="applicantName" column="applicant_name"/>
+        <result property="applicationDate" column="application_date"/>
+        <result property="status" column="status"/>
+        <result property="remark" column="remark"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+
+    <select id="sparePartsReplacement"
+            resultType="com.kitex.mom.tpm.dto.RankingDto">
+        SELECT device_code  as equipment_code,
+               device_name  as equipment_name,
+               SUM(use_num) as quantity
+        FROM (SELECT rep.device_code,
+                     rep.device_name,
+                     consumedetails.use_num
+              FROM tpm_spare_parts_replace as rep
+                       INNER JOIN tpm_spare_parts_replace_consume_details as consumedetails
+                                  ON rep.doc_sn = consumedetails.doc_sn
+              WHERE rep.create_time >= #{startTime}
+                AND rep.create_time <![CDATA[ < ]]> #{endTime}
+              UNION ALL
+
+              SELECT task.device_code,
+                     task.device_name,
+                     taskdetails.use_num
+              FROM tpm_repair_task as task
+                       INNER JOIN tpm_repair_task_details as taskdetails ON task.task_code = taskdetails.task_code
+              WHERE task.create_time >= #{startTime}
+                AND task.create_time <![CDATA[ < ]]> #{endTime}) as con
+        GROUP BY con.device_code, con.device_name
+    </select>
+</mapper>

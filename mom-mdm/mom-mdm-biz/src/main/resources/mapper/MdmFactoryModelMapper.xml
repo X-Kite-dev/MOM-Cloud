@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mdm.mapper.MdmFactoryModelMapper">
+
+    <resultMap id="BaseResultMap" type="com.kitex.mom.mdm.entity.MdmFactoryModelEntity">
+        <id column="id" property="id"/>
+        <result column="code" property="code"/>
+        <result column="name" property="name"/>
+        <result column="parent_id" property="parentId"/>
+        <result column="level" property="level"/>
+        <result column="type" property="type"/>
+        <result column="sort" property="sort"/>
+        <result column="status" property="status"/>
+        <result column="manager" property="manager"/>
+        <result column="phone" property="phone"/>
+        <result column="address" property="address"/>
+        <result column="description" property="description"/>
+        <result column="properties" property="properties"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+        <result column="create_by" property="createBy"/>
+        <result column="update_by" property="updateBy"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id
+        , code, name, parent_id, level, type, sort, status, manager, phone,
+        address, description, properties, create_time, update_time, create_by, update_by
+    </sql>
+
+    <!-- 根据父节点ID查询子节点列表 -->
+    <select id="selectByParentId" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM mdm_factory_model
+        <choose>
+            <when test="parentId != null">
+                WHERE parent_id = #{parentId} and del_flag = '0'
+            </when>
+            <otherwise>
+                WHERE parent_id IS NULL and del_flag = '0'
+            </otherwise>
+        </choose>
+        ORDER BY sort ASC, create_time ASC
+    </select>
+
+    <!-- 查询指定级别的所有节点 -->
+    <select id="selectByLevel" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM mdm_factory_model
+        WHERE level = #{level} and del_flag = '0'
+        ORDER BY sort ASC, create_time ASC
+    </select>
+
+    <!-- 查询指定类型的所有节点 -->
+    <select id="selectByType" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM mdm_factory_model
+        WHERE type = #{type} and del_flag = '0'
+        ORDER BY sort ASC, create_time ASC
+    </select>
+
+    <!-- 根据节点ID查询所有子孙节点 -->
+    <select id="selectDescendants" resultMap="BaseResultMap">
+        WITH RECURSIVE descendants AS (SELECT m.id,
+                                              m.code,
+                                              m.name,
+                                              m.parent_id,
+                                              m.level,
+                                              m.type,
+                                              m.sort,
+                                              m.status,
+                                              m.manager,
+                                              m.phone,
+                                              m.address,
+                                              m.description,
+                                              m.properties,
+                                              m.create_time,
+                                              m.update_time,
+                                              m.create_by,
+                                              m.update_by
+                                       FROM mdm_factory_model m
+                                       WHERE m.id = #{nodeId}
+                                         and m.del_flag = '0'
+
+                                       UNION ALL
+
+                                       SELECT f.id,
+                                              f.code,
+                                              f.name,
+                                              f.parent_id,
+                                              f.level,
+                                              f.type,
+                                              f.sort,
+                                              f.status,
+                                              f.manager,
+                                              f.phone,
+                                              f.address,
+                                              f.description,
+                                              f.properties,
+                                              f.create_time,
+                                              f.update_time,
+                                              f.create_by,
+                                              f.update_by
+                                       FROM mdm_factory_model f
+                                                INNER JOIN descendants d ON f.parent_id = d.id and f.del_flag = '0')
+        SELECT *
+        FROM descendants
+        WHERE id != #{nodeId}
+    </select>
+
+    <!-- 根据节点ID查询所有祖先节点 -->
+    <select id="selectAncestors" resultMap="BaseResultMap">
+        WITH RECURSIVE ancestors AS (
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM mdm_factory_model
+        WHERE id = #{nodeId}
+
+        UNION ALL
+
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM mdm_factory_model f
+        INNER JOIN ancestors a ON f.id = a.parent_id
+        )
+        SELECT * FROM ancestors
+        WHERE id != #{nodeId}
+        ORDER BY level ASC
+    </select>
+
+    <!-- 检查节点编码是否重复 -->
+    <select id="countByCode" resultType="int">
+        SELECT COUNT(*)
+        FROM mdm_factory_model
+        WHERE code = #{code}
+        <if test="excludeId != null">
+            AND id != #{excludeId}
+        </if>
+        and del_flag = '0'
+    </select>
+
+    <!-- 查询树形结构数据 -->
+    <select id="selectTreeList" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM mdm_factory_model
+        WHERE del_flag = '0'
+        ORDER BY level ASC, sort ASC, create_time ASC
+    </select>
+
+</mapper>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.pms.mapper.PmsPlanMapper">
+
+    <select id="getPmsPlanList" resultType="com.kitex.mom.pms.entity.PmsPlanEntity">
+        SELECT result.planArrivalNum as planArrivalNum, result.mat_code as matCode, result.mat_type as matType
+        FROM (SELECT sum(plan_order_num - IFNULL(plan_arrival_num, 0)) AS planArrivalNum,
+                     mat_code,
+                     mat_type
+              FROM pms_plan ${ew.getCustomSqlSegment}) as result
+        WHERE result.planArrivalNum > 0
+    </select>
+</mapper>

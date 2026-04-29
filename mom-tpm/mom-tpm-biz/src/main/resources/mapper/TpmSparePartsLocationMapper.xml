@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.tpm.mapper.TpmSparePartsLocationMapper">
+
+    <resultMap id="tpmSparePartsLocationMap" type="com.kitex.mom.tpm.entity.TpmSparePartsLocationEntity">
+        <id property="id" column="id"/>
+        <result property="code" column="code"/>
+        <result property="name" column="name"/>
+        <result property="storeroomCode" column="storeroom_code"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+
+    <select id="pageList" resultType="com.kitex.mom.tpm.entity.TpmSparePartsLocationEntity">
+        SELECT
+        location.*,
+        storeroom.name as storeroom_name
+        FROM
+        tpm_spare_parts_location as location
+        INNER JOIN (SELECT * FROM tpm_spare_parts_storeroom WHERE del_flag = '0') as storeroom ON
+        location.storeroom_code = storeroom.code
+        WHERE location.del_flag = '0'
+        <if test="query.code != null and query.code != '' ">
+            AND location.code LIKE CONCAT('%',#{query.code},'%')
+        </if>
+        <if test="query.name != null and query.name != '' ">
+            AND location.name LIKE CONCAT('%',#{query.name},'%')
+        </if>
+        <if test="query.storeroomCode != null and query.storeroomCode != '' ">
+            AND storeroom.code LIKE CONCAT('%',#{query.storeroomCode},'%')
+        </if>
+        <if test="query.storeroomName != null and query.storeroomName != '' ">
+            AND storeroom.name LIKE CONCAT('%',#{query.storeroomName},'%')
+        </if>
+        ORDER BY location.create_time DESC
+    </select>
+
+</mapper>

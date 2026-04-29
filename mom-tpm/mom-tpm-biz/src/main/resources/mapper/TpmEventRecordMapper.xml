@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.tpm.mapper.TpmEventRecordMapper">
+
+    <resultMap id="tpmEventRecordMap" type="com.kitex.mom.tpm.entity.TpmEventRecordEntity">
+        <id property="id" column="id"/>
+        <result property="eventCode" column="event_code"/>
+        <result property="deviceCode" column="device_code"/>
+        <result property="eventSource" column="event_source"/>
+        <result property="occurredAt" column="occurred_at"/>
+        <result property="description" column="description"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+
+
+    <select id="countDowntimeRankin" resultType="com.kitex.mom.tpm.dto.EquipmentRunDto">
+        WITH event_pairs AS (SELECT p.device_code,
+                                    p.device_name,
+                                    p.occurred_at AS start_time,
+                                    COALESCE(
+                                            MIN(c.occurred_at),
+                                            CURRENT_TIMESTAMP
+                                    )             AS end_time
+                             FROM tpm_event_record p
+                                      LEFT JOIN tpm_event_record c
+                                                ON p.device_code = c.device_code
+                                                    AND c.event_source = #{close}
+                                                    AND c.occurred_at > p.occurred_at
+                                                    AND c.occurred_at >= #{startTime}
+                                                    AND c.occurred_at <![CDATA[ <= ]]> #{endTime}
+                             WHERE p.event_source = #{power_on}
+                               AND p.occurred_at >= #{startTime}
+                               AND p.occurred_at <![CDATA[ <= ]]>  #{endTime}
+                             GROUP BY p.id, p.device_code, p.occurred_at)
+        SELECT device_code,
+               device_name,
+               FLOOR(SUM(EXTRACT(EPOCH FROM (end_time - start_time)) / 60)) AS run_time
+        FROM event_pairs
+        GROUP BY device_code, device_name;
+    </select>
+
+</mapper>

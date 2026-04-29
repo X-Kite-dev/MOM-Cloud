@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.mes.mapper.MesChangePointHandleMapper">
+    <select id="queryPage" resultType="com.kitex.mom.mes.entity.MesChangePointHandleEntity">
+        select * from mes_change_point_handle
+        WHERE 1 = 1
+        <if test="query.configCode != null and query.configCode != '' ">
+            AND config_code = #{query.configCode}
+        </if>
+        <if test="query.configContent != null and query.configContent != '' ">
+            AND config_content = #{query.configContent}
+        </if>
+        <if test="query.noticePersonCode != null and query.noticePersonCode != '' ">
+            AND #{query.noticePersonCode} = ANY(string_to_array(notice_person_code, ','))
+        </if>
+        order by create_time desc
+    </select>
+
+</mapper>

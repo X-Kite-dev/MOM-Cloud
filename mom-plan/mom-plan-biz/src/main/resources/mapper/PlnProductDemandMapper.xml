@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.plan.mapper.PlnProductDemandMapper">
+
+    <select id="getDemandDate" resultType="com.kitex.mom.plan.vo.PlnTemporaryDemandDateVO">
+        select product_code as productCode, sum(need_num) as num, DATE_FORMAT(plan_end_date, '%m-%d') AS monthDay
+        FROM pln_product_demand ${ew.getCustomSqlSegment}
+    </select>
+
+    <update id="updatePlanDateBatch">
+        update pln_scheduling_task_detail
+        <trim prefix="set" suffixOverrides=",">
+            <!-- 需求日期 -->
+            <trim prefix="demand_time = case" suffix="end,">
+                <foreach collection="list" item="item">
+                    when issue_id = #{item.issueId} and issue_no = #{item.issueNo}
+                    then #{item.demandTime}
+                </foreach>
+            </trim>
+
+            <!-- 分配日期 -->
+            <trim prefix="scheduled_date = case" suffix="end,">
+                <foreach collection="list" item="item">
+                    when issue_id = #{item.issueId} and issue_no = #{item.issueNo}
+                    then #{item.scheduledDate}
+                </foreach>
+            </trim>
+        </trim>
+        where 1=1
+        <foreach collection="list" item="item">
+            or (task_id = #{item.taskId} and issue_id = #{item.issueId} and issue_no = #{item.issueNo})
+        </foreach>
+    </update>
+</mapper>

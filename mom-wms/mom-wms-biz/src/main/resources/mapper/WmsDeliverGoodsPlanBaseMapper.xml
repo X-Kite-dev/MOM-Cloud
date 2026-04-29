@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.wms.mapper.WmsDeliverGoodsPlanBaseMapper">
+
+    <resultMap id="wmsDeliverGoodsPlanBaseMap" type="com.kitex.mom.wms.entity.WmsDeliverGoodsPlanBaseEntity">
+        <id property="id" column="id"/>
+        <result property="deliverPlanCode" column="deliver_plan_code"/>
+        <result property="orderCode" column="order_code"/>
+        <result property="customerCode" column="customer_code"/>
+        <result property="customerName" column="customer_name"/>
+        <result property="productCode" column="product_code"/>
+        <result property="productName" column="product_name"/>
+        <result property="planDeliverTime" column="plan_deliver_time"/>
+        <result property="deliverNum" column="deliver_num"/>
+        <result property="deliveredNum" column="delivered_num"/>
+        <result property="deliverState" column="deliver_state"/>
+        <result property="customerWarehouse" column="customer_warehouse"/>
+        <result property="customerAddress" column="customer_address"/>
+        <result property="customerContact" column="customer_contact"/>
+        <result property="customerPhone" column="customer_phone"/>
+    </resultMap>
+</mapper>

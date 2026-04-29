@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.iot.mapper.IotDeviceEventMapper">
+
+    <sql id="baseColumns">
+        id
+        , device_id, device_code, product_id, product_code, identifier, name, event_type, event_data,
+        event_time, factory_code, create_time, update_time, create_by, update_by, del_flag
+    </sql>
+
+    <select id="selectEventPage" resultType="com.kitex.mom.iot.entity.IotDeviceEventEntity">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM
+        iot_device_event
+        WHERE
+        del_flag = '0'
+        <if test="event.deviceId != null">
+            AND device_id = #{event.deviceId}
+        </if>
+        <if test="event.deviceCode != null and event.deviceCode != ''">
+            AND device_code = #{event.deviceCode}
+        </if>
+        <if test="event.productId != null">
+            AND product_id = #{event.productId}
+        </if>
+        <if test="event.identifier != null and event.identifier != ''">
+            AND identifier = #{event.identifier}
+        </if>
+        <if test="event.name != null and event.name != ''">
+            AND name LIKE CONCAT('%', #{event.name}, '%')
+        </if>
+        <if test="event.eventType != null and event.eventType != ''">
+            AND event_type = #{event.eventType}
+        </if>
+        <if test="event.factoryCode != null">
+            AND factory_code = #{event.factoryCode}
+        </if>
+        ORDER BY event_time DESC
+    </select>
+
+    <select id="selectByDeviceId" resultType="com.kitex.mom.iot.entity.IotDeviceEventEntity">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM
+        iot_device_event
+        WHERE
+        del_flag = '0'
+        AND device_id = #{deviceId}
+        ORDER BY event_time DESC
+    </select>
+
+    <select id="selectByDeviceCode" resultType="com.kitex.mom.iot.entity.IotDeviceEventEntity">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM
+        iot_device_event
+        WHERE
+        del_flag = '0'
+        AND device_code = #{deviceCode}
+        ORDER BY event_time DESC
+    </select>
+</mapper> 

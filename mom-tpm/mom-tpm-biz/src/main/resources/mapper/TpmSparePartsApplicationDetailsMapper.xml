@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.tpm.mapper.TpmSparePartsApplicationDetailsMapper">
+
+    <resultMap id="tpmSparePartsApplicationDetailsMap"
+               type="com.kitex.mom.tpm.entity.TpmSparePartsApplicationDetailsEntity">
+        <id property="id" column="id"/>
+        <result property="applyCode" column="apply_code"/>
+        <result property="sparePartCode" column="spare_part_code"/>
+        <result property="sparePartName" column="spare_part_name"/>
+        <result property="storeroomCode" column="storeroom_code"/>
+        <result property="locationCode" column="location_code"/>
+        <result property="specification" column="specification"/>
+        <result property="quantityRequested" column="quantity_requested"/>
+        <result property="unit" column="unit"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+    <select id="getApplyBySourceCodePage"
+            resultType="com.kitex.mom.tpm.entity.TpmSparePartsApplicationDetailsEntity">
+        SELECT
+        details.spare_part_code,
+        details.spare_part_name,
+        details.specification,
+        details.unit,
+        SUM(quantity_requested) as quantity_requested
+        FROM
+        tpm_spare_parts_application as apply
+        INNER JOIN tpm_spare_parts_application_details as details ON apply.apply_code = details.apply_code
+        WHERE
+        apply.source_code = #{query.sourceCode}
+        and apply.source = #{query.source}
+        and apply.approval_status = '1'
+        and apply.type = 'out'
+        and apply.del_flag = '0'
+        <if test="query.sparePartCode != null and query.sparePartCode != ''">
+            and details.spare_part_code LIKE CONCAT('%',#{query.sparePartCode},'%')
+        </if>
+        <if test="query.sparePartName != null and query.sparePartName != ''">
+            and details.spare_part_name LIKE CONCAT('%',#{query.sparePartName},'%')
+        </if>
+        GROUP BY details.spare_part_code, details.spare_part_name, details.specification,details.unit
+    </select>
+</mapper>

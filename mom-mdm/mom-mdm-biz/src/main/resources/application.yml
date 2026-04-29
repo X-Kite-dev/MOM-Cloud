@@ -1,0 +1,23 @@
+server:
+  port: 32000
+
+spring:
+  application:
+    name: kitex-mom-mdm
+  cloud:
+    nacos:
+      username: @nacos.username@
+      password: @nacos.password@
+      discovery:
+        server-addr: ${NACOS_HOST:kitex-mom-register}:${NACOS_PORT:30808}
+        namespace: @nacos.namespace@
+      config:
+        server-addr: ${spring.cloud.nacos.discovery.server-addr}
+        namespace: @nacos.namespace@
+  config:
+    import:
+      - optional:nacos:application-@profiles.active@.yml
+      - optional:nacos:${spring.application.name}-@profiles.active@.yml
+
+
+

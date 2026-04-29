@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.mes.mapper.MesWipTimeoutHandleMapper">
+    <select id="queryPage" resultType="com.kitex.mom.mes.entity.MesWipTimeoutHandleEntity">
+        select * from mes_wip_timeout_handle
+        WHERE 1 = 1
+        <if test="query.configCode != null and query.configCode != ''">
+            AND config_code = #{query.configCode}
+        </if>
+        <if test="query.lineCode != null and query.lineCode != ''">
+            AND line_code = #{query.lineCode}
+        </if>
+        <if test="query.routeCode != null and query.routeCode != ''">
+            AND route_code = #{query.routeCode}
+        </if>
+        <if test="query.status != null and query.status != ''">
+            AND status = #{query.status}
+        </if>
+        order by create_time desc
+    </select>
+</mapper>

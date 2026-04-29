@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mdm.mapper.MdmStationSettingMapper">
+
+    <!-- 根据线体ID获取工序-工位绑定列表 -->
+    <select id="selectByLineId" resultType="com.kitex.mom.mdm.entity.MdmStationSettingEntity">
+        SELECT *
+        FROM mdm_station_setting
+        WHERE line_id = #{lineId}
+          AND status = true
+        ORDER BY priority ASC, procedure_code ASC
+    </select>
+
+    <!-- 根据工序编码获取对应的工位列表 -->
+    <select id="selectStationsByProcedure" resultType="com.kitex.mom.mdm.entity.MdmStationSettingEntity">
+        SELECT *
+        FROM mdm_station_setting
+        WHERE procedure_code = #{procedureCode}
+          AND status = true
+        ORDER BY priority ASC, is_primary DESC
+    </select>
+
+    <!-- 根据工位ID获取对应的工序列表 -->
+    <select id="selectProceduresByStation" resultType="com.kitex.mom.mdm.entity.MdmStationSettingEntity">
+        SELECT *
+        FROM mdm_station_setting
+        WHERE station_id = #{stationId}
+          AND status = true
+        ORDER BY priority ASC, is_primary DESC
+    </select>
+
+    <!-- 根据车间ID获取所有工序-工位绑定 -->
+    <select id="selectByWorkshopId" resultType="com.kitex.mom.mdm.entity.MdmStationSettingEntity">
+        SELECT *
+        FROM mdm_station_setting
+        WHERE workshop_id = #{workshopId}
+          AND status = true
+        ORDER BY line_code ASC, priority ASC, procedure_code ASC
+    </select>
+
+</mapper>

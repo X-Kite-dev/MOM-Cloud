@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.wms.mapper.WmsInBillMapper">
+
+    <resultMap id="wmsInBillMap" type="com.kitex.mom.wms.entity.WmsInBillEntity">
+        <id property="id" column="id"/>
+        <result property="billNo" column="bill_no"/>
+        <result property="noticeId" column="notice_id"/>
+        <result property="state" column="state"/>
+        <result property="inTime" column="in_time"/>
+        <result property="supplierCode" column="supplier_code"/>
+        <result property="warehouseCode" column="warehouse_code"/>
+        <result property="warehouseName" column="warehouse_name"/>
+        <result property="detailFinishNum" column="detail_finish_num"/>
+        <result property="detailNotFinishNum" column="detail_not_finish_num"/>
+        <result property="remark" column="remark"/>
+        <result property="reviewer" column="reviewer"/>
+        <result property="reviewTime" column="review_time"/>
+        <result property="workshop" column="workshop"/>
+        <result property="billType" column="bill_type"/>
+        <result property="documentId" column="document_id"/>
+        <result property="documentTable" column="document_table"/>
+        <result property="expansion" column="expansion"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+</mapper>

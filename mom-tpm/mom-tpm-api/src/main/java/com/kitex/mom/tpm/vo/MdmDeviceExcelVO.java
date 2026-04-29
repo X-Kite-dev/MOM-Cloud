@@ -1,0 +1,75 @@
+package com.kitex.mom.tpm.vo;
+
+import com.alibaba.excel.annotation.ExcelIgnore;
+import com.alibaba.excel.annotation.ExcelProperty;
+import com.alibaba.excel.annotation.write.style.ColumnWidth;
+import com.kitex.common.excel.annotation.ExcelLine;
+import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
+
+/**
+ * @program: mom-cloud
+ * @description: 设备excel数据类
+ * @author: qinghuan
+ * @create: 2024-10-28 21:34
+ **/
+@Data
+@ColumnWidth(30)
+@Schema(description = "设备excel数据类")
+public class MdmDeviceExcelVO {
+
+    /**
+     * 导入回显行号
+     */
+    @ExcelIgnore
+    @ExcelLine
+    private Long lineNum;
+
+    /**
+     * 设备编码
+     */
+    @ExcelProperty(value = "设备编码")
+    @Schema(description = "设备编码")
+    @NotBlank(message = "设备编码不能为空")
+    private String deviceCode;
+
+    /**
+     * 设备名称
+     */
+    @Schema(description = "设备名称")
+    @ExcelProperty(value = "设备名称")
+    @NotBlank(message = "设备名称不能为空")
+    private String deviceName;
+
+
+    @ExcelIgnore
+    @Schema(description = "设备分类编码")
+    private String classCode;
+
+    /**
+     * 设备分类名称
+     */
+    @Schema(description = "设备分类")
+    @ExcelProperty(value = "设备分类")
+    @NotBlank(message = "设备分类不能为空")
+    private String className;
+
+    /**
+     * 设备位置
+     */
+    @Schema(description = "设备位置")
+    @ExcelProperty(value = "设备位置")
+    private String location;
+
+
+    @ExcelProperty(value = "设备规格")
+    @Schema(description = "设备规格")
+    private String spec;
+
+    @ExcelProperty(value = "设备型号")
+    @Schema(description = "设备型号")
+    private String model;
+
+
+}

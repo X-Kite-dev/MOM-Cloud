@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.tpm.mapper.TpmRepairRemindMapper">
+
+    <resultMap id="tpmRepairRemindMap" type="com.kitex.mom.tpm.entity.TpmRepairRemindEntity">
+        <id property="id" column="id"/>
+        <result property="remindCode" column="remind_code"/>
+        <result property="faultClassId" column="fault_class_id"/>
+        <result property="deviceCodes" column="device_codes"/>
+        <result property="deviceNames" column="device_names"/>
+        <result property="shiftCodes" column="shift_codes"/>
+        <result property="shiftNames" column="shift_names"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+
+    <select id="pageList" resultType="com.kitex.mom.tpm.entity.TpmRepairRemindEntity">
+        SELECT
+        STRING_AGG(details.names, ',') as handle_person,
+        fault.name as fault_class_name,
+        remind.*
+        FROM
+        tpm_repair_remind as remind
+        INNER JOIN (SELECT name, id FROM tpm_repair_fault_class WHERE del_flag = '0') as fault ON remind.fault_class_id
+        = fault.id
+        INNER JOIN (SELECT names, remind_code FROM tpm_repair_remind_details WHERE person_type = '0' ) as details ON
+        remind.remind_code = details.remind_code
+        WHERE remind.del_flag= '0'
+        <if test="query.remindCode != null and query.remindCode != '' ">
+            AND remind.remind_code LIKE CONCAT('%',#{query.remindCode},'%')
+        </if>
+        <if test="query.faultClassName != null and query.faultClassName != '' ">
+            AND fault.name LIKE CONCAT('%',#{query.faultClassName},'%')
+        </if>
+        <if test="query.deviceCodes != null and query.deviceCodes != '' ">
+            AND remind.device_codes LIKE CONCAT('%',#{query.deviceCodes},'%')
+        </if>
+        <if test="query.deviceNames != null and query.deviceNames != '' ">
+            AND remind.device_names LIKE CONCAT('%',#{query.deviceNames},'%')
+        </if>
+        <if test="query.shiftNames != null and query.shiftNames != '' ">
+            AND remind.shift_names LIKE CONCAT('%',#{query.shiftNames},'%')
+        </if>
+        GROUP BY remind.id, remind.remind_code, fault.name
+        ORDER BY remind.create_time DESC
+    </select>
+
+    <select id="getTarget" resultType="com.kitex.mom.tpm.entity.TpmRepairRemindEntity">
+        SELECT
+        remind.*
+        FROM
+        tpm_repair_remind as remind
+        <where>
+            <if test="deviceCode != null and deviceCode != '' ">
+                AND #{deviceCode} = ANY(string_to_array(remind.device_codes, ','))
+            </if>
+            <if test="shiftCode != null and shiftCode != '' ">
+                AND #{shiftCode} = ANY(string_to_array(remind.shift_codes, ','))
+            </if>
+            <if test="faultClassId != null and faultClassId != '' ">
+                AND fault_class_id = #{faultClassId}
+            </if>
+        </where>
+    </select>
+</mapper>

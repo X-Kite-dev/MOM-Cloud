@@ -1,0 +1,22 @@
+server:
+  port: 42000
+
+spring:
+  application:
+    name: mom-iot-biz
+  cloud:
+    nacos:
+      username: @nacos.username@
+      password: @nacos.password@
+      discovery:
+        server-addr: ${NACOS_HOST:kitex-mom-register}:${NACOS_PORT:30808}
+        namespace: @nacos.namespace@
+      config:
+        server-addr: ${spring.cloud.nacos.discovery.server-addr}
+        namespace: @nacos.namespace@
+  config:
+    import:
+      - optional:nacos:application-@profiles.active@.yml
+      - optional:nacos:${spring.application.name}-@profiles.active@.yml
+  main:
+    allow-circular-references: true

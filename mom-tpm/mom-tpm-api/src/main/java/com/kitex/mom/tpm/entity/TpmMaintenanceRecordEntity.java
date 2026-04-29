@@ -1,0 +1,98 @@
+package com.kitex.mom.tpm.entity;
+
+import com.baomidou.mybatisplus.annotation.*;
+import com.kitex.common.core.entity.BaseEntity;
+import com.kitex.common.core.util.TenantTable;
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * 保养记录表
+ *
+ * @author kitex
+ * @date 2025-02-06 15:13:49
+ */
+@Data
+@TenantTable
+@TableName("tpm_maintenance_record")
+@EqualsAndHashCode(callSuper = true)
+@Schema(description = "保养记录表")
+public class TpmMaintenanceRecordEntity extends BaseEntity<TpmMaintenanceRecordEntity> {
+
+
+    /**
+     * id
+     */
+    @TableId(type = IdType.ASSIGN_ID)
+    @Schema(description = "id")
+    private Long id;
+
+    /**
+     * 任务编码
+     */
+    @Schema(description = "任务编码")
+    private String taskCode;
+
+    /**
+     * 计划id
+     */
+    @Schema(description = "计划id")
+    private Long planId;
+
+    /**
+     * 计划名称
+     */
+    @Schema(description = "计划名称")
+    private String planName;
+
+    /**
+     * 设备编码
+     */
+    @Schema(description = "设备编码")
+    private String deviceCode;
+
+    /**
+     * 设备名称
+     */
+    @Schema(description = "设备名称")
+    private String deviceName;
+
+    /**
+     * 处理人编码
+     */
+    @Schema(description = "处理人编码")
+    private String handlePersonCode;
+
+    /**
+     * 处理人名称
+     */
+    @Schema(description = "处理人名称")
+    private String handlePersonName;
+
+    /**
+     * 保养时间
+     */
+    @Schema(description = "保养时间")
+    private LocalDateTime maintenanceTime;
+
+    /**
+     * 任务状态 0 未处理 1处理中 2已处理 3超时已处理
+     */
+    @Schema(description = "任务状态 0 未处理 1处理中 2已处理 3超时已处理")
+    private String state;
+
+    /**
+     * 工厂编码 - 数据所属的工厂编码
+     */
+    @Schema(description = "工厂编码 - 数据所属的工厂编码")
+    @TableField(fill = FieldFill.INSERT)
+    private String factoryCode;
+
+    @TableField(exist = false)
+    @Schema(description = "子表列表")
+    private List<TpmMaintenanceTaskDetailsEntity> detailsList;
+}

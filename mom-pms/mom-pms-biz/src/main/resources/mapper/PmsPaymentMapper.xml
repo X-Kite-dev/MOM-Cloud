@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.pms.mapper.PmsPaymentMapper">
+
+    <select id="getAmount" resultType="com.kitex.mom.pms.entity.PmsPaymentEntity">
+        SELECT type,
+               SUM(paid_amount)                AS paid_amount,
+               SUM(COALESCE(refund_amount, 0)) AS refund_amount
+        FROM pms_payment ${ew.getCustomSqlSegment}
+    </select>
+</mapper>

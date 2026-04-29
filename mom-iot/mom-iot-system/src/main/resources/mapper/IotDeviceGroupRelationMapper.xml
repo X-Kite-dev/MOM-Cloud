@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.iot.mapper.IotDeviceGroupRelationMapper">
+
+    <!-- 分页查询分组下的设备 -->
+    <select id="selectDevicesByGroupId" resultType="com.kitex.mom.iot.entity.IotDeviceEntity">
+        SELECT
+        d.*
+        FROM
+        iot_device d
+        INNER JOIN
+        iot_device_group_relation r ON d.id = r.device_id
+        WHERE
+        r.group_id = #{groupId}
+        AND r.del_flag = '0'
+        AND d.del_flag = '0'
+        <if test="device != null">
+            <if test="device.deviceName != null and device.deviceName != ''">
+                AND d.device_name LIKE CONCAT('%', #{device.deviceName}, '%')
+            </if>
+            <if test="device.deviceCode != null and device.deviceCode != ''">
+                AND d.device_code = #{device.deviceCode}
+            </if>
+            <if test="device.productId != null">
+                AND d.product_id = #{device.productId}
+            </if>
+            <if test="device.status != null">
+                AND d.status = #{device.status}
+            </if>
+        </if>
+        ORDER BY
+        d.create_time DESC
+    </select>
+
+    <!-- 查询设备所属的分组 -->
+    <select id="selectGroupsByDeviceId" resultType="com.kitex.mom.iot.entity.IotDeviceGroupEntity">
+        SELECT g.*
+        FROM iot_device_group g
+                 INNER JOIN
+             iot_device_group_relation r ON g.id = r.group_id
+        WHERE r.device_id = #{deviceId}
+          AND r.del_flag = '0'
+          AND g.del_flag = '0'
+        ORDER BY g.sort ASC, g.create_time ASC
+    </select>
+
+</mapper> 

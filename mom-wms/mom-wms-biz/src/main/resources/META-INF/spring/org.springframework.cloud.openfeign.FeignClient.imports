@@ -1,0 +1,8 @@
+com.kitex.mom.wms.api.feign.RemoteContainerBarcodeService
+com.kitex.mom.wms.api.feign.RemoteDeliverService
+com.kitex.mom.wms.api.feign.RemoteInNoticeService
+com.kitex.mom.wms.api.feign.RemoteLiveStockService
+com.kitex.mom.wms.api.feign.RemoteProducePickingNoticeService
+com.kitex.mom.wms.api.feign.RemoteProductInNoticeService
+com.kitex.mom.wms.api.feign.RemoteProductionPickingOutBillService
+com.kitex.mom.wms.api.feign.RemoteSalesOutboundNoticeService

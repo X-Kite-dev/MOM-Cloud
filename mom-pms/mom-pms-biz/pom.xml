@@ -1,0 +1,199 @@
+<?xml version="1.0"?>
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+            http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.kitex</groupId>
+        <artifactId>mom-pms</artifactId>
+        <version>2.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>mom-pms-biz</artifactId>
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
+    <dependencies>
+        <!--必备: undertow容器-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-undertow</artifactId>
+        </dependency>
+        <!--必备: spring boot web-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!--必备: 注册中心客户端-->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+        <!--必备: 配置中心客户端-->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
+        </dependency>
+        <!--必备: 操作数据源相关-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-data</artifactId>
+        </dependency>
+        <!--必备：安全模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-security</artifactId>
+        </dependency>
+        <!--必备：xss 过滤模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-xss</artifactId>
+        </dependency>
+        <!--必备: sentinel 依赖-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-sentinel</artifactId>
+        </dependency>
+        <!--必备: feign 依赖-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-feign</artifactId>
+        </dependency>
+        <!--必备: 依赖api模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-pms-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!-- mdm-api依赖模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-mdm-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!-- message-api依赖模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!-- plan-api依赖模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-plan-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!-- wms-api依赖模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-wms-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!-- qms-api依赖模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-qms-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!-- adapter-api依赖模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--必备: log 依赖-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-log</artifactId>
+        </dependency>
+        <!--选配: mybatis 依赖 -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        </dependency>
+        <!--选配： druid 连接池 -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>druid-spring-boot-3-starter</artifactId>
+        </dependency>
+        <!--选配： PG 数据库驱动-->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
+        <!--选配: swagger文档-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-swagger</artifactId>
+        </dependency>
+        <!--选配: xxl-job-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-job</artifactId>
+        </dependency>
+        <!--测试: spring boot test-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+        </dependency>
+    </dependencies>
+    <profiles>
+        <profile>
+            <id>cloud</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>repackage</goal>
+                                </goals>
+                                <configuration>
+                                    <loaderImplementation>CLASSIC</loaderImplementation>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>io.fabric8</groupId>
+                        <artifactId>docker-maven-plugin</artifactId>
+                        <configuration>
+                            <skip>false</skip>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>boot</id>
+        </profile>
+    </profiles>
+
+    <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <excludes>
+                    <exclude>**/*.xlsx</exclude>
+                    <exclude>**/*.xls</exclude>
+                </excludes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <includes>
+                    <include>**/*.xlsx</include>
+                    <include>**/*.xls</include>
+                </includes>
+            </resource>
+        </resources>
+    </build>
+</project>

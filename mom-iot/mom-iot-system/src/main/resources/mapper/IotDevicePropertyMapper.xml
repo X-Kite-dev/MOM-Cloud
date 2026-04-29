@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.iot.mapper.IotDevicePropertyMapper">
+
+    <sql id="baseColumns">
+        id
+        , device_id, device_code, product_id, product_code, identifier, name, value, data_type, unit,
+        collect_time, factory_code, create_time, update_time, create_by, update_by, del_flag
+    </sql>
+
+    <select id="selectPropertyPage" resultType="com.kitex.mom.iot.entity.IotDevicePropertyEntity">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM
+        iot_device_property
+        WHERE
+        del_flag = '0'
+        <if test="property.deviceId != null">
+            AND device_id = #{property.deviceId}
+        </if>
+        <if test="property.deviceCode != null and property.deviceCode != ''">
+            AND device_code = #{property.deviceCode}
+        </if>
+        <if test="property.productId != null">
+            AND product_id = #{property.productId}
+        </if>
+        <if test="property.identifier != null and property.identifier != ''">
+            AND identifier = #{property.identifier}
+        </if>
+        <if test="property.name != null and property.name != ''">
+            AND name LIKE CONCAT('%', #{property.name}, '%')
+        </if>
+        <if test="property.factoryCode != null">
+            AND factory_code = #{property.factoryCode}
+        </if>
+        ORDER BY collect_time DESC
+    </select>
+
+    <select id="selectLatestByDeviceId" resultType="com.kitex.mom.iot.entity.IotDevicePropertyEntity">
+        SELECT t.*
+        FROM (
+        SELECT
+        <include refid="baseColumns"/>,
+        ROW_NUMBER() OVER (PARTITION BY identifier ORDER BY collect_time DESC) as rn
+        FROM
+        iot_device_property
+        WHERE
+        del_flag = '0'
+        AND device_id = #{deviceId}
+        ) t
+        WHERE t.rn = 1
+    </select>
+
+    <select id="selectLatestByDeviceIdAndIdentifier" resultType="com.kitex.mom.iot.entity.IotDevicePropertyEntity">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM
+        iot_device_property
+        WHERE
+        del_flag = '0'
+        AND device_id = #{deviceId}
+        AND identifier = #{identifier}
+        ORDER BY collect_time DESC
+        LIMIT 1
+    </select>
+
+    <select id="selectLatestByDeviceCode" resultType="com.kitex.mom.iot.entity.IotDevicePropertyEntity">
+        SELECT t.*
+        FROM (
+        SELECT
+        <include refid="baseColumns"/>,
+        ROW_NUMBER() OVER (PARTITION BY identifier ORDER BY collect_time DESC) as rn
+        FROM
+        iot_device_property
+        WHERE
+        del_flag = '0'
+        AND device_code = #{deviceCode}
+        ) t
+        WHERE t.rn = 1
+    </select>
+
+    <!-- 查询设备元数据 -->
+    <select id="selectMetadataPage" resultType="com.kitex.mom.iot.entity.IotDevicePropertyEntity">
+        SELECT p.*, d.device_code, d.device_name
+        FROM iot_device_property p
+        LEFT JOIN iot_device d ON p.device_id = d.id
+        WHERE 1=1
+        <if test="deviceIds != null and deviceIds.size() > 0">
+            AND p.device_id IN
+            <foreach collection="deviceIds" item="deviceId" open="(" separator="," close=")">
+                #{deviceId}
+            </foreach>
+        </if>
+        <if test="identifier != null and identifier != ''">
+            AND p.identifier = #{identifier}
+        </if>
+        <if test="startTime != null and startTime != ''">
+            AND p.create_time >= #{startTime}
+        </if>
+        <if test="endTime != null and endTime != ''">
+            AND p.create_time &lt;= #{endTime}
+        </if>
+        ORDER BY p.create_time DESC
+    </select>
+
+    <!-- 根据产品ID查询设备属性数据 -->
+    <select id="selectByProductId" resultType="com.kitex.mom.iot.entity.IotDevicePropertyEntity">
+        SELECT p.*, d.device_code, d.device_name
+        FROM iot_device_property p
+        LEFT JOIN iot_device d ON p.device_id = d.id
+        WHERE d.product_id = #{productId}
+        <if test="identifier != null and identifier != ''">
+            AND p.identifier = #{identifier}
+        </if>
+        <if test="startTime != null and startTime != ''">
+            AND p.create_time >= #{startTime}
+        </if>
+        <if test="endTime != null and endTime != ''">
+            AND p.create_time &lt;= #{endTime}
+        </if>
+        ORDER BY p.create_time DESC
+    </select>
+</mapper> 

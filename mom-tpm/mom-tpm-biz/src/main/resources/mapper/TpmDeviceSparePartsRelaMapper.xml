@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.tpm.mapper.TpmDeviceSparePartsRelaMapper">
+
+    <resultMap id="tpmDeviceSparePartsRelaMap" type="com.kitex.mom.tpm.entity.TpmDeviceSparePartsRelaEntity">
+        <id property="id" column="id"/>
+        <result property="deviceCode" column="device_code"/>
+        <result property="sparePartCode" column="spare_part_code"/>
+        <result property="installationDate" column="installation_date"/>
+        <result property="usageDuration" column="usage_duration"/>
+        <result property="replacementInterval" column="replacement_interval"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+
+    <select id="getTpmDeviceSparePartsRelaPage"
+            resultType="com.kitex.mom.tpm.entity.TpmDeviceSparePartsRelaEntity">
+        SELECT
+        rela.*,
+        parts.name as spare_part_name,
+        parts.safety_stock_min,
+        COALESCE(stock.inventory_num,0) as inventory_num
+        FROM
+        tpm_device_spare_parts_rela as rela
+        INNER JOIN (SELECT code, name, safety_stock_min FROM tpm_spare_parts WHERE del_flag = '0') as parts ON
+        parts.code = rela.spare_part_code
+        LEFT JOIN (
+        SELECT
+        spare_parts_code,
+        SUM(inventory_num) as inventory_num
+        FROM tpm_spare_parts_stock
+        WHERE del_flag = '0'
+        GROUP BY spare_parts_code
+        ) as stock ON rela.spare_part_code = stock.spare_parts_code
+        <where>
+            1=1
+            <if test="query.deviceCode != null and query.deviceCode != ''">
+                AND rela.device_code = #{query.deviceCode}
+            </if>
+        </where>
+    </select>
+
+    <select id="getRelaById" resultType="com.kitex.mom.tpm.entity.TpmDeviceSparePartsRelaEntity">
+        SELECT rela.*,
+               parts.name as spare_part_name
+        FROM tpm_device_spare_parts_rela as rela
+                 INNER JOIN (SELECT * FROM tpm_spare_parts WHERE del_flag = '0') as parts
+                            ON parts.code = rela.spare_part_code
+        WHERE rela.id = #{id}
+    </select>
+</mapper>

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.iot.mapper.IotProductMapper">
+
+    <sql id="baseColumns">
+        p
+        .
+        id
+        , p.product_code, p.product_name, p.category_id, p.product_type, p.description, p.status, p.factory_code,
+        p.create_time, p.update_time, p.create_by, p.update_by, p.del_flag
+    </sql>
+
+    <select id="selectProductPage" resultType="com.kitex.mom.iot.entity.IotProductEntity">
+        SELECT
+        <include refid="baseColumns"/>,
+        c.category_name
+        FROM
+        iot_product p
+        LEFT JOIN
+        iot_product_category c ON p.category_id = c.id AND c.del_flag = '0'
+        WHERE
+        p.del_flag = '0'
+        <if test="product.productCode != null and product.productCode != ''">
+            AND p.product_code LIKE CONCAT('%', #{product.productCode}, '%')
+        </if>
+        <if test="product.productName != null and product.productName != ''">
+            AND p.product_name LIKE CONCAT('%', #{product.productName}, '%')
+        </if>
+        <if test="product.categoryId != null">
+            AND p.category_id = #{product.categoryId}
+        </if>
+        <if test="product.productType != null and product.productType != ''">
+            AND p.product_type = #{product.productType}
+        </if>
+        <if test="product.status != null">
+            AND p.status = #{product.status}
+        </if>
+        <if test="product.factoryCode != null">
+            AND p.factory_code = #{product.factoryCode}
+        </if>
+        ORDER BY p.create_time DESC
+    </select>
+</mapper> 

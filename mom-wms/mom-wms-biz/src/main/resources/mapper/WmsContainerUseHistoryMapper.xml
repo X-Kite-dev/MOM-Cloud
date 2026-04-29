@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.wms.mapper.WmsContainerUseHistoryMapper">
+
+    <resultMap id="wmsContainerUseHistoryMap" type="com.kitex.mom.wms.entity.WmsContainerUseHistoryEntity">
+        <id property="id" column="id"/>
+        <result property="code" column="code"/>
+        <result property="startTime" column="start_time"/>
+        <result property="endTime" column="end_time"/>
+        <result property="siteCode" column="site_code"/>
+        <result property="siteName" column="site_name"/>
+        <result property="matCode" column="mat_code"/>
+        <result property="matName" column="mat_name"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+    <select id="fetchHistories" resultType="com.kitex.mom.wms.entity.WmsContainerUseHistoryEntity">
+        select history.id, history.code, history.start_time, history.end_time, history.site_code, history.site_name,
+        history.mat_code, history.mat_name, history.factory_code
+        , history.create_time, history.update_time, history.create_by, history.update_by, history.del_flag
+        , container.type_code as typeCode, container.warehouse_code as warehouseCode, container.warehouse_name as
+        warehouseName
+        from wms_container_use_history history
+        left join wms_container_barcode container on history.code = container.code
+        where history.del_flag = '0'
+        <if test="params.code != null and params.code != ''">
+            and history.code like concat('%', #{params.code}, '%')
+        </if>
+        <if test="params.warehouseCode != null and params.warehouseCode != ''">
+            and history.warehosue_code like concat('%', #{params.warehouseCode}, '%')
+        </if>
+        <if test="params.siteCode != null and params.siteCode != ''">
+            and history.site_code like concat('%', #{params.siteCode}, '%')
+        </if>
+        <if test="params.matCode != null and params.matCode != ''">
+            and history.mat_code like concat('%', #{params.matCode}, '%')
+        </if>
+        <if test="params.startTime != null and params.startTime != ''">
+            and history.start_time &lt;= #{params.startTime}
+            and history.end_time &gt;= #{params.startTime}
+        </if>
+        order by history.create_time desc
+    </select>
+</mapper>

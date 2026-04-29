@@ -1,0 +1,129 @@
+variables:
+  # 镜像仓库配置
+  CI_REGISTRY: 172.25.2.27:5001  # 阿里云镜像仓库地址
+  CI_REGISTRY_NAMESPACE: kitex  # 命名空间
+  DOCKER_USER: admin
+  DOCKER_PASSWORD: admin
+  # 先定义变量名，稍后赋值
+  IMAGE_TAG: latest
+  DEPLOY_SERVER: 172.25.2.29
+  DOCKER_COMPOSE_PATH: /home/kitex-mom/
+
+.defaults: &defaults
+  cache:
+    key: maven-repository
+    paths:
+      - mom-common/mom-common-biz/target/*.jar
+      - mom-iot/mom-iot-system/target/*.jar
+      - mom-mdm/mom-mdm-biz/target/*.jar
+      - mom-mes/mom-mes-biz/target/*.jar
+      - mom-plan/mom-plan-biz/target/*.jar
+      - mom-pms/mom-pms-biz/target/*.jar
+      - mom-qms/mom-qms-biz/target/*.jar
+      - mom-tpm/mom-tpm-biz/target/*.jar
+      - mom-wms/mom-wms-biz/target/*.jar
+
+# 构建docker镜像
+docker-build:
+  image:
+    name: 172.25.2.27:5001/devops/docker:stable-dind
+  stage: docker-build
+  variables:
+    # 启用构建缓存(需要配置缓存卷)
+    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
+  before_script:
+    ## 流水线执行 ID
+    - echo $CI_PIPELINE_ID}
+    - docker login -u ${DOCKER_USER} -p ${DOCKER_PASSWORD} ${CI_REGISTRY}
+  script:
+    # 构建mom-common镜像
+    - docker build -f ${CI_PROJECT_DIR}/mom-common/mom-common-biz/Dockerfile -t ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-common:${IMAGE_TAG} ${CI_PROJECT_DIR}/mom-common/mom-common-biz/
+    - docker push ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-common:${IMAGE_TAG}
+
+    # 构建mom-iot镜像
+    - docker build -f ${CI_PROJECT_DIR}/mom-iot/mom-iot-system/Dockerfile -t ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-iot:${IMAGE_TAG} ${CI_PROJECT_DIR}/mom-iot/mom-iot-system/
+    - docker push ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-iot:${IMAGE_TAG}
+
+    # 构建mom-mdm镜像
+    - docker build -f ${CI_PROJECT_DIR}/mom-mdm/mom-mdm-biz/Dockerfile -t ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-mdm:${IMAGE_TAG} ${CI_PROJECT_DIR}/mom-mdm/mom-mdm-biz/
+    - docker push ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-mdm:${IMAGE_TAG}
+
+    # 构建mom-mes镜像
+    - docker build -f ${CI_PROJECT_DIR}/mom-mes/mom-mes-biz/Dockerfile -t ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-mes:${IMAGE_TAG} ${CI_PROJECT_DIR}/mom-mes/mom-mes-biz/
+    - docker push ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-mes:${IMAGE_TAG}
+
+    # 构建mom-plan镜像
+    - docker build -f ${CI_PROJECT_DIR}/mom-plan/mom-plan-biz/Dockerfile -t ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-plan:${IMAGE_TAG} ${CI_PROJECT_DIR}/mom-plan/mom-plan-biz/
+    - docker push ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-plan:${IMAGE_TAG}
+
+    # 构建mom-pms镜像
+    - docker build -f ${CI_PROJECT_DIR}/mom-pms/mom-pms-biz/Dockerfile -t ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-pms:${IMAGE_TAG} ${CI_PROJECT_DIR}/mom-pms/mom-pms-biz/
+    - docker push ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-pms:${IMAGE_TAG}
+
+    # 构建mom-qms镜像
+    - docker build -f ${CI_PROJECT_DIR}/mom-qms/mom-qms-biz/Dockerfile -t ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-qms:${IMAGE_TAG} ${CI_PROJECT_DIR}/mom-qms/mom-qms-biz/
+    - docker push ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-qms:${IMAGE_TAG}
+
+    # 构建mom-tpm镜像
+    - docker build -f ${CI_PROJECT_DIR}/mom-tpm/mom-tpm-biz/Dockerfile -t ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-tpm:${IMAGE_TAG} ${CI_PROJECT_DIR}/mom-tpm/mom-tpm-biz/
+    - docker push ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-tpm:${IMAGE_TAG}
+
+    # 构建mom-wms镜像
+    - docker build -f ${CI_PROJECT_DIR}/mom-wms/mom-wms-biz/Dockerfile -t ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-wms:${IMAGE_TAG} ${CI_PROJECT_DIR}/mom-wms/mom-wms-biz/
+    - docker push ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-wms:${IMAGE_TAG}
+
+    # 构建mom-ai镜像
+    - docker build -f ${CI_PROJECT_DIR}/mom-ai/mom-ai-biz/Dockerfile -t ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-ai:${IMAGE_TAG} ${CI_PROJECT_DIR}/mom-ai/mom-ai-biz/
+    - docker push ${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/mom-ai:${IMAGE_TAG}
+
+    # 构建完成后删除本地镜像释放空间
+    - docker rmi $(docker images "${CI_REGISTRY}/${CI_REGISTRY_NAMESPACE}/*" -q) || echo "No local images to remove"
+
+  only:
+    - release
+    - release/*
+  <<: *defaults
+  tags:
+    - Kitex
+
+docker-deploy:
+  image: 172.25.2.27:5001/devops/openssh-client:latest
+  stage: docker-deploy
+  # dependencies:
+  #   - docker-build
+  before_script:
+    # 设置SSH配置
+    - mkdir -p ~/.ssh
+    ## SSH_PRIVATE_KEY_214 在环境变量中
+    - echo ${CI_PIPELINE_ID}
+    - echo "${CD_SH_DEPLOY}"
+    - echo "${CD_SH_DEPLOY}" > ~/.ssh/deploy.key
+    - chmod 600 ~/.ssh/deploy.key
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+  script:
+    ## 优化点，在登录到宿主机之后，要删除之前没用的镜像，否则镜像过大 会导致服务器存储不够
+    # 1. 停止远程docker-compose服务
+    - ssh -i ~/.ssh/deploy.key ${DEPLOY_SERVER} -y "cd ${DOCKER_COMPOSE_PATH} && docker-compose down"
+    # 2. 复制本地docker-compose文件到远程主机
+    - scp -i ~/.ssh/deploy.key ${CI_PROJECT_DIR}/docker-compose.yml ${DEPLOY_SERVER}:${DOCKER_COMPOSE_PATH}/
+    # 3. 重新启动服务
+    - ssh -i ~/.ssh/deploy.key ${DEPLOY_SERVER} -y "cd ${DOCKER_COMPOSE_PATH} && docker-compose up -d"
+    # 4. 移除挂载的镜像
+    - ssh -i ~/.ssh/deploy.key ${DEPLOY_SERVER} "cd ${DOCKER_COMPOSE_PATH} && docker images -q -f 'dangling=true' | xargs -r docker rmi || echo 'No dangling images'"
+
+  only:
+    - release
+    - release/*
+  tags:
+    - Kitex
+
+#
+## 清理 Runner Docker 缓存
+#docker-cleanup:
+#  image: 172.25.2.27:5001/devops/docker:stable-dind
+#  stage: docker-cleanup
+#  script:
+#    - echo "Cleaning unused Docker resources on Runner..."
+#    - docker system prune -af --volumes
+#  when: manual         # 手动触发，避免误删
+#  allow_failure: true  # 清理失败不影响其他任务

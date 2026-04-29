@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.wms.mapper.WmsDeliverGoodsReturnMapper">
+
+    <resultMap id="wmsDeliverGoodsReturnMap" type="com.kitex.mom.wms.entity.WmsDeliverGoodsReturnEntity">
+        <id property="id" column="id"/>
+        <result property="customerCode" column="customer_code"/>
+        <result property="customerName" column="customer_name"/>
+        <result property="productCode" column="product_code"/>
+        <result property="productName" column="product_name"/>
+        <result property="returnNum" column="return_num"/>
+        <result property="handlePerson" column="handle_person"/>
+        <result property="handlePersonName" column="handle_person_name"/>
+        <result property="returnWarehouse" column="return_warehouse"/>
+        <result property="returnWarehouseName" column="return_warehouse_name"/>
+        <result property="returnReason" column="return_reason"/>
+    </resultMap>
+</mapper>

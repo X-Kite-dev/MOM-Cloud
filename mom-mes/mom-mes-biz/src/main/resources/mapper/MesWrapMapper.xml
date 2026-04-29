@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mes.mapper.MesWrapMapper">
+
+    <select id="queryPage" resultType="com.kitex.mom.mes.entity.MesWrapEntity">
+        SELECT
+        t1.*,
+        t2.route_type as taskType
+        FROM
+        mes_wrap t1
+        LEFT JOIN mes_task_arrange t2 ON t1.arrange_code = t2.code
+        <where>
+            1 = 1
+            <if test="query.wrapCode != '' and query.wrapCode != null ">
+                AND t1.wrap_code LIKE CONCAT('%', #{query.wrapCode}, '%')
+            </if>
+            <if test="query.taskCode != '' and query.taskCode != null ">
+                AND t1.task_code LIKE CONCAT('%', #{query.taskCode}, '%')
+            </if>
+            <if test="query.arrangeCode != '' and query.arrangeCode != null ">
+                AND t1.arrange_code LIKE CONCAT('%', #{query.arrangeCode}, '%')
+            </if>
+        </where>
+    </select>
+</mapper>

@@ -1,0 +1,186 @@
+<?xml version="1.0"?>
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+            http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.kitex</groupId>
+        <artifactId>mom-mes</artifactId>
+        <version>2.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>mom-mes-biz</artifactId>
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
+    <dependencies>
+        <!--必备: undertow容器-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-undertow</artifactId>
+        </dependency>
+        <!--必备: spring boot web-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!--必备: 注册中心客户端-->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+        <!--必备: 配置中心客户端-->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
+        </dependency>
+        <!--必备: 操作数据源相关-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-data</artifactId>
+        </dependency>
+        <!--必备：安全模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-security</artifactId>
+        </dependency>
+        <!--必备：xss 过滤模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-xss</artifactId>
+        </dependency>
+        <!--必备: sentinel 依赖-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-sentinel</artifactId>
+        </dependency>
+        <!--必备: feign 依赖-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-feign</artifactId>
+        </dependency>
+        <!--必备: 依赖api模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-mes-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--必备: log 依赖-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-log</artifactId>
+        </dependency>
+        <!--选配: mybatis 依赖 -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        </dependency>
+        <!--选配： druid 连接池 -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>druid-spring-boot-3-starter</artifactId>
+        </dependency>
+        <!--选配： PG 数据库驱动-->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
+        <!--选配: swagger文档-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-swagger</artifactId>
+        </dependency>
+        <!--测试: spring boot test-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+        </dependency>
+        <!--引入mdm模块依赖-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-mdm-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--引入wms模块依赖-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-wms-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--引入qms模块依赖-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-qms-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-query</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-plan-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-tpm-api</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--选配: xxl-job-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-job</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.wildfly.common</groupId>
+            <artifactId>wildfly-common</artifactId>
+            <version>1.5.2.Final</version> <!-- 使用适合您项目的版本 -->
+        </dependency>
+    </dependencies>
+    <profiles>
+        <profile>
+            <id>cloud</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>repackage</goal>
+                                </goals>
+                                <configuration>
+                                    <loaderImplementation>CLASSIC</loaderImplementation>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>io.fabric8</groupId>
+                        <artifactId>docker-maven-plugin</artifactId>
+                        <configuration>
+                            <skip>false</skip>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>boot</id>
+        </profile>
+    </profiles>
+</project>

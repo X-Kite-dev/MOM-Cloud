@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.plan.mapper.OmsOrderBaseTrackMapper">
+
+    <resultMap id="omsOrderBaseTrackMap" type="com.kitex.mom.oms.entity.OmsOrderBaseTrackEntity">
+        <id property="id" column="id"/>
+        <result property="orderCode" column="order_code"/>
+        <result property="orderReviewCode" column="order_review_code"/>
+        <result property="orderTrackCode" column="order_track_code"/>
+        <result property="productCode" column="product_code"/>
+        <result property="productName" column="product_name"/>
+        <result property="productSpec" column="product_spec"/>
+        <result property="customerCode" column="customer_code"/>
+        <result property="customerName" column="customer_name"/>
+        <result property="customerPartCode" column="customer_part_code"/>
+        <result property="orderType" column="order_type"/>
+        <result property="orderState" column="order_state"/>
+        <result property="createByName" column="create_by_name"/>
+        <result property="updateByName" column="update_by_name"/>
+    </resultMap>
+
+    <select id="getOmsOrderBaseTrackPage" resultType="com.kitex.mom.oms.dto.OmsOrderBaseTrackPageDto">
+        SELECT
+        base.id as main_id,
+        base.factory_code,
+        base.order_code,
+        base.order_review_code,
+        base.order_track_code,
+        details.id,
+        details.product_code,
+        details.product_name,
+        details.product_spec,
+        details.product_unit,
+        base.customer_code,
+        base.customer_name,
+        details.customer_part_code,
+        base.order_type,
+        details.state,
+        base.order_state,
+        details.deliver_num,
+        details.deliver_time,
+        details.change_sign,
+        ROUND((details.deliver_num - details.delivered_num),2) as un_deliver_num
+        FROM oms_order_base_track as base
+        INNER JOIN oms_order_details as details ON base.order_code = details.order_code
+        <where>
+            AND base.del_flag = '0'
+            <if test="query.orderCode != null and query.orderCode != '' ">
+                AND base.order_code LIKE CONCAT('%',#{query.orderCode},'%')
+            </if>
+            <if test="query.productCode != null and query.productCode != '' ">
+                AND details.product_code LIKE CONCAT('%',#{query.productCode},'%')
+            </if>
+            <if test="query.productName != null and query.productName != '' ">
+                AND details.product_name LIKE CONCAT('%',#{query.productName},'%')
+            </if>
+            <if test="query.productSpec != null and query.productSpec != '' ">
+                AND details.product_spec LIKE CONCAT('%',#{query.productSpec},'%')
+            </if>
+            <if test="query.customerCode != null and query.customerCode != '' ">
+                AND base.customer_code LIKE CONCAT('%',#{query.customerCode},'%')
+            </if>
+            <if test="query.customerName != null and query.customerName != '' ">
+                AND base.customer_name LIKE CONCAT('%',#{query.customerName},'%')
+            </if>
+            <if test="query.state != null and query.state != '' ">
+                AND details.state = #{query.state}
+            </if>
+            <if test="query.factoryCode != null and query.factoryCode != '' ">
+                AND base.factory_code = #{query.factoryCode}
+            </if>
+        </where>
+        ORDER BY
+        CASE details.state
+        WHEN '0' THEN 1
+        WHEN '1' THEN 2
+        WHEN '2' THEN 3
+        WHEN '31' THEN 4
+        WHEN '32' THEN 5
+        WHEN '3' THEN 6
+        WHEN '4' THEN 7
+        ELSE 8
+        END ASC,
+        base.create_time DESC
+    </select>
+    <select id="getOmsOrderBaseTrackCount" resultType="java.lang.String">
+        SELECT
+        details.state
+        FROM oms_order_base_track as base
+        INNER JOIN oms_order_details as details ON base.order_code = details.order_code
+        <where>
+            AND base.del_flag = '0'
+            <if test="query.orderCode != null and query.orderCode != '' ">
+                AND base.order_code LIKE CONCAT('%',#{query.orderCode},'%')
+            </if>
+            <if test="query.productCode != null and query.productCode != '' ">
+                AND details.product_code LIKE CONCAT('%',#{query.productCode},'%')
+            </if>
+            <if test="query.productName != null and query.productName != '' ">
+                AND details.product_name LIKE CONCAT('%',#{query.productName},'%')
+            </if>
+            <if test="query.productSpec != null and query.productSpec != '' ">
+                AND details.product_spec LIKE CONCAT('%',#{query.productSpec},'%')
+            </if>
+            <if test="query.customerCode != null and query.customerCode != '' ">
+                AND base.customer_code LIKE CONCAT('%',#{query.customerCode},'%')
+            </if>
+            <if test="query.customerName != null and query.customerName != '' ">
+                AND base.customer_name LIKE CONCAT('%',#{query.customerName},'%')
+            </if>
+            <if test="query.factoryCode != null and query.factoryCode != '' ">
+                AND base.factory_code = #{query.factoryCode}
+            </if>
+        </where>
+    </select>
+</mapper>

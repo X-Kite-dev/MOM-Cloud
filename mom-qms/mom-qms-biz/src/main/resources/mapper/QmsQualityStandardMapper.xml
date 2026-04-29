@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.qms.mapper.QualityStandardMapper">
+
+    <select id="listInspection" resultType="com.kitex.mom.qms.dto.resp.QmsInspectionProductVo">
+        select detail.*, task.mat_code
+        from qms_inspection_product_task task
+                 LEFT JOIN qms_inspection_product_task_detail detail on task.id = detail.task_id
+        where check_type = 'RANG'
+          and task.mat_code = #{spc.matCode}
+          and detail.name = #{spc.testName}
+          and task.create_time &lt;= #{spc.endTime}
+          and task.create_time &gt;= #{spc.startTime}
+    </select>
+</mapper>

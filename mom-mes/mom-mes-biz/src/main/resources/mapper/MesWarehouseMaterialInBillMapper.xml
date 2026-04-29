@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.mes.mapper.MesWarehouseMaterialInBillMapper">
+
+    <resultMap id="mesWarehouseMaterialInBillMap"
+               type="com.kitex.mom.mes.entity.MesWarehouseMaterialInBillEntity">
+        <id property="id" column="id"/>
+        <result property="billNo" column="bill_no"/>
+        <result property="resourceNo" column="resource_no"/>
+        <result property="matCode" column="mat_code"/>
+        <result property="matName" column="mat_name"/>
+        <result property="matSpec" column="mat_spec"/>
+        <result property="matBatch" column="mat_batch"/>
+        <result property="matUnit" column="mat_unit"/>
+        <result property="matProduceDate" column="mat_produce_date"/>
+        <result property="matValidPeriod" column="mat_valid_period"/>
+        <result property="matValidEndDate" column="mat_valid_end_date"/>
+        <result property="matBarcode" column="mat_barcode"/>
+        <result property="matBarcodeImage" column="mat_barcode_image"/>
+        <result property="supplierCode" column="supplier_code"/>
+        <result property="supplierName" column="supplier_name"/>
+        <result property="noticeInNum" column="notice_in_num"/>
+        <result property="inNum" column="in_num"/>
+        <result property="inTime" column="in_time"/>
+        <result property="warehouseCode" column="warehouse_code"/>
+        <result property="warehouseName" column="warehouse_name"/>
+        <result property="containerCode" column="container_code"/>
+        <result property="containerName" column="container_name"/>
+        <result property="handleBy" column="handle_by"/>
+        <result property="handleByName" column="handle_by_name"/>
+        <result property="sendingDeptCode" column="sending_dept_code"/>
+        <result property="sendingDeptName" column="sending_dept_name"/>
+        <result property="receiptDeptCode" column="receipt_dept_code"/>
+        <result property="receiptDeptName" column="receipt_dept_name"/>
+        <result property="status" column="status"/>
+        <result property="inspectionStatus" column="inspection_status"/>
+        <result property="matDetailType" column="mat_detail_type"/>
+        <result property="createByName" column="create_by_name"/>
+        <result property="updateByName" column="update_by_name"/>
+    </resultMap>
+</mapper>

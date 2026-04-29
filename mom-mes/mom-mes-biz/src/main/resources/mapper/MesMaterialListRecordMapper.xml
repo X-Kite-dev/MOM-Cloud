@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mes.mapper.MesMaterialListRecordMapper">
+
+    <!-- 基础ResultMap -->
+    <resultMap id="BaseResultMap" type="com.kitex.mom.mes.entity.MesMaterialListRecordEntity">
+        <id column="id" property="id"/>
+        <result column="material_list_detail_id" property="materialListDetailId"/>
+        <result column="task_id" property="taskId"/>
+        <result column="material_code" property="materialCode"/>
+        <result column="operation_type" property="operationType"/>
+        <result column="quantity" property="quantity"/>
+        <result column="warehouse_code" property="warehouseCode"/>
+        <result column="warehouse_name" property="warehouseName"/>
+        <result column="batch_no" property="batchNo"/>
+        <result column="operator" property="operator"/>
+        <result column="operation_time" property="operationTime"/>
+        <result column="reference_bill_no" property="referenceBillNo"/>
+        <result column="remark" property="remark"/>
+        <result column="factory_code" property="factoryCode"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="create_by" property="createBy"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_by" property="updateBy"/>
+        <result column="update_time" property="updateTime"/>
+        <result column="del_flag" property="delFlag"/>
+    </resultMap>
+
+    <!-- DTO ResultMap -->
+    <resultMap id="DTOResultMap" type="com.kitex.mom.mes.dto.MesMaterialListRecordDTO" extends="BaseResultMap">
+        <result column="operation_type_name" property="operationTypeName"/>
+        <result column="material_name" property="materialName"/>
+        <result column="material_spec" property="materialSpec"/>
+        <result column="operator_name" property="operatorName"/>
+    </resultMap>
+
+    <!-- 根据用料清单明细ID查询领退料记录 -->
+    <select id="selectRecordsByDetailId" resultMap="DTOResultMap">
+        SELECT mlr.*,
+               CASE mlr.operation_type
+                   WHEN 'PICK' THEN '领料'
+                   WHEN 'RETURN' THEN '退料'
+                   ELSE mlr.operation_type
+                   END    as operation_type_name,
+               mld.material_name,
+               mld.material_spec,
+               u.username as operator_name
+        FROM mes_material_list_record mlr
+                 LEFT JOIN mes_material_list_detail mld ON mlr.material_list_detail_id = mld.id
+                 LEFT JOIN sys_user u ON mlr.create_by = u.id
+        WHERE mlr.del_flag = '0'
+          AND mlr.material_list_detail_id = #{materialListDetailId}
+        ORDER BY mlr.operation_time DESC
+    </select>
+
+    <!-- 根据工单ID查询领退料记录 -->
+    <select id="selectRecordsByTaskId" resultMap="DTOResultMap">
+        SELECT mlr.*,
+               CASE mlr.operation_type
+                   WHEN 'PICK' THEN '领料'
+                   WHEN 'RETURN' THEN '退料'
+                   ELSE mlr.operation_type
+                   END    as operation_type_name,
+               mld.material_name,
+               mld.material_spec,
+               u.username as operator_name
+        FROM mes_material_list_record mlr
+                 LEFT JOIN mes_material_list_detail mld ON mlr.material_list_detail_id = mld.id
+                 LEFT JOIN sys_user u ON mlr.create_by = u.id
+        WHERE mlr.del_flag = '0'
+          AND mlr.task_id = #{taskId}
+        ORDER BY mlr.operation_time DESC
+    </select>
+
+    <!-- 根据物料编码查询领退料记录 -->
+    <select id="selectRecordsByMaterialCode" resultMap="DTOResultMap">
+        SELECT
+        mlr.*,
+        CASE mlr.operation_type
+        WHEN 'PICK' THEN '领料'
+        WHEN 'RETURN' THEN '退料'
+        ELSE mlr.operation_type
+        END as operation_type_name,
+        mld.material_name,
+        mld.material_spec,
+        u.username as operator_name
+        FROM mes_material_list_record mlr
+        LEFT JOIN mes_material_list_detail mld ON mlr.material_list_detail_id = mld.id
+        LEFT JOIN sys_user u ON mlr.create_by = u.id
+        WHERE mlr.del_flag = '0' AND mlr.material_code = #{materialCode}
+        <if test="factoryCode != null and factoryCode != ''">
+            AND mlr.factory_code = #{factoryCode}
+        </if>
+        ORDER BY mlr.operation_time DESC
+    </select>
+
+    <!-- 统计工单的领退料汇总信息 -->
+    <select id="selectPickReturnSummaryByTaskId" resultType="java.util.Map">
+        SELECT material_code,
+               material_name,
+               SUM(CASE WHEN operation_type = 'PICK' THEN quantity ELSE 0 END)     as total_pick_quantity,
+               SUM(CASE WHEN operation_type = 'RETURN' THEN quantity ELSE 0 END)   as total_return_quantity,
+               (SUM(CASE WHEN operation_type = 'PICK' THEN quantity ELSE 0 END) -
+                SUM(CASE WHEN operation_type = 'RETURN' THEN quantity ELSE 0 END)) as actual_consume_quantity
+        FROM mes_material_list_record mlr
+                 LEFT JOIN mes_material_list_detail mld ON mlr.material_list_detail_id = mld.id
+        WHERE mlr.del_flag = '0'
+          AND mlr.task_id = #{taskId}
+        GROUP BY material_code, material_name
+        ORDER BY material_code
+    </select>
+
+</mapper>

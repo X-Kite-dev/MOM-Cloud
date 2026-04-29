@@ -1,0 +1,2 @@
+com.kitex.mom.tpm.api.feign.RemoteDeviceCheckService
+com.kitex.mom.tpm.api.feign.RemoteTpmDeviceService

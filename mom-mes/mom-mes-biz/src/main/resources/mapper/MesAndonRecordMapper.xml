@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mes.mapper.MesAndonRecordMapper">
+
+    <select id="noticePage" resultType="com.kitex.mom.mes.dto.AndonNoticeResp">
+        SELECT
+        t1.id,
+        t1.CODE,
+        t1.type_code,
+        t1.type_name,
+        t1.workshop_code,
+        t1.workshop_name,
+        t1.line_code,
+        t1.line_name,
+        t1.shift_code,
+        t1.shift_name,
+        t1.LEVEL,
+        t1.fault_code,
+        t1.fault_name,
+        t1.state,
+        t1.create_by_name,
+        t1.create_time,
+        t1.ex_desc,
+        t1.receive_time,
+        t1.handler_name,
+        t1.handler_code,
+        t2.staff_name,
+        t2.staff_code,
+        t2.notice_type
+        FROM
+        mes_andon_notice t2
+        LEFT JOIN mes_andon_record t1 ON t1.CODE = t2.record_code
+        WHERE t2.del_flag = '0'
+        <if test="query.typeName != null and query.typeName != '' ">
+            AND t1.typeName LIKE CONCAT('%',#{query.typeName},'%')
+        </if>
+        <if test="query.code != null and query.code != '' ">
+            AND t1.code LIKE CONCAT('%',#{query.code},'%')
+        </if>
+        <if test="query.level != null and query.level != ''">
+            AND t1.level = #{query.level}
+        </if>
+        <if test="staffCode != null and staffCode != '' ">
+            AND t2.staff_code = #{staffCode}
+        </if>
+        <if test="states != null and states.size > 0">
+            AND t1.state IN
+            <foreach collection="states" item="state" open="(" separator="," close=")">
+                #{state}
+            </foreach>
+        </if>
+    </select>
+</mapper>

@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.mes.mapper.MesWarehouseLiveStockMapper">
+
+    <select id="getPageFeedBack" resultType="com.kitex.mom.mes.dto.MesWarehouseFeedDTO">
+        SELECT
+        bill_no,
+        mat_code,
+        MAX(mat_name) AS mat_name,
+        MAX(mat_spec) AS mat_spec,
+        MAX(mat_unit) AS mat_unit,
+        mat_batch,
+        MAX(supplier_code) AS supplier_code,
+        MAX(supplier_name) AS supplier_name,
+        warehouse_code,
+        MAX(warehouse_name) AS warehouse_name,
+        site_code,
+        MAX(site_name) AS site_name,
+        SUM(num) AS num,
+        MAX(judge_status) AS judge_status,
+        MAX(factory_code) AS factory_code
+        FROM
+        mes_warehouse_live_stock
+        <where>
+            mat_detail_type = 'RAW'
+            <if test="query.billNo != '' and query.billNo != null ">
+                AND bill_no LIKE CONCAT('%', #{query.billNo}, '%')
+            </if>
+            <if test="query.matName != '' and query.matName != null ">
+                AND mat_name LIKE CONCAT('%', #{query.matName}, '%')
+            </if>
+            <if test="query.matCode != '' and query.matCode != null ">
+                AND mat_code LIKE CONCAT('%', #{query.matCode}, '%')
+            </if>
+            <if test="query.matSpec != '' and query.matSpec != null ">
+                AND mat_spec LIKE CONCAT('%', #{query.matSpec}, '%')
+            </if>
+            <if test="query.matName != '' and query.matName != null ">
+                AND mat_name LIKE CONCAT('%', #{query.matName}, '%')
+            </if>
+            <if test="query.matBatch != '' and query.matBatch != null ">
+                AND mat_batch LIKE CONCAT('%', #{query.matBatch}, '%')
+            </if>
+        </where>
+        GROUP BY
+        bill_no,
+        mat_code,
+        warehouse_code,
+        site_code,
+        mat_batch
+        HAVING
+        SUM(num) > 0
+    </select>
+    <select id="getWmsLiveStockPageByMatRaw"
+            resultType="com.kitex.mom.mes.vo.MesWarehouseLiveStockVO">
+        SELECT
+        s.id,
+        s.mat_code,
+        s.mat_name,
+        s.mat_spec,
+        s.mat_batch,
+        s.mat_unit,
+        s.supplier_code,
+        s.supplier_name,
+        s.site_code,
+        s.site_name,
+        s.in_time,
+        s.num,
+        b.task_code,
+        b.workshop as workshopCode
+        FROM
+        mes_warehouse_live_stock s
+        LEFT JOIN mes_warehouse_picking_bill b ON s.bill_no = b.bill_no
+        <where>
+            s.del_flag = '0' and b.del_flag = '0'
+            <if test="query.matDetailType != '' and query.matDetailType != null ">
+                AND s.mat_detail_type = #{query.matDetailType}
+            </if>
+            <if test="query.siteCode != null and query.siteCode.size() > 0">
+                AND s.site_code IN
+                <foreach collection="query.siteCode" item="item" open="(" separator="," close=")">
+                    #{item}
+                </foreach>
+            </if>
+            <if test="query.matName != '' and query.matName != null ">
+                AND s.mat_name LIKE CONCAT('%', #{query.matName}, '%')
+            </if>
+            <if test="query.matCode != '' and query.matCode != null ">
+                AND s.mat_code LIKE CONCAT('%', #{query.matCode}, '%')
+            </if>
+            <if test="query.matSpec != '' and query.matSpec != null ">
+                AND s.mat_spec LIKE CONCAT('%', #{query.matSpec}, '%')
+            </if>
+            <if test="query.matBatch != '' and query.matBatch != null ">
+                AND s.mat_batch LIKE CONCAT('%', #{query.matBatch}, '%')
+            </if>
+            <if test="query.taskCode != '' and query.taskCode != null ">
+                AND b.task_code LIKE CONCAT('%', #{query.taskCode}, '%')
+            </if>
+            <if test="query.workshopCode != '' and query.workshopCode != null ">
+                AND b.workshop LIKE CONCAT('%', #{query.workshopCode}, '%')
+            </if>
+        </where>
+    </select>
+
+    <select id="getWmsLiveStockPageByMatOther"
+            resultType="com.kitex.mom.mes.vo.MesWarehouseLiveStockVO">
+        SELECT
+        s.id,
+        s.mat_code,
+        s.mat_name,
+        s.mat_spec,
+        s.mat_batch,
+        s.mat_unit,
+        s.supplier_code,
+        s.supplier_name,
+        s.site_code,
+        s.site_name,
+        s.in_time,
+        s.num,
+        a.task_code,
+        a.route_code,
+        a.route_name,
+        a.workshop_name,
+        a.workshop_code,
+        a.worker_code,
+        a.worker_name,
+        a.shift_code,
+        a.shift_name
+        FROM
+        mes_warehouse_live_stock s
+        LEFT JOIN mes_task_arrange a ON s.bill_no = a.CODE
+        <where>
+            s.del_flag = '0' and a.del_flag = '0'
+            <if test="query.matDetailType != '' and query.matDetailType != null ">
+                AND s.mat_detail_type = #{query.matDetailType}
+            </if>
+            <if test="query.siteCode != null and query.siteCode.size() > 0">
+                AND s.site_code IN
+                <foreach collection="query.siteCode" item="item" open="(" separator="," close=")">
+                    #{item}
+                </foreach>
+            </if>
+            <if test="query.matName != '' and query.matName != null ">
+                AND s.mat_name LIKE CONCAT('%', #{query.matName}, '%')
+            </if>
+            <if test="query.matCode != '' and query.matCode != null ">
+                AND s.mat_code LIKE CONCAT('%', #{query.matCode}, '%')
+            </if>
+            <if test="query.matSpec != '' and query.matSpec != null ">
+                AND s.mat_spec LIKE CONCAT('%', #{query.matSpec}, '%')
+            </if>
+            <if test="query.matBatch != '' and query.matBatch != null ">
+                AND s.mat_batch LIKE CONCAT('%', #{query.matBatch}, '%')
+            </if>
+            <if test="query.taskCode != '' and query.taskCode != null ">
+                AND a.task_code LIKE CONCAT('%', #{query.taskCode}, '%')
+            </if>
+            <if test="query.workshopCode != '' and query.workshopCode != null ">
+                AND a.workshop_code LIKE CONCAT('%', #{query.workshopCode}, '%')
+            </if>
+            <if test="query.routeCode != '' and query.routeCode != null ">
+                AND a.route_code = #{query.routeCode}
+            </if>
+            <if test="query.routeName != '' and query.routeName != null ">
+                AND a.route_name LIKE CONCAT('%', #{query.routeName}, '%')
+            </if>
+            <if test="query.shiftCode != '' and query.shiftCode != null ">
+                AND a.shift_code LIKE CONCAT('%', #{query.shiftCode}, '%')
+            </if>
+        </where>
+    </select>
+</mapper>

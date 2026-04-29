@@ -1,0 +1,3 @@
+com.kitex.mom.pms.api.feign.RemoteOrderService
+com.kitex.mom.pms.api.feign.RemotePmsPlanService
+com.kitex.mom.pms.api.feign.RemotePurchaseReceiptService

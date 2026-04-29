@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mes.mapper.MesMaterialListMapper">
+
+    <!-- 基础ResultMap -->
+    <resultMap id="BaseResultMap" type="com.kitex.mom.mes.entity.MesMaterialListEntity">
+        <id column="id" property="id"/>
+        <result column="task_id" property="taskId"/>
+        <result column="task_code" property="taskCode"/>
+        <result column="product_code" property="productCode"/>
+        <result column="product_name" property="productName"/>
+        <result column="product_spec" property="productSpec"/>
+        <result column="bom_id" property="bomId"/>
+        <result column="bom_version" property="bomVersion"/>
+        <result column="bom_snapshot" property="bomSnapshot"/>
+        <result column="plan_quantity" property="planQuantity"/>
+        <result column="status" property="status"/>
+        <result column="remark" property="remark"/>
+        <result column="factory_code" property="factoryCode"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="create_by" property="createBy"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_by" property="updateBy"/>
+        <result column="update_time" property="updateTime"/>
+        <result column="del_flag" property="delFlag"/>
+    </resultMap>
+
+    <!-- DTO ResultMap -->
+    <resultMap id="DTOResultMap" type="com.kitex.mom.mes.dto.MesMaterialListDTO" extends="BaseResultMap">
+        <result column="task_status_name" property="taskStatusName"/>
+        <result column="plan_start_date" property="planStartDate"/>
+        <result column="plan_end_date" property="planEndDate"/>
+        <result column="material_count" property="materialCount"/>
+        <result column="picked_material_count" property="pickedMaterialCount"/>
+        <result column="pending_material_count" property="pendingMaterialCount"/>
+    </resultMap>
+
+    <!-- 分页查询用料清单 -->
+    <select id="selectMaterialListPage" resultMap="DTOResultMap">
+        SELECT
+        ml.*,
+        CASE ml.status
+        WHEN 'NEW' THEN '新建'
+        WHEN 'PICKING' THEN '领料中'
+        WHEN 'COMPLETED' THEN '完成'
+        ELSE ml.status
+        END as task_status_name,
+        mt.plan_start_date,
+        mt.plan_end_date,
+        IFNULL(detail_stats.material_count, 0) as material_count,
+        IFNULL(detail_stats.picked_material_count, 0) as picked_material_count,
+        IFNULL(detail_stats.pending_material_count, 0) as pending_material_count
+        FROM mes_material_list ml
+        LEFT JOIN mes_task mt ON ml.task_id = mt.id
+        LEFT JOIN (
+        SELECT
+        material_list_id,
+        COUNT(*) as material_count,
+        SUM(CASE WHEN pick_status IN ('PICKED', 'COMPLETED') THEN 1 ELSE 0 END) as picked_material_count,
+        SUM(CASE WHEN pick_status = 'PENDING' THEN 1 ELSE 0 END) as pending_material_count
+        FROM mes_material_list_detail
+        WHERE del_flag = '0'
+        GROUP BY material_list_id
+        ) detail_stats ON ml.id = detail_stats.material_list_id
+        <where>
+            ml.del_flag = '0'
+            <if test="query.taskCode != null and query.taskCode != ''">
+                AND ml.task_code LIKE CONCAT('%', #{query.taskCode}, '%')
+            </if>
+            <if test="query.productCode != null and query.productCode != ''">
+                AND ml.product_code LIKE CONCAT('%', #{query.productCode}, '%')
+            </if>
+            <if test="query.productName != null and query.productName != ''">
+                AND ml.product_name LIKE CONCAT('%', #{query.productName}, '%')
+            </if>
+            <if test="query.status != null and query.status != ''">
+                AND ml.status = #{query.status}
+            </if>
+            <if test="query.createTimeStart != null and query.createTimeStart != ''">
+                AND ml.create_time >= #{query.createTimeStart}
+            </if>
+            <if test="query.createTimeEnd != null and query.createTimeEnd != ''">
+                AND ml.create_time &lt;= #{query.createTimeEnd}
+            </if>
+            <if test="query.factoryCode != null and query.factoryCode != ''">
+                AND ml.factory_code = #{query.factoryCode}
+            </if>
+        </where>
+        ORDER BY ml.create_time DESC
+    </select>
+
+    <!-- 根据工单ID查询用料清单详情 -->
+    <select id="selectMaterialListByTaskId" resultMap="DTOResultMap">
+        SELECT ml.*,
+               CASE ml.status
+                   WHEN 'NEW' THEN '新建'
+                   WHEN 'PICKING' THEN '领料中'
+                   WHEN 'COMPLETED' THEN '完成'
+                   ELSE ml.status
+                   END                                        as task_status_name,
+               mt.plan_start_date,
+               mt.plan_end_date,
+               IFNULL(detail_stats.material_count, 0)         as material_count,
+               IFNULL(detail_stats.picked_material_count, 0)  as picked_material_count,
+               IFNULL(detail_stats.pending_material_count, 0) as pending_material_count
+        FROM mes_material_list ml
+                 LEFT JOIN mes_task mt ON ml.task_id = mt.id
+                 LEFT JOIN (SELECT material_list_id,
+                                   COUNT(*)                                                                as material_count,
+                                   SUM(CASE WHEN pick_status IN ('PICKED', 'COMPLETED') THEN 1 ELSE 0 END) as picked_material_count,
+                                   SUM(CASE WHEN pick_status = 'PENDING' THEN 1 ELSE 0 END)                as pending_material_count
+                            FROM mes_material_list_detail
+                            WHERE del_flag = '0'
+                            GROUP BY material_list_id) detail_stats ON ml.id = detail_stats.material_list_id
+        WHERE ml.del_flag = '0'
+          AND ml.task_id = #{taskId}
+    </select>
+
+    <!-- 根据工单ID列表查询用料清单 -->
+    <select id="selectMaterialListByTaskIds" resultMap="DTOResultMap">
+        SELECT
+        ml.*,
+        CASE ml.status
+        WHEN 'NEW' THEN '新建'
+        WHEN 'PICKING' THEN '领料中'
+        WHEN 'COMPLETED' THEN '完成'
+        ELSE ml.status
+        END as task_status_name
+        FROM mes_material_list ml
+        WHERE ml.del_flag = '0'
+        <if test="taskIds != null and taskIds.size > 0">
+            AND ml.task_id IN
+            <foreach collection="taskIds" item="taskId" open="(" close=")" separator=",">
+                #{taskId}
+            </foreach>
+        </if>
+        ORDER BY ml.create_time DESC
+    </select>
+
+    <!-- 统计用料清单数量按状态分组 -->
+    <select id="selectMaterialListCountByStatus" resultType="java.util.Map">
+        SELECT
+        status,
+        COUNT(*) as count
+        FROM mes_material_list
+        WHERE del_flag = '0'
+        <if test="factoryCode != null and factoryCode != ''">
+            AND factory_code = #{factoryCode}
+        </if>
+        GROUP BY status
+    </select>
+
+</mapper>

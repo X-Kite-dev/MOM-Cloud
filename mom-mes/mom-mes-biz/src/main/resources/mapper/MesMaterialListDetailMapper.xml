@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mes.mapper.MesMaterialListDetailMapper">
+
+    <!-- 基础ResultMap -->
+    <resultMap id="BaseResultMap" type="com.kitex.mom.mes.entity.MesMaterialListDetailEntity">
+        <id column="id" property="id"/>
+        <result column="material_list_id" property="materialListId"/>
+        <result column="task_id" property="taskId"/>
+        <result column="material_code" property="materialCode"/>
+        <result column="material_name" property="materialName"/>
+        <result column="material_spec" property="materialSpec"/>
+        <result column="unit" property="unit"/>
+        <result column="bom_quantity" property="bomQuantity"/>
+        <result column="required_quantity" property="requiredQuantity"/>
+        <result column="picked_quantity" property="pickedQuantity"/>
+        <result column="returned_quantity" property="returnedQuantity"/>
+        <result column="actual_quantity" property="actualQuantity"/>
+        <result column="material_attribute" property="materialAttribute"/>
+        <result column="fixed_loss_rate" property="fixedLossRate"/>
+        <result column="variable_loss_rate" property="variableLossRate"/>
+        <result column="default_warehouse" property="defaultWarehouse"/>
+        <result column="is_loss_issued" property="isLossIssued"/>
+        <result column="usage_type" property="usageType"/>
+        <result column="pick_status" property="pickStatus"/>
+        <result column="remark" property="remark"/>
+        <result column="factory_code" property="factoryCode"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="create_by" property="createBy"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_by" property="updateBy"/>
+        <result column="update_time" property="updateTime"/>
+        <result column="del_flag" property="delFlag"/>
+    </resultMap>
+
+    <!-- DTO ResultMap -->
+    <resultMap id="DTOResultMap" type="com.kitex.mom.mes.dto.MesMaterialListDetailDTO" extends="BaseResultMap">
+        <result column="remaining_quantity" property="remainingQuantity"/>
+        <result column="pick_status_name" property="pickStatusName"/>
+        <result column="stock_quantity" property="stockQuantity"/>
+        <result column="is_stock_shortage" property="isStockShortage"/>
+        <result column="shortage_quantity" property="shortageQuantity"/>
+    </resultMap>
+
+    <!-- 根据用料清单ID查询明细列表 -->
+    <select id="selectDetailsByMaterialListId" resultMap="DTOResultMap">
+        SELECT mld.*,
+               (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) as remaining_quantity,
+               CASE mld.pick_status
+                   WHEN 'PENDING' THEN '待领料'
+                   WHEN 'PICKING' THEN '领料中'
+                   WHEN 'PICKED' THEN '已领料'
+                   WHEN 'COMPLETED' THEN '完成'
+                   ELSE mld.pick_status
+                   END                                                               as pick_status_name,
+               IFNULL(stock.stock_quantity, 0)                                       as stock_quantity,
+               CASE
+                   WHEN IFNULL(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) THEN 1
+                   ELSE 0
+                   END                                                               as is_stock_shortage,
+               CASE
+                   WHEN IFNULL(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity)
+                       THEN (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) -
+                            IFNULL(stock.stock_quantity, 0)
+                   ELSE 0
+                   END                                                               as shortage_quantity
+        FROM mes_material_list_detail mld
+                 LEFT JOIN (SELECT material_code,
+                                   SUM(stock_quantity) as stock_quantity
+                            FROM mes_warehouse_live_stock
+                            WHERE del_flag = '0'
+                            GROUP BY material_code) stock ON mld.material_code = stock.material_code
+        WHERE mld.del_flag = '0'
+          AND mld.material_list_id = #{materialListId}
+        ORDER BY mld.create_time ASC
+    </select>
+
+    <!-- 根据工单ID查询明细列表 -->
+    <select id="selectDetailsByTaskId" resultMap="DTOResultMap">
+        SELECT mld.*,
+               (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) as remaining_quantity,
+               CASE mld.pick_status
+                   WHEN 'PENDING' THEN '待领料'
+                   WHEN 'PICKING' THEN '领料中'
+                   WHEN 'PICKED' THEN '已领料'
+                   WHEN 'COMPLETED' THEN '完成'
+                   ELSE mld.pick_status
+                   END                                                               as pick_status_name,
+               IFNULL(stock.stock_quantity, 0)                                       as stock_quantity,
+               CASE
+                   WHEN IFNULL(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) THEN 1
+                   ELSE 0
+                   END                                                               as is_stock_shortage,
+               CASE
+                   WHEN IFNULL(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity)
+                       THEN (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) -
+                            IFNULL(stock.stock_quantity, 0)
+                   ELSE 0
+                   END                                                               as shortage_quantity
+        FROM mes_material_list_detail mld
+                 LEFT JOIN (SELECT material_code,
+                                   SUM(stock_quantity) as stock_quantity
+                            FROM mes_warehouse_live_stock
+                            WHERE del_flag = '0'
+                            GROUP BY material_code) stock ON mld.material_code = stock.material_code
+        WHERE mld.del_flag = '0'
+          AND mld.task_id = #{taskId}
+        ORDER BY mld.create_time ASC
+    </select>
+
+    <!-- 批量更新物料领料数量 -->
+    <update id="batchUpdatePickedQuantity">
+        <foreach collection="details" item="detail" separator=";">
+            UPDATE mes_material_list_detail
+            SET picked_quantity = picked_quantity + #{detail.pickedQuantity},
+            actual_quantity = picked_quantity - returned_quantity,
+            update_time = NOW()
+            WHERE id = #{detail.id}
+        </foreach>
+    </update>
+
+    <!-- 批量更新物料退料数量 -->
+    <update id="batchUpdateReturnedQuantity">
+        <foreach collection="details" item="detail" separator=";">
+            UPDATE mes_material_list_detail
+            SET returned_quantity = returned_quantity + #{detail.returnedQuantity},
+            actual_quantity = picked_quantity - returned_quantity,
+            update_time = NOW()
+            WHERE id = #{detail.id}
+        </foreach>
+    </update>
+
+    <!-- 根据物料编码查询相关的用料清单明细 -->
+    <select id="selectDetailsByMaterialCode" resultMap="DTOResultMap">
+        SELECT
+        mld.*,
+        (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) as remaining_quantity,
+        CASE mld.pick_status
+        WHEN 'PENDING' THEN '待领料'
+        WHEN 'PICKING' THEN '领料中'
+        WHEN 'PICKED' THEN '已领料'
+        WHEN 'COMPLETED' THEN '完成'
+        ELSE mld.pick_status
+        END as pick_status_name
+        FROM mes_material_list_detail mld
+        WHERE mld.del_flag = '0' AND mld.material_code = #{materialCode}
+        <if test="factoryCode != null and factoryCode != ''">
+            AND mld.factory_code = #{factoryCode}
+        </if>
+        ORDER BY mld.create_time DESC
+    </select>
+
+</mapper>

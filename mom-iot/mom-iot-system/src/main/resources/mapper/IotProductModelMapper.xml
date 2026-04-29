@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.iot.mapper.IotProductModelMapper">
+
+    <sql id="baseColumns">
+        id
+        , product_id, func_type, identifier, name, data_type, data_specs, required, description, factory_code,
+        create_time, update_time, create_by, update_by, del_flag
+    </sql>
+
+    <select id="selectModelPage" resultType="com.kitex.mom.iot.entity.IotProductModelEntity">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM
+        iot_product_model
+        WHERE
+        del_flag = '0'
+        <if test="model.productId != null">
+            AND product_id = #{model.productId}
+        </if>
+        <if test="model.funcType != null and model.funcType != ''">
+            AND func_type = #{model.funcType}
+        </if>
+        <if test="model.identifier != null and model.identifier != ''">
+            AND identifier LIKE CONCAT('%', #{model.identifier}, '%')
+        </if>
+        <if test="model.name != null and model.name != ''">
+            AND name LIKE CONCAT('%', #{model.name}, '%')
+        </if>
+        <if test="model.dataType != null and model.dataType != ''">
+            AND data_type = #{model.dataType}
+        </if>
+        <if test="model.factoryCode != null">
+            AND factory_code = #{model.factoryCode}
+        </if>
+        ORDER BY create_time DESC
+    </select>
+
+    <select id="selectByProductId" resultType="com.kitex.mom.iot.entity.IotProductModelEntity">
+        SELECT *
+        FROM iot_product_model
+        WHERE product_id = #{productId}
+          AND del_flag = '0'
+        ORDER BY create_time ASC
+    </select>
+
+    <select id="selectByProductIdAndIdentifier" resultType="com.kitex.mom.iot.entity.IotProductModelEntity">
+        SELECT *
+        FROM iot_product_model
+        WHERE product_id = #{productId}
+          AND identifier = #{identifier}
+          AND del_flag = '0' LIMIT 1
+    </select>
+</mapper> 

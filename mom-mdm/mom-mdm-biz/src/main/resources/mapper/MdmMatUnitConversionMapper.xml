@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.mdm.mapper.MdmMatUnitConversionMapper">
+
+    <resultMap id="mdmMatUnitMap" type="com.kitex.mom.mdm.entity.MdmMatUnitConversionEntity">
+        <id property="id" column="id"/>
+        <result property="matCode" column="mat_code"/>
+        <result property="nonStandardUnit" column="non_standard_unit"/>
+        <result property="ratio" column="ratio"/>
+        <result property="standardUnit" column="standard_unit"/>
+    </resultMap>
+</mapper>

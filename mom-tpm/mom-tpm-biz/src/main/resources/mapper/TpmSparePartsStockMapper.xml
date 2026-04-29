@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.tpm.mapper.TpmSparePartsStockMapper">
+
+    <resultMap id="tpmSparePartsStockMap" type="com.kitex.mom.tpm.entity.TpmSparePartsStockEntity">
+        <id property="id" column="id"/>
+        <result property="sparePartsCode" column="spare_parts_code"/>
+        <result property="storeroomCode" column="storeroom_code"/>
+        <result property="locationCode" column="location_code"/>
+        <result property="inventoryNum" column="inventory_num"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+
+    <select id="pageList" resultType="com.kitex.mom.tpm.entity.TpmSparePartsStockEntity">
+        SELECT
+        stock.id,
+        stock.spare_parts_code,
+        parts.name as spare_parts_name,
+        stock.storeroom_code,
+        storeroom.name as storeroom_name,
+        stock.location_code,
+        location.name as location_name,
+        stock.inventory_num,
+        parts.unit,
+        parts.spec
+        FROM
+        tpm_spare_parts_stock as stock
+        INNER JOIN (SELECT code, name, unit, spec FROM tpm_spare_parts WHERE del_flag = '0') as parts ON
+        stock.spare_parts_code = parts.code
+        INNER JOIN (SELECT code, name FROM tpm_spare_parts_storeroom WHERE del_flag = '0') as storeroom ON
+        stock.storeroom_code = storeroom.code
+        INNER JOIN (SELECT code, name FROM tpm_spare_parts_location WHERE del_flag = '0') as location ON
+        stock.location_code = location.code
+        WHERE stock.inventory_num >0
+
+        <if test="query.sparePartsCode != null and query.sparePartsCode != '' ">
+            AND parts.code LIKE CONCAT('%',#{query.sparePartsCode},'%')
+        </if>
+        <if test="query.sparePartsName != null and query.sparePartsName != '' ">
+            AND parts.name LIKE CONCAT('%',#{query.sparePartsName},'%')
+        </if>
+        <if test="query.storeroomName != null and query.storeroomName != '' ">
+            AND storeroom.name LIKE CONCAT('%',#{query.storeroomName},'%')
+        </if>
+        <if test="query.locationName != null and query.locationName != '' ">
+            AND location.name LIKE CONCAT('%',#{query.locationName},'%')
+        </if>
+        ORDER BY stock.create_time DESC
+    </select>
+
+
+    <select id="list" resultType="com.kitex.mom.tpm.entity.TpmSparePartsStockEntity">
+        SELECT
+        stock.id,
+        stock.spare_parts_code,
+        parts.name as spare_parts_name,
+        stock.storeroom_code,
+        storeroom.name as storeroom_name,
+        stock.location_code,
+        location.name as location_name,
+        stock.inventory_num,
+        parts.unit
+        FROM
+        tpm_spare_parts_stock as stock
+        INNER JOIN (SELECT code, name, unit FROM tpm_spare_parts WHERE del_flag = '0') as parts ON
+        stock.spare_parts_code = parts.code
+        INNER JOIN (SELECT code, name FROM tpm_spare_parts_storeroom WHERE del_flag = '0') as storeroom ON
+        stock.storeroom_code = storeroom.code
+        INNER JOIN (SELECT code, name FROM tpm_spare_parts_location WHERE del_flag = '0') as location ON
+        stock.location_code = location.code
+        WHERE stock.inventory_num >0
+        <if test="ids != null">
+            and stock.id in
+            <foreach collection="ids" item="item" open="(" separator="," close=")">
+                #{item}
+            </foreach>
+        </if>
+    </select>
+
+    <select id="getStockById" resultType="com.kitex.mom.tpm.entity.TpmSparePartsStockEntity">
+        SELECT stock.id,
+               stock.spare_parts_code,
+               parts.name     as spare_parts_name,
+               stock.storeroom_code,
+               storeroom.name as storeroom_name,
+               stock.location_code,
+               location.name  as location_name,
+               stock.inventory_num,
+               parts.unit
+        FROM tpm_spare_parts_stock as stock
+                 INNER JOIN (SELECT code, name, unit FROM tpm_spare_parts WHERE del_flag = '0') as parts
+                            ON stock.spare_parts_code = parts.code
+                 INNER JOIN (SELECT code, name FROM tpm_spare_parts_storeroom WHERE del_flag = '0') as storeroom
+                            ON stock.storeroom_code = storeroom.code
+                 INNER JOIN (SELECT code, name FROM tpm_spare_parts_location WHERE del_flag = '0') as location
+                            ON stock.location_code = location.code
+        WHERE stock.inventory_num > 0
+          AND stock.id = #{id}
+    </select>
+</mapper>

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.tpm.mapper.TpmMaintenancePlanDetailsMapper">
+
+    <resultMap id="tpmMaintenancePlanDetailsMap" type="com.kitex.mom.tpm.entity.TpmMaintenancePlanDetailsEntity">
+        <id property="id" column="id"/>
+        <result property="planId" column="plan_id"/>
+        <result property="itemId" column="item_id"/>
+        <result property="itemCode" column="item_code"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+
+    <select id="getInfoList" resultType="com.kitex.mom.tpm.entity.TpmMaintenancePlanDetailsEntity">
+        SELECT plandetails.*,
+               item.`name` as item_name,
+               item.check_method,
+               item.check_tool,
+               item.judge_type,
+               item.standard_max,
+               item.standard_min
+        FROM tpm_maintenance_plan_details as plandetails
+                 INNER JOIN tpm_maintenance_item as item ON plandetails.item_id = item.id
+        WHERE plandetails.plan_id = #{planId}
+    </select>
+    <select id="listAllInfos" resultType="com.kitex.mom.tpm.entity.TpmMaintenancePlanDetailsEntity">
+        SELECT plandetails.*,
+               item.`name` as item_name,
+               item.check_method,
+               item.check_tool,
+               item.judge_type,
+               item.standard_max,
+               item.standard_min
+        FROM tpm_maintenance_plan_details as plandetails
+                 INNER JOIN tpm_maintenance_item as item ON plandetails.item_id = item.id
+    </select>
+
+</mapper>

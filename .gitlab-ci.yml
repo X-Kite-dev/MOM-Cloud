@@ -1,0 +1,44 @@
+stages:
+  - maven-build
+  - docker-build
+  - docker-deploy
+#  - docker-cleanup    # 新增清理阶段
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=/cache/.m2/repository"
+  CACHE_PATH: /cache/.m2/repository
+
+.defaults: &defaults
+  cache:
+    key: maven-repository
+    paths:
+      - $CACHE_PATH
+      - mom-common/mom-common-biz/target/*.jar
+      - mom-iot/mom-iot-system/target/*.jar
+      - mom-mdm/mom-mdm-biz/target/*.jar
+      - mom-mes/mom-mes-biz/target/*.jar
+      - mom-plan/mom-plan-biz/target/*.jar
+      - mom-pms/mom-pms-biz/target/*.jar
+      - mom-qms/mom-qms-biz/target/*.jar
+      - mom-tpm/mom-tpm-biz/target/*.jar
+      - mom-wms/mom-wms-biz/target/*.jar
+      - mom-ai/mom-ai-biz/target/*.jar
+
+# maven
+maven-build:
+  image: 172.25.2.27:5001/devops/mvnd:1.0.2-dragonwell-17-anolis-8098
+  stage: maven-build
+  interruptible: true  # 允许自动取消旧流水线
+  script:
+    - mvn clean package -U -DskipTests $MAVEN_OPTS --settings=./settings.xml
+  only:
+    - release
+    - release/*
+  <<: *defaults
+  tags:
+    - Kitex
+
+# 嵌入
+include:
+  # 构建项目docker
+  - /build.yml

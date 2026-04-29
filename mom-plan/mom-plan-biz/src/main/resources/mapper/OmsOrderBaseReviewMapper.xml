@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.plan.mapper.OmsOrderBaseReviewMapper">
+
+    <resultMap id="omsOrderBaseReviewMap" type="com.kitex.mom.oms.entity.OmsOrderBaseReviewEntity">
+        <id property="id" column="id"/>
+        <result property="orderCode" column="order_code"/>
+        <result property="orderReviewCode" column="order_review_code"/>
+        <result property="productCode" column="product_code"/>
+        <result property="productName" column="product_name"/>
+        <result property="productSpec" column="product_spec"/>
+        <result property="customerCode" column="customer_code"/>
+        <result property="customerName" column="customer_name"/>
+        <result property="customerPartCode" column="customer_part_code"/>
+        <result property="orderType" column="order_type"/>
+        <result property="orderState" column="order_state"/>
+        <result property="changeType" column="change_type"/>
+    </resultMap>
+
+    <select id="getOmsOrderBaseReviewPage"
+            resultType="com.kitex.mom.oms.dto.OmsOrderBaseReviewPageDto">
+        SELECT
+        base.id,
+        base.order_code,
+        base.customer_code,
+        base.customer_name,
+        base.order_type,
+        base.order_state,
+        base.change_type,
+        base.remark,
+        SUM(details.deliver_num) as orderNum,
+        ROUND((SUM(details.deliver_num) - SUM(details.delivered_num)),2) as un_deliver_num,
+        currentDetail.deliver_time as min_deliver_time
+        FROM oms_order_base_review as base
+        INNER JOIN oms_order_details_review as details
+        ON base.order_code = details.order_code
+        INNER JOIN (
+        SELECT
+        tab.order_code,
+        tab.deliver_time
+        FROM (
+        SELECT
+        details.order_code,
+        details.deliver_time,
+        ROW_NUMBER() OVER (PARTITION BY order_code ORDER BY ABS(details.deliver_time - CURRENT_DATE) ASC) AS rn
+        FROM oms_order_details_review as details
+        where 1 = 1
+        ) as tab WHERE rn= 1
+        ) as currentDetail ON base.order_code = currentDetail.order_code
+        <where>
+            AND base.del_flag = '0'
+            <if test="query.orderCode != null and query.orderCode != '' ">
+                AND base.order_code LIKE CONCAT('%',#{query.orderCode},'%')
+            </if>
+            <if test="query.customerCode != null and query.customerCode != '' ">
+                AND base.customer_code LIKE CONCAT('%',#{query.customerCode},'%')
+            </if>
+            <if test="query.customerName != null and query.customerName != '' ">
+                AND base.customer_name LIKE CONCAT('%',#{query.customerName},'%')
+            </if>
+            <if test="query.orderState != null and query.orderState != '' ">
+                AND base.order_state = #{query.orderState}
+            </if>
+            <if test="query.factoryCode != null and query.factoryCode != '' ">
+                AND base.factory_code = #{query.factoryCode}
+            </if>
+        </where>
+        GROUP BY base.id, base.order_code, currentDetail.deliver_time
+        ORDER BY base.create_time DESC
+    </select>
+    <select id="getOmsOrderBaseReviewCount" resultType="com.kitex.mom.oms.dto.OmsOrderBaseReviewPageDto">
+        SELECT
+        base.order_code,
+        base.order_state
+        FROM oms_order_base_review as base
+        INNER JOIN oms_order_details_review as details
+        ON base.order_code = details.order_code
+        INNER JOIN (
+        SELECT
+        tab.order_code,
+        tab.deliver_time
+        FROM (
+        SELECT
+        details.order_code,
+        details.deliver_time,
+        ROW_NUMBER() OVER (PARTITION BY order_code ORDER BY ABS(details.deliver_time - CURRENT_DATE) ASC) AS rn
+        FROM oms_order_details_review as details
+        where 1 = 1
+        ) as tab WHERE rn= 1
+        ) as currentDetail ON base.order_code = currentDetail.order_code
+        <where>
+            AND base.del_flag = '0'
+            <if test="query.orderCode != null and query.orderCode != '' ">
+                AND base.order_code LIKE CONCAT('%',#{query.orderCode},'%')
+            </if>
+            <if test="query.customerCode != null and query.customerCode != '' ">
+                AND base.customer_code LIKE CONCAT('%',#{query.customerCode},'%')
+            </if>
+            <if test="query.customerName != null and query.customerName != '' ">
+                AND base.customer_name LIKE CONCAT('%',#{query.customerName},'%')
+            </if>
+            <if test="query.factoryCode != null and query.factoryCode != '' ">
+                AND base.factory_code = #{query.factoryCode}
+            </if>
+        </where>
+        GROUP BY base.order_code, base.order_state
+    </select>
+</mapper>

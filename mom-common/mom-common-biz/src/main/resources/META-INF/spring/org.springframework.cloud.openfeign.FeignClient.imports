@@ -1,0 +1,7 @@
+com.kitex.mom.common.barcode.api.feign.RemoteBarcodeLogService
+com.kitex.mom.common.barcode.api.feign.RemoteBarcodeService
+com.kitex.mom.common.barcode.api.feign.RemoteBarcodeTemplateService
+com.kitex.mom.common.barcode.api.feign.RemotePrintService
+com.kitex.mom.common.flow.api.feign.RemoteProcessAdapterService
+com.kitex.mom.common.message.api.feign.RemoteMessagePushService
+com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService

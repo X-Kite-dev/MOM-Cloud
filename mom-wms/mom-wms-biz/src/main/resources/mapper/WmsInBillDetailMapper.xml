@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.kitex.mom.wms.mapper.WmsInBillDetailMapper">
+
+    <resultMap id="wmsInBillDetailMap" type="com.kitex.mom.wms.entity.WmsInBillDetailEntity">
+        <id property="id" column="id"/>
+        <result property="billId" column="bill_id"/>
+        <result property="matCode" column="mat_code"/>
+        <result property="matName" column="mat_name"/>
+        <result property="matGroup" column="mat_group"/>
+        <result property="matGroupName" column="mat_group_name"/>
+        <result property="matBarcode" column="mat_barcode"/>
+        <result property="matBatch" column="mat_batch"/>
+        <result property="matSpec" column="mat_spec"/>
+        <result property="matPackSpec" column="mat_pack_spec"/>
+        <result property="operateUnit" column="operate_unit"/>
+        <result property="operateNum" column="operate_num"/>
+        <result property="matUnit" column="mat_unit"/>
+        <result property="matNum" column="mat_num"/>
+        <result property="supplierCode" column="supplier_code"/>
+        <result property="supplierName" column="supplier_name"/>
+        <result property="warehouseCode" column="warehouse_code"/>
+        <result property="siteCode" column="site_code"/>
+        <result property="containerCode" column="container_code"/>
+        <result property="isQualityTest" column="is_quality_test"/>
+        <result property="qualityTaskId" column="quality_task_id"/>
+        <result property="qualityResult" column="quality_result"/>
+        <result property="inTime" column="in_time"/>
+        <result property="matProduceDate" column="mat_produce_date"/>
+        <result property="matValidPeriod" column="mat_valid_period"/>
+        <result property="matValidEndDate" column="mat_valid_end_date"/>
+        <result property="workshop" column="workshop"/>
+        <result property="noticeDetailId" column="notice_detail_id"/>
+        <result property="expansion" column="expansion"/>
+        <result property="factoryCode" column="factory_code"/>
+    </resultMap>
+    <select id="fetchDetails" resultType="com.kitex.mom.wms.entity.WmsInBillDetailEntity">
+        select b.state,
+        b.bill_type,
+        b.bill_no,
+        b.notice_id,
+        a.id,
+        a.bill_id,
+        a.mat_code,
+        a.mat_name,
+        a.mat_group,
+        a.mat_group_name,
+        a.mat_barcode,
+        a.mat_batch,
+        a.mat_spec,
+        a.mat_pack_spec,
+        a.operate_unit,
+        a.operate_num,
+        a.mat_unit,
+        a.mat_num,
+        a.supplier_code,
+        a.supplier_name,
+        a.warehouse_code,
+        a.site_code,
+        a.container_code,
+        a.is_quality_test,
+        a.quality_task_id,
+        a.quality_result,
+        a.in_time,
+        a.mat_produce_date,
+        a.mat_valid_period,
+        a.mat_valid_end_date,
+        a.workshop,
+        a.notice_detail_id,
+        a.expansion,
+        a.tenant_id,
+        a.create_by,
+        a.create_time,
+        a.update_by,
+        a.update_time,
+        a.factory_code,
+        a.del_flag
+        from wms_in_bill_detail a left join wms_in_bill b on a.bill_id = b.id
+        where a.del_flag = '0'
+        <if test="params.billType != null and params.billType != ''">
+            and b.bill_type = #{params.billType}
+        </if>
+        <if test="params.billTypes != null">
+            and b.bill_type in
+            <foreach collection="params.billTypes" item="item" open="(" separator="," close=")">
+                #{item}
+            </foreach>
+        </if>
+        <if test="params.state != null and params.state != ''">
+            and b.state = #{params.state}
+        </if>
+        <if test="params.warehouseCode != null and params.warehouseCode != ''">
+            and a.warehouse_code = #{params.warehouseCode}
+        </if>
+        <if test="params.billNo != null and params.billNo != ''">
+            and b.bill_no like concat('%', #{params.billNo}, '%')
+        </if>
+        <if test="params.noticeId != null and params.noticeId != ''">
+            and b.notice_id like concat('%', #{params.noticeId}, '%')
+        </if>
+        <if test="params.matCode != null and params.matCode != ''">
+            and a.mat_code like concat('%', #{params.matCode}, '%')
+        </if>
+        <if test="params.createBy != null and params.createBy != ''">
+            and a.create_by like concat('%', #{params.createBy}, '%')
+        </if>
+        <if test="params.createTime != null">
+            and a.create_time between #{params.createTime[0]} and #{params.createTime[1]}
+        </if>
+        <if test="ids != null">
+            and a.id in
+            <foreach collection="ids" item="item" open="(" separator="," close=")">
+                #{item}
+            </foreach>
+        </if>
+        order by b.state asc, a.create_time desc
+    </select>
+</mapper>
