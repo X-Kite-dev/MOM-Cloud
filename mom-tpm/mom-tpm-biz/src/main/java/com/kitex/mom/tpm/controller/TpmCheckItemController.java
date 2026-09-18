@@ -14,6 +14,7 @@ import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.tpm.entity.TpmCheckItemEntity;
 import com.kitex.mom.tpm.entity.TpmDeviceItemEntity;
+import com.kitex.mom.tpm.enums.CheckFailureActionEnum;
 import com.kitex.mom.tpm.service.TpmCheckItemService;
 import com.kitex.mom.tpm.service.TpmDeviceItemService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -87,6 +88,7 @@ public class TpmCheckItemController {
     @PostMapping
     @PreAuthorize("@pms.hasPermission('tpm_tpmCheckItem_add')")
     public R<Boolean> save(@RequestBody TpmCheckItemEntity tpmCheckItem) {
+        normalizeAndValidate(tpmCheckItem);
         Long count = tpmCheckItemService.count(new LambdaQueryWrapper<TpmCheckItemEntity>()
                 .eq(TpmCheckItemEntity::getCode, tpmCheckItem.getCode()));
         if (count.compareTo(0L) > 0) {
@@ -106,6 +108,7 @@ public class TpmCheckItemController {
     @PutMapping
     @PreAuthorize("@pms.hasPermission('tpm_tpmCheckItem_edit')")
     public R<Boolean> updateById(@RequestBody TpmCheckItemEntity tpmCheckItem) {
+        normalizeAndValidate(tpmCheckItem);
         //更新关联表类型
         tpmDeviceItemService.update(new UpdateWrapper<TpmDeviceItemEntity>().lambda()
                 .set(TpmDeviceItemEntity::getType, tpmCheckItem.getType())
@@ -141,5 +144,17 @@ public class TpmCheckItemController {
     @Operation(summary = "导出点/巡检项目", description = "导出点/巡检项目数据到Excel")
     public List<TpmCheckItemEntity> export(TpmCheckItemEntity tpmCheckItem, Long[] ids) {
         return tpmCheckItemService.list(Wrappers.lambdaQuery(tpmCheckItem).in(ArrayUtil.isNotEmpty(ids), TpmCheckItemEntity::getId, ids));
+    }
+
+    private void normalizeAndValidate(TpmCheckItemEntity item) {
+        if (StrUtil.isBlank(item.getFailureAction())) item.setFailureAction(CheckFailureActionEnum.WARN.getCode());
+        if (!CheckFailureActionEnum.supports(item.getFailureAction())) throw new IllegalArgumentException("不合格处置仅支持WARN、BLOCK或REPAIR");
+        if (item.getDefaultRecoveryMinutes() != null && item.getDefaultRecoveryMinutes() <= 0) {
+            throw new IllegalArgumentException("默认预计恢复分钟数必须大于0");
+        }
+        if (CheckFailureActionEnum.WARN.getCode().equals(item.getFailureAction())) item.setDefaultRecoveryMinutes(null);
+        if (!CheckFailureActionEnum.WARN.getCode().equals(item.getFailureAction()) && StrUtil.isBlank(item.getFailureGuidance())) {
+            throw new IllegalArgumentException("封锁生产或转维修的点检项目必须填写不合格处置指引");
+        }
     }
 }

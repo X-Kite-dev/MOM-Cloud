@@ -10,9 +10,13 @@ import com.kitex.mom.mdm.entity.MdmCustomerPartEntity;
 import com.kitex.mom.mdm.feign.RemoteCustomerPartService;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
+import com.kitex.mom.mes.dto.MesTaskReportResult;
 import com.kitex.mom.mes.entity.MesTaskReportEntity;
 import com.kitex.mom.mes.entity.MesWrapEntity;
 import com.kitex.mom.mes.entity.MesWrapRecordEntity;
+import com.kitex.mom.mes.enums.MesWrapRecordStatusEnum;
+import com.kitex.mom.mes.enums.MesWrapStatusEnum;
+import com.kitex.mom.mes.enums.ReportModeEnum;
 import com.kitex.mom.mes.process.AbstractProcessOperation;
 import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
@@ -22,10 +26,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -36,8 +37,6 @@ import java.util.Objects;
  */
 @Component
 public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
-
-    private static final String CODE = "PACKAGE_ONE_CODE";
 
     private final RemoteCustomerPartService partService;
     private final MesWrapService mesWrapService;
@@ -52,7 +51,7 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Map<String, Object> execute(MesTaskReportVO params) {
+    public MesTaskReportResult execute(MesTaskReportVO params) {
         MomUser currentUser = SecurityUtils.getUser();
         // 1. 验证参数
         if (StrUtil.isEmpty(params.getTransferCode())) {
@@ -60,26 +59,21 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
         }
         // 2. 一物一码校验
         validateOneCode(params.getTransferCode(), params.getMatCode());
-        // 3. 保存装箱记录（保存的一物一码的条码
+        // 3. 预生成报工主记录ID，包装明细和后续库存流水统一关联该报工。
+        MesTaskReportEntity report = createReport(params, currentUser);
+        params.setReportId(report.getId());
+        // 4. 保存装箱记录（保存一物一码条码）
         createWrapRecord(params);
-        // 4. 扫码数量达到最大容量后生成箱码
+        // 5. 扫码数量达到最大容量后生成箱码
         String wrapCode = createNewWrapCode(params);
-        // 5. 创建并保存报工记录
-        MesTaskReportEntity report = createAndSaveReport(params, currentUser);
-//        // 6. 冗余绑定箱码
-//        arrangeService.update(new LambdaUpdateWrapper<MesTaskArrange>()
-//                .eq(MesTaskArrange::getCode, params.getArrangeCode())
-//                .set(MesTaskArrange::getWrapCode, wrapCode));
-        // 7. 返回处理结果
-        Map<String, Object> resultMap = new HashMap<>(2);
-        String reportMessage = currentUser.getName() + "于" + DateUtil.format(report.getReportTime(), "yyyy-MM-dd HH:mm:ss") + "进行包装装箱报工，合格数量为：" + report.getReportNum();
-        resultMap.put("report", report);
-        resultMap.put("reportMessage", reportMessage);
+        // 6. 返回处理结果
+        String reportMessage = operatorName(params, currentUser) + "于" + DateUtil.format(report.getReportTime(), "yyyy-MM-dd HH:mm:ss") + "进行包装装箱报工，合格数量为：" + report.getReportNum();
+        MesTaskReportResult result = new MesTaskReportResult().setReport(report).setReportMessage(reportMessage);
         if (StrUtil.isNotEmpty(wrapCode)) {
-            String wrapMessage = currentUser.getName() + "于" + DateUtil.format(report.getReportTime(), "yyyy-MM-dd HH:mm:ss") + "完成装箱，生成箱码：" + wrapCode + "，容量：" + params.getCapacity();
-            resultMap.put("wrapMessage", wrapMessage);
+            String wrapMessage = operatorName(params, currentUser) + "于" + DateUtil.format(report.getReportTime(), "yyyy-MM-dd HH:mm:ss") + "完成装箱，生成箱码：" + wrapCode + "，容量：" + params.getCapacity();
+            result.setWrapMessage(wrapMessage);
         }
-        return resultMap;
+        return result;
     }
 
     /**
@@ -121,9 +115,15 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
             wrap.setProcedureTaskCode(params.getProduceTaskCode());
             wrap.setArrangeCode(params.getArrangeCode());
             wrap.setRuleCode(params.getWrapRuleCode());
+            wrap.setWrapCapacity(params.getCapacity());
             wrap.setWrapType(params.getTaskType());
             wrap.setFactoryCode(params.getFactoryCode());
-            return mesWrapService.addData(wrap);
+            wrap.setStatus(MesWrapStatusEnum.SEALED.name());
+            wrap.setCurrentQuantity(BigDecimal.valueOf(params.getCapacity()));
+            wrap.setSourceMode(ReportModeEnum.PACKAGE_ONE_CODE.name());
+            String wrapCode = mesWrapService.addData(wrap);
+            bindSealedRecords(params, wrapCode);
+            return wrapCode;
         }
         return null;
     }
@@ -135,41 +135,45 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
      */
     private void createWrapRecord(MesTaskReportVO params) {
         MesWrapRecordEntity record = new MesWrapRecordEntity();
+        record.setReportId(params.getReportId());
         record.setTransferCode(params.getTransferCode());
         record.setArrangeCode(params.getArrangeCode());
         record.setTaskCode(params.getTaskCode());
         record.setProcedureTaskCode(params.getProduceTaskCode());
+        record.setFactoryCode(params.getFactoryCode());
+        record.setQuantity(BigDecimal.ONE);
+        record.setAvailableQuantity(BigDecimal.ZERO);
+        record.setPackingStatus(MesWrapRecordStatusEnum.STAGED.name());
         wrapRecordService.save(record);
     }
 
     /**
-     * 创建并保存报工记录
-     *
-     * @param vo 报工VO对象
-     * @return 报工记录
+     * 封箱时把本箱全部单件记录绑定到箱码。已封箱记录必须先拆箱，不能直接反报工。
      */
-    private MesTaskReportEntity createAndSaveReport(MesTaskReportVO vo, MomUser currentUser) {
-        MesTaskReportEntity report = new MesTaskReportEntity();
-        report.setArrangeCode(vo.getArrangeCode());
-        report.setTaskCode(vo.getTaskCode());
-        report.setProduceTaskCode(vo.getProduceTaskCode());
-        report.setMatCode(vo.getMatCode());
-        report.setMatName(vo.getMatName());
-        report.setMatSpec(vo.getMatSpec());
-        report.setTransferCode(vo.getTransferCode());
-        report.setReportNum(vo.getPassNum());
-//        report.setQualifiedNum(vo.getPassNum());
-        report.setType(vo.getType());
-        report.setReportTime(LocalDateTime.now());
-        report.setWorkerCode(currentUser.getUsername());
-        report.setWorkerName(currentUser.getName());
-        report.setDeviceCode(vo.getDeviceCode());
-        report.setDeviceName(vo.getDeviceName());
-        return report;
+    private void bindSealedRecords(MesTaskReportVO params, String wrapCode) {
+        List<MesWrapRecordEntity> records = wrapRecordService.list(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MesWrapRecordEntity>()
+                        .eq(MesWrapRecordEntity::getArrangeCode, params.getArrangeCode())
+                        .isNotNull(MesWrapRecordEntity::getReportId)
+                        .eq(MesWrapRecordEntity::getPackingStatus, MesWrapRecordStatusEnum.STAGED.name())
+                        .orderByDesc(MesWrapRecordEntity::getCreateTime)
+                        .orderByDesc(MesWrapRecordEntity::getId))
+                .stream()
+                .limit(params.getCapacity())
+                .toList();
+        if (records.size() != params.getCapacity()) {
+            throw new IllegalStateException("待封箱单件数量与包装容量不一致");
+        }
+        records.forEach(record -> {
+            record.setWrapCode(wrapCode);
+            record.setPackingStatus(MesWrapRecordStatusEnum.PACKED.name());
+            record.setAvailableQuantity(BigDecimal.ZERO);
+        });
+        wrapRecordService.updateBatchById(records);
     }
 
     @Override
-    public String getCode() {
-        return CODE;
+    public ReportModeEnum getMode() {
+        return ReportModeEnum.PACKAGE_ONE_CODE;
     }
-} 
+}

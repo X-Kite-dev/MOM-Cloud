@@ -4,8 +4,11 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.entity.MesScrapMaterialEntity;
+import com.kitex.mom.mes.dto.MesQualityDispositionDTO;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
 
 /**
  * 报废品管理服务
@@ -23,6 +26,14 @@ public interface MesScrapMaterialService extends IService<MesScrapMaterialEntity
      * @return 分页结果
      */
     IPage<MesScrapMaterialEntity> queryPage(Page<MesScrapMaterialEntity> pageParam, MesScrapMaterialEntity query);
+
+    void create(MesScrapMaterialEntity entity);
+
+    void edit(MesScrapMaterialEntity entity);
+
+    void deletePending(List<Long> ids);
+
+    void createFromQualityDisposition(MesQualityDispositionDTO command);
 
     /**
      * 导出报废品管理数据
@@ -60,4 +71,4 @@ public interface MesScrapMaterialService extends IService<MesScrapMaterialEntity
      * @param id 主键id
      */
     void cancelAudit(Long id);
-} 
+}

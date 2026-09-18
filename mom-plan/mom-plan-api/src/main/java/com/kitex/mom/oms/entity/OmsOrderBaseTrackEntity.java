@@ -111,6 +111,10 @@ public class OmsOrderBaseTrackEntity extends BaseEntity<OmsOrderBaseTrackEntity>
     @Schema(description = "更新人名称")
     private String updateByName;
 
+    @TableField(exist = false)
+    @Schema(description = "订单变更提交永久幂等请求号")
+    private String changeRequestId;
+
 
     /**
      * 生产计划信息(已下发)

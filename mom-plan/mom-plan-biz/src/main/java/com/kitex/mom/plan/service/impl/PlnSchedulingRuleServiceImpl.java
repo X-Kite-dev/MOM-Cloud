@@ -18,6 +18,8 @@ import com.kitex.mom.mdm.feign.RemoteCalendarService;
 import com.kitex.mom.mdm.feign.RemoteClassesService;
 import com.kitex.mom.mdm.feign.RemoteProcessRouteService;
 import com.kitex.mom.plan.dto.PlnSchedulingGanttDetailQueryDTO;
+import com.kitex.mom.plan.dto.PlnMaterialConstraintEvaluationDTO;
+import com.kitex.mom.plan.dto.PlnOperationScheduleEvaluationDTO;
 import com.kitex.mom.plan.entity.*;
 import com.kitex.mom.plan.mapper.PlnIssueMapper;
 import com.kitex.mom.plan.mapper.PlnSchedulingConflictMapper;
@@ -28,7 +30,9 @@ import com.kitex.mom.plan.vo.PlnSchedulingGanttDetailVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import cn.hutool.core.util.ObjUtil;
+import cn.hutool.core.util.StrUtil;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -55,6 +59,8 @@ public class PlnSchedulingRuleServiceImpl extends ServiceImpl<PlnSchedulingRuleS
     private final RemoteProcessRouteService remoteProcessRouteService;
     private final RemoteClassesService remoteClassesService;
     private final RemoteCalendarService remoteCalendarService;
+    private final com.kitex.mom.plan.service.PlnMaterialConstraintService materialConstraintService;
+    private final com.kitex.mom.plan.service.PlnOperationSchedulingService operationSchedulingService;
 
     @Override
     public Boolean createRule(PlnSchedulingRuleSetEntity ruleSet) {
@@ -63,9 +69,16 @@ public class PlnSchedulingRuleServiceImpl extends ServiceImpl<PlnSchedulingRuleS
     }
 
     @Override
-    public Page<PlnSchedulingTaskEntity> pageTask(SearchPage page, String mode) {
+    public Page<PlnSchedulingTaskEntity> pageTask(SearchPage page, String mode, String taskNo) {
+        return pageTask(page,mode,taskNo,null);
+    }
+
+    @Override
+    public Page<PlnSchedulingTaskEntity> pageTask(SearchPage page, String mode, String taskNo,Boolean resultArchived) {
         return plnSchedulingTaskMapper.selectPage(page.toMpPage(), Wrappers.<PlnSchedulingTaskEntity>lambdaQuery()
+                .eq(resultArchived!=null,PlnSchedulingTaskEntity::getResultArchived,resultArchived)
                 .eq(mode != null && !mode.isBlank(), PlnSchedulingTaskEntity::getMode, mode)
+                .like(taskNo != null && !taskNo.isBlank(), PlnSchedulingTaskEntity::getTaskNo, taskNo == null ? null : taskNo.trim())
                 .orderByDesc(PlnSchedulingTaskEntity::getCreateTime)
                 .orderByDesc(PlnSchedulingTaskEntity::getId));
     }
@@ -192,6 +205,21 @@ public class PlnSchedulingRuleServiceImpl extends ServiceImpl<PlnSchedulingRuleS
             issue.setPlanType(item.getPlanType());
             issue.setMatchedRules(item.getMatchedRules());
             issue.setScoreBreakdown(item.getScoreBreakdown());
+            issue.setMaterialConstraintStatus(item.getMaterialConstraintStatus());
+            issue.setMaterialAvailableDate(item.getMaterialAvailableDate());
+            issue.setMaterialAvailableTime(item.getMaterialAvailableTime());
+            issue.setMaterialHardBlocked(item.getMaterialHardBlocked());
+            issue.setMaterialConstraintSummary(item.getMaterialConstraintSummary());
+            issue.setMaterialConstraintSnapshot(item.getMaterialConstraintSnapshot());
+            issue.setOperationMaterialConstraintSnapshot(item.getOperationMaterialConstraintSnapshot());
+            issue.setMaterialLineageFingerprint(item.getMaterialLineageFingerprint());
+            issue.setMaterialConstraintCheckedTime(item.getMaterialConstraintCheckedTime());
+            issue.setOperationScheduleStatus(item.getOperationScheduleStatus());
+            issue.setOperationHardBlocked(item.getOperationHardBlocked());
+            issue.setOperationScheduleSummary(item.getOperationScheduleSummary());
+            issue.setOperationCount(item.getOperationCount());
+            issue.setOperationStartTime(item.getOperationStartTime());
+            issue.setOperationEndTime(item.getOperationEndTime());
             issue.setFactoryCode(item.getFactoryCode());
             return issue;
         }).toList();
@@ -286,11 +314,14 @@ public class PlnSchedulingRuleServiceImpl extends ServiceImpl<PlnSchedulingRuleS
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Map<String, LocalDate> adjustTaskDetailScheduleDate(Long taskId, Long issueId, LocalDate scheduledDate, LocalDate scheduledEndDate) {
         if (isNull(taskId) || isNull(issueId) || isNull(scheduledDate)) {
             throw new CheckedException("调整参数不能为空");
         }
+        if(plnSchedulingTaskMapper.acquireTransactionLock(taskId)==null)throw new CheckedException("任务不存在");
         PlnSchedulingTaskEntity task = plnSchedulingTaskMapper.selectById(taskId);
+        if(task!=null && Boolean.TRUE.equals(task.getResultArchived()))throw new CheckedException("已归档结果不能调整");
         if (task == null) {
             throw new CheckedException("任务不存在");
         }
@@ -301,20 +332,38 @@ public class PlnSchedulingRuleServiceImpl extends ServiceImpl<PlnSchedulingRuleS
         if (!"official".equalsIgnoreCase(task.getMode())) {
             throw new CheckedException("仅正式排产任务允许调整分配日期");
         }
-        Long detailCount = plnSchedulingTaskDetailMapper.selectCount(
+        if (!"WAIT_CONFIRM".equalsIgnoreCase(task.getTaskStatus())) {
+            throw new CheckedException("仅待确认锁定的正式排产任务允许调整，已锁定任务请通过重排流程处理");
+        }
+        if (Boolean.TRUE.equals(issue.getLockStatus())) {
+            throw new CheckedException("计划已正式锁定，禁止直接修改工序资源占用");
+        }
+        PlnSchedulingTaskDetailEntity taskDetail = plnSchedulingTaskDetailMapper.selectOne(
                 Wrappers.<com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity>lambdaQuery()
                         .eq(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getTaskId, taskId)
                         .and(q -> q.eq(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getIssueId, issueId)
                                 .or()
                                 .eq(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getIssueNo, issue.getIssueNo()))
+                        .last("LIMIT 1")
         );
-        boolean belongsByDetail = detailCount != null && detailCount > 0;
-        boolean belongsByLock = taskId.equals(issue.getLockTaskId());
-        if (!belongsByDetail && !belongsByLock) {
+        boolean belongsByDetail = taskDetail != null;
+        if (!belongsByDetail) {
             throw new CheckedException("该计划不属于当前排产任务");
+        }
+        if (taskDetail != null) {
+            refreshMaterialConstraint(taskDetail, issue);
         }
         if (issue.getDemandTime() != null && scheduledDate.isAfter(issue.getDemandTime())) {
             throw new CheckedException("分配日期晚于需求日期，禁止确认");
+        }
+        if (taskDetail != null && Boolean.TRUE.equals(taskDetail.getMaterialHardBlocked())) {
+            throw new CheckedException("物料约束尚未解除：" + StrUtil.blankToDefault(
+                    taskDetail.getMaterialConstraintSummary(), taskDetail.getMaterialConstraintStatus()));
+        }
+        if (taskDetail != null && StrUtil.isBlank(taskDetail.getOperationMaterialConstraintSnapshot())
+                && taskDetail.getMaterialAvailableDate() != null
+                && scheduledDate.isBefore(taskDetail.getMaterialAvailableDate())) {
+            throw new CheckedException("分配日期不能早于预计齐料日期" + taskDetail.getMaterialAvailableDate());
         }
         // 手动传入结束日期时校验合法性
         if (scheduledEndDate != null && scheduledEndDate.isBefore(scheduledDate)) {
@@ -322,46 +371,86 @@ public class PlnSchedulingRuleServiceImpl extends ServiceImpl<PlnSchedulingRuleS
         }
 
         Long sameDayCount;
-        if (belongsByLock) {
-            sameDayCount = plnIssueMapper.selectCount(new LambdaQueryWrapper<PlnIssueEntity>()
-                    .eq(PlnIssueEntity::getLockTaskId, taskId)
-                    .eq(PlnIssueEntity::getProductCode, issue.getProductCode())
-                    .eq(PlnIssueEntity::getScheduledDate, scheduledDate)
-                    .eq(PlnIssueEntity::getLockStatus, true)
-                    .ne(PlnIssueEntity::getId, issueId));
-        } else {
-            sameDayCount = plnSchedulingTaskDetailMapper.selectCount(
-                    Wrappers.<com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity>lambdaQuery()
-                            .eq(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getTaskId, taskId)
-                            .eq(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getProductCode, issue.getProductCode())
-                            .eq(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getScheduledDate, scheduledDate)
-                            .and(q -> q.ne(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getIssueId, issueId)
-                                    .or()
-                                    .ne(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getIssueNo, issue.getIssueNo()))
-            );
-        }
+        sameDayCount = plnSchedulingTaskDetailMapper.selectCount(
+                Wrappers.<com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity>lambdaQuery()
+                        .eq(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getTaskId, taskId)
+                        .eq(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getProductCode, issue.getProductCode())
+                        .eq(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getScheduledDate, scheduledDate)
+                        .and(q -> q.ne(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getIssueId, issueId)
+                                .or()
+                                .ne(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getIssueNo, issue.getIssueNo()))
+        );
         if (sameDayCount != null && sameDayCount >= resolveDayCapacityThreshold(task.getRuleCode())) {
             throw new CheckedException("同产品同日已达到产能阈值，禁止调整");
         }
 
-        // 结束日期：手动传入优先，否则自动计算
-        LocalDate finalEndDate = scheduledEndDate != null
-                ? scheduledEndDate
-                : calcScheduledEndDate(issue.getProductCode(), issue.getNum(), scheduledDate);
+        PlnOperationScheduleEvaluationDTO operationEvaluation = operationSchedulingService
+                .rescheduleIssue(taskId, issue, scheduledDate);
+        LocalDate effectiveStartDate = operationEvaluation.getFirstStartTime() == null
+                ? scheduledDate : operationEvaluation.getFirstStartTime().toLocalDate();
+        LocalDate finalEndDate = operationEvaluation.getLastEndTime() == null
+                ? calcScheduledEndDate(issue.getProductCode(), issue.getNum(), effectiveStartDate)
+                : operationEvaluation.getLastEndTime().toLocalDate();
+        if (issue.getDemandTime() != null && finalEndDate.isAfter(issue.getDemandTime())) {
+            throw new CheckedException("资源有限产能重排后的完工日期" + finalEndDate
+                    + "晚于需求日期" + issue.getDemandTime() + "，请调整资源或交期");
+        }
 
-        issue.setScheduledDate(scheduledDate);
+        issue.setScheduledDate(effectiveStartDate);
+        issue.setScheduledEndDate(finalEndDate);
         boolean updated = plnIssueMapper.updateById(issue) > 0;
         if (updated) {
             plnSchedulingTaskDetailMapper.update(null, Wrappers.<com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity>lambdaUpdate()
                     .eq(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getTaskId, taskId)
                     .eq(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getIssueId, issueId)
-                    .set(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getScheduledDate, scheduledDate)
-                    .set(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getScheduledEndDate, finalEndDate));
+                    .set(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getScheduledDate, effectiveStartDate)
+                    .set(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getScheduledEndDate, finalEndDate)
+                    .set(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getOperationScheduleStatus, operationEvaluation.getStatus())
+                    .set(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getOperationHardBlocked, operationEvaluation.getHardBlocked())
+                    .set(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getOperationScheduleSummary, operationEvaluation.getSummary())
+                    .set(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getOperationCount, operationEvaluation.getOperationCount())
+                    .set(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getOperationStartTime, operationEvaluation.getFirstStartTime())
+                    .set(com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity::getOperationEndTime, operationEvaluation.getLastEndTime()));
         }
         Map<String, LocalDate> result = new LinkedHashMap<>();
-        result.put("scheduledDate", scheduledDate);
+        result.put("scheduledDate", effectiveStartDate);
         result.put("scheduledEndDate", finalEndDate);
         return result;
+    }
+
+    /**
+     * 手工调整前读取最新MRP、供应下达和WMS预留状态，避免历史快照在风险解除后继续阻断排期。
+     */
+    private void refreshMaterialConstraint(PlnSchedulingTaskDetailEntity detail, PlnIssueEntity issue) {
+        PlnMaterialConstraintEvaluationDTO evaluation = materialConstraintService
+                .evaluate(List.of(issue), LocalDate.now()).get(issue.getId());
+        if (evaluation == null) {
+            return;
+        }
+        detail.setMaterialConstraintStatus(evaluation.getStatus());
+        detail.setMaterialAvailableDate(evaluation.getMaterialAvailableDate());
+        detail.setMaterialAvailableTime(evaluation.getMaterialAvailableTime());
+        detail.setMaterialHardBlocked(evaluation.getHardBlocked());
+        detail.setMaterialConstraintSummary(evaluation.getSummary());
+        try {
+            detail.setMaterialConstraintSnapshot(OBJECT_MAPPER.writeValueAsString(evaluation.getLines()));
+            detail.setOperationMaterialConstraintSnapshot(OBJECT_MAPPER.writeValueAsString(
+                    evaluation.getOperationConstraints()));
+        } catch (JsonProcessingException e) {
+            throw new CheckedException("物料约束快照序列化失败");
+        }
+        detail.setMaterialLineageFingerprint(evaluation.getBomPathFingerprint());
+        detail.setMaterialConstraintCheckedTime(evaluation.getCheckedTime());
+        plnSchedulingTaskDetailMapper.updateById(detail);
+        issue.setMaterialConstraintStatus(evaluation.getStatus());
+        issue.setMaterialAvailableDate(evaluation.getMaterialAvailableDate());
+        issue.setMaterialAvailableTime(evaluation.getMaterialAvailableTime());
+        issue.setMaterialHardBlocked(evaluation.getHardBlocked());
+        issue.setMaterialConstraintSummary(evaluation.getSummary());
+        issue.setMaterialConstraintSnapshot(detail.getMaterialConstraintSnapshot());
+        issue.setOperationMaterialConstraintSnapshot(detail.getOperationMaterialConstraintSnapshot());
+        issue.setMaterialLineageFingerprint(evaluation.getBomPathFingerprint());
+        issue.setMaterialConstraintCheckedTime(evaluation.getCheckedTime());
     }
 
     // ===================== 排产结束日期计算（内联，避免循环依赖） =====================

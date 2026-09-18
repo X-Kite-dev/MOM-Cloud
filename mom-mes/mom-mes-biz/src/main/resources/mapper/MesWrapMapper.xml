@@ -9,6 +9,8 @@
         FROM
         mes_wrap t1
         LEFT JOIN mes_task_arrange t2 ON t1.arrange_code = t2.code
+            AND t1.tenant_id = t2.tenant_id
+            AND t2.del_flag = '0'
         <where>
             1 = 1
             <if test="query.wrapCode != '' and query.wrapCode != null ">
@@ -20,6 +22,10 @@
             <if test="query.arrangeCode != '' and query.arrangeCode != null ">
                 AND t1.arrange_code LIKE CONCAT('%', #{query.arrangeCode}, '%')
             </if>
+            <if test="query.status != '' and query.status != null ">
+                AND t1.status = #{query.status}
+            </if>
         </where>
+        ORDER BY t1.create_time DESC, t1.id DESC
     </select>
 </mapper>

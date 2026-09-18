@@ -178,6 +178,6 @@ public class PmsContractController {
     @PostMapping("/import")
     @PreAuthorize("@pms.hasPermission('pms_pmsContract_export')")
     public R importExcel(@RequestExcel List<PmsContractEntity> pmsContractList, BindingResult bindingResult) {
-        return R.ok(pmsContractService.saveBatch(pmsContractList));
+        return R.ok(pmsContractService.saveDeepBatch(pmsContractList));
     }
 }

@@ -47,9 +47,9 @@
         END as task_status_name,
         mt.plan_start_date,
         mt.plan_end_date,
-        IFNULL(detail_stats.material_count, 0) as material_count,
-        IFNULL(detail_stats.picked_material_count, 0) as picked_material_count,
-        IFNULL(detail_stats.pending_material_count, 0) as pending_material_count
+        COALESCE(detail_stats.material_count, 0) as material_count,
+        COALESCE(detail_stats.picked_material_count, 0) as picked_material_count,
+        COALESCE(detail_stats.pending_material_count, 0) as pending_material_count
         FROM mes_material_list ml
         LEFT JOIN mes_task mt ON ml.task_id = mt.id
         LEFT JOIN (
@@ -100,9 +100,9 @@
                    END                                        as task_status_name,
                mt.plan_start_date,
                mt.plan_end_date,
-               IFNULL(detail_stats.material_count, 0)         as material_count,
-               IFNULL(detail_stats.picked_material_count, 0)  as picked_material_count,
-               IFNULL(detail_stats.pending_material_count, 0) as pending_material_count
+               COALESCE(detail_stats.material_count, 0)         as material_count,
+               COALESCE(detail_stats.picked_material_count, 0)  as picked_material_count,
+               COALESCE(detail_stats.pending_material_count, 0) as pending_material_count
         FROM mes_material_list ml
                  LEFT JOIN mes_task mt ON ml.task_id = mt.id
                  LEFT JOIN (SELECT material_list_id,

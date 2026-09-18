@@ -53,15 +53,15 @@
                    WHEN 'COMPLETED' THEN '完成'
                    ELSE mld.pick_status
                    END                                                               as pick_status_name,
-               IFNULL(stock.stock_quantity, 0)                                       as stock_quantity,
+               COALESCE(stock.stock_quantity, 0)                                     as stock_quantity,
                CASE
-                   WHEN IFNULL(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) THEN 1
+                   WHEN COALESCE(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) THEN 1
                    ELSE 0
                    END                                                               as is_stock_shortage,
                CASE
-                   WHEN IFNULL(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity)
+                   WHEN COALESCE(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity)
                        THEN (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) -
-                            IFNULL(stock.stock_quantity, 0)
+                            COALESCE(stock.stock_quantity, 0)
                    ELSE 0
                    END                                                               as shortage_quantity
         FROM mes_material_list_detail mld
@@ -86,15 +86,15 @@
                    WHEN 'COMPLETED' THEN '完成'
                    ELSE mld.pick_status
                    END                                                               as pick_status_name,
-               IFNULL(stock.stock_quantity, 0)                                       as stock_quantity,
+               COALESCE(stock.stock_quantity, 0)                                     as stock_quantity,
                CASE
-                   WHEN IFNULL(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) THEN 1
+                   WHEN COALESCE(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) THEN 1
                    ELSE 0
                    END                                                               as is_stock_shortage,
                CASE
-                   WHEN IFNULL(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity)
+                   WHEN COALESCE(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity)
                        THEN (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) -
-                            IFNULL(stock.stock_quantity, 0)
+                            COALESCE(stock.stock_quantity, 0)
                    ELSE 0
                    END                                                               as shortage_quantity
         FROM mes_material_list_detail mld

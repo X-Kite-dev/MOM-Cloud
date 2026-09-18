@@ -1,16 +1,19 @@
 package com.kitex.mom.wms.controller;
 
-import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.SearchPage;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
+import com.kitex.common.security.component.PermissionService;
 import com.kitex.mom.wms.dto.WmsAllocationBillAddDTO;
+import com.kitex.mom.wms.dto.WmsAllocationCancelDTO;
 import com.kitex.mom.wms.dto.WmsAllocationBillQueryDTO;
+import com.kitex.mom.wms.dto.WmsCrossWarehouseTransferDTO;
 import com.kitex.mom.wms.dto.app.WmsAllocationBillAppDTO;
 import com.kitex.mom.wms.entity.WmsAllocationBillEntity;
 import com.kitex.mom.wms.service.WmsAllocationBillService;
@@ -23,6 +26,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpHeaders;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -44,6 +48,8 @@ public class WmsAllocationBillController {
 
     private final WmsAllocationBillService wmsAllocationBillService;
 
+    private final PermissionService permissionService;
+
     /**
      * 分页查询
      *
@@ -55,6 +61,7 @@ public class WmsAllocationBillController {
     @GetMapping("/page")
 //    @PreAuthorize("@pms.hasPermission('wms_wmsAllocationBill_view')")
     public R<Page<WmsAllocationBillEntity>> getWmsAllocationBillPage(@ParameterObject SearchPage page, @ParameterObject WmsAllocationBillQueryDTO wmsAllocationBill) {
+        requireWarehouseScope(wmsAllocationBill);
         LambdaQueryWrapper<WmsAllocationBillEntity> wrapper = Wrappers.lambdaQuery();
         wrapper.like(StrUtil.isNotBlank(wmsAllocationBill.getBillNo()), WmsAllocationBillEntity::getBillNo, wmsAllocationBill.getBillNo());
         wrapper.eq(StrUtil.isNotBlank(wmsAllocationBill.getOldWarehouseCode()), WmsAllocationBillEntity::getOldWarehouseCode, wmsAllocationBill.getOldWarehouseCode());
@@ -72,6 +79,7 @@ public class WmsAllocationBillController {
     @Operation(summary = "分页查询", description = "分页查询")
     @GetMapping("/getCount")
     public R<Map<String, Long>> getCount(@ParameterObject WmsAllocationBillQueryDTO wmsAllocationBill) {
+        requireWarehouseScope(wmsAllocationBill);
         LambdaQueryWrapper<WmsAllocationBillEntity> wrapper = Wrappers.lambdaQuery();
         wrapper.like(StrUtil.isNotBlank(wmsAllocationBill.getBillNo()), WmsAllocationBillEntity::getBillNo, wmsAllocationBill.getBillNo());
         wrapper.eq(StrUtil.isNotBlank(wmsAllocationBill.getOldWarehouseCode()), WmsAllocationBillEntity::getOldWarehouseCode, wmsAllocationBill.getOldWarehouseCode());
@@ -125,6 +133,30 @@ public class WmsAllocationBillController {
         return R.ok(wmsAllocationBillService.updateAllocationBill(wmsAllocationBillAdd));
     }
 
+    @Operation(summary = "取消在途调拨", description = "将新模式调拨的在途库存按原批次和质量属性返还源仓")
+    @SysLog("取消在途调拨")
+    @PostMapping("/cancel")
+    @PreAuthorize("@pms.hasPermission('wms_wmsAllocationBill_cancel_*','wms_wmsAllocationBill_cancel')")
+    public R<Boolean> cancel(@RequestBody WmsAllocationCancelDTO command) {
+        return R.ok(wmsAllocationBillService.cancel(command));
+    }
+
+    @Operation(summary = "Agent跨仓调拨建议", description = "按安全库存、活动预留、质量效期和目标仓在途计算可执行建议")
+    @PostMapping("/agent/transfer/recommendations")
+    @PreAuthorize("@pms.hasPermission('agent:shortage:run')")
+    public R<List<WmsCrossWarehouseTransferDTO.Recommendation>> transferRecommendations(
+            @RequestBody WmsCrossWarehouseTransferDTO.Query query) {
+        return R.ok(wmsAllocationBillService.transferRecommendations(query));
+    }
+
+    @Operation(summary = "执行已审批的Agent跨仓调拨", description = "重新锁库复核后发起正式在途调拨单")
+    @PostMapping("/agent/transfer/execute")
+    @PreAuthorize("@pms.hasPermission('agent:approval:execute')")
+    public R<WmsCrossWarehouseTransferDTO.Receipt> executeAgentTransfer(
+            @RequestBody WmsCrossWarehouseTransferDTO.AgentCommand command) {
+        return R.ok(wmsAllocationBillService.executeAgentTransfer(command));
+    }
+
     /**
      * app-新增调拨单
      *
@@ -149,7 +181,7 @@ public class WmsAllocationBillController {
     @DeleteMapping
 //    @PreAuthorize("@pms.hasPermission('wms_wmsAllocationBill_del')")
     public R<Boolean> removeById(@RequestBody Long[] ids) {
-        return R.ok(wmsAllocationBillService.removeBatchByIds(CollUtil.toList(ids)));
+        throw new IllegalStateException("调拨单属于库存审计凭证，禁止物理删除；在途单请使用有原因取消");
     }
 
     /**
@@ -163,6 +195,23 @@ public class WmsAllocationBillController {
     @GetMapping("/export")
 //    @PreAuthorize("@pms.hasPermission('wms_wmsAllocationBill_export')" )
     public List<WmsAllocationBillExcelVO> export(WmsAllocationBillEntity wmsAllocationBill, Long[] ids) {
+        WmsAllocationBillQueryDTO scope = new WmsAllocationBillQueryDTO();
+        scope.setOldWarehouseCode(wmsAllocationBill.getOldWarehouseCode());
+        scope.setNewWarehouseCode(wmsAllocationBill.getNewWarehouseCode());
+        requireWarehouseScope(scope);
         return wmsAllocationBillService.export(wmsAllocationBill, ids);
+    }
+
+    private void requireWarehouseScope(WmsAllocationBillQueryDTO query) {
+        String source = StrUtil.trim(query.getOldWarehouseCode());
+        String target = StrUtil.trim(query.getNewWarehouseCode());
+        boolean sourceAllowed = StrUtil.isNotBlank(source) && permissionService.hasPermission(
+                "wms_wmsAllocationBill_view", "wms_wmsAllocationBill_view_" + source);
+        boolean targetAllowed = StrUtil.isNotBlank(target) && permissionService.hasPermission(
+                "wms_wmsAllocationReceive_view", "wms_wmsAllocationReceive_view_" + target,
+                "wms_wmsAllocationReceive_rec_" + target);
+        if (!sourceAllowed && !targetAllowed) {
+            throw new CheckedException("必须指定并拥有源仓调拨或目标仓接收查看权限");
+        }
     }
 }

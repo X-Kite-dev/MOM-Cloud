@@ -1,7 +1,6 @@
 package com.kitex.mom.mes.controller;
 
 
-import cn.hutool.core.collection.CollUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -17,6 +16,8 @@ import lombok.AllArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Arrays;
 
 /**
  * 质检任务生成规则
@@ -86,15 +87,17 @@ public class MesInspectionRuleController {
     @Operation(summary = "修改质检任务生成规则", description = "修改质检任务生成规则")
     @SysLog("修改质检任务生成规则")
     @PutMapping
+    @PreAuthorize("@pms.hasPermission('mesInspectionRule:add')")
     public R updateById(@RequestBody MesInspectionRuleEntity mesInspectionRule) {
-        return R.ok(mesInspectionRuleService.updateById(mesInspectionRule));
+        mesInspectionRuleService.saveData(mesInspectionRule);
+        return R.ok();
     }
 
     @Operation(summary = "通过id删除", description = "通过id删除")
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('mesInspectionRule:delete')")
     public R<Void> removeById(@RequestBody Long[] ids) {
-        mesInspectionRuleService.removeBatchByIds(CollUtil.toList(ids));
+        mesInspectionRuleService.removeData(Arrays.asList(ids));
         return R.ok();
     }
 

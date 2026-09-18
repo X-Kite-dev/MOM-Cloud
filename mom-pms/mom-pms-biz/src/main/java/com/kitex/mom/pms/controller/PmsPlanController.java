@@ -17,6 +17,9 @@ import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
 import com.kitex.mom.pms.dto.PmsOrderSupplierQueryDTO;
 import com.kitex.mom.pms.dto.PmsPlanQueryDTO;
+import com.kitex.mom.pms.dto.PmsAgentSupplyEvidenceDTO;
+import com.kitex.mom.pms.dto.PmsAgentSupplyEvidenceQueryDTO;
+import com.kitex.mom.pms.dto.PmsPlanSupplyWithdrawalDTO;
 import com.kitex.mom.pms.entity.PmsPlanEntity;
 import com.kitex.mom.pms.enums.PmsPlanStatusEnum;
 import com.kitex.mom.pms.service.PmsPlanService;
@@ -165,7 +168,7 @@ public class PmsPlanController {
     @PutMapping
     @PreAuthorize("@pms.hasPermission('pms_pmsPlan_edit')")
     public R<Boolean> updateById(@RequestBody PmsPlanEntity pmsPlan) {
-        return R.ok(pmsPlanService.updateById(pmsPlan));
+        return R.ok(pmsPlanService.updatePlan(pmsPlan));
     }
 
     /**
@@ -179,7 +182,7 @@ public class PmsPlanController {
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('pms_pmsPlan_del')")
     public R<Boolean> removeById(@RequestBody Long[] ids) {
-        return R.ok(pmsPlanService.removeBatchByIds(CollUtil.toList(ids)));
+        return R.ok(pmsPlanService.removePlans(CollUtil.toList(ids)));
     }
 
     /**
@@ -233,6 +236,26 @@ public class PmsPlanController {
     @GetMapping("/omsLife")
     public R<List<PmsPlanEntity>> omsLife(@RequestParam("orderNo") String orderNo) {
         return R.ok(pmsPlanService.omsLife(orderNo));
+    }
+
+    @Operation(summary = "Agent批量查询采购/外协供应证据", description = "仅返回指定工厂和计划需求范围内的确定性供应计划、下单和到货数量")
+    @PostMapping("/agent/supply-evidence")
+    @PreAuthorize("@pms.hasPermission('agent:shortage:run')")
+    public R<List<PmsAgentSupplyEvidenceDTO>> agentSupplyEvidence(@RequestBody PmsAgentSupplyEvidenceQueryDTO query) {
+        return R.ok(pmsPlanService.agentSupplyEvidence(query));
+    }
+
+    @Operation(summary = "PLAN来源采购/外协计划幂等创建")
+    @PostMapping("/internal/source-plan")
+    public R<PmsPlanEntity> saveFromPlanSource(@RequestBody PmsPlanEntity plan) {
+        return R.ok(pmsPlanService.saveFromPlanSource(plan));
+    }
+
+    @Operation(summary = "PLAN级联撤回PMS采购/外协供应计划")
+    @PostMapping("/internal/supply-withdrawal")
+    public R<PmsPlanSupplyWithdrawalDTO.Receipt> withdrawSupplyPlan(
+            @RequestBody PmsPlanSupplyWithdrawalDTO.Command command) {
+        return R.ok(pmsPlanService.withdrawSupplyPlan(command));
     }
 
 }

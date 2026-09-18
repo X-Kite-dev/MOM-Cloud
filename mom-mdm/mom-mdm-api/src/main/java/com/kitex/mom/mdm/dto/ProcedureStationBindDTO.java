@@ -80,6 +80,18 @@ public class ProcedureStationBindDTO {
         @Schema(description = "工位产能（件/小时）")
         private BigDecimal stationCapacity;
 
+        @Schema(description = "工位并行资源槽位数")
+        private Integer parallelCapacity;
+
+        @Schema(description = "跨工位共享资源组编码")
+        private String resourceGroupCode;
+
+        @Schema(description = "跨工位共享资源组名称")
+        private String resourceGroupName;
+
+        @Schema(description = "资源组共享并行容量")
+        private Integer resourceGroupCapacity;
+
         /**
          * 线体信息
          */

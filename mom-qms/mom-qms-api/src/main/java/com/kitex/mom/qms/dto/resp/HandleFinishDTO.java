@@ -7,6 +7,8 @@ import lombok.experimental.Accessors;
 @Accessors(chain = true)
 public class HandleFinishDTO {
 
+    private String requestId;
+
     private Long id;
 
     private Integer handleNum;

@@ -24,6 +24,7 @@ import com.kitex.mom.wms.entity.*;
 import com.kitex.mom.wms.enums.*;
 import com.kitex.mom.wms.mapper.*;
 import com.kitex.mom.wms.service.WmsDeliverGoodsReturnService;
+import com.kitex.mom.wms.service.WmsMaterialReservationService;
 import com.kitex.mom.wms.vo.WmsInBillDetailExcelVO;
 import com.kitex.mom.wms.vo.WmsInBillExcelVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -64,6 +65,9 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 
     @Autowired
     private WmsDeliverGoodsReturnService wmsDeliverGoodsReturnService;
+
+    @Autowired
+    private WmsMaterialReservationService wmsMaterialReservationService;
 
     @Autowired
     private RemoteSeqConfigService remoteSeqConfigService;
@@ -181,7 +185,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
                 wmsDeliverGoodsReturnService.updateReturnByBill(inBill);
             }
         } catch (Exception e) {
-            throw new RuntimeException("更新退货信息失败！");
+            throw new RuntimeException("更新退货信息失败：" + e.getMessage(), e);
         }
 
         return Boolean.TRUE;
@@ -270,7 +274,9 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
         Assert.isTrue(InBillTypeEnum.isValid(entity.getBillType()) || OtherInBillTypeEnum.isValid(entity.getBillType()), "无效的单据类型：" + entity.getBillType());
 
         // 3. 校验明细是否重复
-        Map<String, List<WmsInBillDetailEntity>> collectGroup = entity.getDetails().stream().collect(Collectors.groupingBy(it -> it.getMatCode() + it.getSiteCode() + it.getContainerCode() + it.getMatBatch() + it.getSupplierCode()));
+        Map<String, List<WmsInBillDetailEntity>> collectGroup = entity.getDetails().stream().collect(Collectors.groupingBy(it ->
+                it.getMatCode() + it.getSiteCode() + it.getContainerCode() + it.getMatBatch() + it.getSupplierCode()
+                        + it.getReservationNo() + it.getRequirementMatCode()));
         for (List<WmsInBillDetailEntity> value : collectGroup.values()) {
             if (value.size() > 1) {
                 throw new CheckedException("数据重复【物料编码：" + value.get(0).getMatCode()
@@ -445,7 +451,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
                 wmsDeliverGoodsReturnService.updateReturnByBill(bill);
             }
         } catch (Exception e) {
-            throw new RuntimeException("更新退货信息失败！");
+            throw new RuntimeException("更新退货信息失败：" + e.getMessage(), e);
         }
 
         return Boolean.TRUE;
@@ -592,6 +598,10 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
             BeanUtil.copyProperties(detail, liveStock, "id");
             liveStock.setStatus(0);
             wmsLiveStockMapper.insert(liveStock);
+            if (InBillTypeEnum.RETURN.getCode().equals(inBill.getBillType())
+                    && StrUtil.isNotBlank(detail.getReservationNo())) {
+                wmsMaterialReservationService.replenishFromProductionReturn(detail, liveStock.getId());
+            }
             // 入库流水
             WmsInoutFlowEntity inoutFlow = new WmsInoutFlowEntity();
             BeanUtil.copyProperties(detail, inoutFlow, "id");

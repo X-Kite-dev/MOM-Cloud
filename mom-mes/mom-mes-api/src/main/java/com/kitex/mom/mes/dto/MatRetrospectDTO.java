@@ -13,6 +13,9 @@ import java.time.LocalDate;
  */
 @Data
 public class MatRetrospectDTO {
+    private String matCode;
+    @Schema(description = "FEED_HISTORY投料历史或BACKFLUSH_HISTORY倒冲历史；不是净消耗证明")
+    private String sourceType;
 
     // ------基本信息-------
 

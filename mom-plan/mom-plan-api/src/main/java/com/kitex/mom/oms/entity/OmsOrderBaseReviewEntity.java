@@ -99,6 +99,20 @@ public class OmsOrderBaseReviewEntity extends BaseEntity<OmsOrderBaseReviewEntit
     @Schema(description = "变更信息")
     private String changeMsg;
 
+    @Schema(description = "本轮订单变更申请人编码")
+    private String changeApplicantCode;
+
+    private String changeApplicantName;
+
+    private java.time.LocalDateTime changeSubmittedTime;
+
+    @Schema(description = "本轮订单变更复核人编码")
+    private String changeReviewerCode;
+
+    private String changeReviewerName;
+
+    private java.time.LocalDateTime changeReviewedTime;
+
     /**
      * remark
      */

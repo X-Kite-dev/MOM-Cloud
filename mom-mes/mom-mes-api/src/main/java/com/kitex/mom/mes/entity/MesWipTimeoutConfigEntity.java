@@ -49,6 +49,21 @@ public class MesWipTimeoutConfigEntity extends BaseEntity<MesWipTimeoutConfigEnt
     @Schema(description = "L3 通知角色（逗号分隔）")
     private String level3NotifyRoles;
 
+    @Schema(description = "处置验证角色（逗号分隔）")
+    private String verifyRoles;
+
+    @Schema(description = "L1 通知通道（逗号分隔：SYSTEM,DINGDING,WECHAT,SMS,EMAIL）")
+    private String level1NotifyChannels;
+
+    @Schema(description = "L2 通知通道（逗号分隔：SYSTEM,DINGDING,WECHAT,SMS,EMAIL）")
+    private String level2NotifyChannels;
+
+    @Schema(description = "L3 通知通道（逗号分隔：SYSTEM,DINGDING,WECHAT,SMS,EMAIL）")
+    private String level3NotifyChannels;
+
+    @Schema(description = "同级重复通知冷却分钟数（为空走系统默认30）")
+    private Integer notifyCooldownMin;
+
     @Schema(description = "是否启用 1=是 0=否")
     private String enabled;
 

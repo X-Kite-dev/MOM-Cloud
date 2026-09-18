@@ -77,6 +77,15 @@ public class PlnProductDemandExcelVO implements Serializable {
     @ExcelProperty("产品规格")
     private String specification;
 
+    @Schema(description = "需求领料仓库编码")
+    @NotNull(message = "需求领料仓库编码不能为空")
+    @ExcelProperty("需求领料仓库编码")
+    private String demandWarehouseCode;
+
+    @Schema(description = "需求领料仓库名称")
+    @ExcelProperty("需求领料仓库名称")
+    private String demandWarehouseName;
+
     /**
      * 需求日期
      */
@@ -92,6 +101,10 @@ public class PlnProductDemandExcelVO implements Serializable {
     @NotNull(message = "需求数量不能为空")
     @ExcelProperty("需求数量")
     private BigDecimal needNum;
+
+    @Schema(description = "同一需求日期时间桶内的MRP库存分配优先级，1-999且数值越大越优先")
+    @ExcelProperty("MRP优先级")
+    private Integer mrpPriority;
 
     /**
      * 计划状态 - 0: 未接受, 1: 已接收

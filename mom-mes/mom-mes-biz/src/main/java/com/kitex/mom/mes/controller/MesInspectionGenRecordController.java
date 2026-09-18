@@ -5,7 +5,6 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
-import com.kitex.common.log.annotation.SysLog;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.mom.mes.entity.MesInspectionGenRecordEntity;
 import com.kitex.mom.mes.service.MesInspectionGenRecordService;
@@ -14,6 +13,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -41,6 +41,7 @@ public class MesInspectionGenRecordController {
 
     @Operation(summary = "分页查询", description = "分页查询")
     @GetMapping("/page")
+    @PreAuthorize("@pms.hasPermission('mesInspectionGenRecord:show')")
     public R<IPage<MesInspectionGenRecordEntity>> getMesInspectionGenRecordPage(Page<MesInspectionGenRecordEntity> page, MesInspectionGenRecordEntity query) {
         QueryWrapper<MesInspectionGenRecordEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
         return R.ok(mesInspectionGenRecordService.page(page, autoQueryWrapper));
@@ -54,46 +55,9 @@ public class MesInspectionGenRecordController {
      */
     @Operation(summary = "通过id查询", description = "通过id查询")
     @GetMapping("/{id}")
+    @PreAuthorize("@pms.hasPermission('mesInspectionGenRecord:show')")
     public R getById(@PathVariable("id") Long id) {
         return R.ok(mesInspectionGenRecordService.getById(id));
     }
 
-    /**
-     * 新增质检任务生成记录
-     *
-     * @param mesInspectionGenRecord 质检任务生成记录
-     * @return R
-     */
-    @Operation(summary = "新增质检任务生成记录", description = "新增质检任务生成记录")
-    @SysLog("新增质检任务生成记录")
-    @PostMapping
-    public R save(@RequestBody MesInspectionGenRecordEntity mesInspectionGenRecord) {
-        return R.ok(mesInspectionGenRecordService.save(mesInspectionGenRecord));
-    }
-
-    /**
-     * 修改质检任务生成记录
-     *
-     * @param mesInspectionGenRecord 质检任务生成记录
-     * @return R
-     */
-    @Operation(summary = "修改质检任务生成记录", description = "修改质检任务生成记录")
-    @SysLog("修改质检任务生成记录")
-    @PutMapping
-    public R updateById(@RequestBody MesInspectionGenRecordEntity mesInspectionGenRecord) {
-        return R.ok(mesInspectionGenRecordService.updateById(mesInspectionGenRecord));
-    }
-
-    /**
-     * 通过id删除质检任务生成记录
-     *
-     * @param id id
-     * @return R
-     */
-    @Operation(summary = "通过id删除质检任务生成记录", description = "通过id删除质检任务生成记录")
-    @SysLog("通过id删除质检任务生成记录")
-    @DeleteMapping("/{id}")
-    public R removeById(@PathVariable Long id) {
-        return R.ok(mesInspectionGenRecordService.removeById(id));
-    }
 }

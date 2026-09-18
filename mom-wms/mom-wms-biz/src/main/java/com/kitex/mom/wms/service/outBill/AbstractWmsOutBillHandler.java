@@ -23,12 +23,15 @@ import com.kitex.mom.wms.enums.*;
 import com.kitex.mom.wms.mapper.*;
 import com.kitex.mom.wms.service.WmsDeliverGoodsBaseService;
 import com.kitex.mom.wms.service.WmsLiveStockService;
+import com.kitex.mom.wms.service.WmsMaterialReservationService;
+import com.kitex.mom.wms.service.WmsSalesStockReservationService;
 import com.kitex.mom.wms.service.WmsPickingAreaService;
 import com.kitex.mom.wms.vo.WmsOutBillDetailExcelVO;
 import com.kitex.mom.wms.vo.WmsOutBillExcelVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Function;
@@ -67,6 +70,11 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
     @Autowired
     private RemoteSeqConfigService remoteSeqConfigService;
 
+    @Autowired
+    private WmsMaterialReservationService materialReservationService;
+    @Autowired
+    private WmsSalesStockReservationService salesStockReservationService;
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveDeep(WmsOutBillEntity entity) {
@@ -87,6 +95,10 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
     public void beforeSaveDeep(WmsOutBillEntity entity) {
         // 1. 校验数据完整性
         checkData(entity);
+
+        // 预留批次可能在页面打开后发生质量漂移或受控重配，落单前必须在同一事务内重新锁定复核。
+        materialReservationService.validateOutboundReservation(entity.getDetails());
+        salesStockReservationService.validateOutboundReservation(entity.getDetails());
 
         // 2. 校验仓库是否支持该业务
         checkWarehouse(entity.getWarehouseCode(), entity.getBillType());
@@ -280,6 +292,13 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
         );
         notice.setDetails(details);
 
+        if (notice.getNoticeId() != null) {
+            WmsOutNoticeEntity sourceNotice = wmsOutNoticeMapper.selectById(notice.getNoticeId());
+            if (sourceNotice == null) throw new CheckedException("出库来源通知不存在，无法核验业务单据");
+            notice.setDocumentId(sourceNotice.getDocumentId());
+            notice.setDocumentTable(sourceNotice.getDocumentTable());
+        }
+
         return notice;
     }
 
@@ -413,7 +432,9 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
     @Transactional
     public Boolean passBill(Long id) {
         // 1. 校验出库单状态
-        WmsOutBillEntity bill = wmsOutBillMapper.selectById(id);
+        WmsOutBillEntity bill = wmsOutBillMapper.selectOne(Wrappers.<WmsOutBillEntity>lambdaQuery()
+                .eq(BaseEntity::getId, id).last("FOR UPDATE"));
+        Assert.notNull(bill, "出库单不存在");
         InOutBillStateEnum state = InOutBillStateEnum.getByCode(bill.getState());
         Assert.notNull(state, "出库单状态无效");
         Assert.isTrue(state.isReviewable(), String.format("出库单[%s]当前状态[%s]不允许审核", bill.getBillNo(), state.getDesc()));
@@ -426,6 +447,8 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
         bill.setDetails(billDetails);
         // 修改出库单明细数、出库时间和状态
         LocalDateTime now = LocalDateTime.now();
+        bill.setState(InOutBillStateEnum.PASSED.getCode());
+        bill.setOutTime(now);
         wmsOutBillMapper.update(Wrappers.<WmsOutBillEntity>lambdaUpdate()
                 .set(WmsOutBillEntity::getState, InOutBillStateEnum.PASSED.getCode())
                 .set(WmsOutBillEntity::getDetailFinishNum, billDetails.size())
@@ -612,14 +635,35 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
         List<WmsOutBillDetailEntity> details = outBill.getDetails();
         for (WmsOutBillDetailEntity detail : details) {
             // 处理实时库存  由物料编码、供应商编码、批次、容器码、库位 确定出库的物料
-            wmsLiveStockService.reduceStockWhenOut(detail);
-            // 出库流水
-            WmsInoutFlowEntity inoutFlow = new WmsInoutFlowEntity();
-            BeanUtil.copyProperties(detail, inoutFlow, "id");
-            inoutFlow.setBillNo(outBill.getBillNo());
-            inoutFlow.setBillType(outBill.getBillType());
-            inoutFlow.setOperateType(InOutEnum.OUT.getCode());
-            wmsInoutFlowMapper.insert(inoutFlow);
+            List<WmsLiveStockEntity> stockOuted = wmsLiveStockService.reduceStockWhenOut(detail);
+            if (CollUtil.isEmpty(stockOuted)) {
+                throw new CheckedException("出库未形成实际库存扣减证据");
+            }
+            BigDecimal proofTotal = stockOuted.stream().map(item -> BigDecimal.valueOf(item.getMatNum()))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (detail.getMatNum() == null || proofTotal.compareTo(BigDecimal.valueOf(detail.getMatNum())) != 0) {
+                throw new CheckedException("实际库存扣减证据与出库明细数量不守恒");
+            }
+            // 一条实际被消耗库存行形成一条不可拆分证据，保留批次、库位、容器、质量与首次入库时间。
+            for (WmsLiveStockEntity stock : stockOuted) {
+                WmsInoutFlowEntity inoutFlow = new WmsInoutFlowEntity();
+                BeanUtil.copyProperties(stock, inoutFlow, "id");
+                inoutFlow.setBillId(outBill.getId());
+                inoutFlow.setBillDetailId(detail.getId());
+                inoutFlow.setSourceStockId(stock.getId());
+                inoutFlow.setStockProofType(OutBillTypeEnum.SALES_OUT.getCode().equals(outBill.getBillType())
+                        ? "SALES_SHIPMENT" : "OUTBOUND");
+                inoutFlow.setOperationRequestId("OUT-STOCK:" + detail.getId() + ":" + stock.getId());
+                inoutFlow.setBillNo(outBill.getBillNo());
+                inoutFlow.setBillType(outBill.getBillType());
+                inoutFlow.setOperateType(InOutEnum.OUT.getCode());
+                inoutFlow.setStockInTime(stock.getInTime());
+                inoutFlow.setExpirationStatus(stock.getExpirationStatus());
+                inoutFlow.setSlowMaterialStatus(stock.getSlowMaterialStatus());
+                if (wmsInoutFlowMapper.insert(inoutFlow) != 1) {
+                    throw new CheckedException("出库精确库存证据保存失败");
+                }
+            }
         }
 
     }

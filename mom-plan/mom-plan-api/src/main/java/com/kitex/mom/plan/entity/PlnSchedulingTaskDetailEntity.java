@@ -85,6 +85,51 @@ public class PlnSchedulingTaskDetailEntity extends BaseEntity<PlnSchedulingTaskD
     @Schema(description = "工艺路线编码（快照，用于冲突检测）")
     private String processRouteCode;
 
+    @Schema(description = "物料约束状态：READY、WAITING_SUPPLY及各类硬阻断状态")
+    private String materialConstraintStatus;
+
+    @Schema(description = "所有下级物料预计齐套后的最早可开工日期")
+    private LocalDate materialAvailableDate;
+
+    @Schema(description = "所有下级物料逐层汇合后的分钟级最早可开工时刻")
+    private LocalDateTime materialAvailableTime;
+
+    @Schema(description = "物料约束是否硬阻断正式锁定")
+    private Boolean materialHardBlocked;
+
+    @Schema(description = "物料约束业务摘要")
+    private String materialConstraintSummary;
+
+    @Schema(description = "MRP物料约束明细JSON快照")
+    private String materialConstraintSnapshot;
+
+    @Schema(description = "逐工序物料汇合约束JSON快照")
+    private String operationMaterialConstraintSnapshot;
+
+    @Schema(description = "本次MRP BOM路径证据综合指纹")
+    private String materialLineageFingerprint;
+
+    @Schema(description = "最近一次物料约束复核时间")
+    private LocalDateTime materialConstraintCheckedTime;
+
+    @Schema(description = "工序级有限产能排程状态")
+    private String operationScheduleStatus;
+
+    @Schema(description = "工序级排程是否硬阻断")
+    private Boolean operationHardBlocked;
+
+    @Schema(description = "工序级排程摘要")
+    private String operationScheduleSummary;
+
+    @Schema(description = "排产工序数量")
+    private Integer operationCount;
+
+    @Schema(description = "首道工序计划开始时间")
+    private LocalDateTime operationStartTime;
+
+    @Schema(description = "末道工序计划结束时间")
+    private LocalDateTime operationEndTime;
+
     @Schema(description = "工厂编码")
     @TableField(fill = FieldFill.INSERT)
     private String factoryCode;

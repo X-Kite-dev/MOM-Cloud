@@ -1,9 +1,8 @@
 package com.kitex.mom.mes.process;
 
 import com.kitex.mom.mes.dto.MesTaskReportVO;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
-
-import java.util.Map;
+import com.kitex.mom.mes.dto.MesTaskReportResult;
+import com.kitex.mom.mes.enums.ReportModeEnum;
 
 /**
  * 工序报工
@@ -19,12 +18,7 @@ public interface ProcessOperation {
      * @param params 报工参数
      * @return 报工结果
      */
-    Map<String, Object> execute(MesTaskReportVO params);
-
-    /**
-     * 通用报工
-     */
-    MesTaskReportEntity report(MesTaskReportVO params);
+    MesTaskReportResult execute(MesTaskReportVO params);
 
     /**
      * 物料消耗
@@ -42,7 +36,11 @@ public interface ProcessOperation {
      *
      * @return 报工方式编码
      */
-    String getCode();
+    ReportModeEnum getMode();
+
+    default String getCode() {
+        return getMode().getCode();
+    }
 
 
     /**
@@ -52,5 +50,4 @@ public interface ProcessOperation {
         return "报工描述";
     }
 
-    ;
 }

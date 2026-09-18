@@ -41,8 +41,9 @@ public class MesChangePointConfigController {
 
     @Operation(summary = "变化点配置接收", description = "变化点配置接收")
     @PostMapping("/add")
+    @PreAuthorize("@pms.hasPermission('mesChangePointConfig:add')")
     public R<Void> add(@RequestBody MesChangePointConfigEntity params) {
-        service.save(params);
+        service.saveData(params);
         return R.ok();
     }
 
@@ -50,15 +51,7 @@ public class MesChangePointConfigController {
     @PostMapping("/update")
     @PreAuthorize("@pms.hasPermission('mesChangePointConfig:update')")
     public R<Void> update(@RequestBody MesChangePointConfigEntity mesChangePointConfig) {
-        service.updateById(mesChangePointConfig);
-        return R.ok();
-    }
-
-    @Operation(summary = "变化点配置编辑", description = "变化点配置编辑")
-    @PostMapping("/set")
-    @PreAuthorize("@pms.hasPermission('mesChangePointConfig:update')")
-    public R<Void> set(@RequestBody MesChangePointConfigEntity mesChangePointConfig) {
-        service.set(mesChangePointConfig);
+        service.updateData(mesChangePointConfig);
         return R.ok();
     }
 
@@ -73,7 +66,7 @@ public class MesChangePointConfigController {
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('mesChangePointConfig:delete')")
     public R<Void> removeById(@RequestBody Long[] ids) {
-        service.removeBatchByIds(CollUtil.toList(ids));
+        service.removeUnused(CollUtil.toList(ids));
         return R.ok();
     }
 }

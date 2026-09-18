@@ -79,6 +79,22 @@ public class OmsOrderDetailsEntity extends Model<OmsOrderDetailsEntity> {
     @Schema(description = "已交付数量")
     private BigDecimal deliveredNum;
 
+    /** 客户签收累计量；与仓库出库/退货净交付量分账。 */
+    @Schema(description = "客户签收累计量")
+    private BigDecimal customerSignedNum;
+
+    /** 客户拒收、破损、丢失累计量；等待退货、补发或索赔闭环。 */
+    @Schema(description = "客户交付异常累计量")
+    private BigDecimal customerExceptionNum;
+
+    /** 已由补发签收、退款或让步结案冲销的客户异常累计量。 */
+    @Schema(description = "客户交付异常已解决累计量")
+    private BigDecimal customerResolvedExceptionNum;
+
+    /** 退款或商业让步已结案的异常量；用于与补发签收区分订单完成口径。 */
+    @Schema(description = "客户异常结算关闭累计量")
+    private BigDecimal customerSettlementResolvedNum;
+
     /**
      * 备注
      */
@@ -99,6 +115,17 @@ public class OmsOrderDetailsEntity extends Model<OmsOrderDetailsEntity> {
 
     @TableField(exist = false)
     private BigDecimal operateNum;
+
+    @TableField(exist = false)
+    @Schema(description = "已下发PLAN来源需求状态，供OMS变更界面解释可编辑边界")
+    private String planDemandState;
+
+    @TableField(exist = false)
+    @Schema(description = "仅PLAN来源需求仍是无下游事实的未接收草案时允许订单行数量/交期同步变更")
+    private Boolean planDemandEditable;
+
+    @TableField(exist = false)
+    private String planDemandBlockReason;
 
     /**
      * 工厂编码

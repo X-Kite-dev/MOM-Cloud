@@ -4,8 +4,13 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.dto.AndonNoticeResp;
+import com.kitex.mom.mes.dto.AndonRecordCancelVO;
 import com.kitex.mom.mes.dto.AndonRecordHandleVO;
+import com.kitex.mom.mes.dto.AndonRecordVerifyVO;
+import com.kitex.mom.mes.entity.MesAndonOperationEntity;
 import com.kitex.mom.mes.entity.MesAndonRecordEntity;
+
+import java.util.List;
 
 public interface MesAndonRecordService extends IService<MesAndonRecordEntity> {
 
@@ -23,14 +28,14 @@ public interface MesAndonRecordService extends IService<MesAndonRecordEntity> {
      *
      * @param mesAndonRecord
      */
-    void saveData(MesAndonRecordEntity mesAndonRecord);
+    MesAndonRecordEntity saveData(MesAndonRecordEntity mesAndonRecord);
 
     /**
      * 撤销
      *
      * @param id
      */
-    void cancel(Long id);
+    void cancel(AndonRecordCancelVO vo);
 
     /**
      * 关闭
@@ -52,5 +57,9 @@ public interface MesAndonRecordService extends IService<MesAndonRecordEntity> {
      * @param vo
      */
     void handle(AndonRecordHandleVO vo);
+
+    void verify(AndonRecordVerifyVO vo);
+
+    List<MesAndonOperationEntity> listOperations(Long recordId);
 
 }

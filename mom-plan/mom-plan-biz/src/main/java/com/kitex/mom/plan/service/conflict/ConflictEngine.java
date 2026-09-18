@@ -33,9 +33,120 @@ public class ConflictEngine {
         }
 
         List<PlnSchedulingConflictEntity> result = new ArrayList<>();
+        result.addAll(detectMaterialConstraints(taskId, taskDetails));
+        result.addAll(detectOperationConstraints(taskId, taskDetails));
         result.addAll(detectSameProductSameDayConcentration(taskId, taskDetails));
         result.addAll(detectMissingProcessRoute(taskId, taskDetails));
         return result;
+    }
+
+    /**
+     * 物料约束在正式锁定时属于硬约束。排产快照生成时已经评估一次，锁定前会重新读取MRP和WMS复核。
+     */
+    private List<PlnSchedulingConflictEntity> detectMaterialConstraints(
+            Long taskId, List<PlnSchedulingTaskDetailEntity> taskDetails) {
+        List<PlnSchedulingConflictEntity> conflicts = new ArrayList<>();
+        for (PlnSchedulingTaskDetailEntity detail : taskDetails) {
+            String status = StrUtil.blankToDefault(detail.getMaterialConstraintStatus(), "MRP_NOT_CALCULATED");
+            String conflictType = null;
+            if (Boolean.TRUE.equals(detail.getMaterialHardBlocked())) {
+                conflictType = switch (status) {
+                    case "SUPPLY_NOT_RELEASED" -> "MATERIAL_SUPPLY_NOT_RELEASED";
+                    case "SUPPLY_OVERDUE" -> "MATERIAL_SUPPLY_OVERDUE";
+                    case "SUPPLY_DATE_MISSING" -> "MATERIAL_SUPPLY_DATE_MISSING";
+                    case "SUBSTITUTE_PENDING" -> "MATERIAL_SUBSTITUTE_PENDING";
+                    case "POLICY_CONFLICT" -> "MATERIAL_POLICY_CONFLICT";
+                    case "MULTILEVEL_SUBSTITUTE_RECALC_REQUIRED" -> "MATERIAL_MULTILEVEL_RECALC_REQUIRED";
+                    case "RESERVATION_RISK" -> "MATERIAL_RESERVATION_RISK";
+                    case "RESERVATION_UNVERIFIED" -> "MATERIAL_RESERVATION_UNVERIFIED";
+                    case "SUPPLY_EVIDENCE_UNVERIFIED" -> "MATERIAL_SUPPLY_EVIDENCE_UNVERIFIED";
+                    case "BOM_LINEAGE_INVALID" -> "MATERIAL_BOM_LINEAGE_INVALID";
+                    case "MATERIAL_OPERATION_MAPPING_MISSING" -> "MATERIAL_OPERATION_MAPPING_MISSING";
+                    case "MULTILEVEL_CONVERGENCE_CONFLICT" -> "MATERIAL_MULTILEVEL_CONVERGENCE_CONFLICT";
+                    default -> "MATERIAL_MRP_NOT_CALCULATED";
+                };
+            } else if (detail.getMaterialAvailableDate() != null && detail.getScheduledDate() != null
+                    && detail.getScheduledDate().isBefore(detail.getMaterialAvailableDate())) {
+                conflictType = "MATERIAL_NOT_AVAILABLE_AT_START";
+            }
+            if (conflictType == null) {
+                continue;
+            }
+            PlnSchedulingConflictEntity conflict = new PlnSchedulingConflictEntity();
+            conflict.setTaskId(taskId);
+            conflict.setIssueId(detail.getIssueId());
+            conflict.setIssueNo(detail.getIssueNo());
+            conflict.setProductCode(detail.getProductCode());
+            conflict.setConflictType(conflictType);
+            conflict.setConflictLevel("HIGH");
+            conflict.setHardConstraint(Boolean.TRUE);
+            String summary = StrUtil.blankToDefault(detail.getMaterialConstraintSummary(), "物料约束未通过");
+            if ("MATERIAL_NOT_AVAILABLE_AT_START".equals(conflictType)) {
+                summary = "计划开工日" + detail.getScheduledDate() + "早于预计齐料日"
+                        + detail.getMaterialAvailableDate() + "；" + summary;
+            }
+            conflict.setConflictContent(summary);
+            conflict.setResolved(Boolean.FALSE);
+            conflict.setFactoryCode(detail.getFactoryCode());
+            conflicts.add(conflict);
+        }
+        return conflicts;
+    }
+
+    /**
+     * 工序级资源排程是正式锁定的硬边界，禁止缺路线、缺时间、缺资源或资源重叠的计划落锁。
+     */
+    private List<PlnSchedulingConflictEntity> detectOperationConstraints(
+            Long taskId, List<PlnSchedulingTaskDetailEntity> taskDetails) {
+        List<PlnSchedulingConflictEntity> conflicts = new ArrayList<>();
+        for (PlnSchedulingTaskDetailEntity detail : taskDetails) {
+            if (!Boolean.TRUE.equals(detail.getOperationHardBlocked())) {
+                continue;
+            }
+            String status = StrUtil.blankToDefault(detail.getOperationScheduleStatus(), "OPERATION_SNAPSHOT_MISSING");
+            String conflictType = switch (status) {
+                case "ROUTE_MISSING" -> "OPERATION_ROUTE_MISSING";
+                case "OPERATION_MISSING" -> "OPERATION_LIST_MISSING";
+                case "RESOURCE_MISSING" -> "OPERATION_RESOURCE_MISSING";
+                case "DURATION_MISSING" -> "OPERATION_DURATION_MISSING";
+                case "CALENDAR_EXHAUSTED" -> "OPERATION_CALENDAR_EXHAUSTED";
+                case "OPERATION_TIME_INVALID" -> "OPERATION_TIME_INVALID";
+                case "PRECEDENCE_INVALID" -> "OPERATION_PRECEDENCE_INVALID";
+                case "COMPLETION_AFTER_DEMAND" -> "OPERATION_COMPLETION_AFTER_DEMAND";
+                case "RESOURCE_OVERLAP" -> "OPERATION_RESOURCE_OVERLAP";
+                case "RESOURCE_INVALID" -> "OPERATION_RESOURCE_INVALID";
+                case "RESOURCE_UNVERIFIED" -> "OPERATION_RESOURCE_UNVERIFIED";
+                case "DEVICE_UNAVAILABLE" -> "OPERATION_DEVICE_UNAVAILABLE";
+                case "DEVICE_UNVERIFIED" -> "OPERATION_DEVICE_UNVERIFIED";
+                case "DEVICE_BINDING_INVALID" -> "OPERATION_DEVICE_BINDING_INVALID";
+                case "WORKFORCE_MISSING" -> "OPERATION_WORKFORCE_MISSING";
+                case "WORKFORCE_UNQUALIFIED" -> "OPERATION_WORKFORCE_UNQUALIFIED";
+                case "WORKFORCE_UNAVAILABLE" -> "OPERATION_WORKFORCE_UNAVAILABLE";
+                case "WORKFORCE_UNVERIFIED" -> "OPERATION_WORKFORCE_UNVERIFIED";
+                case "WORKFORCE_BINDING_INVALID" -> "OPERATION_WORKFORCE_BINDING_INVALID";
+                case "TOOLING_MISSING" -> "OPERATION_TOOLING_MISSING";
+                case "TOOLING_UNQUALIFIED" -> "OPERATION_TOOLING_UNQUALIFIED";
+                case "TOOLING_UNAVAILABLE" -> "OPERATION_TOOLING_UNAVAILABLE";
+                case "TOOLING_UNVERIFIED" -> "OPERATION_TOOLING_UNVERIFIED";
+                case "TOOLING_BINDING_INVALID" -> "OPERATION_TOOLING_BINDING_INVALID";
+                case "TOOLING_LIFE_INSUFFICIENT" -> "OPERATION_TOOLING_LIFE_INSUFFICIENT";
+                default -> "OPERATION_SNAPSHOT_MISSING";
+            };
+            PlnSchedulingConflictEntity conflict = new PlnSchedulingConflictEntity();
+            conflict.setTaskId(taskId);
+            conflict.setIssueId(detail.getIssueId());
+            conflict.setIssueNo(detail.getIssueNo());
+            conflict.setProductCode(detail.getProductCode());
+            conflict.setConflictType(conflictType);
+            conflict.setConflictLevel("HIGH");
+            conflict.setHardConstraint(Boolean.TRUE);
+            conflict.setConflictContent(StrUtil.blankToDefault(detail.getOperationScheduleSummary(),
+                    "工序级有限产能排程未通过"));
+            conflict.setResolved(Boolean.FALSE);
+            conflict.setFactoryCode(detail.getFactoryCode());
+            conflicts.add(conflict);
+        }
+        return conflicts;
     }
 
     /**
@@ -104,6 +215,10 @@ public class ConflictEngine {
         for (PlnSchedulingTaskDetailEntity detail : taskDetails) {
             String productCode = detail.getProductCode();
             if (productCode == null) {
+                continue;
+            }
+            // 新任务已经由工序级排程将缺路线作为硬冲突处理；此分支只兼容历史任务快照。
+            if (StrUtil.isNotBlank(detail.getOperationScheduleStatus())) {
                 continue;
             }
             if (StrUtil.isNotBlank(detail.getProcessRouteCode())) {

@@ -28,6 +28,25 @@ import java.time.LocalDateTime;
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "线边库实时库存")
 public class MesWarehouseLiveStockEntity extends BaseEntity<MesWarehouseLiveStockEntity> {
+    /** 独立实物质量案件；原报工放行不能解除此隔离。 */
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    private Long qualityCaseId;
+    /** 隔离根库存最后一次数量变动回执；新放行行以origin字段保留谱系。 */
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    private Long qualityDispositionReceiptId;
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    private Long qualityOriginCaseId;
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    private Long qualityReleaseReceiptId;
+    private Long materialReceiptId;
+
+    @Schema(description = "库存来源报工记录ID")
+    private Long sourceReportId;
+
+    @Schema(description = "最近一次转运确认的现场库位，独立于来源工序库位")
+    private String physicalLocationCode;
+    private String physicalLocationName;
+    private LocalDateTime physicalConfirmedTime;
 
     /**
      * 单据号
@@ -41,11 +60,32 @@ public class MesWarehouseLiveStockEntity extends BaseEntity<MesWarehouseLiveStoc
     @Schema(description = "工序任务编号")
     private String produceTaskCode;
 
+    @Schema(description = "来源工序编码")
+    private String routeCode;
+
+    @Schema(description = "来源工序名称")
+    private String routeName;
+
     /**
      * 物料编码
      */
     @Schema(description = "物料编码")
     private String matCode;
+
+    @Schema(description = "WMS物料预留单号")
+    private String reservationNo;
+
+    @Schema(description = "BOM需求物料编码")
+    private String requirementMatCode;
+
+    @Schema(description = "BOM需求物料名称")
+    private String requirementMatName;
+
+    @Schema(description = "是否为替代料")
+    private Boolean substituteFlag;
+
+    @Schema(description = "替代比例")
+    private BigDecimal substituteRatio;
 
     /**
      * 物料名称

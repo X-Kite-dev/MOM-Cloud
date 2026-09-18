@@ -14,9 +14,12 @@ import lombok.Getter;
 public enum WarehouseInBizTypeEnum {
 
     RECEPTION("reception", "物料接收"),
+    RECEPTION_REVERSE("reception_reverse", "线边签收冲销"),
     PROCESS_PRODUCT_IN("process_product_in", "工序生产入库"),
     PROCESS_PRODUCT_OUT("process_product_out", "工序生产出库"),
     BACK_FLUSH_OUT("back_flush_out", "倒冲出库"),
+    REPORT_REVERSE_PRODUCT_OUT("report_reverse_product_out", "报工冲销产出退回"),
+    REPORT_REVERSE_MATERIAL_IN("report_reverse_material_in", "报工冲销物料恢复"),
     SURPLUS("surplus", "余料入库"),
     INVENTORY_IN("inventory_in", "盘点入库");
 

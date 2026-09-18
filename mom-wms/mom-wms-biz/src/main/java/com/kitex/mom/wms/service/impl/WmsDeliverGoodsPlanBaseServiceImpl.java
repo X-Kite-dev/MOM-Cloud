@@ -9,7 +9,9 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.entity.BaseCore;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.oms.entity.OmsOrderDetailsEntity;
@@ -24,6 +26,7 @@ import com.kitex.mom.wms.mapper.WmsDeliverGoodsBaseMapper;
 import com.kitex.mom.wms.mapper.WmsDeliverGoodsPlanBaseMapper;
 import com.kitex.mom.wms.service.WmsDeliverGoodsDetailsService;
 import com.kitex.mom.wms.service.WmsDeliverGoodsPlanBaseService;
+import com.kitex.mom.wms.service.WmsSalesStockReservationService;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,6 +54,7 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
     private final RemoteOmsOrderService remoteOmsOrderService;
 
     private final RemoteMaterialService remoteMaterialService;
+    private final WmsSalesStockReservationService salesStockReservationService;
 
 
     @Override
@@ -75,7 +79,9 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
         wrapper.eq(StrUtil.isNotBlank(wmsDeliverGoodsPlanBase.getDeliverState()), WmsDeliverGoodsPlanBaseEntity::getDeliverState, wmsDeliverGoodsPlanBase.getDeliverState());
         wrapper.orderByAsc(WmsDeliverGoodsPlanBaseEntity::getDeliverState);
         wrapper.orderByDesc(BaseCore::getCreateTime);
-        return this.page(toMpPage, wrapper);
+        Page<WmsDeliverGoodsPlanBaseEntity> result = this.page(toMpPage, wrapper);
+        enrichSalesReservation(result.getRecords());
+        return result;
     }
 
     @Override
@@ -117,7 +123,35 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
                     .in(WmsDeliverGoodsBaseEntity::getDeliverCode, deliverCodeList));
         }
         planBaseById.setDeliverList(deliverList);
+        enrichSalesReservation(List.of(planBaseById));
         return planBaseById;
+    }
+
+    private void enrichSalesReservation(List<WmsDeliverGoodsPlanBaseEntity> plans) {
+        if (CollUtil.isEmpty(plans)) return;
+        Map<Long, com.kitex.mom.wms.entity.WmsSalesStockReservationEntity> reservations =
+                salesStockReservationService.reservationsByPlanIds(plans.stream()
+                        .map(WmsDeliverGoodsPlanBaseEntity::getId).collect(Collectors.toSet()));
+        for (WmsDeliverGoodsPlanBaseEntity plan : plans) {
+            com.kitex.mom.wms.entity.WmsSalesStockReservationEntity row = reservations.get(plan.getId());
+            if (row == null) {
+                plan.setSalesReservationStatus("NONE");
+                plan.setSalesReservedNum(BigDecimal.ZERO);
+                plan.setSalesConsumedNum(BigDecimal.ZERO);
+                plan.setSalesReleasedNum(BigDecimal.ZERO);
+                plan.setSalesActiveReservedNum(BigDecimal.ZERO);
+                continue;
+            }
+            BigDecimal reserved = Optional.ofNullable(row.getReservedNum()).orElse(BigDecimal.ZERO);
+            BigDecimal consumed = Optional.ofNullable(row.getConsumedNum()).orElse(BigDecimal.ZERO);
+            BigDecimal released = Optional.ofNullable(row.getReleasedNum()).orElse(BigDecimal.ZERO);
+            plan.setSalesReservationNo(row.getReservationNo());
+            plan.setSalesReservationStatus(row.getStatus());
+            plan.setSalesReservedNum(reserved);
+            plan.setSalesConsumedNum(consumed);
+            plan.setSalesReleasedNum(released);
+            plan.setSalesActiveReservedNum(reserved.subtract(consumed).subtract(released).max(BigDecimal.ZERO));
+        }
     }
 
     /**
@@ -127,14 +161,14 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
      * @return R
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Boolean saveDeliverPlan(WmsDeliverGoodsPlanBaseEntity wmsDeliverGoodsPlanBase) {
-        //根据订单号，产品、发货时间，查询订单明细
-        R<OmsOrderDetailsEntity> omsOrderDetailsEntityR = remoteOmsOrderService.getOrderDetails(wmsDeliverGoodsPlanBase.getOrderCode(), wmsDeliverGoodsPlanBase.getProductCode(), wmsDeliverGoodsPlanBase.getPlanDeliverTime());
-        if (ObjectUtil.isNotEmpty(omsOrderDetailsEntityR.getData())) {
-            OmsOrderDetailsEntity data = omsOrderDetailsEntityR.getData();
-            wmsDeliverGoodsPlanBase.setOrderCodeDetails(data.getId());
+        requireManualPlanInput(wmsDeliverGoodsPlanBase);
+        if (wmsDeliverGoodsPlanBase.getOrderCodeDetails() != null) {
+            throw new CheckedException("OMS来源订单行只能由OMS下发创建WMS发货计划");
         }
-        //状态初始化
+        requireNoMatchingOmsLine(wmsDeliverGoodsPlanBase);
+        wmsDeliverGoodsPlanBase.setId(null);
         wmsDeliverGoodsPlanBase.setDeliveredNum(BigDecimal.ZERO);
         wmsDeliverGoodsPlanBase.setReturnNum(BigDecimal.ZERO);
         wmsDeliverGoodsPlanBase.setReissueNum(BigDecimal.ZERO);
@@ -143,14 +177,81 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Boolean updatePlanById(WmsDeliverGoodsPlanBaseEntity wmsDeliverGoodsPlanBase) {
-        //根据订单号，产品、发货时间，查询订单明细
-        R<OmsOrderDetailsEntity> omsOrderDetailsEntityR = remoteOmsOrderService.getOrderDetails(wmsDeliverGoodsPlanBase.getOrderCode(), wmsDeliverGoodsPlanBase.getProductCode(), wmsDeliverGoodsPlanBase.getPlanDeliverTime());
-        if (ObjectUtil.isNotEmpty(omsOrderDetailsEntityR.getData())) {
-            OmsOrderDetailsEntity data = omsOrderDetailsEntityR.getData();
-            wmsDeliverGoodsPlanBase.setOrderCodeDetails(data.getId());
+        if (wmsDeliverGoodsPlanBase == null || wmsDeliverGoodsPlanBase.getId() == null) {
+            throw new CheckedException("编辑发货计划必须指定ID");
         }
-        return this.updateById(wmsDeliverGoodsPlanBase);
+        WmsDeliverGoodsPlanBaseEntity current = this.getOne(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
+                .eq(WmsDeliverGoodsPlanBaseEntity::getId, wmsDeliverGoodsPlanBase.getId())
+                .last("FOR UPDATE"), false);
+        if (current == null) throw new CheckedException("发货计划不存在");
+        requireFactory(current.getFactoryCode());
+        requireUnstartedAndUnlinked(current);
+        requireNoActiveSalesReservation(current);
+        if (StrUtil.isNotBlank(wmsDeliverGoodsPlanBase.getFactoryCode())
+                && !Objects.equals(current.getFactoryCode(), wmsDeliverGoodsPlanBase.getFactoryCode())) {
+            throw new CheckedException("不得改写发货计划所属工厂");
+        }
+        if (current.getOrderCodeDetails() != null) {
+            if (!Objects.equals(current.getOrderCode(), wmsDeliverGoodsPlanBase.getOrderCode())
+                    || !Objects.equals(current.getOrderCodeDetails(), wmsDeliverGoodsPlanBase.getOrderCodeDetails())
+                    || !Objects.equals(current.getDeliverPlanCode(), wmsDeliverGoodsPlanBase.getDeliverPlanCode())
+                    || !Objects.equals(current.getProductCode(), wmsDeliverGoodsPlanBase.getProductCode())
+                    || !Objects.equals(current.getPlanDeliverTime(), wmsDeliverGoodsPlanBase.getPlanDeliverTime())
+                    || current.getDeliverNum() == null || wmsDeliverGoodsPlanBase.getDeliverNum() == null
+                    || current.getDeliverNum().compareTo(wmsDeliverGoodsPlanBase.getDeliverNum()) != 0) {
+                throw new CheckedException("OMS来源发货计划的订单、产品、交期和数量只能经OMS变更");
+            }
+        } else {
+            requireManualPlanInput(wmsDeliverGoodsPlanBase);
+            if (wmsDeliverGoodsPlanBase.getOrderCodeDetails() != null
+                    || !Objects.equals(current.getDeliverPlanCode(), wmsDeliverGoodsPlanBase.getDeliverPlanCode())) {
+                throw new CheckedException("手工发货计划不得伪造OMS来源或改写计划号");
+            }
+            requireNoMatchingOmsLine(wmsDeliverGoodsPlanBase);
+            current.setOrderCode(wmsDeliverGoodsPlanBase.getOrderCode());
+            current.setCustomerCode(wmsDeliverGoodsPlanBase.getCustomerCode());
+            current.setCustomerName(wmsDeliverGoodsPlanBase.getCustomerName());
+            current.setProductCode(wmsDeliverGoodsPlanBase.getProductCode());
+            current.setProductName(wmsDeliverGoodsPlanBase.getProductName());
+            current.setProductSpec(wmsDeliverGoodsPlanBase.getProductSpec());
+            current.setPlanDeliverTime(wmsDeliverGoodsPlanBase.getPlanDeliverTime());
+            current.setDeliverNum(wmsDeliverGoodsPlanBase.getDeliverNum());
+        }
+        current.setCustomerWarehouse(wmsDeliverGoodsPlanBase.getCustomerWarehouse());
+        current.setCustomerAddress(wmsDeliverGoodsPlanBase.getCustomerAddress());
+        current.setCustomerContact(wmsDeliverGoodsPlanBase.getCustomerContact());
+        current.setCustomerPhone(wmsDeliverGoodsPlanBase.getCustomerPhone());
+        if (!this.updateById(current)) throw new CheckedException("发货计划编辑失败");
+        return Boolean.TRUE;
+    }
+
+    private void requireManualPlanInput(WmsDeliverGoodsPlanBaseEntity plan) {
+        if (plan == null || StrUtil.isBlank(plan.getDeliverPlanCode()) || StrUtil.isBlank(plan.getOrderCode())
+                || StrUtil.isBlank(plan.getProductCode()) || plan.getPlanDeliverTime() == null
+                || plan.getDeliverNum() == null || plan.getDeliverNum().signum() <= 0) {
+            throw new CheckedException("手工发货计划必须明确计划号、订单、产品、交期和正数量");
+        }
+        String selected = FactoryContextHolder.getFactoryCode();
+        if (StrUtil.isNotBlank(selected)) {
+            if (StrUtil.isNotBlank(plan.getFactoryCode()) && !Objects.equals(selected, plan.getFactoryCode())) {
+                throw new CheckedException("手工发货计划工厂与当前工厂不一致");
+            }
+            plan.setFactoryCode(selected);
+        }
+        requireFactory(plan.getFactoryCode());
+    }
+
+    private void requireNoMatchingOmsLine(WmsDeliverGoodsPlanBaseEntity plan) {
+        R<OmsOrderDetailsEntity> result = remoteOmsOrderService.getOrderDetails(
+                plan.getOrderCode(), plan.getProductCode(), plan.getPlanDeliverTime());
+        if (result == null || !result.isOk()) {
+            throw new CheckedException("OMS订单来源不可核验，手工发货计划故障关闭");
+        }
+        if (result.getData() != null) {
+            throw new CheckedException("已匹配OMS订单行，请从OMS下发或变更发货计划");
+        }
     }
 
     /**
@@ -160,16 +261,163 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
      * @return R
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Boolean removePlanById(ArrayList<Long> idList) {
-        if (CollUtil.isEmpty(idList)) {
-            throw new RuntimeException("删除项不能为空！");
+        return removePlans(idList, false);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Boolean removeFromOms(ArrayList<Long> ids) {
+        return removePlans(ids, true);
+    }
+
+    private Boolean removePlans(ArrayList<Long> ids, boolean omsSource) {
+        if (CollUtil.isEmpty(ids) || ids.size() > 50 || ids.stream().anyMatch(Objects::isNull)
+                || new HashSet<>(ids).size() != ids.size()) {
+            throw new CheckedException("发货计划删除必须指定最多50个不重复的ID");
         }
-        List<WmsDeliverGoodsPlanBaseEntity> planBaseList = this.listByIds(idList);
-        Long count = planBaseList.stream().filter(item -> !DeliverStateEnum.NOT_START.getCode().equals(item.getDeliverState())).count();
-        if (count.compareTo(0L) > 0) {
-            throw new RuntimeException("只有未开始的计划才可以删除！");
+        for (Long id : ids.stream().sorted().toList()) {
+            WmsDeliverGoodsPlanBaseEntity plan = this.getOne(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
+                    .eq(WmsDeliverGoodsPlanBaseEntity::getId, id).last("FOR UPDATE"), false);
+            if (plan == null) throw new CheckedException("发货计划不存在：" + id);
+            requireFactory(plan.getFactoryCode());
+            if (omsSource != (plan.getOrderCodeDetails() != null)) {
+                throw new CheckedException("OMS来源发货计划须由OMS撤回，非OMS计划不得使用OMS内部撤回入口");
+            }
+            requireUnstartedAndUnlinked(plan);
+            requireNoActiveSalesReservation(plan);
+            if (!this.removeById(id)) throw new CheckedException("发货计划删除失败：" + id);
         }
-        return this.removeBatchByIds(idList);
+        return Boolean.TRUE;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Boolean saveFromOms(List<WmsDeliverGoodsPlanBaseEntity> plans) {
+        List<WmsDeliverGoodsPlanBaseEntity> ordered = orderedOmsPlans(plans, false);
+        for (WmsDeliverGoodsPlanBaseEntity incoming : ordered) {
+            baseMapper.lockOmsSource(omsSourceKey(incoming));
+            List<WmsDeliverGoodsPlanBaseEntity> existing = this.list(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
+                    .eq(WmsDeliverGoodsPlanBaseEntity::getOrderCode, incoming.getOrderCode())
+                    .eq(WmsDeliverGoodsPlanBaseEntity::getOrderCodeDetails, incoming.getOrderCodeDetails())
+                    .last("FOR UPDATE"));
+            if (existing.size() > 1) throw new CheckedException("OMS来源发货计划重复，须先治理历史数据");
+            if (!existing.isEmpty()) {
+                if (!sameOmsFacts(existing.get(0), incoming)) {
+                    throw new CheckedException("OMS来源发货计划已存在但事实不同，须走受控同步或变更");
+                }
+                continue;
+            }
+            if (incoming.getId() != null || !DeliverStateEnum.NOT_START.getCode().equals(incoming.getDeliverState())
+                    || !zero(incoming.getDeliveredNum()) || !zero(incoming.getReturnNum())
+                    || !zero(incoming.getReissueNum())) {
+                throw new CheckedException("OMS新发货计划不得携带旧ID、执行数量或非初始状态");
+            }
+            incoming.setDeliveredNum(BigDecimal.ZERO);
+            incoming.setReturnNum(BigDecimal.ZERO);
+            incoming.setReissueNum(BigDecimal.ZERO);
+            if (!this.save(incoming)) throw new CheckedException("OMS来源发货计划保存失败");
+        }
+        return Boolean.TRUE;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Boolean updateFromOms(List<WmsDeliverGoodsPlanBaseEntity> plans) {
+        List<WmsDeliverGoodsPlanBaseEntity> ordered = orderedOmsPlans(plans, true);
+        for (WmsDeliverGoodsPlanBaseEntity incoming : ordered) {
+            baseMapper.lockOmsSource(omsSourceKey(incoming));
+            WmsDeliverGoodsPlanBaseEntity current = this.getOne(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
+                    .eq(WmsDeliverGoodsPlanBaseEntity::getId, incoming.getId()).last("FOR UPDATE"), false);
+            if (current == null || !Objects.equals(current.getOrderCode(), incoming.getOrderCode())
+                    || !Objects.equals(current.getOrderCodeDetails(), incoming.getOrderCodeDetails())
+                    || !Objects.equals(current.getFactoryCode(), incoming.getFactoryCode())
+                    || !Objects.equals(current.getDeliverPlanCode(), incoming.getDeliverPlanCode())) {
+                throw new CheckedException("OMS发货计划来源ID、订单行或工厂不匹配");
+            }
+            if (!Objects.equals(current.getDeliverState(), incoming.getDeliverState())
+                    || !sameQuantity(current.getDeliveredNum(), incoming.getDeliveredNum())
+                    || !sameQuantity(current.getReturnNum(), incoming.getReturnNum())
+                    || !sameQuantity(current.getReissueNum(), incoming.getReissueNum())) {
+                throw new CheckedException("OMS不得绕过WMS发货单或退补货流程改写计划执行状态和数量");
+            }
+            if (sameOmsFacts(current, incoming)) continue;
+            requireUnstartedAndUnlinked(current);
+            requireNoActiveSalesReservation(current);
+            current.setCustomerCode(incoming.getCustomerCode());
+            current.setCustomerName(incoming.getCustomerName());
+            current.setProductCode(incoming.getProductCode());
+            current.setProductName(incoming.getProductName());
+            current.setProductSpec(incoming.getProductSpec());
+            current.setPlanDeliverTime(incoming.getPlanDeliverTime());
+            current.setDeliverNum(incoming.getDeliverNum());
+            if (!this.updateById(current)) throw new CheckedException("OMS发货计划同步失败");
+        }
+        return Boolean.TRUE;
+    }
+
+    private List<WmsDeliverGoodsPlanBaseEntity> orderedOmsPlans(List<WmsDeliverGoodsPlanBaseEntity> plans,
+                                                                 boolean requireId) {
+        if (CollUtil.isEmpty(plans) || plans.size() > 50 || plans.stream().anyMatch(Objects::isNull)) {
+            throw new CheckedException("OMS发货计划批量命令必须包含1到50条非空记录");
+        }
+        Set<String> keys = new HashSet<>();
+        for (WmsDeliverGoodsPlanBaseEntity plan : plans) {
+            if (StrUtil.isBlank(plan.getOrderCode()) || plan.getOrderCodeDetails() == null
+                    || StrUtil.isBlank(plan.getFactoryCode()) || StrUtil.isBlank(plan.getDeliverPlanCode())
+                    || StrUtil.isBlank(plan.getProductCode()) || plan.getPlanDeliverTime() == null
+                    || plan.getDeliverNum() == null || plan.getDeliverNum().signum() <= 0
+                    || (requireId && plan.getId() == null) || !keys.add(omsSourceKey(plan))) {
+                throw new CheckedException("OMS发货计划缺少唯一来源、正数量、产品、交期或计划号");
+            }
+            requireFactory(plan.getFactoryCode());
+        }
+        return plans.stream().sorted(Comparator.comparing(this::omsSourceKey)).toList();
+    }
+
+    private String omsSourceKey(WmsDeliverGoodsPlanBaseEntity plan) {
+        return plan.getFactoryCode() + ':' + plan.getOrderCode() + ':' + plan.getOrderCodeDetails();
+    }
+
+    private boolean sameOmsFacts(WmsDeliverGoodsPlanBaseEntity current, WmsDeliverGoodsPlanBaseEntity incoming) {
+        return Objects.equals(current.getFactoryCode(), incoming.getFactoryCode())
+                && Objects.equals(current.getOrderCode(), incoming.getOrderCode())
+                && Objects.equals(current.getOrderCodeDetails(), incoming.getOrderCodeDetails())
+                && Objects.equals(current.getCustomerCode(), incoming.getCustomerCode())
+                && Objects.equals(current.getCustomerName(), incoming.getCustomerName())
+                && Objects.equals(current.getProductCode(), incoming.getProductCode())
+                && Objects.equals(current.getProductName(), incoming.getProductName())
+                && Objects.equals(current.getProductSpec(), incoming.getProductSpec())
+                && Objects.equals(current.getPlanDeliverTime(), incoming.getPlanDeliverTime())
+                && current.getDeliverNum() != null && incoming.getDeliverNum() != null
+                && current.getDeliverNum().compareTo(incoming.getDeliverNum()) == 0;
+    }
+
+    private void requireUnstartedAndUnlinked(WmsDeliverGoodsPlanBaseEntity plan) {
+        if (!DeliverStateEnum.NOT_START.getCode().equals(plan.getDeliverState())
+                || !zero(plan.getDeliveredNum()) || !zero(plan.getReturnNum())
+                || !zero(plan.getReissueNum())
+                || wmsDeliverGoodsDetailsService.count(new LambdaQueryWrapper<WmsDeliverGoodsDetailsEntity>()
+                .eq(WmsDeliverGoodsDetailsEntity::getDeliverPlanCode, plan.getDeliverPlanCode())) != 0) {
+            throw new CheckedException("WMS发货计划已有发货单、交付/退补数量或非未开始状态，禁止直接变更/删除");
+        }
+    }
+
+    private boolean zero(BigDecimal value) {
+        return value != null && value.signum() == 0;
+    }
+
+    private boolean sameQuantity(BigDecimal left, BigDecimal right) {
+        return left != null && right != null && left.compareTo(right) == 0;
+    }
+
+    private void requireFactory(String factoryCode) {
+        String selected = FactoryContextHolder.getFactoryCode();
+        if (StrUtil.isBlank(factoryCode)
+                || (StrUtil.isNotBlank(selected) && !Objects.equals(selected, factoryCode))) {
+            throw new CheckedException("当前工厂无权操作该WMS发货计划");
+        }
     }
 
 
@@ -200,7 +448,11 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
     public Boolean closePlan(String deliverPlanCode) {
         //二次校验，完成状态不可关闭
         WmsDeliverGoodsPlanBaseEntity planBase = this.getOne(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
-                .eq(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, deliverPlanCode));
+                .eq(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, deliverPlanCode)
+                .last("FOR UPDATE"), false);
+        if (planBase == null) throw new CheckedException("发货计划不存在");
+        requireFactory(planBase.getFactoryCode());
+        requireNoActiveSalesReservation(planBase);
         if (DeliverStateEnum.COMPLETE.getCode().equals(planBase.getDeliverState())) {
             throw new RuntimeException("完成状态不可关闭！");
         }
@@ -222,6 +474,12 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean completePlan(String deliverPlanCode) {
+        WmsDeliverGoodsPlanBaseEntity planBase = this.getOne(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
+                .eq(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, deliverPlanCode)
+                .last("FOR UPDATE"), false);
+        if (planBase == null) throw new CheckedException("发货计划不存在");
+        requireFactory(planBase.getFactoryCode());
+        requireNoActiveSalesReservation(planBase);
         //判断是否存在未关闭的发货单
         List<String> errorMsg = checkExistDeliverGoodsBase(deliverPlanCode);
         if (CollUtil.isNotEmpty(errorMsg)) {
@@ -234,24 +492,71 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
         return Boolean.TRUE;
     }
 
+    private void requireNoActiveSalesReservation(WmsDeliverGoodsPlanBaseEntity plan) {
+        BigDecimal active = salesStockReservationService.activeReservedByPlanIds(Set.of(plan.getId()))
+                .getOrDefault(plan.getId(), BigDecimal.ZERO);
+        if (active.signum() > 0) {
+            throw new CheckedException("发货计划仍有销售库存正式预留"
+                    + active.stripTrailingZeros().toPlainString() + "，须先填写原因并受控释放");
+        }
+    }
+
     /**
      * 生成发货单
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean createDeliver(WmsDeliverGoodsBaseEntity deliverGoodsBase) {
-        if (CollUtil.isEmpty(deliverGoodsBase.getDeliverDetailsList())) {
-            throw new RuntimeException("发货明细信息不能为空！");
+        if (deliverGoodsBase == null || StrUtil.isBlank(deliverGoodsBase.getDeliverCode())
+                || CollUtil.isEmpty(deliverGoodsBase.getDeliverDetailsList())) {
+            throw new CheckedException("发货单号和发货明细不能为空");
         }
         List<WmsDeliverGoodsDetailsEntity> deliverDetailsList = deliverGoodsBase.getDeliverDetailsList();
-        //后端二次校验：只有未开始和进行中的数据才可以进行生成发货单
-        Long stateCount = deliverDetailsList.stream().filter(item -> DeliverStateEnum.COMPLETE.getCode().equals(item.getDeliverState())
-                || DeliverStateEnum.CLOSE.getCode().equals(item.getDeliverCode())).count();
-        if (stateCount.compareTo(0L) > 0) {
-            throw new RuntimeException("只有未开始和进行中的数据才可以进行生成发货单！");
+        if (deliverDetailsList.stream().anyMatch(Objects::isNull)) {
+            throw new CheckedException("发货明细不能包含空行");
         }
         //校验：计划只能同时存在一个发货单（关闭 和 完成 状态除外）//改为多次发货
         List<String> deliverPlanCodes = deliverDetailsList.stream().map(WmsDeliverGoodsDetailsEntity::getDeliverPlanCode).distinct().collect(Collectors.toList());
+        if (deliverPlanCodes.stream().anyMatch(StrUtil::isBlank)
+                || deliverPlanCodes.size() != deliverDetailsList.size()) {
+            throw new CheckedException("发货单须逐发货计划指定唯一明细，不能重复或缺少来源计划号");
+        }
+        List<WmsDeliverGoodsPlanBaseEntity> lockedPlans = this.list(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
+                .in(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, deliverPlanCodes)
+                .orderByAsc(WmsDeliverGoodsPlanBaseEntity::getId).last("FOR UPDATE"));
+        if (lockedPlans.size() != deliverPlanCodes.size()) {
+            throw new CheckedException("发货计划缺失、重复或已被OMS撤回，请刷新后重试");
+        }
+        Map<String, WmsDeliverGoodsPlanBaseEntity> planByCode = lockedPlans.stream().collect(Collectors.toMap(
+                WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, Function.identity(), (a, b) -> {
+                    throw new CheckedException("发货计划号重复，禁止生成发货单");
+                }));
+        for (WmsDeliverGoodsDetailsEntity incoming : deliverDetailsList) {
+            WmsDeliverGoodsPlanBaseEntity plan = planByCode.get(incoming.getDeliverPlanCode());
+            if (plan == null || !(DeliverStateEnum.NOT_START.getCode().equals(plan.getDeliverState())
+                    || DeliverStateEnum.CREATE.getCode().equals(plan.getDeliverState())
+                    || DeliverStateEnum.ING.getCode().equals(plan.getDeliverState()))
+                    || incoming.getDeliverNum() == null
+                    || incoming.getDeliverNum().signum() <= 0
+                    || !Objects.equals(incoming.getOrderCode(), plan.getOrderCode())
+                    || !Objects.equals(incoming.getProductCode(), plan.getProductCode())
+                    || !Objects.equals(incoming.getCustomerCode(), plan.getCustomerCode())) {
+                throw new CheckedException("发货明细与当前计划的订单、客户、产品、状态或数量不一致");
+            }
+            if (plan.getDeliverNum() == null || plan.getDeliveredNum() == null
+                    || incoming.getDeliverNum().compareTo(
+                    plan.getDeliverNum().subtract(plan.getDeliveredNum())) > 0) {
+                throw new CheckedException("发货单数量超过计划剩余可发量：" + plan.getDeliverPlanCode());
+            }
+            requireFactory(plan.getFactoryCode());
+            incoming.setOrderCode(plan.getOrderCode());
+            incoming.setCustomerCode(plan.getCustomerCode());
+            incoming.setCustomerName(plan.getCustomerName());
+            incoming.setProductCode(plan.getProductCode());
+            incoming.setProductName(plan.getProductName());
+            incoming.setProductSpec(plan.getProductSpec());
+            incoming.setFactoryCode(plan.getFactoryCode());
+        }
         List<WmsDeliverGoodsDetailsEntity> dbGoodsDetailsList = wmsDeliverGoodsDetailsService.list(new LambdaQueryWrapper<WmsDeliverGoodsDetailsEntity>()
                 .in(WmsDeliverGoodsDetailsEntity::getDeliverPlanCode, deliverPlanCodes));
         Set<String> deliverCodes = dbGoodsDetailsList.stream().map(WmsDeliverGoodsDetailsEntity::getDeliverCode).collect(Collectors.toSet());
@@ -282,10 +587,13 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
         //业务逻辑：
 
 
-        // 1.查询计划单改为进行中状态更新
-        this.update(new UpdateWrapper<WmsDeliverGoodsPlanBaseEntity>().lambda()
-                .set(WmsDeliverGoodsPlanBaseEntity::getDeliverState, DeliverStateEnum.CREATE.getCode())
-                .in(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, deliverPlanCodes));
+        // 未开始计划进入已下发；此前已部分发货的计划保持进行中，不倒退状态。
+        for (WmsDeliverGoodsPlanBaseEntity plan : lockedPlans) {
+            if (DeliverStateEnum.NOT_START.getCode().equals(plan.getDeliverState())) {
+                plan.setDeliverState(DeliverStateEnum.CREATE.getCode());
+                if (!this.updateById(plan)) throw new CheckedException("发货计划下发状态写回失败");
+            }
+        }
         // 2.根据计划单生产发货单及其明细信息，发货单初始状态为未开始，明细信息初始状态为进行中
         //主表
         deliverGoodsBase.setDeliverState(DeliverStateEnum.NOT_START.getCode());
@@ -293,7 +601,11 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
         deliverGoodsBase.setIssued(YesOrNoStateEnum.NO.getCode());
         deliverGoodsBase.setSource(DeliverBaseSourceEnum.PLAN.getCode());
         deliverGoodsBase.setFactoryCode(deliverDetailsList.get(0).getFactoryCode());
-        wmsDeliverGoodsBaseMapper.insert(deliverGoodsBase);
+        deliverGoodsBase.setCustomerCode(deliverDetailsList.get(0).getCustomerCode());
+        deliverGoodsBase.setCustomerName(deliverDetailsList.get(0).getCustomerName());
+        if (wmsDeliverGoodsBaseMapper.insert(deliverGoodsBase) != 1) {
+            throw new CheckedException("发货单主记录保存失败");
+        }
         //明细表
         deliverDetailsList.forEach(item -> {
             MdmMaterialEntity mdmMaterial = materialMap.get(item.getProductCode());
@@ -301,10 +613,14 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
             //改为多次发货，已发货数量重置为0
             item.setDeliveredNum(BigDecimal.ZERO);
             item.setReturnNum(BigDecimal.ZERO);
-            item.setProductSpec(ObjectUtil.isNotEmpty(mdmMaterial) ? mdmMaterial.getSpecificationModel() : null);
+            if (StrUtil.isBlank(item.getProductSpec())) {
+                item.setProductSpec(ObjectUtil.isNotEmpty(mdmMaterial) ? mdmMaterial.getSpecificationModel() : null);
+            }
             item.setProductUnit(ObjectUtil.isNotEmpty(mdmMaterial) ? mdmMaterial.getBasicUnit() : null);
         });
-        wmsDeliverGoodsDetailsService.saveBatch(deliverDetailsList);
+        if (!wmsDeliverGoodsDetailsService.saveBatch(deliverDetailsList)) {
+            throw new CheckedException("发货单明细保存失败");
+        }
         return Boolean.TRUE;
     }
 

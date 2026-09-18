@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.kitex.mom.mes.dto.MesTaskDTO;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 /**
  * 工单获取
@@ -15,6 +17,9 @@ import org.apache.ibatis.annotations.Mapper;
  */
 @Mapper
 public interface MesTaskMapper extends BaseMapper<MesTaskEntity> {
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(#{batchNo}, 0))")
+    Integer acquireApsBatchTransactionLock(@Param("batchNo") String batchNo);
+
     default MesTaskDTO getByTaskCode(String taskCode) {
         MesTaskEntity mesTask = selectOne(Wrappers.<MesTaskEntity>lambdaQuery().eq(MesTaskEntity::getCode, taskCode));
         MesTaskDTO mesTaskDTO = new MesTaskDTO();

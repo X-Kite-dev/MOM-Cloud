@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
+import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.core.util.R;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
 import com.kitex.mom.mes.dto.MesWarehouseFeedDTO;
 import com.kitex.mom.mes.dto.MesWarehouseFeedJudgeDTO;
@@ -47,6 +49,11 @@ public class MesWarehouseStockFeedJudgeServiceImpl extends ServiceImpl<MesWareho
         List<WmsInNoticeDetailEntity> detailList = new ArrayList<>();
         WmsInNoticeDetailEntity detail = new WmsInNoticeDetailEntity();
         detail.setMatCode(judge.getMatCode());
+        detail.setReservationNo(judge.getReservationNo());
+        detail.setRequirementMatCode(judge.getRequirementMatCode());
+        detail.setRequirementMatName(judge.getRequirementMatName());
+        detail.setSubstituteFlag(judge.getSubstituteFlag());
+        detail.setSubstituteRatio(judge.getSubstituteRatio());
         detail.setMatName(judge.getMatName());
         detail.setMatBatch(judge.getMatBatch());
         detail.setMatUnit(judge.getMatUnit());
@@ -68,6 +75,11 @@ public class MesWarehouseStockFeedJudgeServiceImpl extends ServiceImpl<MesWareho
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void submitReturnMaterial(MesWarehouseFeedDTO submitDTO) {
+        if (submitDTO == null || submitDTO.getBackNum() == null
+                || submitDTO.getBackNum().compareTo(BigDecimal.ZERO) <= 0
+                || submitDTO.getNum() == null || submitDTO.getBackNum().compareTo(submitDTO.getNum()) > 0) {
+            throw new CheckedException("退料数量必须大于0且不得超过当前可退数量");
+        }
         MesWarehouseStockFeedJudgeEntity judge = new MesWarehouseStockFeedJudgeEntity();
         BeanUtil.copyProperties(submitDTO, judge);
         judge.setCode(remoteSeqConfigService.create("mes_stock_feed_back_judge").getData());
@@ -78,13 +90,21 @@ public class MesWarehouseStockFeedJudgeServiceImpl extends ServiceImpl<MesWareho
         this.save(judge);
 
         // 更新审批状态为待审批
-        liveStockService.update(new LambdaUpdateWrapper<MesWarehouseLiveStockEntity>()
+        boolean locked = liveStockService.update(new LambdaUpdateWrapper<MesWarehouseLiveStockEntity>()
+                .isNull(MesWarehouseLiveStockEntity::getQualityCaseId)
                 .eq(MesWarehouseLiveStockEntity::getBillNo, submitDTO.getBillNo())
                 .eq(MesWarehouseLiveStockEntity::getMatCode, submitDTO.getMatCode())
+                .eq(submitDTO.getReservationNo() != null, MesWarehouseLiveStockEntity::getReservationNo, submitDTO.getReservationNo())
+                .eq(submitDTO.getRequirementMatCode() != null, MesWarehouseLiveStockEntity::getRequirementMatCode, submitDTO.getRequirementMatCode())
                 .eq(MesWarehouseLiveStockEntity::getWarehouseCode, submitDTO.getWarehouseCode())
                 .eq(MesWarehouseLiveStockEntity::getSiteCode, submitDTO.getSiteCode())
                 .eq(MesWarehouseLiveStockEntity::getMatBatch, submitDTO.getMatBatch())
+                .and(status -> status.isNull(MesWarehouseLiveStockEntity::getJudgeStatus)
+                        .or().eq(MesWarehouseLiveStockEntity::getJudgeStatus, ""))
                 .set(MesWarehouseLiveStockEntity::getJudgeStatus, "0"));
+        if (!locked) {
+            throw new CheckedException("库存已进入其他退料审批或已发生变化，请刷新后重试");
+        }
     }
 
     /**
@@ -93,11 +113,15 @@ public class MesWarehouseStockFeedJudgeServiceImpl extends ServiceImpl<MesWareho
      * @param submitDTO
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void judge(MesWarehouseFeedJudgeDTO submitDTO) {
         MesWarehouseStockFeedJudgeEntity judge = this.getById(submitDTO.getId());
         MomUser user = SecurityUtils.getUser();
         if (Objects.isNull(judge)) {
             throw new RuntimeException("未找到审批申请单");
+        }
+        if (!"0".equals(judge.getStatus())) {
+            throw new CheckedException("退料申请已审批，不能重复处理");
         }
         if (submitDTO.getPass()) {
             judge.setStatus("1");
@@ -108,19 +132,33 @@ public class MesWarehouseStockFeedJudgeServiceImpl extends ServiceImpl<MesWareho
         judge.setJudgePersonCode(user.getUsername());
         judge.setJudgePersonName(user.getName());
         judge.setJudgeTime(LocalDateTime.now());
-        this.updateById(judge);
+        boolean stateChanged = this.update(new LambdaUpdateWrapper<MesWarehouseStockFeedJudgeEntity>()
+                .eq(MesWarehouseStockFeedJudgeEntity::getId, judge.getId())
+                .eq(MesWarehouseStockFeedJudgeEntity::getStatus, "0")
+                .set(MesWarehouseStockFeedJudgeEntity::getStatus, judge.getStatus())
+                .set(MesWarehouseStockFeedJudgeEntity::getOpinion, judge.getOpinion())
+                .set(MesWarehouseStockFeedJudgeEntity::getJudgePersonCode, judge.getJudgePersonCode())
+                .set(MesWarehouseStockFeedJudgeEntity::getJudgePersonName, judge.getJudgePersonName())
+                .set(MesWarehouseStockFeedJudgeEntity::getJudgeTime, judge.getJudgeTime()));
+        if (!stateChanged) {
+            throw new CheckedException("退料申请已被其他审批人处理，请刷新后查看");
+        }
 
         List<MesWarehouseLiveStockEntity> updateList = new ArrayList<>();
         // 审核通过时处理
         if (submitDTO.getPass()) {
             // 查询符合条件的库存记录
             List<MesWarehouseLiveStockEntity> stockList = liveStockService.list(new LambdaQueryWrapper<MesWarehouseLiveStockEntity>()
+                .isNull(MesWarehouseLiveStockEntity::getQualityCaseId)
                     .eq(MesWarehouseLiveStockEntity::getBillNo, judge.getBillNo())
                     .eq(MesWarehouseLiveStockEntity::getMatCode, judge.getMatCode())
+                    .eq(judge.getReservationNo() != null, MesWarehouseLiveStockEntity::getReservationNo, judge.getReservationNo())
+                    .eq(judge.getRequirementMatCode() != null, MesWarehouseLiveStockEntity::getRequirementMatCode, judge.getRequirementMatCode())
                     .eq(MesWarehouseLiveStockEntity::getWarehouseCode, judge.getWarehouseCode())
                     .eq(MesWarehouseLiveStockEntity::getSiteCode, judge.getSiteCode())
                     .eq(MesWarehouseLiveStockEntity::getMatBatch, judge.getMatBatch())
-                    .orderByAsc(MesWarehouseLiveStockEntity::getCreateTime));
+                    .orderByAsc(MesWarehouseLiveStockEntity::getCreateTime)
+                    .last("FOR UPDATE"));
 
             BigDecimal remainingNum = judge.getNum();
             for (MesWarehouseLiveStockEntity stock : stockList) {
@@ -149,22 +187,46 @@ public class MesWarehouseStockFeedJudgeServiceImpl extends ServiceImpl<MesWareho
                 liveStockService.updateBatchById(updateList);
             }
 
-            // 删除数量为0的记录
-            liveStockService.remove(new LambdaQueryWrapper<MesWarehouseLiveStockEntity>()
+            if (remainingNum.compareTo(BigDecimal.ZERO) > 0) {
+                throw new CheckedException("线边库存不足，尚缺退料数量：" + remainingNum.stripTrailingZeros().toPlainString());
+            }
+
+            liveStockService.update(new LambdaUpdateWrapper<MesWarehouseLiveStockEntity>()
+                .isNull(MesWarehouseLiveStockEntity::getQualityCaseId)
                     .eq(MesWarehouseLiveStockEntity::getBillNo, judge.getBillNo())
                     .eq(MesWarehouseLiveStockEntity::getMatCode, judge.getMatCode())
+                    .eq(judge.getReservationNo() != null, MesWarehouseLiveStockEntity::getReservationNo, judge.getReservationNo())
+                    .eq(judge.getRequirementMatCode() != null, MesWarehouseLiveStockEntity::getRequirementMatCode, judge.getRequirementMatCode())
+                    .eq(MesWarehouseLiveStockEntity::getWarehouseCode, judge.getWarehouseCode())
+                    .eq(MesWarehouseLiveStockEntity::getSiteCode, judge.getSiteCode())
+                    .eq(MesWarehouseLiveStockEntity::getMatBatch, judge.getMatBatch())
+                    .set(MesWarehouseLiveStockEntity::getJudgeStatus, null));
+
+            // 删除数量为0的记录
+            liveStockService.remove(new LambdaQueryWrapper<MesWarehouseLiveStockEntity>()
+                .isNull(MesWarehouseLiveStockEntity::getQualityCaseId)
+                    .eq(MesWarehouseLiveStockEntity::getBillNo, judge.getBillNo())
+                    .eq(MesWarehouseLiveStockEntity::getMatCode, judge.getMatCode())
+                    .eq(judge.getReservationNo() != null, MesWarehouseLiveStockEntity::getReservationNo, judge.getReservationNo())
+                    .eq(judge.getRequirementMatCode() != null, MesWarehouseLiveStockEntity::getRequirementMatCode, judge.getRequirementMatCode())
                     .eq(MesWarehouseLiveStockEntity::getWarehouseCode, judge.getWarehouseCode())
                     .eq(MesWarehouseLiveStockEntity::getSiteCode, judge.getSiteCode())
                     .eq(MesWarehouseLiveStockEntity::getMatBatch, judge.getMatBatch())
                     .eq(MesWarehouseLiveStockEntity::getNum, BigDecimal.ZERO));
 
             // 将指定数量的物料退回到指定仓库中
-            inNoticeService.produceReturn(buildInNotice(judge));
+            R<Boolean> result = inNoticeService.produceReturn(buildInNotice(judge));
+            if (!result.isOk()) {
+                throw new CheckedException("生成WMS生产退料入库通知单失败：" + result.getMsg());
+            }
         } else {
             // 审核驳回时处理
             List<MesWarehouseLiveStockEntity> stockList = liveStockService.list(new LambdaQueryWrapper<MesWarehouseLiveStockEntity>()
+                .isNull(MesWarehouseLiveStockEntity::getQualityCaseId)
                     .eq(MesWarehouseLiveStockEntity::getBillNo, judge.getBillNo())
                     .eq(MesWarehouseLiveStockEntity::getMatCode, judge.getMatCode())
+                    .eq(judge.getReservationNo() != null, MesWarehouseLiveStockEntity::getReservationNo, judge.getReservationNo())
+                    .eq(judge.getRequirementMatCode() != null, MesWarehouseLiveStockEntity::getRequirementMatCode, judge.getRequirementMatCode())
                     .eq(MesWarehouseLiveStockEntity::getWarehouseCode, judge.getWarehouseCode())
                     .eq(MesWarehouseLiveStockEntity::getSiteCode, judge.getSiteCode())
                     .eq(MesWarehouseLiveStockEntity::getMatBatch, judge.getMatBatch()));
@@ -195,8 +257,9 @@ public class MesWarehouseStockFeedJudgeServiceImpl extends ServiceImpl<MesWareho
         notice.setWarehouseCode(judge.getWarehouseCode());
         notice.setWarehouseName(judge.getWarehouseName());
         notice.setWorkshop(judge.getSiteCode());
+        notice.setFactoryCode(judge.getFactoryCode());
         List<WmsInNoticeDetailEntity> detailList = getWmsInNoticeDetailEntities(judge);
         notice.setDetailList(detailList);
         return notice;
     }
-} 
+}

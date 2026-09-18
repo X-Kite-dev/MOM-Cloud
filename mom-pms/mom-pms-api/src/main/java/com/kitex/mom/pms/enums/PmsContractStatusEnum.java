@@ -15,7 +15,8 @@ public enum PmsContractStatusEnum {
     EXECUTION("2", "执行中"),
     CHANGE("3", "变更中"),
     COMPLETE("4", "结算完成"),
-    ARCHIVIST("5", "归档");
+    ARCHIVIST("5", "归档"),
+    TERMINATED("6", "已终止");
 
     private final String code;
     private final String desc;

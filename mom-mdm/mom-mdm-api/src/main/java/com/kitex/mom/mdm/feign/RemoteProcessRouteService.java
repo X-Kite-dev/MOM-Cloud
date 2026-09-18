@@ -6,6 +6,8 @@ import com.kitex.mom.mdm.Constants;
 import com.kitex.mom.mdm.entity.MdmProcessProcedureMatEntity;
 import com.kitex.mom.mdm.entity.MdmProcessRouteEntity;
 import com.kitex.mom.mdm.entity.MdmProcessRouteWorkingEntity;
+import com.kitex.mom.mdm.dto.MdmProcessRouteDTO;
+import com.kitex.mom.mdm.dto.MdmRouteMaterialAssignmentQueryDTO;
 import com.kitex.mom.mdm.vo.MdmProcedureSopVO;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.cloud.openfeign.SpringQueryMap;
@@ -93,6 +95,9 @@ public interface RemoteProcessRouteService {
     @GetMapping("/mdmProcessRoute/getMatByCode")
     R<List<MdmProcessProcedureMatEntity>> getMatByCode(@RequestParam("routeCode") String routeCode, @RequestParam("processCode") String processCode);
 
+    @PostMapping("/mdmProcessRoute/materialAssignments")
+    R<List<MdmProcessProcedureMatEntity>> getMaterialAssignments(@RequestBody MdmRouteMaterialAssignmentQueryDTO query);
+
     @GetMapping("/mdmProcessRoute/getProcessWorkingById")
     R<MdmProcessRouteWorkingEntity> getProcessWorkingById(@RequestParam("id") Long id);
 
@@ -104,4 +109,10 @@ public interface RemoteProcessRouteService {
      */
     @GetMapping("/mdmProcessRoute/getDefaultByProductCode")
     R<MdmProcessRouteEntity> getDefaultByProductCode(@RequestParam("productCode") String productCode);
+
+    /**
+     * 批量获取工艺路线、工序和启用工位能力，用于APS生成工序级资源占用。
+     */
+    @PostMapping("/mdmProcessRoute/mdmProcessRouteByIds")
+    R<List<MdmProcessRouteDTO>> getDetailByIds(@RequestBody List<Long> ids);
 }

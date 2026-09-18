@@ -35,7 +35,11 @@ public interface TpmDeviceBaseService {
 
     Boolean devicePause(String deviceCode, String moldCode);
 
+    com.kitex.mom.tpm.dto.TpmDevicePauseReceipt devicePauseReceipt(com.kitex.mom.tpm.dto.TpmDevicePauseCommand command);
+
     Boolean deviceClose(String deviceCode, String moldCode);
+
+    com.kitex.mom.tpm.dto.TpmDevicePauseReceipt deviceCloseReceipt(com.kitex.mom.tpm.dto.TpmDevicePauseCommand command);
 
     /**
      * 生成设备二维码

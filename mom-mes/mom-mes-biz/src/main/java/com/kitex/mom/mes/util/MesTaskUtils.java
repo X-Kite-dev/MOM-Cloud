@@ -21,13 +21,16 @@ public class MesTaskUtils {
      * 获取任务对应工序信息
      */
     public static ProcessProcedureDTO getCurrentProcess(MesTaskEntity task, String routeCode) {
-        List<ProcessProcedureDTO> processList = getCurrentRouteCode(task);
-        ProcessProcedureDTO progress = processList.stream()
-                .filter(process -> process.getRouteCode().equals(routeCode))
-                .findFirst()
-                .orElseThrow(() -> new RuntimeException("未找到对应的工序信息"));
+        return getCurrentProcess(task.getProcessRouteSnapshot(),routeCode);
+    }
 
-        return progress;
+    public static ProcessProcedureDTO getCurrentProcess(String snapshot, String routeCode) {
+        List<ProcessProcedureDTO> processList = JSONUtil.toList(snapshot, ProcessProcedureDTO.class);
+        List<ProcessProcedureDTO> matches = processList.stream()
+                .filter(process -> java.util.Objects.equals(cn.hutool.core.util.StrUtil.blankToDefault(process.getProcessCode(),process.getRouteCode()),routeCode))
+                .toList();
+        if(matches.size()!=1)throw new com.kitex.common.core.exception.CheckedException("工艺快照中缺少唯一对应工序，不能猜测物料消耗："+routeCode);
+        return matches.get(0);
     }
 
 }

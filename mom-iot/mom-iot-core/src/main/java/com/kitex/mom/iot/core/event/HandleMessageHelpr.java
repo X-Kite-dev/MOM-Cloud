@@ -16,6 +16,12 @@ public class HandleMessageHelpr {
 
     private final ApplicationEventPublisher applicationEventPublisher;
 
+    public void handleMessage(String gatewayId, DeviceMessage message) {
+        if (gatewayId == null || message == null) throw new IllegalArgumentException("采集缺少可信网关或解码消息");
+        // 失败向调用端传播；是否重投仍由具体协议与边缘持久化保证，不在此吞错冒充接收成功。
+        applicationEventPublisher.publishEvent(new DeviceMessageEvent(gatewayId, message));
+    }
+
     public void handleMessage(DeviceMessage encodedMessage) {
 
         log.info("收到要处理的消息 -》 {}", encodedMessage);

@@ -22,6 +22,9 @@ import java.time.LocalDate;
 @Schema(description = "BOM")
 public class MdmBomEntity extends BusinessEntity<MdmBomEntity> {
 
+    @Schema(description = "工程发布状态：LEGACY历史版本、DRAFT草案、RELEASED已审批发布")
+    private String releaseState;
+
     /**
      * 产品编码
      */

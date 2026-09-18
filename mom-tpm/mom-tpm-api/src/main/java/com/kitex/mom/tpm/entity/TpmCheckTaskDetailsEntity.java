@@ -90,6 +90,15 @@ public class TpmCheckTaskDetailsEntity extends Model<TpmCheckTaskDetailsEntity> 
     @Schema(description = "标准下限")
     private BigDecimal standardMin;
 
+    @Schema(description = "任务创建时冻结的不合格处置：WARN、BLOCK、REPAIR")
+    private String failureAction;
+
+    @Schema(description = "任务创建时冻结的默认预计恢复分钟数")
+    private Integer defaultRecoveryMinutes;
+
+    @Schema(description = "任务创建时冻结的不合格处置指引")
+    private String failureGuidance;
+
     /**
      * 判断结果 1 通过  0 不通过
      */

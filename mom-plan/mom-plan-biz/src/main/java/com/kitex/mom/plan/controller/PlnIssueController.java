@@ -201,7 +201,7 @@ public class PlnIssueController {
     @SysLog("新增生产排产结果表")
     @PostMapping("/save")
     public R<Boolean> saveIssue(@RequestBody PlnIssueEntity plnIssue) {
-        return R.ok(plnIssueService.save(plnIssue));
+        return R.ok(plnIssueService.createStandaloneIssue(plnIssue));
     }
 
     /**

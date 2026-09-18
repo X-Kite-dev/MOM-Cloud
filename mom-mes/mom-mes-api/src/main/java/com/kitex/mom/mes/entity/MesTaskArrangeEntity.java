@@ -97,6 +97,22 @@ public class MesTaskArrangeEntity extends BaseEntity<MesTaskArrangeEntity> {
     @Schema(description = "工序顺序")
     private Integer routeOrder;
 
+    @Schema(description = "前置工序编码，多个逗号分隔")
+    private String predecessorCodes;
+
+    @Schema(description = "后置工序编码，多个逗号分隔")
+    private String successorCodes;
+
+    @Schema(description = "允许达到转移批量后放行后序")
+    private Boolean overlapEnabled;
+
+    @Schema(description = "放行后序开工的最小合格转移批量")
+    private BigDecimal transferBatchQuantity;
+
+    @Schema(description = "达到放行条件后仍需等待的转序分钟")
+    private Long transferMinutes;
+
+
     /**
      * 是否最后一道工序
      */
@@ -188,6 +204,41 @@ public class MesTaskArrangeEntity extends BaseEntity<MesTaskArrangeEntity> {
     @Schema(description = "工位报工类型 自动 手动")
     private String worksiteTypes;
 
+    @Schema(description = "任务接收时确认的实际执行工位")
+    private String actualWorksiteCode;
+
+    @Schema(description = "APS计划选定工位编码")
+    private String plannedWorksiteCode;
+    private String plannedWorksiteName;
+
+    @Schema(description = "APS计划选定员工编码")
+    private String plannedWorkerCode;
+    private String plannedWorkerName;
+
+    @Schema(description = "APS计划开始时间")
+    private LocalDateTime plannedStartTime;
+    @Schema(description = "APS计划结束时间")
+    private LocalDateTime plannedEndTime;
+    @Schema(description = "APS计划设备编码")
+    private String plannedDeviceCode;
+    private String plannedDeviceName;
+    @Schema(description = "APS选定的工位并行槽位")
+    private Integer plannedResourceSlotNo;
+    @Schema(description = "APS跨工位共享资源组编码")
+    private String plannedResourceGroupCode;
+    private String plannedResourceGroupName;
+    private Integer plannedResourceGroupCapacity;
+    private Integer plannedResourceGroupSlotNo;
+    @Schema(description = "APS计划工装编码，多个逗号分隔")
+    private String plannedToolingCodes;
+    private String plannedToolingNames;
+    @Schema(description = "APS工装能力、兼容性和不可用窗口证据JSON")
+    private String toolingAllocationSnapshot;
+    @Schema(description = "APS工装寿命预占JSON，键为工装编码")
+    private String toolingLifeUsageSnapshot;
+    @Schema(description = "派工时保留的APS工序证据快照JSON")
+    private String apsOperationSnapshot;
+
     /**
      * 下达数量
      */
@@ -205,6 +256,11 @@ public class MesTaskArrangeEntity extends BaseEntity<MesTaskArrangeEntity> {
      */
     @Schema(description = "完成数量")
     private BigDecimal completeNum;
+
+    @Schema(description = "质量已放行完成数量")
+    private BigDecimal qualityReleasedNum;
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    private Long materialGateRecordId;
 
     /**
      * 不合格品数量
@@ -255,4 +311,3 @@ public class MesTaskArrangeEntity extends BaseEntity<MesTaskArrangeEntity> {
     @TableField(fill = FieldFill.INSERT)
     private String factoryCode;
 }
-

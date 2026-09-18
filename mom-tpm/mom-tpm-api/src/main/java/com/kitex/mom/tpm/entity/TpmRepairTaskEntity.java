@@ -105,6 +105,21 @@ public class TpmRepairTaskEntity extends BaseEntity<TpmRepairTaskEntity> {
     private LocalDateTime submitTime;
 
     /**
+     * 面向计划联动的设备预计恢复时间；允许报修时暂缺，但未补齐前不会触发智能重排。
+     */
+    @Schema(description = "设备预计恢复时间；补齐后触发PLAN资源影响评估")
+    private LocalDateTime expectedRecoveryTime;
+
+    @Schema(description = "恢复时间预测依据或调整原因")
+    private String recoveryForecastReason;
+
+    @Schema(description = "恢复时间预测最近更新时刻")
+    private LocalDateTime forecastUpdatedTime;
+
+    @Schema(description = "恢复时间预测最近更新人")
+    private String forecastUpdatedBy;
+
+    /**
      * 故障原因
      */
     @Schema(description = "故障原因")
@@ -164,7 +179,6 @@ public class TpmRepairTaskEntity extends BaseEntity<TpmRepairTaskEntity> {
     @Schema(description = "维修任务详情")
     private List<TpmRepairTaskDetailsEntity> detailsList;
 
-    @TableField(exist = false)
     @Schema(description = "是否提醒")
     private Boolean remindSign;
 }

@@ -17,10 +17,16 @@ import java.time.LocalDateTime;
  * @date 2025-03-12
  */
 @Data
+@com.kitex.common.core.util.TenantTable
 @TableName("iot_device_property")
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "IoT设备属性数据")
 public class IotDevicePropertyEntity extends BaseCore<IotDevicePropertyEntity> {
+    @Schema(description = "采集时绑定的租户，禁止按设备当前归属覆盖历史")
+    private Long tenantId;
+    @Schema(description = "原始来源归属是否已经核验；未核验历史不进入业务读视图")
+    private Boolean scopeVerified;
+    private String factoryCode;
 
 
     @TableId(type = IdType.ASSIGN_ID)
@@ -85,4 +91,7 @@ public class IotDevicePropertyEntity extends BaseCore<IotDevicePropertyEntity> {
      */
     @Schema(description = "采集时间")
     private LocalDateTime collectTime;
-} 
+
+    @Schema(description = "采集质量：GOOD有效；UNSPECIFIED未提供，其他值不作为有效恢复证据")
+    private String qualityCode;
+}

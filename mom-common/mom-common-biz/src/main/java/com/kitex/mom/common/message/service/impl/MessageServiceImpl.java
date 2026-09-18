@@ -106,18 +106,37 @@ public class MessageServiceImpl implements MessageService {
         messageDTO.setMessageConfig(messageConfig);
         messageDTO.setMessageBusinessConfig(messageBusinessConfig);
 
-        // 第三方消息推送
-        MessageBusinessHandler messageBusinessHandler = messageBusinessHandlerMap.get(messageDTO.getCode());
-        Boolean pushBoolean = messageBusinessHandler.businessPush(messageDTO);
+        Set<String> requestedChannels = Optional.ofNullable(messageDTO.getRequestedChannels())
+                .orElse(Collections.emptyList()).stream()
+                .filter(Objects::nonNull).map(String::trim).map(String::toUpperCase)
+                .filter(value -> !value.isEmpty()).collect(Collectors.toSet());
+        boolean useConfiguredDefaults = requestedChannels.isEmpty();
+        String externalType = messageConfig == null ? null : messageConfig.getType();
+        boolean externalRequested = useConfiguredDefaults
+                || (externalType != null && requestedChannels.contains(externalType.toUpperCase()));
+        boolean unsupportedRequested = !useConfiguredDefaults && requestedChannels.stream()
+                .anyMatch(channel -> !"SYSTEM".equals(channel)
+                        && (externalType == null || !channel.equalsIgnoreCase(externalType)));
+
+        // 一个业务编码只绑定一个外部通道；调用方可以缩小本次范围，但不能伪装成已投递到未配置通道。
+        boolean pushBoolean = true;
+        if (externalRequested) {
+            MessageBusinessHandler messageBusinessHandler = messageBusinessHandlerMap.get(messageDTO.getCode());
+            pushBoolean = messageBusinessHandler != null && messageConfig != null
+                    && Boolean.TRUE.equals(messageBusinessHandler.businessPush(messageDTO));
+        }
 
         // 推送站内信
-        String title = String.format("【%s】消息推送", messageBusinessConfig.getName());
-        Boolean systemMsgStatus = sendSystemMsg(title, messageDTO.getMessage(), messageDTO.getUserList(),
-                messageBusinessConfig.getModuleCode());
+        String businessName = messageBusinessConfig == null ? messageDTO.getCode() : messageBusinessConfig.getName();
+        String moduleCode = messageBusinessConfig == null ? messageDTO.getCode() : messageBusinessConfig.getModuleCode();
+        String title = String.format("【%s】消息推送", businessName);
+        boolean systemRequested = useConfiguredDefaults || requestedChannels.contains("SYSTEM");
+        Boolean systemMsgStatus = !systemRequested || sendSystemMsg(title, messageDTO.getMessage(),
+                Optional.ofNullable(messageDTO.getUserList()).orElse(Collections.emptyList()), moduleCode);
         // 日志保存
-        this.saveMessageLog(messageDTO, title, pushBoolean && systemMsgStatus, messageConfig.getType(),
-                messageBusinessConfig.getCode(), messageBusinessConfig.getModuleCode());
-        return Boolean.TRUE;
+        this.saveMessageLog(messageDTO, title, pushBoolean && systemMsgStatus && !unsupportedRequested,
+                externalType == null ? "SYSTEM" : externalType, messageDTO.getCode(), moduleCode);
+        return pushBoolean && systemMsgStatus && !unsupportedRequested;
     }
 
     /**

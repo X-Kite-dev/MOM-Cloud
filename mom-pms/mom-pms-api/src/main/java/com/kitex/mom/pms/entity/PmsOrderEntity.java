@@ -45,10 +45,28 @@ public class PmsOrderEntity extends BaseEntity<PmsOrderEntity> {
     private String supplierName;
 
     /**
-     * 状态（0 未审核 1 审核中 2 审核通过 3 收货中 4 部分到货 5 完成收货 6 驳回）
+     * 状态（0 未审核 1 审核中 2 审核通过 3 收货中 4 部分到货 5 完成收货 6 驳回 7 已取消 8 部分到货后取消）
      */
-    @Schema(description = "状态（0 未审核 1 审核中 2 审核通过 3 收货中 4 部分到货 5 完成收货 6 驳回）")
+    @Schema(description = "状态（0 未审核 1 审核中 2 审核通过 3 收货中 4 部分到货 5 完成收货 6 驳回 7 已取消 8 部分到货后取消）")
     private String status;
+
+    @Schema(description = "最近一次成功执行的订单变更申请ID")
+    private Long lastChangeRequestId;
+
+    @Schema(description = "已审批订单受控变更版本，从0开始递增")
+    private Integer changeVersion;
+
+    @Schema(description = "最近一次受控变更完成时间")
+    private java.time.LocalDateTime lastChangedTime;
+
+    @Schema(description = "最近一次受控变更原因")
+    private String lastChangeReason;
+
+    @Schema(description = "订单剩余量取消时间")
+    private java.time.LocalDateTime cancelledTime;
+
+    @Schema(description = "订单剩余量取消原因")
+    private String cancelReason;
 
     /**
      * 类型 false 采购计划生成 true 采购订单新增
@@ -68,6 +86,39 @@ public class PmsOrderEntity extends BaseEntity<PmsOrderEntity> {
      */
     @Schema(description = "是否签订合同 true 是 false 否")
     private Boolean contractStatus;
+
+    @Schema(description = "订单来源：MANUAL、AGENT_SHORTAGE")
+    private String sourceType;
+
+    @Schema(description = "Agent采购模式：RELEASE_PLAN、SUPPLEMENT_PLAN")
+    private String agentPurchaseMode;
+
+    @Schema(description = "Agent采购执行永久幂等号")
+    private String agentRequestId;
+
+    @Schema(description = "Agent采购冻结命令摘要")
+    private String agentCommandHash;
+
+    @Schema(description = "Agent采购来源MRP记录")
+    private Long agentMrpId;
+
+    @Schema(description = "Agent采购冻结业务类型")
+    private String agentBusinessType;
+
+    @Schema(description = "Agent采购冻结业务单号")
+    private String agentBusinessNo;
+
+    @Schema(description = "Agent采购候选证据指纹")
+    private String agentEvidenceFingerprint;
+
+    @Schema(description = "Agent采购价格库记录")
+    private Long agentPriceId;
+
+    @Schema(description = "Agent采购供应商认证记录")
+    private Long agentAuthorizationId;
+
+    @Schema(description = "Agent采购申请原因")
+    private String agentReason;
 
     /**
      * 工厂编码

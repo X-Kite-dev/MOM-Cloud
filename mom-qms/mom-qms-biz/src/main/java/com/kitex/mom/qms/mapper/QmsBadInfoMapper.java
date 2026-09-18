@@ -12,5 +12,7 @@ import org.apache.ibatis.annotations.Mapper;
  */
 @Mapper
 public interface QmsBadInfoMapper extends BaseMapper<QmsBadInfoEntity> {
+    @org.apache.ibatis.annotations.Select("SELECT pg_advisory_xact_lock(hashtextextended(#{key}, 0))")
+    void lockSource(@org.apache.ibatis.annotations.Param("key") String key);
 
 }

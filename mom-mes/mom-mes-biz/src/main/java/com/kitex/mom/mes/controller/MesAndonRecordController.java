@@ -1,6 +1,5 @@
 package com.kitex.mom.mes.controller;
 
-import cn.hutool.core.collection.CollUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -10,10 +9,14 @@ import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.AndonNoticeResp;
+import com.kitex.mom.mes.dto.AndonRecordCancelVO;
 import com.kitex.mom.mes.dto.AndonRecordHandleVO;
+import com.kitex.mom.mes.dto.AndonRecordVerifyVO;
+import com.kitex.mom.mes.entity.MesAndonOperationEntity;
 import com.kitex.mom.mes.entity.MesAndonRecordEntity;
 import com.kitex.mom.mes.enums.AndonStateEnum;
 import com.kitex.mom.mes.service.MesAndonRecordService;
+import com.kitex.mom.mes.service.impl.MesAndonProductionReleaseService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,6 +24,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /**
  * 安灯信息处理记录
@@ -36,6 +41,7 @@ import org.springframework.web.bind.annotation.*;
 public class MesAndonRecordController {
 
     private final MesAndonRecordService service;
+    private final MesAndonProductionReleaseService productionReleaseService;
 
     /**
      * 分页查询
@@ -50,6 +56,7 @@ public class MesAndonRecordController {
     @PreAuthorize("@pms.hasPermission('andonRecord:show')")
     public R<IPage<MesAndonRecordEntity>> recordPage(Page<MesAndonRecordEntity> pageParam, MesAndonRecordEntity query) {
         QueryWrapper<MesAndonRecordEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
+        autoQueryWrapper.eq("factory_code", productionReleaseService.authorizeFactory("read"));
         autoQueryWrapper.lambda().orderByDesc(MesAndonRecordEntity::getCreateTime);
         return R.ok(service.page(pageParam, autoQueryWrapper));
     }
@@ -81,9 +88,10 @@ public class MesAndonRecordController {
     @PreAuthorize("@pms.hasPermission('andonRecord:show')")
     public R<IPage<MesAndonRecordEntity>> workPage(Page<MesAndonRecordEntity> pageParam, MesAndonRecordEntity query) {
         QueryWrapper<MesAndonRecordEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
+        autoQueryWrapper.eq("factory_code", productionReleaseService.authorizeFactory("read"));
         MomUser currentUser = SecurityUtils.getUser();
         autoQueryWrapper
-                .apply("FIND_IN_SET({0}, handler_code) > 0", currentUser.getId())
+                .apply("CAST({0} AS text) = ANY(regexp_split_to_array(handler_code, '\\s*,\\s*'))", currentUser.getId())
                 .ne("state", AndonStateEnum.CLOSED.getCode())
                 .orderByDesc("create_time");
         return R.ok(service.page(pageParam, autoQueryWrapper));
@@ -100,7 +108,7 @@ public class MesAndonRecordController {
     @GetMapping("/{id}")
     @PreAuthorize("@pms.hasPermission('andonRecord:show')")
     public R getById(@PathVariable("id") Long id) {
-        return R.ok(service.getById(id));
+        return R.ok(productionReleaseService.readScopedEvent(id));
     }
 
     /**
@@ -113,51 +121,22 @@ public class MesAndonRecordController {
     @SysLog("新增安灯异常类型配置")
     @PostMapping("/add")
     @PreAuthorize("@pms.hasPermission('andonRecord:add')")
-    public R<Void> save(@RequestBody MesAndonRecordEntity mesAndonRecord) {
-        service.saveData(mesAndonRecord);
-        return R.ok();
+    public R<MesAndonRecordEntity> save(@RequestBody MesAndonRecordEntity mesAndonRecord) {
+        return R.ok(service.saveData(mesAndonRecord));
     }
 
-    /**
-     * 修改安灯异常类型配置
-     *
-     * @param mesAndonRecord 安灯异常类型配置
-     * @return R
-     */
-    @Operation(summary = "修改安灯信息处理记录", description = "修改安灯信息处理记录")
-    @SysLog("修改安灯异常类型配置")
-    @PutMapping
-    @PreAuthorize("@pms.hasPermission('andonRecord:edit')")
-    public R<Void> updateById(@RequestBody MesAndonRecordEntity mesAndonRecord) {
-        service.updateById(mesAndonRecord);
-        return R.ok();
-    }
-
-    /**
-     * 通过id删除安灯异常类型配置
-     *
-     * @param ids id列表
-     * @return R
-     */
-    @Operation(summary = "通过id删除安灯信息处理记录", description = "通过id删除安灯信息处理记录")
-    @SysLog("通过id删除安灯异常类型配置")
-    @DeleteMapping
-    @PreAuthorize("@pms.hasPermission('andonRecord:delete')")
-    public R<Void> removeById(@RequestBody Long[] ids) {
-        service.removeBatchByIds(CollUtil.toList(ids));
-        return R.ok();
-    }
+    // 安灯业务记录是审计凭证，不开放通用修改和物理/逻辑删除入口。
 
     /**
      * 撤销
      *
-     * @param id id
+     * @param vo 撤销命令
      * @return 新增结果
      */
     @PostMapping("/cancel")
     @PreAuthorize("@pms.hasPermission('andonRecord:cancel')")
-    public R<Void> cancel(Long id) {
-        service.cancel(id);
+    public R<Void> cancel(@RequestBody AndonRecordCancelVO vo) {
+        service.cancel(vo);
         return R.ok();
     }
 
@@ -199,6 +178,21 @@ public class MesAndonRecordController {
     public R<Void> handle(@RequestBody AndonRecordHandleVO vo) {
         service.handle(vo);
         return R.ok();
+    }
+
+    @Operation(summary = "验证安灯处理结果", description = "发起人验证通过后闭环，驳回则返回处理环节")
+    @PostMapping("/verify")
+    @PreAuthorize("@pms.hasPermission('andonRecord:close')")
+    public R<Void> verify(@RequestBody AndonRecordVerifyVO vo) {
+        service.verify(vo);
+        return R.ok();
+    }
+
+    @Operation(summary = "查询安灯操作履历")
+    @GetMapping("/{id}/operations")
+    @PreAuthorize("@pms.hasPermission('andonRecord:show')")
+    public R<List<MesAndonOperationEntity>> operations(@PathVariable("id") Long id) {
+        return R.ok(service.listOperations(id));
     }
 
 }

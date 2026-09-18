@@ -20,6 +20,19 @@ import java.time.LocalDate;
 @Schema(description = "线边库出入库流水")
 public class MesWarehouseInoutExcelVO {
 
+    @ColumnWidth(24) @ExcelProperty("实际库存主键")
+    private String sourceStockId;
+    @ColumnWidth(24) @ExcelProperty("库存原报工ID")
+    private String sourceReportId;
+    @ColumnWidth(20) @ExcelProperty("操作前数量")
+    private String stockBeforeNum;
+    @ColumnWidth(20) @ExcelProperty("操作后数量")
+    private String stockAfterNum;
+    @ColumnWidth(22) @ExcelProperty("行级证据版本")
+    private String stockProofVersion;
+    @ColumnWidth(60) @ExcelProperty("库存选择依据")
+    private String allocationPolicy;
+
     /**
      * 序号
      */

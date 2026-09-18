@@ -15,7 +15,11 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 生产工序任务单
@@ -52,6 +56,8 @@ public class MesProduceTaskServiceImpl extends ServiceImpl<MesProduceTaskMapper,
 
         List<RouteProcessDTO> processes = new ArrayList<>();
         if (CollUtil.isNotEmpty(processTasks)) {
+            Map<String, MesProduceTaskEntity> byProcess = processTasks.stream().collect(Collectors.toMap(
+                    MesProduceTaskEntity::getRouteCode, item -> item, (a, b) -> a, LinkedHashMap::new));
             processTasks.forEach(task -> {
                 RouteProcessDTO process = new RouteProcessDTO();
                 process.setProduceTaskCode(task.getCode());
@@ -63,6 +69,18 @@ public class MesProduceTaskServiceImpl extends ServiceImpl<MesProduceTaskMapper,
                 process.setWorksiteNames(task.getWorksiteNames());
                 process.setProcessCode(task.getRouteCode());
                 process.setProcessName(task.getRouteName());
+                process.setStatus(task.getStatus());
+                process.setPredecessorCodes(task.getPredecessorCodes());
+                process.setSuccessorCodes(task.getSuccessorCodes());
+                process.setOverlapEnabled(task.getOverlapEnabled());
+                process.setTransferBatchQuantity(task.getTransferBatchQuantity());
+                List<String> blocking = splitCodes(task.getPredecessorCodes()).stream().filter(code -> {
+                    MesProduceTaskEntity predecessor = byProcess.get(code);
+                    return predecessor == null || predecessor.getTransferReleasedTime() == null
+                            || predecessor.getTransferReleasedTime().isAfter(java.time.LocalDateTime.now());
+                }).toList();
+                process.setReadyToStart(blocking.isEmpty());
+                process.setBlockingPredecessorCodes(String.join(",", blocking));
                 process.setFinishNum(task.getCompleteNum() != null ? task.getCompleteNum() : BigDecimal.ZERO);
                 if (task.getNoticeNum() != null && task.getNoticeNum().compareTo(BigDecimal.ZERO) > 0) {
                     BigDecimal percent = task.getCompleteNum() != null ?
@@ -76,6 +94,13 @@ public class MesProduceTaskServiceImpl extends ServiceImpl<MesProduceTaskMapper,
             });
         }
         return processes;
+    }
+
+    private List<String> splitCodes(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(value.split(",")).map(String::trim).filter(code -> !code.isBlank()).distinct().toList();
     }
 
 

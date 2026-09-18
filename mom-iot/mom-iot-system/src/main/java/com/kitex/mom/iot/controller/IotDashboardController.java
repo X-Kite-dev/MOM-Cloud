@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
  * @author claude
  * @date 2025-03-14
  */
+@org.springframework.security.access.prepost.PreAuthorize("@pms.hasPermission('iot_device_view')")
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/dashboard")
@@ -65,4 +66,4 @@ public class IotDashboardController {
 
         return R.ok(dashboardService.getMessageTrend(timeRange, startTime, endTime));
     }
-} 
+}

@@ -5,6 +5,12 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
 import com.kitex.mom.mes.entity.MesChangePointHandleEntity;
+import com.kitex.mom.mes.dto.ChangePointAcceptCommand;
+import com.kitex.mom.mes.dto.ChangePointCancelCommand;
+import com.kitex.mom.mes.dto.ChangePointHandleCommand;
+import com.kitex.mom.mes.dto.ChangePointTriggerCommand;
+import com.kitex.mom.mes.dto.ChangePointVerifyCommand;
+import com.kitex.mom.mes.entity.MesChangePointOperationEntity;
 import com.kitex.mom.mes.service.MesChangePointHandleService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,19 +40,11 @@ public class MesChangePointHandleController {
         return R.ok(service.queryPage(pageParam, query));
     }
 
-    @Operation(summary = "变化点处理接收", description = "变化点处理接收")
-    @PostMapping("/add")
-    public R<Void> add(@RequestBody MesChangePointHandleEntity params) {
-        service.save(params);
-        return R.ok();
-    }
-
-    @Operation(summary = "变化点处理编辑", description = "变化点处理编辑")
-    @PostMapping("/update")
-    @PreAuthorize("@pms.hasPermission('mesChangePointHandle:update')")
-    public R<Void> update(@RequestBody MesChangePointHandleEntity mesChangePointHandle) {
-        service.updateById(mesChangePointHandle);
-        return R.ok();
+    @Operation(summary = "触发变化点事件")
+    @PostMapping("/trigger")
+    @PreAuthorize("@pms.hasPermission('mesChangePointHandle:trigger')")
+    public R<MesChangePointHandleEntity> trigger(@RequestBody ChangePointTriggerCommand command) {
+        return R.ok(service.trigger(command));
     }
 
     @Operation(summary = "变化点处理编辑", description = "变化点处理编辑")
@@ -56,19 +54,50 @@ public class MesChangePointHandleController {
         return R.ok(service.getById(id));
     }
 
-    @Operation(summary = "通知", description = "通知")
-    @PostMapping("/notice")
-    @PreAuthorize("@pms.hasPermission('mesChangePointHandle:notice')")
-    public R<Void> notice(@RequestBody MesChangePointHandleEntity mesChangePointHandle) {
-        service.notice(mesChangePointHandle);
+    @Operation(summary = "接收变化点事件")
+    @PostMapping("/accept")
+    @PreAuthorize("@pms.hasPermission('mesChangePointHandle:handle')")
+    public R<Void> accept(@RequestBody ChangePointAcceptCommand command) {
+        service.accept(command);
         return R.ok();
     }
 
     @Operation(summary = "处理", description = "处理")
     @PostMapping("/handle")
     @PreAuthorize("@pms.hasPermission('mesChangePointHandle:handle')")
-    public R<Void> handle(@RequestBody MesChangePointHandleEntity mesChangePointHandle) {
-        service.handle(mesChangePointHandle);
+    public R<Void> handle(@RequestBody ChangePointHandleCommand command) {
+        service.handle(command);
         return R.ok();
+    }
+
+    @Operation(summary = "验证变化点处置")
+    @PostMapping("/verify")
+    @PreAuthorize("@pms.hasPermission('mesChangePointHandle:verify')")
+    public R<Void> verify(@RequestBody ChangePointVerifyCommand command) {
+        service.verify(command);
+        return R.ok();
+    }
+
+    @Operation(summary = "取消误报或无效变化点")
+    @PostMapping("/cancel")
+    @PreAuthorize("@pms.hasPermission('mesChangePointHandle:cancel')")
+    public R<Void> cancel(@RequestBody ChangePointCancelCommand command) {
+        service.cancel(command);
+        return R.ok();
+    }
+
+    @Operation(summary = "重试变化点首检")
+    @PostMapping("/{id}/retryInspection")
+    @PreAuthorize("@pms.hasPermission('mesChangePointHandle:handle')")
+    public R<Void> retryInspection(@PathVariable Long id) {
+        service.retryInspection(id);
+        return R.ok();
+    }
+
+    @Operation(summary = "变化点事件生命周期履历")
+    @GetMapping("/{id}/operations")
+    @PreAuthorize("@pms.hasPermission('mesChangePointHandle:show')")
+    public R<java.util.List<MesChangePointOperationEntity>> operations(@PathVariable Long id) {
+        return R.ok(service.operations(id));
     }
 }

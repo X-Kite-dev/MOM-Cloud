@@ -44,6 +44,24 @@ public class RouteProcessDTO {
     @Schema(description = "工序名称")
     private String processName;
 
+    @Schema(description = "工序状态")
+    private String status;
+
+    @Schema(description = "直接前置工序编码，多个逗号分隔")
+    private String predecessorCodes;
+
+    @Schema(description = "直接后置工序编码，多个逗号分隔")
+    private String successorCodes;
+
+    @Schema(description = "全部直接前置工序是否已完成")
+    private Boolean readyToStart;
+
+    @Schema(description = "尚未完成或缺失的前置工序")
+    private String blockingPredecessorCodes;
+
+    private Boolean overlapEnabled;
+    private BigDecimal transferBatchQuantity;
+
     @Schema(description = "百分比")
     private BigDecimal percent;
 

@@ -239,12 +239,10 @@ public class MdmDeviceController {
     @SysLog("修改设备")
     @PutMapping
     public R<Boolean> updateById(@RequestBody MdmDeviceEntity mdmDevice) {
-        if (StrUtil.isNotEmpty(mdmDevice.getDeviceState()) && mdmDevice.getDeviceState().equals(DeviceStateEnum.IDLE.getCode())) {
-            mdmDevice.setDeviceUsable(DeviceUsableEnum.YES.getCode());
-        }
-        mdmDeviceService.updateById(mdmDevice);
+        // 通用资料编辑不得隐式将不可用设备改成可用；维修恢复必须走独立回执。
+        if (!Boolean.TRUE.equals(mdmDeviceService.updateById(mdmDevice))) return R.failed("设备资料更新失败");
         DynamicRefreshUtils.refreshMdm(mdmDevice);
-        return R.ok();
+        return R.ok(Boolean.TRUE);
     }
 
     /**

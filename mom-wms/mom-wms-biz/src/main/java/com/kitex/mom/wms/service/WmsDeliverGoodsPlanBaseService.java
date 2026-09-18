@@ -6,6 +6,7 @@ import com.kitex.mom.wms.entity.WmsDeliverGoodsBaseEntity;
 import com.kitex.mom.wms.entity.WmsDeliverGoodsPlanBaseEntity;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 public interface WmsDeliverGoodsPlanBaseService extends IService<WmsDeliverGoodsPlanBaseEntity> {
@@ -43,6 +44,13 @@ public interface WmsDeliverGoodsPlanBaseService extends IService<WmsDeliverGoods
      * @return R
      */
     Boolean removePlanById(ArrayList<Long> idList);
+
+    /** OMS来源发货计划只能经内部来源命令建立、同步和撤回。 */
+    Boolean saveFromOms(List<WmsDeliverGoodsPlanBaseEntity> plans);
+
+    Boolean updateFromOms(List<WmsDeliverGoodsPlanBaseEntity> plans);
+
+    Boolean removeFromOms(ArrayList<Long> ids);
 
     /**
      * 通过发货计划号关闭计划

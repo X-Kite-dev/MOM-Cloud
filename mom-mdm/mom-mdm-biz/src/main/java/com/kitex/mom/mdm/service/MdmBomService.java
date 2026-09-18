@@ -16,6 +16,9 @@ import java.util.Map;
 
 public interface MdmBomService extends MPJDeepService<MdmBomEntity> {
 
+    /** 工程发布前只读复核结构化替代策略及当前权威认证，不修改冻结版本。 */
+    void validateEngineeringSubstitutes(MdmBomEntity bom, List<MdmBomChildEntity> children);
+
     /**
      * 保存 bom
      *

@@ -7,6 +7,9 @@ import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
+import java.math.BigDecimal;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
@@ -20,10 +23,19 @@ import java.util.Date;
 @TableName("qms_bad_info_detail")
 public class QmsBadInfoDetailEntity extends BaseEntity<QmsBadInfoDetailEntity> {
 
+    @Schema(description = "不合格明细永久编号")
+    private String detailNo;
+    /** 实际发布的多岗位会签提案；历史决策不补造。 */
+    private Long mrbProposalId;
+
+    @Schema(description = "判定幂等请求号")
+    private String requestId;
+
     @Schema(description = "不合格品管理id")
     private Long badId;
 
     @Schema(description = "来源任务id")
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long resourceTaskId;
 
     @Schema(description = "来源类型")
@@ -31,6 +43,7 @@ public class QmsBadInfoDetailEntity extends BaseEntity<QmsBadInfoDetailEntity> {
 
     @Schema(description = "物料编码")
     private String matCode;
+    private String quantityUnit;
 
     @Schema(description = "物料名称")
     private String matName;
@@ -48,10 +61,12 @@ public class QmsBadInfoDetailEntity extends BaseEntity<QmsBadInfoDetailEntity> {
     private String batchNo;
 
     @Schema(description = "数量")
-    private Integer num;
+    @JsonSerialize(using = ToStringSerializer.class)
+    private BigDecimal num;
 
     @Schema(description = "判定数量")
-    private Integer judgeNum;
+    @JsonSerialize(using = ToStringSerializer.class)
+    private BigDecimal judgeNum;
 
     @Schema(description = "不合格类型")
     private String badType;
@@ -79,6 +94,27 @@ public class QmsBadInfoDetailEntity extends BaseEntity<QmsBadInfoDetailEntity> {
 
     @Schema(description = "处置文件")
     private String handleFile;
+
+    @Schema(description = "预计处置完成时间")
+    private java.time.LocalDateTime expectedCompletionTime;
+
+    private Long wmsOperationId;
+    private String wmsSyncStatus;
+    private String wmsSyncMessage;
+    private String executionRef;
+    private String mesDecisionKey;
+    @JsonSerialize(using=ToStringSerializer.class) private Long mesDeciderUserId;
+    private Boolean mesConcessionUnrestricted;
+    @TableField(updateStrategy=com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+    @JsonSerialize(using=ToStringSerializer.class) private Long mesReceiptId;
+    @TableField(updateStrategy=com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS) private String mesExecutorCode;
+    @TableField(updateStrategy=com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS) private String mesExecutionEvidence;
+
+    private String verificationResult;
+    private String verificationRemark;
+    private String verifierCode;
+    private String verifierName;
+    private java.time.LocalDateTime verificationTime;
 
     @Schema(description = "处置状态")
     private String status;

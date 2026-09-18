@@ -77,7 +77,6 @@ public class TpmRepairTaskController {
     public R<Page<TpmRepairTaskEntity>> getTpmRepairInternalTaskPage(@ParameterObject SearchPage page, @ParameterObject TpmRepairTaskEntity tpmRepairTask) {
         LambdaQueryWrapper<TpmRepairTaskEntity> wrapper = Wrappers.lambdaQuery();
         wrapper.eq(TpmRepairTaskEntity::getType, RepairTaskTypeEnum.INTERNAL.getCode());
-        wrapper.eq(TpmRepairTaskEntity::getState, RepairStateEnum.CREATE.getCode());
         wrapper.eq(StrUtil.isNotBlank(tpmRepairTask.getDeviceCode()), TpmRepairTaskEntity::getDeviceCode, tpmRepairTask.getDeviceCode());
         wrapper.like(StrUtil.isNotBlank(tpmRepairTask.getTaskCode()), TpmRepairTaskEntity::getTaskCode, tpmRepairTask.getTaskCode());
         wrapper.like(StrUtil.isNotBlank(tpmRepairTask.getDeviceName()), TpmRepairTaskEntity::getDeviceName, tpmRepairTask.getDeviceName());
@@ -119,7 +118,7 @@ public class TpmRepairTaskController {
     public R<Page<TpmRepairTaskEntity>> getTpmRepairOutsourcingTaskPage(@ParameterObject SearchPage page, @ParameterObject TpmRepairTaskEntity tpmRepairTask) {
         LambdaQueryWrapper<TpmRepairTaskEntity> wrapper = Wrappers.lambdaQuery();
         wrapper.eq(TpmRepairTaskEntity::getType, RepairTaskTypeEnum.OUTSOURCING.getCode());
-        wrapper.eq(TpmRepairTaskEntity::getState, RepairStateEnum.CREATE.getCode());
+        wrapper.eq(StrUtil.isNotBlank(tpmRepairTask.getState()), TpmRepairTaskEntity::getState, tpmRepairTask.getState());
         wrapper.eq(StrUtil.isNotBlank(tpmRepairTask.getDeviceCode()), TpmRepairTaskEntity::getDeviceCode, tpmRepairTask.getDeviceCode());
         wrapper.like(StrUtil.isNotBlank(tpmRepairTask.getTaskCode()), TpmRepairTaskEntity::getTaskCode, tpmRepairTask.getTaskCode());
         wrapper.like(StrUtil.isNotBlank(tpmRepairTask.getDeviceName()), TpmRepairTaskEntity::getDeviceName, tpmRepairTask.getDeviceName());

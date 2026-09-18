@@ -61,6 +61,12 @@ public class MesInspectionGenRecordEntity extends BaseEntity<MesInspectionGenRec
     private Long inspectionId;
 
     /**
+     * 跨MES/QMS永久幂等请求号。
+     */
+    @Schema(description = "质检任务来源请求号")
+    private String sourceRequestId;
+
+    /**
      * 生成质检类型 首中末
      */
     @Schema(description = "生成质检类型 首中末")
@@ -109,6 +115,38 @@ public class MesInspectionGenRecordEntity extends BaseEntity<MesInspectionGenRec
      */
     @Schema(description = "质检结果")
     private String inspectionResult;
+
+    @Schema(description = "QMS质检任务状态")
+    private String inspectionStatus;
+
+    @Schema(description = "质量门状态 PENDING/PASSED/FAILED/CANCELED/ERROR")
+    private String gateStatus;
+
+    @Schema(description = "最近同步说明")
+    private String syncMessage;
+
+    @Schema(description = "因本质检任务阻断次数")
+    private Integer blockedCount;
+
+    @Schema(description = "QMS受检批总数量")
+    private Integer qmsTotalNum;
+
+    @Schema(description = "QMS累计可放行数量")
+    private Integer qmsUsableNum;
+
+    @Schema(description = "QMS累计已处置数量")
+    private Integer qmsHandleNum;
+
+    @Schema(description = "QMS累计处置结论")
+    private String qmsHandleResult;
+
+    @Schema(description = "最近同步时间")
+    @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime lastSyncTime;
+
+    @Schema(description = "最近阻断时间")
+    @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime lastBlockedTime;
 
     /**
      * 所属组织

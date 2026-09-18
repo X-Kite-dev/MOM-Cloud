@@ -22,6 +22,18 @@ public class MdmBomChildDTO {
     @Schema(description = "物料编码")
     private String materialCode;
 
+    @Schema(description = "替代料编码集合（兼容字段）")
+    private String replaceCodes;
+
+    @Schema(description = "替代料结构化策略 JSON")
+    private String substitutePolicy;
+
+    @Schema(description = "是否允许主料与替代料混用")
+    private Boolean substituteMixAllowed;
+
+    @Schema(description = "选用顺序：MAIN_FIRST、SUBSTITUTE_FIRST")
+    private String substituteStrategy;
+
     /**
      * 物料名称
      */

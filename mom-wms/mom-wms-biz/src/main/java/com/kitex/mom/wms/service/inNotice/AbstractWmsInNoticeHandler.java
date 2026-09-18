@@ -35,6 +35,8 @@ import com.kitex.mom.wms.vo.WmsInNoticeExcelVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -66,8 +68,26 @@ public abstract class AbstractWmsInNoticeHandler
     @Transactional
     public Boolean saveDeep(WmsInNoticeEntity wmsInNotice) {
 
-        // 校验数据完整性
+        // 先校验业务载荷，再由WMS自身生成指纹，调用方不能用伪造指纹绕过同号异载荷校验。
         checkData(wmsInNotice);
+
+        if (StrUtil.isNotBlank(wmsInNotice.getSourceRequestId())) {
+            String requestId = wmsInNotice.getSourceRequestId().trim();
+            if (requestId.length() > 200) throw new CheckedException("入库通知来源幂等号长度不能超过200");
+            String sourceFingerprint = noticeFingerprint(wmsInNotice);
+            wmsInNoticeMapper.lockSourceRequest(requestId);
+            WmsInNoticeEntity existing = wmsInNoticeMapper.selectOne(new LambdaQueryWrapper<WmsInNoticeEntity>()
+                    .eq(WmsInNoticeEntity::getSourceRequestId, requestId), false);
+            if (existing != null) {
+                if (!Objects.equals(existing.getSourceRequestFingerprint(), sourceFingerprint)) {
+                    throw new CheckedException("入库通知来源幂等号已使用且载荷不一致：" + requestId);
+                }
+                wmsInNotice.setId(existing.getId());
+                return true;
+            }
+            wmsInNotice.setSourceRequestId(requestId);
+            wmsInNotice.setSourceRequestFingerprint(sourceFingerprint);
+        }
 
         // 进行校验
         checkWarehouse(wmsInNotice.getWarehouseCode(), wmsInNotice.getBillType());
@@ -106,6 +126,23 @@ public abstract class AbstractWmsInNoticeHandler
             wmsInNoticeDetailMapper.insert(details);
         }
         return true;
+    }
+
+    private String noticeFingerprint(WmsInNoticeEntity notice) {
+        try {
+            List<String> lines = Optional.ofNullable(notice.getDetailList()).orElse(Collections.emptyList()).stream()
+                    .map(detail -> String.join("~", String.valueOf(detail.getMatCode()),
+                            String.valueOf(detail.getRequirementMatCode()), String.valueOf(detail.getNoticeInNum()),
+                            String.valueOf(detail.getWarehouseCode()), String.valueOf(detail.getMatUnit())))
+                    .sorted().toList();
+            String raw = String.join("|", String.valueOf(notice.getBillType()), String.valueOf(notice.getDocumentTable()),
+                    String.valueOf(notice.getDocumentId()), String.valueOf(notice.getWarehouseCode()),
+                    String.valueOf(notice.getWarehouseName()), String.valueOf(notice.getRemark()), String.join(";", lines));
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(raw.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception exception) {
+            throw new CheckedException("入库通知来源指纹生成失败");
+        }
     }
 
     /**

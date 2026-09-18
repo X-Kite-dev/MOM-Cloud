@@ -77,23 +77,52 @@ public class InspectionProductTaskServiceImpl extends ServiceImpl<QmsInspectionP
 
     private final RemoteMesTaskService remoteMesTaskService;
 
+    private final QmsReworkResultPublisher reworkResultPublisher;
+
+    private final QmsPlanEventOutboxService qmsPlanEventOutboxService;
+
 
     /**
      * 创建质检任务
      */
     @Transactional(rollbackFor = Exception.class)
     public void create(InspectionProductCreateParam createParam) {
-        // 判断是否已经有同类型任务
-        if (this.existTask(createParam.getMatCode(), createParam.getBatchNo(), createParam.getProcessCode())) {
+        if (createParam == null || StrUtil.isBlank(createParam.getMatCode())
+                || createParam.getNum() == null || createParam.getNum() <= 0) {
+            throw new RuntimeException("成品质检必须提供物料和大于0的数量");
+        }
+        if (StrUtil.isNotBlank(createParam.getSourceRequestId())) {
+            String sourceRequestId = createParam.getSourceRequestId().trim();
+            if (sourceRequestId.length() > 200) {
+                throw new RuntimeException("质检来源请求号长度不能超过200位");
+            }
+            QmsInspectionProductTaskEntity existing = this.getOne(
+                    new LambdaQueryWrapper<QmsInspectionProductTaskEntity>()
+                            .eq(QmsInspectionProductTaskEntity::getSourceRequestId, sourceRequestId), false);
+            if (existing != null) {
+                if (Objects.equals(existing.getSourceTaskCode(), createParam.getSourceTaskCode())
+                        && Objects.equals(existing.getMatCode(), createParam.getMatCode())) {
+                    return;
+                }
+                throw new RuntimeException("质检来源请求号已被其他业务使用");
+            }
+            createParam.setSourceRequestId(sourceRequestId);
+        } else if (this.existTask(createParam.getMatCode(), createParam.getBatchNo(), createParam.getProcessCode())) {
             throw new RuntimeException("已经有同类型的任务,无法继续创建");
         }
 
         // 获取关联质检标准
         QmsQualityStandardEntity qualityStandard = qualityStandardService.getById(createParam.getStandardId());
+        if (qualityStandard == null || !InspectionTaskTypeEnum.PRODUCT.name().equals(qualityStandard.getInspectionType())
+                || !Objects.equals(qualityStandard.getPublished(), 1)
+                || !Objects.equals(qualityStandard.getMatCode(), createParam.getMatCode())) {
+            throw new RuntimeException("指定质量标准未发布、不是成品检验类型或与当前物料不匹配");
+        }
 
 
         // 创建质检任务
         val task = new QmsInspectionProductTaskEntity().setBatchNo(createParam.getBatchNo()).setName(createParam.getName())
+                .setSourceRequestId(createParam.getSourceRequestId()).setSourceTaskCode(createParam.getSourceTaskCode())
                 .setMatCode(createParam.getMatCode()).setMatName(createParam.getMatName()).setMatSpec(createParam.getMatSpec())
                 .setProcessCode(createParam.getProcessCode()).setProcessName(createParam.getProcessName())
                 .setStandardId(qualityStandard.getId()).setStandardName(qualityStandard.getStandardName())
@@ -574,6 +603,10 @@ public class InspectionProductTaskServiceImpl extends ServiceImpl<QmsInspectionP
 
             // 保存历史
             historyService.check(task);
+            if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())
+                    && StrUtil.isNotBlank(task.getOrderNo())) {
+                qmsPlanEventOutboxService.enqueueIsolation("PRODUCT", task.getId());
+            }
         }
 
     }
@@ -586,6 +619,9 @@ public class InspectionProductTaskServiceImpl extends ServiceImpl<QmsInspectionP
         val task = this.getById(taskId);
         if (Objects.isNull(task)) {
             throw new RuntimeException("质检任务未找到");
+        }
+        if (StrUtil.isNotBlank(task.getResult())) {
+            return;
         }
         // 查询到质检项
         val taskDetails = productTaskDetailService.lambdaQuery()
@@ -607,12 +643,17 @@ public class InspectionProductTaskServiceImpl extends ServiceImpl<QmsInspectionP
         // 如果不合格 入不合格品管理
         if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())) {
             badInfoService.add(new QmsBadInfoEntity().setResourceTaskId(taskId).setResourceType(InspectionTaskTypeEnum.PRODUCT.name())
-                    .setNum(task.getNum()).setMatCode(task.getMatCode()).setMatName(task.getMatName())
+                    .setNum(task.getNum() == null ? null : java.math.BigDecimal.valueOf(task.getNum())).setMatCode(task.getMatCode()).setMatName(task.getMatName())
                     .setBatchNo(task.getBatchNo()));
         }
 
         // 保存历史
         historyService.check(task);
+        if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())
+                && StrUtil.isNotBlank(task.getOrderNo())) {
+            qmsPlanEventOutboxService.enqueueIsolation("PRODUCT", task.getId());
+        }
+        reworkResultPublisher.publish(InspectionTaskTypeEnum.PRODUCT.name(), task.getId());
     }
 
 
@@ -828,26 +869,91 @@ public class InspectionProductTaskServiceImpl extends ServiceImpl<QmsInspectionP
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void handleFinish(HandleFinishDTO dto) {
-        QmsInspectionProductTaskEntity task = this.getById(dto.getId());
-        task.setHandleNum(task.getHandleNum() + dto.getHandleNum());
+        QmsInspectionProductTaskEntity task = this.getOne(
+                new LambdaQueryWrapper<QmsInspectionProductTaskEntity>()
+                        .eq(QmsInspectionProductTaskEntity::getId, dto.getId()).last("FOR UPDATE"), false);
+        if (task == null) {
+            throw new RuntimeException("成品质检任务不存在");
+        }
+        if (dto.getHandleNum() == null || dto.getHandleNum() <= 0) {
+            throw new RuntimeException("处置数量必须大于0");
+        }
+        try {
+            HandleResultEnum.valueOf(dto.getHandleResult());
+        } catch (Exception exception) {
+            throw new RuntimeException("请选择有效的处置结果");
+        }
+        if (StrUtil.isBlank(dto.getHandleRemark())) {
+            throw new RuntimeException("处置原因不能为空");
+        }
+        String requestId = StrUtil.blankToDefault(dto.getRequestId(), UUID.randomUUID().toString()).trim();
+        if (requestId.length() > 100) {
+            throw new RuntimeException("处置请求号长度不能超过100位");
+        }
+        QmsInspectionProductHandleRecordEntity existing = handleRecordService.getOne(
+                new LambdaQueryWrapper<QmsInspectionProductHandleRecordEntity>()
+                        .eq(QmsInspectionProductHandleRecordEntity::getRequestId, requestId), false);
+        if (existing != null) {
+            if (Objects.equals(existing.getTaskId(), dto.getId())
+                    && Objects.equals(existing.getHandleNum(), dto.getHandleNum())
+                    && Objects.equals(existing.getHandleResult(), dto.getHandleResult())) {
+                return;
+            }
+            throw new RuntimeException("处置请求号已被其他业务使用");
+        }
+        if (!InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())
+                || !InspectionTaskStatusEnum.UNHANDLED.name().equals(task.getStatus())) {
+            throw new RuntimeException("只有待处置的不合格成品质检任务可以处置");
+        }
+        task.setHandleNum(Objects.requireNonNullElse(task.getHandleNum(), 0) + dto.getHandleNum());
         if (task.getHandleNum() > task.getNum()) {
             throw new RuntimeException("处置数量不能大于未处置数量");
         }
+        if (HandleResultEnum.RELEASE.name().equals(dto.getHandleResult())
+                || HandleResultEnum.CONCESSION.name().equals(dto.getHandleResult())) {
+            task.setUsableNum(Objects.requireNonNullElse(task.getUsableNum(), 0) + dto.getHandleNum());
+        }
         if (HandleResultEnum.UNQUALIFIED.name().equals(dto.getHandleResult())) {
             // 入不合格品库
-            task.setUsableNum(task.getUsableNum() + dto.getHandleNum());
             badInfoService.add(new QmsBadInfoEntity().setResourceTaskId(task.getId()).setResourceType(InspectionTaskTypeEnum.PRODUCT.name())
-                    .setNum(dto.getHandleNum()).setMatCode(task.getMatCode()).setMatName(task.getMatName())
+                    .setRequestId("DISPOSITION:" + requestId)
+                    .setNum(dto.getHandleNum() == null ? null : java.math.BigDecimal.valueOf(dto.getHandleNum())).setMatCode(task.getMatCode()).setMatName(task.getMatName())
                     .setBatchNo(task.getBatchNo()));
         }
         this.updateById(task);
         // 保存处理明细
         QmsInspectionProductHandleRecordEntity record = new QmsInspectionProductHandleRecordEntity();
         MomUser user = SecurityUtils.getUser();
-        record.setHandleNum(dto.getHandleNum()).setHandleRemark(dto.getHandleRemark()).setHandlePersonId(user.getId())
+        record.setRequestId(requestId).setHandleNum(dto.getHandleNum()).setHandleRemark(dto.getHandleRemark().trim()).setHandlePersonId(user.getId())
                 .setHandlePersonName(user.getName()).setHandleTime(new Date()).setHandleResult(dto.getHandleResult())
-                .setTaskId(task.getId()).setStatus(Boolean.TRUE);
+                .setTaskId(task.getId()).setStatus(HandleResultEnum.UNQUALIFIED.name().equals(dto.getHandleResult())
+                        || HandleResultEnum.SMASH.name().equals(dto.getHandleResult()));
         handleRecordService.save(record);
+        if (Set.of(HandleResultEnum.RELEASE.name(), HandleResultEnum.CONCESSION.name(),
+                HandleResultEnum.REWORK.name(), HandleResultEnum.SMASH.name()).contains(dto.getHandleResult())
+                && StrUtil.isNotBlank(task.getOrderNo())) {
+            qmsPlanEventOutboxService.enqueueDisposition("PRODUCT", task.getId(), record.getId());
+        }
+
+        List<QmsInspectionProductHandleRecordEntity> dispositions = handleRecordService.list(
+                new LambdaQueryWrapper<QmsInspectionProductHandleRecordEntity>()
+                        .eq(QmsInspectionProductHandleRecordEntity::getTaskId, task.getId()));
+        task.setHandleResult(dispositions.stream().map(QmsInspectionProductHandleRecordEntity::getHandleResult)
+                .filter(StrUtil::isNotBlank).distinct().sorted().collect(Collectors.joining(",")));
+        if (Objects.equals(task.getHandleNum(), task.getNum())) {
+            boolean onlyAccepted = dispositions.stream().allMatch(item ->
+                    HandleResultEnum.RELEASE.name().equals(item.getHandleResult())
+                            || HandleResultEnum.CONCESSION.name().equals(item.getHandleResult()));
+            if (onlyAccepted) {
+                boolean concession = dispositions.stream().anyMatch(item ->
+                        HandleResultEnum.CONCESSION.name().equals(item.getHandleResult()));
+                task.setResult(concession ? InspectionTaskResultEnum.RECEIVE.name()
+                        : InspectionTaskResultEnum.RELEASE.name());
+            }
+            task.setStatus(InspectionTaskStatusEnum.FINISHED.name());
+        }
+        this.updateById(task);
+        reworkResultPublisher.publish(InspectionTaskTypeEnum.PRODUCT.name(), task.getId());
     }
 
     /**

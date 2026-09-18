@@ -21,6 +21,12 @@ public class InspectionProcedureCreateParam {
     @Schema(description = "工序任务编码")
     private String taskCode;
 
+    @Schema(description = "MES工序任务编码")
+    private String sourceTaskCode;
+
+    @Schema(description = "来源系统永久幂等请求号")
+    private String sourceRequestId;
+
     @Schema(description = "标签类型")
     private String labelType;
 

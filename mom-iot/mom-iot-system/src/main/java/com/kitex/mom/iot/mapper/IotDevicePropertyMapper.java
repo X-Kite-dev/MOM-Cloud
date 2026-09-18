@@ -17,6 +17,8 @@ import java.util.List;
  */
 @Mapper
 public interface IotDevicePropertyMapper extends BaseMapper<IotDevicePropertyEntity> {
+    @org.apache.ibatis.annotations.Select("SELECT DISTINCT ON (identifier) * FROM iot_device_property WHERE del_flag='0' AND scope_verified=true AND device_id=#{deviceId} AND tenant_id=#{tenantId} AND factory_code=#{factory} ORDER BY identifier,collect_time DESC NULLS LAST,id DESC")
+    List<IotDevicePropertyEntity> latestScoped(@Param("deviceId") Long deviceId,@Param("tenantId") Long tenantId,@Param("factory") String factory);
 
     /**
      * 查询设备元数据
@@ -33,7 +35,8 @@ public interface IotDevicePropertyMapper extends BaseMapper<IotDevicePropertyEnt
             @Param("deviceIds") List<Long> deviceIds,
             @Param("identifier") String identifier,
             @Param("startTime") String startTime,
-            @Param("endTime") String endTime
+            @Param("endTime") String endTime,
+            @Param("productId") Long productId,@Param("tenantId") Long tenantId,@Param("factory") String factory
     );
 
     /**
@@ -53,4 +56,4 @@ public interface IotDevicePropertyMapper extends BaseMapper<IotDevicePropertyEnt
             @Param("startTime") String startTime,
             @Param("endTime") String endTime
     );
-} 
+}

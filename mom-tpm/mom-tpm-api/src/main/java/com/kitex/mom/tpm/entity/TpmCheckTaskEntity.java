@@ -105,6 +105,57 @@ public class TpmCheckTaskEntity extends BaseEntity<TpmCheckTaskEntity> {
     @Schema(description = "判断结果 0 通过  1 不通过")
     private String judgeResult;
 
+    @Schema(description = "生产封锁状态：NONE无封锁、BLOCKED封锁中、RELEASED已解除")
+    private String blockStatus;
+
+    @Schema(description = "本次不合格的最高处置级别：WARN、BLOCK、REPAIR")
+    private String failureAction;
+
+    @Schema(description = "生产封锁原因")
+    private String blockReason;
+
+    @Schema(description = "生产封锁发生时间")
+    private LocalDateTime blockTime;
+
+    @Schema(description = "预计恢复时间；允许暂缺，暂缺时不触发智能重排")
+    private LocalDateTime expectedRecoveryTime;
+
+    @Schema(description = "预计恢复时间预测依据")
+    private String recoveryForecastReason;
+
+    @Schema(description = "封锁操作人编码")
+    private String blockOperatorCode;
+
+    @Schema(description = "封锁操作人名称")
+    private String blockOperatorName;
+
+    @Schema(description = "封锁前设备状态，用于安全恢复")
+    private String deviceStateBeforeBlock;
+
+    @Schema(description = "封锁前设备可用状态，用于安全恢复")
+    private String deviceUsableBeforeBlock;
+
+    @Schema(description = "解除请求幂等号")
+    private String releaseRequestId;
+
+    @Schema(description = "解除原因")
+    private String releaseReason;
+
+    @Schema(description = "解除证据（复检记录、安全确认等）")
+    private String releaseEvidence;
+
+    @Schema(description = "REPAIR处置关联的已完成维修任务编码")
+    private String relatedRepairTaskCode;
+
+    @Schema(description = "解除人编码")
+    private String releaseOperatorCode;
+
+    @Schema(description = "解除人名称")
+    private String releaseOperatorName;
+
+    @Schema(description = "解除时间")
+    private LocalDateTime releasedTime;
+
     /**
      * 工厂编码 - 数据所属的工厂编码
      */

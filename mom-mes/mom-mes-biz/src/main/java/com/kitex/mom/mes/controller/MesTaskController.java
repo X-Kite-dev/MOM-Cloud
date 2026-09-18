@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
+import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.mes.batch.BatchGeneratorService;
 import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.MesTaskEntity;
@@ -50,6 +51,59 @@ public class MesTaskController {
     public R<Void> add(@RequestBody MesTaskReceiveDTO receive) {
         service.add(receive);
         return R.ok();
+    }
+
+    @Operation(summary = "接收QMS返工工单", description = "按原工单冻结BOM和指定返工工序创建可执行返工工单，永久幂等")
+    @PostMapping("/rework")
+    public R<String> addRework(@RequestBody MesTaskReceiveDTO receive) {
+        return R.ok(service.addRework(receive));
+    }
+
+    @Operation(summary = "重试返工完工回传", description = "对已完工但QMS复检任务创建失败的返工工单进行幂等重试")
+    @PostMapping("/{id}/rework-callback/retry")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
+    public R<Long> retryReworkCallback(@PathVariable Long id) {
+        return R.ok(service.retryReworkCallback(id));
+    }
+
+    @Operation(summary = "同步返工复检结论", description = "QMS按可用/已处置数量驱动MES隔离库存放行或拒绝，永久幂等")
+    @PostMapping("/rework/inspection-result")
+    public R<Void> syncReworkInspection(@RequestBody MesReworkInspectionResultDTO result) {
+        service.syncReworkInspection(result);
+        return R.ok();
+    }
+
+    @Operation(summary = "同步QMS生产质量处置", description = "将QMS已批准报废幂等落入MES报废账并按APS来源计划归集")
+    @PostMapping("/quality-disposition")
+    public R<Void> recordQualityDisposition(@RequestBody MesQualityDispositionDTO command) {
+        service.recordQualityDisposition(command);
+        return R.ok();
+    }
+
+    @Operation(summary = "内部查询PLAN来源计划映射",
+            description = "按MES工单或工序任务反查APS拆合批分配；QMS等来源系统禁止自行猜测PLAN计划ID")
+    @GetMapping("/internal/plan-source-mapping")
+    public R<MesPlanSourceMappingDTO> planSourceMapping(
+            @RequestParam(value = "taskCode", required = false) String taskCode,
+            @RequestParam(value = "produceTaskCode", required = false) String produceTaskCode,
+            @RequestParam("factoryCode") String factoryCode) {
+        return R.ok(service.planSourceMapping(taskCode, produceTaskCode, factoryCode));
+    }
+
+    @Operation(summary = "内部开工前计划撤回",
+            description = "仅允许APS来源完整、派工未接收且无现场执行事实的独占MES工单关闭；合批和历史来源故障关闭")
+    @Inner
+    @PostMapping("/internal/plan-withdraw")
+    public R<MesPlanWithdrawalDTO.Receipt> withdrawPlan(@RequestBody MesPlanWithdrawalDTO.Command command) {
+        return R.ok(service.withdrawPlan(command));
+    }
+
+    @Operation(summary = "内部查询来源数量请求映射",
+            description = "按MES请求号返回本次实际归集到各PLAN计划的数量增量，供QMS等事实源精确核对回执")
+    @GetMapping("/internal/source-quantity-mapping")
+    public R<MesSourceQuantityMappingDTO> sourceQuantityMapping(@RequestParam("requestId") String requestId,
+                                                                 @RequestParam("factoryCode") String factoryCode) {
+        return R.ok(service.sourceQuantityMapping(requestId, factoryCode));
     }
 
     @Operation(summary = "生产工单编辑", description = "生产工单编辑")

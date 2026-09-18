@@ -10,6 +10,7 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.wms.dto.WmsInBillDetailQueryDTO;
+import com.kitex.mom.wms.dto.WmsLineDeliveryCommand;
 import com.kitex.mom.wms.entity.WmsOutBillEntity;
 import com.kitex.mom.wms.enums.OutBillTypeEnum;
 import com.kitex.mom.wms.service.outBill.WmsOutBillFactory;
@@ -22,7 +23,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpHeaders;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import com.kitex.mom.wms.service.impl.WmsLineDeliveryService;
 
 import java.util.List;
 
@@ -41,6 +44,7 @@ public class WmsProductionPickingOutBillController {
 
     // 生产领料出库编码
     private final String billType = OutBillTypeEnum.PRODUCE_OUT.getCode();
+    private final WmsLineDeliveryService lineDeliveryService;
 
     /**
      * 分页查询生产领料出库单
@@ -202,6 +206,54 @@ public class WmsProductionPickingOutBillController {
     public R rejectBill(@RequestBody WmsOutBillEntity params) {
         WmsOutBillHandler handler = WmsOutBillFactory.getHandler(billType);
         return R.ok(handler.rejectBill(params));
+    }
+
+    @GetMapping("/{outBillId}/line-delivery")
+    @PreAuthorize("@pms.hasPermission('wms_lineDelivery_view')")
+    public R<?> lineDelivery(@PathVariable Long outBillId) {
+        return R.ok(lineDeliveryService.viewByOutBill(outBillId));
+    }
+
+    @PostMapping("/line-delivery/{id}/dispatch")
+    @SysLog("线边配送派单")
+    @PreAuthorize("@pms.hasPermission('wms_lineDelivery_dispatch')")
+    public R<?> dispatchLineDelivery(@PathVariable Long id, @RequestBody WmsLineDeliveryCommand.Dispatch command) {
+        return R.ok(lineDeliveryService.dispatch(id, command));
+    }
+
+    @PostMapping("/line-delivery/{id}/redispatch")
+    @SysLog("线边配送未启运改派")
+    @PreAuthorize("@pms.hasPermission('wms_lineDelivery_redispatch')")
+    public R<?> redispatchLineDelivery(@PathVariable Long id, @RequestBody WmsLineDeliveryCommand.Dispatch command) {
+        return R.ok(lineDeliveryService.redispatch(id, command));
+    }
+
+    @PostMapping("/line-delivery/{id}/accept")
+    @SysLog("线边配送接单")
+    @PreAuthorize("@pms.hasPermission('wms_lineDelivery_accept')")
+    public R<?> acceptLineDelivery(@PathVariable Long id, @RequestBody WmsLineDeliveryCommand.Accept command) {
+        return R.ok(lineDeliveryService.accept(id, command));
+    }
+
+    @PostMapping("/line-delivery/{id}/transit")
+    @SysLog("线边配送启运")
+    @PreAuthorize("@pms.hasPermission('wms_lineDelivery_transit')")
+    public R<?> transitLineDelivery(@PathVariable Long id, @RequestBody WmsLineDeliveryCommand.Transit command) {
+        return R.ok(lineDeliveryService.transit(id, command));
+    }
+
+    @PostMapping("/line-delivery/{id}/arrive")
+    @SysLog("线边配送到达确认")
+    @PreAuthorize("@pms.hasPermission('wms_lineDelivery_arrive')")
+    public R<?> arriveLineDelivery(@PathVariable Long id, @RequestBody WmsLineDeliveryCommand.Arrival command) {
+        return R.ok(lineDeliveryService.arrive(id, command));
+    }
+
+    @PostMapping("/line-delivery/{id}/resolve")
+    @SysLog("线边配送差异核销")
+    @PreAuthorize("@pms.hasPermission('wms_lineDelivery_resolve')")
+    public R<?> resolveLineDelivery(@PathVariable Long id, @RequestBody WmsLineDeliveryCommand.Resolve command) {
+        return R.ok(lineDeliveryService.resolve(id, command));
     }
 
     /**

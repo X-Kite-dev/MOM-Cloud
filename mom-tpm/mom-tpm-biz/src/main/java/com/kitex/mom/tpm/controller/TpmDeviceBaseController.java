@@ -160,14 +160,26 @@ public class TpmDeviceBaseController {
         return R.ok(tpmDeviceBaseService.devicePause(deviceCode, moldCode));
     }
 
+    @PostMapping("/pause/receipt")
+    public R<com.kitex.mom.tpm.dto.TpmDevicePauseReceipt> devicePauseReceipt(
+            @RequestBody com.kitex.mom.tpm.dto.TpmDevicePauseCommand command) {
+        return R.ok(tpmDeviceBaseService.devicePauseReceipt(command));
+    }
+
     /**
      * 设备暂停 - 生产使用
      */
     @Operation(summary = "设备暂停 - 生产使用", description = "设备暂停 - 生产使用")
-    @GetMapping("/close")
+    @PostMapping("/close")
     public R<Boolean> deviceClose(@RequestParam("deviceCode") String deviceCode,
-                                  @RequestParam(value = "deviceCode", required = false) String moldCode) {
+                                  @RequestParam(value = "moldCode", required = false) String moldCode) {
         return R.ok(tpmDeviceBaseService.deviceClose(deviceCode, moldCode));
+    }
+
+    @PostMapping("/close/receipt")
+    public R<com.kitex.mom.tpm.dto.TpmDevicePauseReceipt> deviceCloseReceipt(
+            @RequestBody com.kitex.mom.tpm.dto.TpmDevicePauseCommand command) {
+        return R.ok(tpmDeviceBaseService.deviceCloseReceipt(command));
     }
 
     /**

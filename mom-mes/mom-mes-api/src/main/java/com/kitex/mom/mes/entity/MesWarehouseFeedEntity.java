@@ -58,6 +58,21 @@ public class MesWarehouseFeedEntity extends BaseEntity<MesWarehouseFeedEntity> {
     @Schema(description = "物料编码")
     private String matCode;
 
+    @Schema(description = "WMS物料预留单号")
+    private String reservationNo;
+
+    @Schema(description = "BOM需求物料编码；使用替代料时与实际物料编码不同")
+    private String requirementMatCode;
+
+    @Schema(description = "是否为替代料投料")
+    private Boolean substituteFlag;
+
+    @Schema(description = "替代比例：1个需求单位对应的实际物料用量")
+    private BigDecimal substituteRatio;
+
+    @Schema(description = "投料时冻结的替代策略快照")
+    private String substitutePolicySnapshot;
+
     /**
      * 物料名称
      */

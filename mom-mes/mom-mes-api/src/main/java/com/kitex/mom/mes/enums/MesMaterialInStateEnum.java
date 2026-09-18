@@ -14,6 +14,7 @@ import lombok.Getter;
 public enum MesMaterialInStateEnum {
 
     PENDING("0", "待入库"),
+    PARTIAL("2", "部分签收"),
     ALREADY("1", "已入库");
 
     /**

@@ -77,11 +77,30 @@ public class PmsOrderDetailEntity extends BaseEntity<PmsOrderDetailEntity> {
      */
     @Schema(description = "到货数量")
     private Double arrivalNum;
+
+    /** 审批后取消且不再允许收货的数量；原订购量和已到货量均保留为历史事实。 */
+    @Schema(description = "已取消未到货数量")
+    private Double cancelledNum;
+
+    @Schema(description = "执行取消的订单变更申请ID")
+    private Long cancellationRequestId;
+
+    @Schema(description = "最近一次受控变更申请ID")
+    private Long lastChangeRequestId;
+
+    @Schema(description = "订单行受控变更版本")
+    private Integer changeVersion;
     /**
      * 单价
      */
     @Schema(description = "单价")
     private BigDecimal price;
+
+    @Schema(description = "订单行冻结的价格库记录")
+    private Long priceId;
+
+    @Schema(description = "订单行冻结的供应商物料认证记录")
+    private Long materialAuthorizationId;
 
     /**
      * 工厂编码

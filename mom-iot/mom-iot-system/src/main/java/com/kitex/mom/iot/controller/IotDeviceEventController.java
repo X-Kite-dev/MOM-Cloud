@@ -34,6 +34,7 @@ import java.util.List;
 public class IotDeviceEventController {
 
     private final IotDeviceEventService deviceEventService;
+    private final com.kitex.mom.iot.service.impl.IotMesOutboxService outbox;
 
     /**
      * 分页查询设备事件数据列表
@@ -69,6 +70,27 @@ public class IotDeviceEventController {
         return R.ok(deviceEventService.getRecentEventsByDeviceCode(deviceCode, limit));
     }
 
+    @GetMapping("/detail/{eventId}")
+    @Operation(summary = "查询设备事件详情")
+    @PreAuthorize("@pms.hasPermission('iot_device_view')")
+    public R<IotDeviceEventEntity> getEventDetail(@PathVariable Long eventId) {
+        IotDeviceEventEntity event = deviceEventService.authorizedEvent(eventId,"read");
+        return event == null ? R.failed("设备事件不存在") : R.ok(event);
+    }
+
+    @GetMapping("/history")
+    @Operation(summary = "查询设备同类事件历史")
+    @PreAuthorize("@pms.hasPermission('iot_device_view')")
+    public R<List<IotDeviceEventEntity>> getEventHistory(@RequestParam Long deviceId,
+                                                         @RequestParam String identifier,
+                                                         @RequestParam(required = false, defaultValue = "100") Integer limit) {
+        int safeLimit = Math.max(1, Math.min(limit == null ? 100 : limit, 500));
+        return R.ok(deviceEventService.list(deviceEventService.scoped(deviceId,null,"read")
+                .eq(IotDeviceEventEntity::getIdentifier, identifier)
+                .orderByDesc(IotDeviceEventEntity::getEventTime)
+                .last("LIMIT " + safeLimit)));
+    }
+
     /**
      * 根据字段查询事件数据详情
      */
@@ -86,7 +108,7 @@ public class IotDeviceEventController {
             @Parameter(description = "开始时间") @RequestParam(required = false) LocalDateTime startTime,
             @Parameter(description = "结束时间") @RequestParam(required = false) LocalDateTime endTime) {
 
-        LambdaQueryWrapper<IotDeviceEventEntity> queryWrapper = new LambdaQueryWrapper<>();
+        LambdaQueryWrapper<IotDeviceEventEntity> queryWrapper = deviceEventService.scoped(deviceId,deviceCode,"read");
 
         // 使用条件构造器的条件参数
         queryWrapper.eq(deviceId != null, IotDeviceEventEntity::getDeviceId, deviceId)
@@ -118,9 +140,27 @@ public class IotDeviceEventController {
     /**
      * 批量保存设备事件数据
      */
+    @PreAuthorize("@pms.hasPermission('iot_device_edit')")
+    @SysLog("批量保存设备事件")
     @PostMapping("/batch")
     @Operation(summary = "批量保存设备事件数据")
     public R<Boolean> batchSaveDeviceEvent(@RequestBody List<IotDeviceEventEntity> events) {
-        return R.ok(deviceEventService.saveBatch(events));
+        return R.ok(deviceEventService.batchSaveDeviceEvent(events));
     }
-} 
+
+    @PostMapping("/forward/retry/{eventId}")
+    @SysLog("重试IoT生产产量事件转发")
+    @Operation(summary = "重试向MES转发生产产量事件")
+    @PreAuthorize("@pms.hasPermission('iot_device_event_retry')")
+    public R<IotDeviceEventEntity> retryMesReportForward(@PathVariable Long eventId,
+            @RequestBody com.kitex.mom.iot.dto.IotMesRetryCommand command) {
+        return R.ok(deviceEventService.retryMesReportForward(eventId,command));
+    }
+
+    @GetMapping("/forward/evidence/{eventId}")
+    @PreAuthorize("@pms.hasPermission('iot_device_view')")
+    public R<java.util.Map<String,Object>> forwardEvidence(@PathVariable Long eventId,
+            @RequestParam(defaultValue="1") long current) {
+        return R.ok(outbox.detail(eventId,current));
+    }
+}

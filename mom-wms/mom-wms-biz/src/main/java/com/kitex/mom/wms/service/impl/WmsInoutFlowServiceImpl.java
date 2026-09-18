@@ -31,13 +31,17 @@ public class WmsInoutFlowServiceImpl extends ServiceImpl<WmsInoutFlowMapper, Wms
         out.setWarehouseCode(wmsAllocationBillAdd.getOldWarehouseCode());
         out.setSiteName(wmsAllocationBillAdd.getOldSiteName());
         out.setSiteCode(wmsAllocationBillAdd.getOldSiteCode());
+        out.setBillId(wmsAllocationBillAdd.getAllocationBillId());
         out.setBillNo(wmsAllocationBillAdd.getBillNo());
         out.setContainerCode(wmsAllocationBillAdd.getOldContainerCode());
         out.setOperateType(InOutEnum.OUT.getCode());
         out.setMatNum(wmsAllocationBillAdd.getOperateNum());
         out.setFactoryCode(wmsAllocationBillAdd.getFactoryCode());
         out.setBillType(OutBillTypeEnum.ALLOCATION_OUT.getCode());
-        this.save(out);
+        out.setTransferAction("ISSUE");
+        if (!this.save(out)) {
+            throw new IllegalStateException("即时调拨出库流水保存失败");
+        }
 
         WmsInoutFlowEntity in = new WmsInoutFlowEntity();
         BeanUtils.copyProperties(wmsAllocationBillAdd, in);
@@ -46,12 +50,17 @@ public class WmsInoutFlowServiceImpl extends ServiceImpl<WmsInoutFlowMapper, Wms
         in.setWarehouseCode(wmsAllocationBillAdd.getNewWarehouseCode());
         in.setSiteName(wmsAllocationBillAdd.getNewSiteName());
         in.setSiteCode(wmsAllocationBillAdd.getNewSiteCode());
+        in.setBillId(wmsAllocationBillAdd.getAllocationBillId());
         in.setBillNo(wmsAllocationBillAdd.getBillNo());
         in.setContainerCode(wmsAllocationBillAdd.getNewContainerCode());
         in.setOperateType(InOutEnum.IN.getCode());
         in.setMatNum(wmsAllocationBillAdd.getOperateNum());
         in.setFactoryCode(wmsAllocationBillAdd.getFactoryCode());
         in.setBillType(InBillTypeEnum.ALLOCATION.getCode());
-        this.save(in);
+        in.setSourceFlowId(out.getId());
+        in.setTransferAction("RECEIVE");
+        if (!this.save(in)) {
+            throw new IllegalStateException("即时调拨入库流水保存失败");
+        }
     }
 }

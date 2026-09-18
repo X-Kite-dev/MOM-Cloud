@@ -10,6 +10,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * 采购计划表
@@ -96,6 +97,9 @@ public class PmsPlanEntity extends BaseEntity<PmsPlanEntity> {
     @Schema(description = "到货数量")
     private Double planArrivalNum;
 
+    @Schema(description = "最近一次到货数量回写时间")
+    private LocalDateTime lastArrivalTime;
+
     /**
      * 质检合格状态，true 合格 false 不合格
      */
@@ -113,6 +117,12 @@ public class PmsPlanEntity extends BaseEntity<PmsPlanEntity> {
      */
     @Schema(description = "类型 采购 外协")
     private String type;
+
+    @Schema(description = "PLAN采购/外协月计划精确来源ID")
+    private Long sourceIssueMonthId;
+
+    @Schema(description = "PLAN月计划完整来源SHA-256指纹")
+    private String sourceIssueMonthFingerprint;
 
     /**
      * 工厂编码 - 数据所属的工厂编码

@@ -20,6 +20,6 @@ public interface MesAndonRecordMapper extends MomBaseMapper<MesAndonRecordEntity
      * @param query
      * @return
      */
-    IPage<AndonNoticeResp> noticePage(Page<AndonNoticeResp> page, @Param("query") AndonNoticeResp query, @Param("staffCode") String staffCode, @Param("states") List<String> stateList);
+    IPage<AndonNoticeResp> noticePage(Page<AndonNoticeResp> page, @Param("query") AndonNoticeResp query, @Param("staffCode") String staffCode, @Param("states") List<String> stateList, @Param("factoryCode") String factoryCode);
 
 }

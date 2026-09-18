@@ -1,153 +1,88 @@
 package com.kitex.mom.mes.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.kitex.admin.api.feign.RemoteParamService;
-import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.exception.CheckedException;
-import com.kitex.common.security.service.MomUser;
-import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
-import com.kitex.mom.mes.dto.MesWarehouseLiveStockInoutDTO;
+import com.kitex.common.core.util.R;
 import com.kitex.mom.mes.entity.MesWarehouseMaterialInBillEntity;
 import com.kitex.mom.mes.enums.MesMaterialInStateEnum;
-import com.kitex.mom.mes.enums.MesWarehouseMatDetailTypeEnum;
-import com.kitex.mom.mes.enums.WarehouseInBizTypeEnum;
-import com.kitex.mom.mes.enums.YesNoEnum;
 import com.kitex.mom.mes.mapper.MesWarehouseMaterialInBillMapper;
-import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
 import com.kitex.mom.mes.service.MesWarehouseMaterialInBillService;
 import com.kitex.mom.mes.vo.MesWarehouseMaterialInBillExcelVO;
 import com.kitex.mom.wms.api.feign.RemoteProductionPickingOutBillService;
 import com.kitex.mom.wms.entity.WmsOutBillDetailEntity;
 import com.kitex.mom.wms.entity.WmsOutBillEntity;
+import com.kitex.mom.wms.enums.DocumentEnum;
+import com.kitex.mom.wms.enums.OutBillTypeEnum;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
-/**
- * 生产领料
- *
- * @author kitex
- * @date 2025-02-24 09:15:17
- */
 @Service
 @RequiredArgsConstructor
 public class MesWarehouseMaterialInBillServiceImpl extends ServiceImpl<MesWarehouseMaterialInBillMapper, MesWarehouseMaterialInBillEntity> implements MesWarehouseMaterialInBillService {
-
-    private final MesWarehouseLiveStockService mesWarehouseLiveStockService;
-    private final RemoteSeqConfigService remoteSeqConfigService;
-    private final RemoteParamService remoteParamService;
     private final RemoteProductionPickingOutBillService remoteProductionPickingOutBillService;
+    private final MesMaterialReceiptService receiptService;
 
-    /**
-     * 新增生产领料-通过出库单
-     */
+    /** 导入只生成待签收通知，不再因参数跳过实物交接直接增加线边库存。 */
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Boolean saveByWmsOutBill(List<Long> ids) {
-        String isSite = remoteParamService.getByKey("MES_LINE_STOCK_IN_IS_SITE").getData();
-        MomUser user = SecurityUtils.getUser();
-        String username = user.getUsername();
-        String name = user.getName();
-        for (Long id : ids) {
-            // 获取wms出库单明细
-            WmsOutBillEntity outBill = Optional.ofNullable(remoteProductionPickingOutBillService.getDeepById(id).getData()).orElseThrow(() -> new CheckedException("仓库生产领料出库单查找失败"));
-            List<WmsOutBillDetailEntity> details = outBill.getDetails();
-            // 循环出库单明细赋值并保存
-            for (WmsOutBillDetailEntity bill : details) {
-                MesWarehouseMaterialInBillEntity mesInBill = new MesWarehouseMaterialInBillEntity();
-                BeanUtil.copyProperties(bill, mesInBill, "id", "billNo", "inTime", "warehouseCode", "warehouseName", "siteCode", "siteName", "containerCode");
-                mesInBill.setResourceNo(outBill.getBillNo());
-                mesInBill.setNoticeInNum(BigDecimal.valueOf(bill.getMatNum()));
-                mesInBill.setInspectionStatus(bill.getQualityResult());
-                // 序列号
-                String billNo = remoteSeqConfigService.create("mes_in_bill").getData();
-                mesInBill.setBillNo(billNo);
-                mesInBill.setHandleBy(username);
-                mesInBill.setHandleByName(name);
-                // 状态
-                if (YesNoEnum.YES.getCode().equals(isSite)) {
-                    mesInBill.setStatus(MesMaterialInStateEnum.PENDING.getCode());
-                    save(mesInBill);
-                } else {
-                    mesInBill.setStatus(MesMaterialInStateEnum.ALREADY.getCode());
-                    mesInBill.setInNum(mesInBill.getNoticeInNum());
-                    mesInBill.setInTime(LocalDateTime.now());
-                    save(mesInBill);
-                    // 入库
-                    doInStock(mesInBill);
-                }
+        if (ids == null || ids.isEmpty() || ids.size() > 100 || ids.contains(null))
+            throw new CheckedException("请选择1至100张生产发料出库单");
+        for (Long id : ids.stream().distinct().sorted().toList()) {
+            R<WmsOutBillEntity> response = remoteProductionPickingOutBillService.getDeepById(id);
+            if (response == null || !response.isOk() || response.getData() == null)
+                throw new CheckedException("无法核验WMS生产发料出库单");
+            WmsOutBillEntity bill = response.getData();
+            if (!Objects.equals(id, bill.getId()) || !OutBillTypeEnum.PRODUCE_OUT.getCode().equals(bill.getBillType())
+                    || !Set.of("2", "12").contains(StrUtil.blankToDefault(bill.getState(), ""))
+                    || bill.getDetails() == null || bill.getDetails().isEmpty())
+                throw new CheckedException("只允许从已通过/已完成的生产发料出库单生成收料通知");
+            receiptService.requireWriteAccess(bill.getFactoryCode());
+            if (bill.getDetails().stream().anyMatch(d -> d == null || d.getId() == null))
+                throw new CheckedException("WMS发料明细缺少精确ID");
+            for (WmsOutBillDetailEntity detail : bill.getDetails().stream()
+                    .sorted(Comparator.comparing(WmsOutBillDetailEntity::getId)).toList()) {
+                if (detail.getId() == null || !Objects.equals(detail.getBillId(), id)
+                        || detail.getMatNum() == null || !Double.isFinite(detail.getMatNum()) || detail.getMatNum() <= 0)
+                    throw new CheckedException("WMS发料明细来源或数量不完整");
+                MesWarehouseMaterialInBillEntity notice = new MesWarehouseMaterialInBillEntity();
+                BeanUtil.copyProperties(detail, notice, "id", "billId", "inTime", "siteCode", "siteName", "containerCode",
+                        "createBy", "createTime", "updateBy", "updateTime", "delFlag");
+                notice.setWmsOutDetailId(detail.getId());
+                notice.setResourceNo(bill.getBillNo());
+                notice.setBillNo(bill.getBillNo());
+                notice.setBillId(DocumentEnum.MES_PICKING.getCode().equals(bill.getDocumentTable()) ? bill.getDocumentId() : null);
+                notice.setNoticeInNum(BigDecimal.valueOf(detail.getMatNum()));
+                notice.setInspectionStatus(detail.getQualityResult());
+                notice.setFactoryCode(bill.getFactoryCode());
+                receiptService.registerNotice(notice);
             }
+            if (DocumentEnum.MES_PICKING.getCode().equals(bill.getDocumentTable()) && bill.getDocumentId() != null)
+                receiptService.refreshPicking(bill.getDocumentId());
         }
-        return Boolean.TRUE;
+        return true;
     }
 
     @Override
     public Boolean saveRecord(MesWarehouseMaterialInBillEntity inBill) {
-        MomUser user = SecurityUtils.getUser();
-        String username = user.getUsername();
-        String name = user.getName();
-        // 序列号
-        String billNo = remoteSeqConfigService.create("mes_in_bill").getData();
-        inBill.setBillNo(billNo);
-        inBill.setHandleBy(username);
-        inBill.setHandleByName(name);
-        save(inBill);
-        // 入库
-        doInStock(inBill);
-        return null;
+        throw new CheckedException("生产收料必须来自WMS正式出库通知；请导入来源后按实物签收，不能手填库存事实");
     }
 
-    /**
-     * 设置库位并入库
-     *
-     * @param entity
-     * @return
-     */
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Boolean inStock(MesWarehouseMaterialInBillEntity entity) {
-        BigDecimal inNum = Optional.ofNullable(entity.getInNum()).orElseThrow(() -> new CheckedException("实际入库数量为空！"));
-        if (inNum.compareTo(entity.getNoticeInNum()) > 0) {
-            throw new CheckedException("超出通知入库数！");
-        }
-        update(new LambdaUpdateWrapper<MesWarehouseMaterialInBillEntity>()
-                .set(MesWarehouseMaterialInBillEntity::getInNum, inNum)
-                .set(MesWarehouseMaterialInBillEntity::getSiteCode, entity.getSiteCode())
-                .set(MesWarehouseMaterialInBillEntity::getSiteName, entity.getSiteName())
-                .set(MesWarehouseMaterialInBillEntity::getInTime, LocalDateTime.now())
-                .set(MesWarehouseMaterialInBillEntity::getStatus, MesMaterialInStateEnum.ALREADY.getCode())
-                .eq(BaseEntity::getId, entity.getId())
-        );
-        doInStock(entity);
-        return Boolean.TRUE;
+        return receiptService.receiveLegacy(entity);
     }
 
-    /**
-     * 执行入库
-     *
-     * @param bill 生产领料
-     * @return
-     */
     @Override
-    @Transactional
     public void doInStock(MesWarehouseMaterialInBillEntity bill) {
-        MesWarehouseLiveStockInoutDTO liveStock = new MesWarehouseLiveStockInoutDTO();
-        BeanUtil.copyProperties(bill, liveStock, "id");
-        liveStock.setBillId(bill.getId());
-        liveStock.setNum(bill.getInNum());
-        liveStock.setBizType(WarehouseInBizTypeEnum.RECEPTION.getCode());
-        liveStock.setMatDetailType(MesWarehouseMatDetailTypeEnum.RAW.name());
-        mesWarehouseLiveStockService.inStock(liveStock);
+        throw new CheckedException("请使用受控签收命令，禁止绕过签收履历直接入库");
     }
 
     @Override
@@ -159,7 +94,8 @@ public class MesWarehouseMaterialInBillServiceImpl extends ServiceImpl<MesWareho
             MesWarehouseMaterialInBillExcelVO vo = new MesWarehouseMaterialInBillExcelVO();
             BeanUtil.copyProperties(entity, vo);
             vo.setRowNo(i + 1);
-            vo.setStatus(MesMaterialInStateEnum.getByCode(Optional.ofNullable(vo.getStatus()).orElse(MesMaterialInStateEnum.PENDING.getCode())).getName());
+            MesMaterialInStateEnum status = MesMaterialInStateEnum.getByCode(vo.getStatus());
+            vo.setStatus(status == null ? "历史未知状态" : status.getName());
             result.add(vo);
         }
         return result;

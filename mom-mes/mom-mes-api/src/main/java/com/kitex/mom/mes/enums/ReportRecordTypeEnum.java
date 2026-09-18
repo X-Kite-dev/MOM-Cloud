@@ -14,8 +14,10 @@ import lombok.Getter;
 public enum ReportRecordTypeEnum {
 
     REPORT("报工"),
+    REVERSE("反报工/冲销"),
     WRAP("包装装箱"),
     UNQUALIFIED("不合格品上报"),
+    QUALITY_SYNC("质量数量同步"),
     FEED("投料");
 
 

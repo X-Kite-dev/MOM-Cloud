@@ -1,13 +1,18 @@
 package com.kitex.mom.plan.service.impl;
 
 import cn.hutool.core.util.ObjUtil;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
+import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
+import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
 import com.kitex.mom.plan.constant.IssueStatusEnum;
 import com.kitex.mom.plan.constant.ModuleEnum;
@@ -16,12 +21,25 @@ import com.kitex.mom.plan.dto.MonthPlanQueryDTO;
 import com.kitex.mom.plan.dto.PlnIssueModuleDTO;
 import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
 import com.kitex.mom.plan.entity.PlnIssueEntity;
+import com.kitex.mom.plan.entity.PlnIssueCallbackReceiptEntity;
 import com.kitex.mom.plan.entity.PlnIssueFeedbackEntity;
 import com.kitex.mom.plan.entity.PlnUpdateLogEntity;
+import com.kitex.mom.plan.entity.PlanMatMrpEntity;
+import com.kitex.mom.plan.entity.PlnProductDemandEntity;
+import com.kitex.mom.plan.entity.PlnSchedulingBatchAllocationEntity;
+import com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity;
+import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
 import com.kitex.mom.plan.mapper.PlnIssueFeedbackMapper;
+import com.kitex.mom.plan.mapper.PlnIssueCallbackReceiptMapper;
 import com.kitex.mom.plan.mapper.PlnIssueMapper;
+import com.kitex.mom.plan.mapper.PlanMatMrpMapper;
+import com.kitex.mom.plan.mapper.PlnProductDemandMapper;
+import com.kitex.mom.plan.mapper.PlnSchedulingBatchAllocationMapper;
+import com.kitex.mom.plan.mapper.PlnSchedulingTaskDetailMapper;
+import com.kitex.mom.plan.mapper.PlnSchedulingOperationMapper;
 import com.kitex.mom.plan.service.PlanMatMrpService;
 import com.kitex.mom.plan.service.PlnIssueService;
+import com.kitex.mom.plan.service.PlnAutomationEventService;
 import com.kitex.mom.plan.service.PlnSchedulingEngineService;
 import com.kitex.mom.plan.service.PlnUpdateLogService;
 import com.kitex.mom.plan.vo.PlnIssueMonthVO;
@@ -33,6 +51,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -62,6 +82,17 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
 
     private final PlnSchedulingEngineService plnSchedulingEngineService;
 
+    private final PlnIssueCallbackReceiptMapper plnIssueCallbackReceiptMapper;
+
+    private final PlnAutomationEventService plnAutomationEventService;
+
+    private final PlanMatMrpMapper planMatMrpMapper;
+    private final PlnProductDemandMapper plnProductDemandMapper;
+    private final PlnSchedulingBatchAllocationMapper batchAllocationMapper;
+    private final PlnSchedulingTaskDetailMapper schedulingTaskDetailMapper;
+    private final PlnSchedulingOperationMapper schedulingOperationMapper;
+    private final RemoteMesTaskService remoteMesTaskService;
+
     /**
      * 新增或修改计划下达任务
      *
@@ -71,20 +102,52 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveOrUpdatePlnIssue(PlnIssueVO plnIssueVO) {
+        if (plnIssueVO == null || StrUtil.isBlank(plnIssueVO.getProductCode())
+                || plnIssueVO.getNum() == null || plnIssueVO.getNum().signum() <= 0
+                || plnIssueVO.getIssueTime() == null) {
+            throw new CheckedException("生产计划必须提供产品、正数数量和下达时间");
+        }
         if (plnIssueVO.getIssueTime().isBefore(LocalDateTime.now())) {
             throw new CheckedException("计划下达时间不能小于当前时间");
         }
         if (plnIssueVO.getIssueId() != null) {
-            PlnIssueEntity plnIssueEntity = this.getById(plnIssueVO.getIssueId());
+            PlnIssueEntity plnIssueEntity = requireStandaloneEditableIssue(plnIssueVO.getIssueId());
             return checkUpdateIssue(plnIssueEntity, plnIssueVO.getNum());
         }
         PlnIssueEntity plnIssue = new PlnIssueEntity();
         BeanUtils.copyProperties(plnIssueVO, plnIssue);
         plnIssue.setIssueNo(remoteSeqConfigService.create("plan_mes").getData());
+        plnIssue.setStatus(IssueStatusEnum.UNISSUED.getCode());
         // 新增日志保存
         PlnUpdateLogEntity initialLog = createUpdateLog(plnIssue, UpdateTypeEnum.NUM_ADD, null, plnIssueVO.getNum().toString());
         plnUpdateLogService.saveUpdateLog(Collections.singletonList(initialLog));
         return this.save(plnIssue);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Boolean createStandaloneIssue(PlnIssueEntity input) {
+        if (input == null || input.getId() != null || StrUtil.isBlank(input.getProductCode())
+                || input.getNum() == null || input.getNum().signum() <= 0 || input.getIssueTime() == null) {
+            throw new CheckedException("独立计划创建必须提供产品、正数数量和下达时间，且不能携带已有计划ID");
+        }
+        PlnIssueEntity issue = new PlnIssueEntity();
+        issue.setIssueNo(remoteSeqConfigService.create("plan_mes").getData());
+        issue.setCustomerCode(input.getCustomerCode());
+        issue.setCustomerName(input.getCustomerName());
+        issue.setProductCode(input.getProductCode());
+        issue.setProductName(input.getProductName());
+        issue.setSpecificationModel(input.getSpecificationModel());
+        issue.setMaterialAttribute(input.getMaterialAttribute());
+        issue.setNum(input.getNum());
+        issue.setIssueTime(input.getIssueTime());
+        issue.setDemandTime(input.getDemandTime());
+        issue.setPlanType(input.getPlanType());
+        issue.setRemark(input.getRemark());
+        // 通知来源若原本是正式生产计划，保持既有前端口径；MRP等来源不得伪装为新供应来源。
+        issue.setType("issue".equals(input.getType()) ? "issue" : "manual");
+        issue.setStatus(IssueStatusEnum.UNISSUED.getCode());
+        return this.save(issue);
     }
 
     private Boolean checkUpdateIssue(PlnIssueEntity plnIssueEntity, BigDecimal num) {
@@ -212,14 +275,14 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean removeBatchIssue(List<Long> ids) {
-        List<PlnIssueEntity> plnIssueEntityList = this.listByIds(ids);
-        for (PlnIssueEntity plnIssueEntity : plnIssueEntityList) {
-            if ("1".equals(plnIssueEntity.getStatus())) {
-                throw new CheckedException("该计划已下发，不能删除");
-            }
+        if (ids == null || ids.isEmpty() || ids.stream().anyMatch(Objects::isNull)) {
+            throw new CheckedException("删除生产计划必须提供有效计划ID");
         }
-        this.removeByIds(ids);
-        return Boolean.TRUE;
+        List<Long> uniqueIds = ids.stream().distinct().sorted().toList();
+        for (Long id : uniqueIds) {
+            requireStandaloneEditableIssue(id);
+        }
+        return this.removeByIds(uniqueIds);
     }
 
     /**
@@ -428,8 +491,13 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
      * @return R
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Boolean updateIssue(PlnIssueEntity plnIssue) {
-        PlnIssueEntity plnIssueEntity = this.getById(plnIssue.getId());
+        if (plnIssue == null || plnIssue.getId() == null
+                || !IssueStatusEnum.NOT_ISSUED.getCode().equals(plnIssue.getStatus())) {
+            throw new CheckedException("旧计划状态接口仅允许关闭独立且未下发的计划；其他变更须走受控流程");
+        }
+        PlnIssueEntity plnIssueEntity = requireStandaloneEditableIssue(plnIssue.getId());
 
         // 修改日志保存
         PlnUpdateLogEntity plnUpdateLogEntities = new PlnUpdateLogEntity();
@@ -445,6 +513,53 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
         return this.updateById(plnIssueEntity);
     }
 
+    /** 旧接口只处理无需求/MRP/APS/MES来源的独立草案，严禁跳过跨模块撤回。 */
+    private PlnIssueEntity requireStandaloneEditableIssue(Long issueId) {
+        PlnIssueEntity issue = this.getOne(new LambdaQueryWrapper<PlnIssueEntity>()
+                .eq(PlnIssueEntity::getId, issueId).last("FOR UPDATE"));
+        if (issue == null) throw new CheckedException("生产计划不存在：" + issueId);
+        String currentFactory = FactoryContextHolder.getFactoryCode();
+        if (StrUtil.isNotBlank(currentFactory) && !Objects.equals(currentFactory, issue.getFactoryCode())) {
+            throw new CheckedException("当前工厂无权变更该生产计划");
+        }
+        if (!IssueStatusEnum.UNISSUED.getCode().equals(issue.getStatus())
+                || Boolean.TRUE.equals(issue.getLockStatus()) || issue.getLockTaskId() != null
+                || positive(issue.getFinishNum()) || positive(issue.getUnqualifiedNum())
+                || positive(issue.getQualityIsolatedNum()) || positive(issue.getQualityReleasedNum())
+                || positive(issue.getQualityRejectedNum()) || positive(issue.getScrapNum())
+                || positive(issue.getReworkNum()) || positive(issue.getReworkCompletedNum())
+                || positive(issue.getReworkQualifiedNum()) || positive(issue.getReworkRejectedNum())) {
+            throw new CheckedException("计划已下发、锁定或存在执行/质量事实，不能通过旧接口修改；请走受控变更");
+        }
+        if (StrUtil.isBlank(issue.getIssueNo())
+                || this.count(new LambdaQueryWrapper<PlnIssueEntity>()
+                .eq(PlnIssueEntity::getIssueNo, issue.getIssueNo()).ne(PlnIssueEntity::getId, issueId)) != 0
+                || plnProductDemandMapper.selectCount(new LambdaQueryWrapper<PlnProductDemandEntity>()
+                .eq(PlnProductDemandEntity::getDemandNo, issue.getIssueNo())) != 0
+                || planMatMrpMapper.selectCount(new LambdaQueryWrapper<PlanMatMrpEntity>()
+                .eq(PlanMatMrpEntity::getPlanDemandNo, issue.getIssueNo())) != 0
+                || batchAllocationMapper.selectCount(new LambdaQueryWrapper<PlnSchedulingBatchAllocationEntity>()
+                .eq(PlnSchedulingBatchAllocationEntity::getIssueId, issueId)) != 0
+                || schedulingTaskDetailMapper.selectCount(new LambdaQueryWrapper<PlnSchedulingTaskDetailEntity>()
+                .eq(PlnSchedulingTaskDetailEntity::getIssueId, issueId)) != 0
+                || schedulingOperationMapper.selectCount(new LambdaQueryWrapper<PlnSchedulingOperationEntity>()
+                .eq(PlnSchedulingOperationEntity::getIssueId, issueId)) != 0) {
+            throw new CheckedException("计划已关联需求、MRP或APS，不能通过旧接口修改；请走受控变更");
+        }
+        R<List<MesTaskEntity>> mes = remoteMesTaskService.omsLife(issue.getIssueNo());
+        if (mes == null || !mes.isOk() || mes.getData() == null) {
+            throw new CheckedException("MES工单事实不可核验，禁止修改生产计划");
+        }
+        if (!mes.getData().isEmpty()) {
+            throw new CheckedException("计划已关联MES工单，不能通过旧接口修改；请走受控变更");
+        }
+        return issue;
+    }
+
+    private boolean positive(BigDecimal value) {
+        return value != null && value.signum() > 0;
+    }
+
     /**
      * 修改生产生产排产结果表
      *
@@ -454,31 +569,157 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean edit(List<OmsOrderLifeCycleDTO> omsOrderLifeCycleDtoList) {
+        if (omsOrderLifeCycleDtoList == null || omsOrderLifeCycleDtoList.isEmpty()) {
+            return true;
+        }
+        for (OmsOrderLifeCycleDTO callback : omsOrderLifeCycleDtoList) {
+            if (callback == null || callback.getNo() == null || callback.getNo().isBlank()
+                    || callback.getProductCode() == null || callback.getProductCode().isBlank()) {
+                throw new CheckedException("生产执行回传必须包含计划号和产品编码");
+            }
+        }
         Map<String, PlnIssueEntity> plnIssueEntityMap = this.list(new LambdaQueryWrapper<PlnIssueEntity>().in(PlnIssueEntity::getIssueNo,
                         omsOrderLifeCycleDtoList.stream().map(OmsOrderLifeCycleDTO::getNo).collect(Collectors.toList())))
                 .stream().collect(Collectors.toMap(entity -> entity.getIssueNo() + "_" + entity.getProductCode(), Function.identity(), (v1, v2) -> v1));
         // 生产排产结果
-        List<PlnIssueEntity> updateList = new ArrayList<>();
+        Map<Long, PlnIssueEntity> updateMap = new LinkedHashMap<>();
         // mrp 完成数量修改
         List<OmsOrderLifeCycleDTO> matMrpList = new ArrayList<>();
+        List<PlnIssueCallbackReceiptEntity> receipts = new ArrayList<>();
         for (OmsOrderLifeCycleDTO omsOrderLifeCycleDTO : omsOrderLifeCycleDtoList) {
-            PlnIssueEntity issue = plnIssueEntityMap.get(omsOrderLifeCycleDTO.getNo() + "_" + omsOrderLifeCycleDTO.getProductCode());
-            if (omsOrderLifeCycleDTO.getFinishNum() != null) {
-                issue.setFinishNum(Optional.ofNullable(issue.getFinishNum()).orElse(BigDecimal.ZERO)
-                        .add(omsOrderLifeCycleDTO.getFinishNum()));
+            PlnIssueEntity mappedIssue = plnIssueEntityMap.get(omsOrderLifeCycleDTO.getNo() + "_" + omsOrderLifeCycleDTO.getProductCode());
+            if (mappedIssue == null) {
+                throw new CheckedException("未找到生产执行回传对应的计划：" + omsOrderLifeCycleDTO.getNo()
+                        + "/" + omsOrderLifeCycleDTO.getProductCode());
             }
-            if ("mrp".equals(issue.getType())) {
+            String requestId = omsOrderLifeCycleDTO.getRequestId();
+            String requestFingerprint = callbackFingerprint(omsOrderLifeCycleDTO);
+            if (requestId != null && !requestId.isBlank()) {
+                requestId = requestId.trim();
+                if (requestId.length() > 200) {
+                    throw new CheckedException("生产执行回传幂等号长度不能超过200");
+                }
+                plnIssueCallbackReceiptMapper.lockRequest(requestId);
+                PlnIssueCallbackReceiptEntity existing = plnIssueCallbackReceiptMapper.selectOne(
+                        new LambdaQueryWrapper<PlnIssueCallbackReceiptEntity>()
+                                .eq(PlnIssueCallbackReceiptEntity::getRequestId, requestId), false);
+                if (existing != null) {
+                    if (!Objects.equals(existing.getRequestFingerprint(), requestFingerprint)) {
+                        throw new CheckedException("生产执行回传幂等号已使用且载荷不一致：" + requestId);
+                    }
+                    continue;
+                }
+            }
+            PlnIssueEntity issue = updateMap.get(mappedIssue.getId());
+            if (issue == null) {
+                issue = baseMapper.selectOne(new LambdaQueryWrapper<PlnIssueEntity>()
+                        .eq(PlnIssueEntity::getId, mappedIssue.getId()).last("FOR UPDATE"));
+                if (issue == null) throw new CheckedException("生产执行回传锁定计划失败：" + mappedIssue.getIssueNo());
+                updateMap.put(issue.getId(), issue);
+            }
+            if (omsOrderLifeCycleDTO.getFinishNum() != null) {
+                issue.setFinishNum(addNonNegative(issue.getFinishNum(), omsOrderLifeCycleDTO.getFinishNum(), "完成"));
+            }
+            issue.setUnqualifiedNum(addNullable(issue.getUnqualifiedNum(), omsOrderLifeCycleDTO.getUnqualifiedNum(), "直接不合格"));
+            issue.setQualityIsolatedNum(addNullable(issue.getQualityIsolatedNum(), omsOrderLifeCycleDTO.getQualityIsolatedNum(), "质量隔离"));
+            issue.setQualityReleasedNum(addNullable(issue.getQualityReleasedNum(), omsOrderLifeCycleDTO.getQualityReleasedNum(), "质量放行"));
+            issue.setQualityRejectedNum(addNullable(issue.getQualityRejectedNum(), omsOrderLifeCycleDTO.getQualityRejectedNum(), "质量判退"));
+            issue.setScrapNum(addNullable(issue.getScrapNum(), omsOrderLifeCycleDTO.getScrapNum(), "报废"));
+            issue.setReworkNum(addNullable(issue.getReworkNum(), omsOrderLifeCycleDTO.getReworkNum(), "返工创建"));
+            issue.setReworkCompletedNum(addNullable(issue.getReworkCompletedNum(), omsOrderLifeCycleDTO.getReworkCompletedNum(), "返工完工"));
+            issue.setReworkQualifiedNum(addNullable(issue.getReworkQualifiedNum(), omsOrderLifeCycleDTO.getReworkQualifiedNum(), "返工复检放行"));
+            issue.setReworkRejectedNum(addNullable(issue.getReworkRejectedNum(), omsOrderLifeCycleDTO.getReworkRejectedNum(), "返工复检拒绝"));
+            validateQualityDispositionQuantity(issue);
+            validateReworkQuantity(issue);
+            if ("mrp".equals(issue.getType()) && omsOrderLifeCycleDTO.getFinishNum() != null) {
                 matMrpList.add(omsOrderLifeCycleDTO);
             }
-            issue.setStatus(omsOrderLifeCycleDTO.getIssueStatus());
-            issue.setFinishTime(omsOrderLifeCycleDTO.getFinishTime());
-            updateList.add(issue);
+            if (omsOrderLifeCycleDTO.getIssueStatus() != null && !omsOrderLifeCycleDTO.getIssueStatus().isBlank()) {
+                issue.setStatus(omsOrderLifeCycleDTO.getIssueStatus());
+            }
+            if (omsOrderLifeCycleDTO.getFinishTime() != null) {
+                issue.setFinishTime(omsOrderLifeCycleDTO.getFinishTime());
+            }
+            if (requestId != null && !requestId.isBlank()) {
+                receipts.add(new PlnIssueCallbackReceiptEntity()
+                        .setRequestId(requestId).setRequestFingerprint(requestFingerprint)
+                        .setSourceType(omsOrderLifeCycleDTO.getType()).setIssueId(issue.getId())
+                        .setIssueNo(issue.getIssueNo()).setProductCode(issue.getProductCode())
+                        .setIssueStatus(omsOrderLifeCycleDTO.getIssueStatus())
+                        .setLifeCycleStatus(omsOrderLifeCycleDTO.getStatus())
+                        .setFinishQuantity(omsOrderLifeCycleDTO.getFinishNum())
+                        .setUnqualifiedQuantity(omsOrderLifeCycleDTO.getUnqualifiedNum())
+                        .setQualityIsolatedQuantity(omsOrderLifeCycleDTO.getQualityIsolatedNum())
+                        .setQualityReleasedQuantity(omsOrderLifeCycleDTO.getQualityReleasedNum())
+                        .setQualityRejectedQuantity(omsOrderLifeCycleDTO.getQualityRejectedNum())
+                        .setScrapQuantity(omsOrderLifeCycleDTO.getScrapNum())
+                        .setReworkQuantity(omsOrderLifeCycleDTO.getReworkNum())
+                        .setReworkCompletedQuantity(omsOrderLifeCycleDTO.getReworkCompletedNum())
+                        .setReworkQualifiedQuantity(omsOrderLifeCycleDTO.getReworkQualifiedNum())
+                        .setReworkRejectedQuantity(omsOrderLifeCycleDTO.getReworkRejectedNum())
+                        .setReceivedTime(LocalDateTime.now()).setFactoryCode(issue.getFactoryCode()));
+            }
         }
 
         if (matMrpList.size() > 0) {
             planMatMrpService.completeNumHandle(matMrpList);
         }
-        return this.updateBatchById(updateList);
+        if (!updateMap.isEmpty() && !this.updateBatchById(updateMap.values())) {
+            return false;
+        }
+        for (PlnIssueCallbackReceiptEntity receipt : receipts) {
+            plnIssueCallbackReceiptMapper.insert(receipt);
+            PlnIssueEntity issue = updateMap.get(receipt.getIssueId());
+            // 回执与事件收件箱同事务落库；后续由独立事件事务执行补产履约和质量阈值评估。
+            plnAutomationEventService.receiveQualityCallback(receipt, issue);
+        }
+        return true;
+    }
+
+    private String callbackFingerprint(OmsOrderLifeCycleDTO callback) {
+        try {
+            String raw = String.join("|", String.valueOf(callback.getNo()), String.valueOf(callback.getProductCode()),
+                    String.valueOf(callback.getType()), String.valueOf(callback.getStatus()),
+                    String.valueOf(callback.getIssueStatus()), String.valueOf(callback.getFinishNum()),
+                    String.valueOf(callback.getUnqualifiedNum()), String.valueOf(callback.getQualityIsolatedNum()),
+                    String.valueOf(callback.getQualityReleasedNum()), String.valueOf(callback.getQualityRejectedNum()),
+                    String.valueOf(callback.getScrapNum()), String.valueOf(callback.getReworkNum()),
+                    String.valueOf(callback.getReworkCompletedNum()), String.valueOf(callback.getReworkQualifiedNum()),
+                    String.valueOf(callback.getReworkRejectedNum()));
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(raw.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception exception) {
+            throw new CheckedException("生产执行回传指纹生成失败");
+        }
+    }
+
+    private BigDecimal addNullable(BigDecimal current, BigDecimal delta, String label) {
+        return delta == null ? current : addNonNegative(current, delta, label);
+    }
+
+    private BigDecimal addNonNegative(BigDecimal current, BigDecimal delta, String label) {
+        BigDecimal result = Optional.ofNullable(current).orElse(BigDecimal.ZERO).add(delta);
+        if (result.signum() < 0) throw new CheckedException(label + "累计数量不能为负");
+        return result;
+    }
+
+    private void validateReworkQuantity(PlnIssueEntity issue) {
+        BigDecimal created = Optional.ofNullable(issue.getReworkNum()).orElse(BigDecimal.ZERO);
+        BigDecimal completed = Optional.ofNullable(issue.getReworkCompletedNum()).orElse(BigDecimal.ZERO);
+        BigDecimal qualified = Optional.ofNullable(issue.getReworkQualifiedNum()).orElse(BigDecimal.ZERO);
+        BigDecimal rejected = Optional.ofNullable(issue.getReworkRejectedNum()).orElse(BigDecimal.ZERO);
+        if (completed.compareTo(created) > 0 || qualified.add(rejected).compareTo(completed) > 0) {
+            throw new CheckedException("计划返工创建、完工与复检处置数量不守恒：" + issue.getIssueNo());
+        }
+    }
+
+    private void validateQualityDispositionQuantity(PlnIssueEntity issue) {
+        BigDecimal unqualified = Optional.ofNullable(issue.getUnqualifiedNum()).orElse(BigDecimal.ZERO);
+        BigDecimal isolated = Optional.ofNullable(issue.getQualityIsolatedNum()).orElse(BigDecimal.ZERO);
+        BigDecimal released = Optional.ofNullable(issue.getQualityReleasedNum()).orElse(BigDecimal.ZERO);
+        if (released.compareTo(unqualified.max(isolated)) > 0) {
+            throw new CheckedException("计划质量放行累计量超过已上报不合格或已隔离数量：" + issue.getIssueNo());
+        }
     }
 
     /**

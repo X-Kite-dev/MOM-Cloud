@@ -3,6 +3,9 @@ package com.kitex.mom.mes.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
+import com.kitex.mom.mes.entity.MesChangeoverExecutionEntity;
+import com.kitex.mom.mes.entity.MesTaskExecutionSegmentEntity;
+import com.kitex.mom.mes.entity.MesToolingExecutionEntity;
 import com.kitex.mom.tpm.dto.DeviceCheckTaskStartDto;
 
 import java.util.List;
@@ -64,11 +67,22 @@ public interface MesTaskArrangeService extends IService<MesTaskArrangeEntity> {
     void pause(Long id);
 
     /**
+     * 安灯事件联动暂停，不依赖当前登录人是派工任务执行人。
+     */
+    void pauseByAndon(String arrangeCode);
+
+    com.kitex.mom.tpm.dto.TpmDevicePauseReceipt pauseByAndon(String arrangeCode, String requestId);
+
+    /**
      * 接收
      *
      * @param id
      */
     void receive(Long id, String worksiteCode);
+
+    void checkInToolings(MesToolingCheckInDTO dto);
+
+    List<MesToolingExecutionEntity> listToolingExecutions(Long arrangeId);
 
     /**
      * 任务开工
@@ -76,6 +90,8 @@ public interface MesTaskArrangeService extends IService<MesTaskArrangeEntity> {
      * @param id
      */
     void start(Long id);
+
+    List<MesTaskExecutionSegmentEntity> listExecutionSegments(Long arrangeId);
 
     /**
      * 关闭
@@ -97,4 +113,8 @@ public interface MesTaskArrangeService extends IService<MesTaskArrangeEntity> {
      * @param dto
      */
     void deviceStart(DeviceCheckTaskStartDto dto);
+
+    MesChangeoverExecutionEntity beginChangeover(MesChangeoverStartDTO dto);
+
+    void cancelChangeover(MesChangeoverCancelDTO dto);
 }

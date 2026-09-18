@@ -16,6 +16,8 @@ import java.util.Map;
  * @date 2025-03-12
  */
 public interface IotDevicePropertyService extends IService<IotDevicePropertyEntity> {
+    List<IotDevicePropertyEntity> details(Long deviceId,String deviceCode,Long productId,String productCode,
+            String identifier,String name,LocalDateTime startTime,LocalDateTime endTime);
 
     /**
      * 分页查询设备属性数据列表
@@ -88,6 +90,8 @@ public interface IotDevicePropertyService extends IService<IotDevicePropertyEnti
      * @return 是否更新成功
      */
     boolean updateDeviceProperties(String deviceId, Map<String, Object> properties);
+
+    boolean updateDeviceProperties(String deviceId, Map<String, Object> properties, Map<String, String> qualityCodes);
 
     /**
      * 获取设备属性

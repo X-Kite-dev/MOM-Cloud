@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -26,6 +28,22 @@ import java.time.LocalDate;
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "线边库出入库流水")
 public class MesWarehouseInoutEntity extends BaseEntity<MesWarehouseInoutEntity> {
+    private Long materialReceiptId;
+
+    @Schema(description = "本次实际增减的库存行主键，不按批次猜测")
+    @JsonSerialize(using = ToStringSerializer.class)
+    private Long sourceStockId;
+    @Schema(description = "该库存行原始报工来源，非本次扣料报工")
+    @JsonSerialize(using = ToStringSerializer.class)
+    private Long sourceReportId;
+    @JsonSerialize(using = ToStringSerializer.class)
+    private BigDecimal stockBeforeNum;
+    @JsonSerialize(using = ToStringSerializer.class)
+    private BigDecimal stockAfterNum;
+    @Schema(description = "行级数量证据版本，历史为空不回填")
+    private String stockProofVersion;
+    @Schema(description = "本次库存选择规则及读取的主数据依据")
+    private String allocationPolicy;
 
     /**
      * 单据id
@@ -56,6 +74,21 @@ public class MesWarehouseInoutEntity extends BaseEntity<MesWarehouseInoutEntity>
      */
     @Schema(description = "物料名称")
     private String matCode;
+
+    @Schema(description = "WMS物料预留单号")
+    private String reservationNo;
+
+    @Schema(description = "BOM需求物料编码")
+    private String requirementMatCode;
+
+    @Schema(description = "BOM需求物料名称")
+    private String requirementMatName;
+
+    @Schema(description = "是否使用替代料")
+    private Boolean substituteFlag;
+
+    @Schema(description = "替代比例")
+    private BigDecimal substituteRatio;
 
     /**
      * 物料编码

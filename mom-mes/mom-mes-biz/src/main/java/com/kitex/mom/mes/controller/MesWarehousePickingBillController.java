@@ -1,5 +1,7 @@
 package com.kitex.mom.mes.controller;
 
+import org.springframework.security.access.prepost.PreAuthorize;
+
 
 import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.util.StrUtil;
@@ -167,6 +169,7 @@ public class MesWarehousePickingBillController {
     @Operation(summary = "领料出库单完成后返回结果", description = "领料出库单完成后返回结果")
     @SysLog("领料出库单完成后返回结果")
     @PostMapping("/wmsOutBillBack")
+    @com.kitex.common.security.annotation.Inner
     public R<Boolean> wmsOutBillBack(@RequestBody MesPickingWmsOutBillBackDTO dto) {
         return R.ok(mesWarehousePickingBillService.wmsOutBillBack(dto));
     }
@@ -180,6 +183,7 @@ public class MesWarehousePickingBillController {
     @Operation(summary = "领料出库单 接收物料", description = "领料出库单 接收物料")
     @SysLog("领料出库单 接收物料")
     @PostMapping("/receiveBill")
+    @PreAuthorize("@pms.hasPermission('mes_materialReceipt_receive')")
     public R<Boolean> receiveBill(@RequestBody MesPickingReceiveMatDTO dto) {
         return R.ok(mesWarehousePickingBillService.receiveBill(dto));
     }

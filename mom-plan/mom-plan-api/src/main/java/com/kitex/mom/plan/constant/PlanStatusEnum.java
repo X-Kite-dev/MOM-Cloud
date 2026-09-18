@@ -11,6 +11,7 @@ public enum PlanStatusEnum {
     CANCEL("0", "未接收"),
     RECEIVE("1", "已接收"),
     MRP("2", "已生成mrp"),
+    WITHDRAWN("3", "已撤回"),
 
     ISSUED("1", "已下达"),
     NOT_ISSUED("0", "未下达");;

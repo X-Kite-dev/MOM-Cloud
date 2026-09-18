@@ -2,6 +2,7 @@ package com.kitex.mom.mdm.feign;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
+import com.kitex.common.feign.annotation.NoToken;
 import com.kitex.mom.mdm.Constants;
 import com.kitex.mom.mdm.entity.MdmWarehouseEntity;
 import org.springframework.cloud.openfeign.FeignClient;
@@ -32,6 +33,10 @@ public interface RemoteWarehouseService {
      */
     @GetMapping("/mdmWarehouse/list")
     R<List<MdmWarehouseEntity>> getList(@SpringQueryMap MdmWarehouseEntity mdmWarehouse);
+
+    @NoToken
+    @GetMapping("/mdmWarehouse/productEnabled")
+    R<List<MdmWarehouseEntity>> getEnabledProductWarehouses();
 
     /**
      * 根据编码获取仓库

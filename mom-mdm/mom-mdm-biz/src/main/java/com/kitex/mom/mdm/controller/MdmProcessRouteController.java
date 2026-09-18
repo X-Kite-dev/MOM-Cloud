@@ -74,6 +74,12 @@ public class MdmProcessRouteController {
         return R.ok(mdmProcessRouteService.list(new LambdaQueryWrapper<MdmProcessRouteEntity>().eq(MdmProcessRouteEntity::getProductCode, productCode)));
     }
 
+    @Operation(summary = "批量查询工序投料映射", description = "供PLAN和Agent按工艺路线、物料批量核算缺料影响工序")
+    @PostMapping("/materialAssignments")
+    public R<List<MdmProcessProcedureMatEntity>> getMaterialAssignments(@RequestBody MdmRouteMaterialAssignmentQueryDTO query) {
+        return R.ok(mdmProcessRouteService.getMaterialAssignments(query));
+    }
+
     /**
      * 工艺路线树查询
      *

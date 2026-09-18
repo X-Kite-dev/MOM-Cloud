@@ -13,6 +13,7 @@ import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
 import java.util.Date;
+import java.time.LocalDate;
 
 /**
  * 采购质检任务
@@ -126,6 +127,24 @@ public class QmsInspectionPurchaseTaskEntity extends BaseEntity<QmsInspectionPur
 
     @Schema(description = "附件")
     private String annex;
+
+    @Schema(description = "供应商物料认证台账ID")
+    private Long materialAuthorizationId;
+
+    @Schema(description = "供应商物料认证编号")
+    private String materialAuthorizationNo;
+
+    @Schema(description = "供应商物料认证有效期")
+    private LocalDate materialAuthorizationValidEnd;
+
+    @Schema(description = "来料检验等级：NORMAL、TIGHTENED")
+    private String inspectionLevel;
+
+    @Schema(description = "质量标准原始检验方式")
+    private String originalInspectionMethod;
+
+    @Schema(description = "认证与加严检验决策JSON快照")
+    private String complianceSnapshot;
 
     /**
      * 工厂编码 - 数据所属的工厂编码

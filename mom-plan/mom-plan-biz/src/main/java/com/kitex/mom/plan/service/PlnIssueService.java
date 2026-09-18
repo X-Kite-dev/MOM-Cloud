@@ -25,6 +25,9 @@ public interface PlnIssueService extends MPJDeepService<PlnIssueEntity> {
      */
     Boolean saveOrUpdatePlnIssue(PlnIssueVO plnIssueVO);
 
+    /** 兼容旧通知入口：只允许创建独立的未下发计划，不接受客户端状态/来源编号。 */
+    Boolean createStandaloneIssue(PlnIssueEntity issue);
+
     /**
      * 通过条件查询计划下达
      *

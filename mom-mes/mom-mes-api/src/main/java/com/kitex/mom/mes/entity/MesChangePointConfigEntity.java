@@ -25,6 +25,9 @@ import java.math.BigDecimal;
 @Schema(description = "变化点配置")
 public class MesChangePointConfigEntity extends BaseEntity<MesChangePointConfigEntity> {
 
+    @Schema(description = "配置唯一编码")
+    private String configCode;
+
     /**
      * 变化点编码
      */
@@ -113,6 +116,21 @@ public class MesChangePointConfigEntity extends BaseEntity<MesChangePointConfigE
      */
     @Schema(description = "验证角色")
     private String verifyRole;
+
+    @Schema(description = "生产控制模式：NOTICE/HOLD_START/HOLD_REPORT/HOLD_ALL")
+    private String controlMode;
+
+    @Schema(description = "是否必须生成并通过变化点首检")
+    private Boolean inspectionRequired;
+
+    @Schema(description = "接收SLA分钟")
+    private Integer responseSlaMin;
+
+    @Schema(description = "处置SLA分钟")
+    private Integer handleSlaMin;
+
+    @Schema(description = "通知通道，SYSTEM固定，可附加DINGDING或WECHAT")
+    private String notifyChannels;
 
     /**
      * 所属组织

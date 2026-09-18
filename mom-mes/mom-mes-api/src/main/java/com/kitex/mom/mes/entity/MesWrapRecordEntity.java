@@ -10,6 +10,8 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
+import java.math.BigDecimal;
+
 /**
  * <p>
  * 包装装箱扫码记录 实体类
@@ -25,6 +27,12 @@ import lombok.experimental.Accessors;
 @Schema(description = "包装装箱扫码记录")
 @TableName("mes_wrap_record")
 public class MesWrapRecordEntity extends BaseEntity<MesWrapRecordEntity> {
+
+    @Schema(description = "关联报工记录ID")
+    private Long reportId;
+
+    @Schema(description = "已封装箱码；为空表示当前尚未封箱")
+    private String wrapCode;
 
     /**
      * 工单编码
@@ -50,6 +58,21 @@ public class MesWrapRecordEntity extends BaseEntity<MesWrapRecordEntity> {
     @Schema(description = "报工条码")
     private String transferCode;
 
+    @Schema(description = "本包装内容数量")
+    private BigDecimal quantity;
+
+    @Schema(description = "拆箱后尚可用于重组的数量")
+    private BigDecimal availableQuantity;
+
+    @Schema(description = "内容状态 STAGED/PACKED/UNPACKED/PARTIAL/MOVED/REVERSED")
+    private String packingStatus;
+
+    @Schema(description = "重组内容的来源记录ID")
+    private Long sourceRecordId;
+
+    @Schema(description = "最近包装操作请求号")
+    private String operationRequestId;
+
     /**
      * 所属组织
      */
@@ -58,4 +81,3 @@ public class MesWrapRecordEntity extends BaseEntity<MesWrapRecordEntity> {
     private String factoryCode;
 
 }
-

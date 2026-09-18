@@ -3,6 +3,7 @@ package com.kitex.mom.wms.dto;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -25,6 +26,51 @@ public class WmsAllocationBillAddDTO {
      */
     @Schema(description = "调拨单号")
     private String billNo;
+
+    @Schema(description = "永久幂等请求号；发起和接收分别使用新的请求号")
+    private String requestId;
+
+    @Schema(description = "Agent调拨路线策略ID")
+    private Long transferRoutePolicyId;
+
+    @Schema(description = "Agent调拨路线策略编码")
+    private String transferRoutePolicyCode;
+
+    @Schema(description = "Agent调拨路线策略快照JSON")
+    private String transferRoutePolicySnapshot;
+
+    @Schema(description = "运输方式")
+    private String transportMode;
+
+    @Schema(description = "紧急等级")
+    private String urgencyLevel;
+
+    @Schema(description = "预计到达时间")
+    private LocalDateTime estimatedArrivalTime;
+
+    @Schema(description = "来源调拨单ID；差异补调单使用")
+    private Long parentAllocationBillId;
+
+    @Schema(description = "关联短溢收差异单ID")
+    private Long varianceCaseId;
+
+    @Schema(description = "调拨目的：NORMAL/AGENT/VARIANCE_SUPPLEMENT")
+    private String transferPurpose;
+
+    @Schema(description = "结构化来源业务类型")
+    private String sourceBusinessType;
+
+    @Schema(description = "结构化来源业务单号")
+    private String sourceBusinessNo;
+
+    @Schema(description = "来源PLAN MRP记录ID")
+    private Long sourceMrpId;
+
+    @Schema(description = "来源缺料物料编码")
+    private String sourceMaterialCode;
+
+    @Schema(description = "来源缺料数量")
+    private java.math.BigDecimal sourceShortageQuantity;
 
     /**
      * 旧仓库编码

@@ -1,6 +1,9 @@
 package com.kitex.mom.qms.dto.req;
 
 import lombok.Data;
+import java.math.BigDecimal;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 
 /**
  * 不良判定
@@ -10,6 +13,8 @@ import lombok.Data;
  */
 @Data
 public class QmsBadJudgeReq {
+
+    private String requestId;
 
     private Long id;
 
@@ -31,6 +36,7 @@ public class QmsBadJudgeReq {
     /**
      * 判定数量
      */
-    private Integer num;
+    @JsonSerialize(using = ToStringSerializer.class)
+    private BigDecimal num;
 
 }

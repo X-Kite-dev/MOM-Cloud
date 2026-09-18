@@ -12,6 +12,7 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 
 /**
  * 实时库存
@@ -123,6 +124,10 @@ public class WmsLiveStockEntity extends BaseEntity<WmsLiveStockEntity> {
     @Schema(description = "数量")
     private Double matNum;
 
+    @TableField(exist = false)
+    @Schema(description = "扣除WMS活动预留后的计划可用数量；供MRP读取，不改变实物数量")
+    private BigDecimal planAvailableNum;
+
     /**
      * 单位
      */
@@ -152,6 +157,24 @@ public class WmsLiveStockEntity extends BaseEntity<WmsLiveStockEntity> {
      */
     @Schema(description = "质检结果")
     private String qualityResult;
+
+    @Schema(description = "标准质量状态：PENDING/HOLD/QUALIFIED/CONCESSION/REWORK/SCRAP_PENDING/RETURN_PENDING")
+    private String qualityStatus;
+
+    @Schema(description = "质量隔离单号")
+    private String qualityHoldNo;
+
+    @Schema(description = "质量状态来源类型")
+    private String qualitySourceType;
+
+    @Schema(description = "质量状态来源业务ID")
+    private String qualitySourceId;
+
+    @Schema(description = "是否要求质检；0否、1是")
+    private String isQualityTest;
+
+    @Schema(description = "质检任务id")
+    private Long qualityTaskId;
 
     /**
      * 状态 是否被锁定;0否 1是

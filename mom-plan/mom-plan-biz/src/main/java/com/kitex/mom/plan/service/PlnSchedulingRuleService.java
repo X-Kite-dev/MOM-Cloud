@@ -27,7 +27,8 @@ public interface PlnSchedulingRuleService extends IService<PlnSchedulingRuleSetE
      * @param page 分页参数
      * @return 任务分页
      */
-    Page<PlnSchedulingTaskEntity> pageTask(SearchPage page, String mode);
+    Page<PlnSchedulingTaskEntity> pageTask(SearchPage page, String mode, String taskNo);
+    Page<PlnSchedulingTaskEntity> pageTask(SearchPage page, String mode, String taskNo, Boolean resultArchived);
 
     /**
      * 分页查询规则集

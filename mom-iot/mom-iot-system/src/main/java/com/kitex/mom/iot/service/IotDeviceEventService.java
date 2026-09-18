@@ -15,6 +15,8 @@ import java.util.Map;
  * @date 2025-03-12
  */
 public interface IotDeviceEventService extends IService<IotDeviceEventEntity> {
+    com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<IotDeviceEventEntity> scoped(Long id,String code,String permission);
+    IotDeviceEventEntity authorizedEvent(Long id,String permission);
 
     /**
      * 分页查询设备事件数据
@@ -91,4 +93,7 @@ public interface IotDeviceEventService extends IService<IotDeviceEventEntity> {
      */
     boolean saveEvent(Long deviceId, String deviceCode, Long productId, String productCode,
                       String identifier, String name, String eventType, Map<String, Object> eventData, String factoryCode);
-} 
+
+    /** 对已持久化但转发失败/忽略的生产产量事件进行幂等补偿。 */
+    IotDeviceEventEntity retryMesReportForward(Long eventId, com.kitex.mom.iot.dto.IotMesRetryCommand command);
+}

@@ -19,7 +19,10 @@
                checktab.check_tool,
                checktab.judge_type,
                checktab.standard_max,
-               checktab.standard_min
+               checktab.standard_min,
+               checktab.failure_action,
+               checktab.default_recovery_minutes,
+               checktab.failure_guidance
         FROM tpm_device_item as rela
                  INNER JOIN tpm_check_item as checktab ON rela.item_id = checktab.id
         WHERE rela.device_code = #{query.deviceCode}
@@ -35,7 +38,10 @@
         checktab.check_tool,
         checktab.judge_type,
         checktab.standard_max,
-        checktab.standard_min
+        checktab.standard_min,
+        checktab.failure_action,
+        checktab.default_recovery_minutes,
+        checktab.failure_guidance
         FROM
         tpm_device_item as rela
         INNER JOIN tpm_check_item as checktab ON rela.item_id = checktab.id

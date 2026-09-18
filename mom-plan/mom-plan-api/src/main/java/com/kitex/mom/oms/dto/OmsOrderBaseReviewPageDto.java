@@ -79,6 +79,10 @@ public class OmsOrderBaseReviewPageDto extends BaseEntity<OmsOrderBaseReviewPage
     @Schema(description = "订单状态 0 否 1是")
     private String changeType;
 
+    private String changeApplicantName;
+
+    private String changeReviewerName;
+
 
     /**
      * 订单数量

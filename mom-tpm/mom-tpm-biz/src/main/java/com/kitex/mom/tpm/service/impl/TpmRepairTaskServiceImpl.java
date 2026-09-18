@@ -2,39 +2,34 @@ package com.kitex.mom.tpm.service.impl;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.ObjectUtil;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.kitex.admin.api.entity.SysUserEntity;
-import com.kitex.admin.api.feign.RemoteUserService;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.mom.common.message.api.feign.RemoteMessagePushService;
-import com.kitex.mom.common.message.constant.enums.MessageTypeEnum;
-import com.kitex.mom.common.message.dto.MessageDTO;
+import com.kitex.common.data.tenant.TenantContextHolder;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
 import com.kitex.mom.mdm.entity.MdmDeviceEntity;
 import com.kitex.mom.mdm.enums.DeviceStateEnum;
 import com.kitex.mom.mdm.enums.DeviceUsableEnum;
 import com.kitex.mom.mdm.feign.RemoteDeviceService;
-import com.kitex.mom.tpm.delayedConfig.TpmDelayedConfig;
-import com.kitex.mom.tpm.delayedConfig.TpmMessageDelayed;
-import com.kitex.mom.tpm.delayedConfig.TpmNoticePerson;
-import com.kitex.mom.tpm.delayedConfig.TpmTaskNotice;
 import com.kitex.mom.tpm.entity.*;
 import com.kitex.mom.tpm.enums.*;
 import com.kitex.mom.tpm.mapper.*;
 import com.kitex.mom.tpm.service.*;
 import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.DelayQueue;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -46,18 +41,14 @@ import java.util.stream.Collectors;
  */
 @Service
 @AllArgsConstructor
+@Slf4j
 public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, TpmRepairTaskEntity> implements TpmRepairTaskService {
-
-    public static final String TPMDELAY = "TPMDELAY";
-    public static String MESSAGE = "维修任务编码为【%s】的维修任务已超出规定完成时间!    ";
 
     private final TpmRepairTaskDetailsService tpmRepairTaskDetailsService;
     private final TpmRepairRemindMapper tpmRepairRemindMapper;
     private final TpmRepairRemindDetailsMapper tpmRepairRemindDetailsMapper;
-    private final TpmDelayedConfig tpmDelayedConfig;
     private final RemoteDeviceService remoteDeviceService;
-    private final RemoteMessagePushService remoteMessagePushService;
-    private final RemoteUserService remoteUserService;
+    private final TpmRepairNoticeService noticeService;
     private final RemoteSeqConfigService remoteSeqConfigService;
     private final TpmMaintenanceTaskMapper tpmMaintenanceTaskMapper;
     private final TpmRepairRecordMapper tpmRepairRecordMapper;
@@ -66,6 +57,8 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
     private final TpmSparePartsStockService tpmSparePartsStockService;
     private final TpmSparePartsService tpmSparePartsService;
     private final TpmSparePartsApplicationService tpmSparePartsApplicationService;
+    private final TpmPlanEventOutboxService tpmPlanEventOutboxService;
+    private final TpmRepairVerificationMapper verificationMapper;
 
 
     @Override
@@ -82,152 +75,60 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveTask(TpmRepairTaskEntity tpmRepairTask) {
+        var user=SecurityUtils.getUser();String factory=FactoryContextHolder.getFactoryCode();
+        if(tpmRepairTask==null || user==null || user.getId()==null || TenantContextHolder.getTenantId()==null || TenantContextHolder.getTenantSkip()
+            || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) || StrUtil.isBlank(factory)
+            || tpmRepairTask.getId()!=null || StrUtil.isBlank(tpmRepairTask.getTaskCode()) || StrUtil.isBlank(tpmRepairTask.getDeviceCode())
+            || StrUtil.isNotBlank(tpmRepairTask.getState()) || tpmRepairTask.getRepairTime()!=null)
+            throw new com.kitex.common.core.exception.CheckedException("报修须实名选择实际工厂、完整设备与新任务编码，不能携带已存在任务或完成状态");
         LocalDateTime now = LocalDateTime.now();
-        tpmRepairTask.setType(RepairTaskTypeEnum.INTERNAL.getCode());
-        if (!tpmRepairTask.getRemindSign()) {
-            //保存任务
-            MomUser user = SecurityUtils.getUser();
-            tpmRepairTask.setSubmitBy(user.getUsername());
-            tpmRepairTask.setSubmitByName(user.getName());
-            tpmRepairTask.setSubmitTime(now);
-            tpmRepairTask.setState(RepairStateEnum.CREATE.getCode());
-            this.save(tpmRepairTask);
-        } else {
+        if (tpmRepairTask.getExpectedRecoveryTime() != null && !tpmRepairTask.getExpectedRecoveryTime().isAfter(now)) {
+            throw new RuntimeException("设备预计恢复时间必须晚于当前报修时间");
+        }
+        if (tpmRepairTask.getExpectedRecoveryTime() != null && StrUtil.isBlank(tpmRepairTask.getRecoveryForecastReason())) {
+            throw new RuntimeException("填写设备预计恢复时间时必须同时提供预测依据");
+        }
+        // 两种报修通知模式共享同一权威设备及数据库原子故障阻断；提醒开关只决定是否通知。
+        var query=new MdmDeviceEntity();query.setDeviceCode(tpmRepairTask.getDeviceCode());
+        var deviceResponse=remoteDeviceService.getDetails(query);
+        var device=deviceResponse==null?null:deviceResponse.getData();
+        if(deviceResponse==null || !deviceResponse.isOk() || device==null || !Objects.equals(device.getTenantId(),TenantContextHolder.getTenantId())
+            || !factory.equals(device.getFactoryCode()) || !Boolean.TRUE.equals(device.getStatus())
+            || !Set.of(DeviceStateEnum.IDLE.getCode(),DeviceStateEnum.RUNNING.getCode(),DeviceStateEnum.PAUSE.getCode(),
+                DeviceStateEnum.MAINTENANCE.getCode(),DeviceStateEnum.REPAIR.getCode()).contains(Objects.toString(device.getDeviceState(),"")))
+            throw new com.kitex.common.core.exception.CheckedException("设备不存在、跨工厂、已停用/报废或处于未知状态；须先核对MDM实际设备状态");
+        tpmRepairTask.setFactoryCode(factory);tpmRepairTask.setTenantId(TenantContextHolder.getTenantId());
+        tpmRepairTask.setDeviceName(device.getDeviceName());tpmRepairTask.setType(RepairTaskTypeEnum.INTERNAL.getCode());
+        tpmRepairTask.setSubmitBy(user.getUsername());tpmRepairTask.setSubmitByName(user.getName());tpmRepairTask.setSubmitTime(now);
+        tpmRepairTask.setState(RepairStateEnum.CREATE.getCode());tpmRepairTask.setRepairMethod(null);tpmRepairTask.setRepairResult(null);
+        if(tpmRepairTask.getExpectedRecoveryTime()!=null){tpmRepairTask.setForecastUpdatedTime(now);tpmRepairTask.setForecastUpdatedBy(user.getUsername());}
+        tpmRepairTask.setRemindSign(Boolean.TRUE.equals(tpmRepairTask.getRemindSign()));
+        List<TpmRepairNoticeService.Draft> noticeDrafts=List.of();
+        if (Boolean.TRUE.equals(tpmRepairTask.getRemindSign())) {
             //根据班次、设备、故障类型查询维修配置
             List<TpmRepairRemindEntity> targetRemindList = tpmRepairRemindMapper.getTarget(tpmRepairTask.getFaultClassId(), tpmRepairTask.getDeviceCode(), tpmRepairTask.getShiftCode());
             if (CollUtil.isEmpty(targetRemindList)) {
                 throw new RuntimeException("根据故障类型、设备、班次未查询到相关的维修配置信息，请先维护！");
             }
-            //查询设备
-            MdmDeviceEntity mdmDevice = new MdmDeviceEntity();
-            mdmDevice.setDeviceCode(tpmRepairTask.getDeviceCode());
-            MdmDeviceEntity data = remoteDeviceService.getDetails(mdmDevice).getData();
-            if (ObjectUtil.isEmpty(data)) {
-                throw new RuntimeException("访问设备数据失败，请授权或者检查主数据服务是否运行！");
-            }
-
-            if (data.getDeviceState().equals(DeviceStateEnum.RUNNING.getCode())
-                    || data.getDeviceState().equals(DeviceStateEnum.PAUSE.getCode())) {
-                throw new RuntimeException("新增失败，设备处于生产状态，请先将设备停止运行！");
-            }
-
-            //保存任务
-            MomUser user = SecurityUtils.getUser();
-            tpmRepairTask.setSubmitBy(user.getUsername());
-            tpmRepairTask.setSubmitByName(user.getName());
-            tpmRepairTask.setSubmitTime(now);
-            tpmRepairTask.setState(RepairStateEnum.CREATE.getCode());
-
-
-            //查询相关人配置信息,发送消息提醒
+            // 提前核定全部升级规则及收件人，任务保存后与报修同事务持久入箱。
             List<String> remindCodes = targetRemindList.stream().map(TpmRepairRemindEntity::getRemindCode).distinct().toList();
             List<TpmRepairRemindDetailsEntity> tpmRepairRemindDetailsList = tpmRepairRemindDetailsMapper.selectList(new LambdaQueryWrapper<TpmRepairRemindDetailsEntity>()
                     .in(TpmRepairRemindDetailsEntity::getRemindCode, remindCodes));
-            try {
-                messageHandle(tpmRepairRemindDetailsList, tpmRepairTask);
-            } catch (Exception e) {
-                throw new RuntimeException(e.getMessage());
-            }
-
-            this.save(tpmRepairTask);
-            //更改设备状态
-            data.setDeviceState(DeviceStateEnum.REPAIR.getCode());
-            data.setDeviceUsable(DeviceUsableEnum.NO.getCode());
-            remoteDeviceService.updateById(data).getData();
+            noticeDrafts=noticeService.prepare(tpmRepairTask,tpmRepairRemindDetailsList);
+        }else if(StrUtil.isBlank(tpmRepairTask.getRepairBy()) || StrUtil.isBlank(tpmRepairTask.getRepairByName()))
+            throw new com.kitex.common.core.exception.CheckedException("关闭自动提醒时须指定实际维修处理人");
+        if(!this.save(tpmRepairTask))throw new com.kitex.common.core.exception.CheckedException("维修任务保存失败");
+        // 第131节数据库触发器在本地事务中同步将真实MDM行置维修中/不可用并记录前后状态；不再在事务内调用远程MDM写接口。
+        tpmPlanEventOutboxService.enqueueRepairUnavailable(tpmRepairTask);
+        if(!noticeDrafts.isEmpty()){
+            var staged=noticeService.enqueue(tpmRepairTask,noticeDrafts);
+            var immediate=staged.stream().filter(n->"IMMEDIATE".equals(n.getNoticeKey())).findFirst().orElseThrow();
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){
+                @Override public void afterCommit(){try{noticeService.dispatchOne(immediate.getId(),immediate.getTenantId(),immediate.getFactoryCode());}
+                    catch(RuntimeException ex){log.error("报修已提交，即时提醒暂留持久投递账，noticeId={}",immediate.getId(),ex);}}
+            });
         }
         return Boolean.TRUE;
-    }
-
-    /**
-     * 添加发送消息到队列
-     */
-    private void messageHandle(List<TpmRepairRemindDetailsEntity> tpmRepairRemindDetailsList, TpmRepairTaskEntity tpmRepairTask) {
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
-        LocalDateTime now = LocalDateTime.now();
-        DelayQueue<TpmMessageDelayed> queue = tpmDelayedConfig.getQueue();
-        List<TpmMessageDelayed> results = new ArrayList<>();
-        //处理人立即通知
-        Set<Long> userIdsList = new HashSet<>();
-        List<TpmRepairRemindDetailsEntity> handlePersonList = tpmRepairRemindDetailsList.stream().filter(item -> RepairPersonTypeEnum.HANDLE.getCode().equals(item.getPersonType())).toList();
-        for (TpmRepairRemindDetailsEntity remindDetails : handlePersonList) {
-            String userIds = remindDetails.getUserIds();
-            userIdsList.addAll(Arrays.stream(userIds.split(",")).map(Long::valueOf).toList());
-        }
-        List<SysUserEntity> userList = remoteUserService.getUserByIdInner(userIdsList.stream().toList()).getData();
-        if (CollUtil.isEmpty(userList)) {
-            throw new RuntimeException("查询用户数据失败！");
-        }
-        List<String> usernameList = userList.stream().map(SysUserEntity::getUsername).toList();
-        List<String> nameList = userList.stream().map(SysUserEntity::getName).toList();
-        tpmRepairTask.setRepairBy(String.join(",", usernameList));
-        tpmRepairTask.setRepairByName(String.join(",", nameList));
-        String userIds = userList.stream().map(SysUserEntity::getWxDingUserid).collect(Collectors.joining(","));
-        //构建消息体
-        String message = String.format(MESSAGE, tpmRepairTask.getTaskCode(), now.format(formatter));
-        //构建参数推送消息
-        MessageDTO messageDTO = new MessageDTO();
-        messageDTO.setCode(TPMDELAY);
-        messageDTO.setMessageType(MessageTypeEnum.TEXT.getType());
-        messageDTO.setUserList(userIdsList.stream().toList());
-        messageDTO.setUserIds(userIds);
-        messageDTO.setMessage(message);
-        remoteMessagePushService.pushPersonMsg(messageDTO);
-
-        //通知人消息通知
-        List<TpmNoticePerson> noticePersonList = new ArrayList<>();
-        Map<String, List<TpmRepairRemindDetailsEntity>> remindMap = tpmRepairRemindDetailsList.stream().collect(Collectors.groupingBy(TpmRepairRemindDetailsEntity::getRemindCode, Collectors.toList()));
-
-        for (Map.Entry<String, List<TpmRepairRemindDetailsEntity>> entry : remindMap.entrySet()) {
-            List<TpmRepairRemindDetailsEntity> value = entry.getValue().stream()
-                    .sorted(Comparator.comparingInt(TpmRepairRemindDetailsEntity::getUserLevel)).toList();
-            //获取处理人处理时间
-            TpmRepairRemindDetailsEntity handlePerson = value.get(0);
-            Integer expireTime = getExpireTime(handlePerson.getHandleUnit(), handlePerson.getHandleLimit());
-            //从第二个开始 ，第一个为处理人
-            for (int i = 1; i < value.size(); i++) {
-                TpmRepairRemindDetailsEntity remindDetails = value.get(i);
-                for (String userId : remindDetails.getUserIds().split(",")) {
-                    TpmNoticePerson noticePerson = new TpmNoticePerson(Long.valueOf(userId), expireTime);
-                    noticePersonList.add(noticePerson);
-                }
-                if (ObjectUtil.isNotEmpty(remindDetails.getHandleLimit())
-                        && ObjectUtil.isNotEmpty(remindDetails.getHandleUnit())) {
-                    Integer time = getExpireTime(remindDetails.getHandleUnit(), remindDetails.getHandleLimit());
-                    expireTime = expireTime + time;
-                }
-            }
-        }
-        //通知结果值 noticePersonList
-        Map<Integer, List<TpmNoticePerson>> noticePersonMap = noticePersonList.stream().collect(Collectors.groupingBy(TpmNoticePerson::getExpireTime, Collectors.toList()));
-        //统一时间值去重用户 添加到延时队列
-        for (Map.Entry<Integer, List<TpmNoticePerson>> noticePerson : noticePersonMap.entrySet()) {
-            List<Long> userIdList = noticePerson.getValue().stream().map(TpmNoticePerson::getUserId).distinct().toList();
-            results.add(buildTpmMessageDelayed(tpmRepairTask.getId(), userIdList, Long.valueOf(noticePerson.getKey())));
-        }
-        queue.addAll(results);
-    }
-
-
-    private TpmMessageDelayed buildTpmMessageDelayed(Long id, List<Long> userIdList, Long expireTime) {
-        TpmTaskNotice taskNotice = new TpmTaskNotice();
-        taskNotice.setId(id);
-        taskNotice.setUserIdList(userIdList);
-        return new TpmMessageDelayed(taskNotice, expireTime);
-    }
-
-
-    private Integer getExpireTime(String handleUnit, Integer handleLimit) {
-        Integer results = null;
-        if (TimeUnitEnum.MINUTE.getCode().equals(handleUnit)) {
-            results = handleLimit;
-        }
-        if (TimeUnitEnum.HOUR.getCode().equals(handleUnit)) {
-            results = handleLimit * 60;
-        }
-        if (TimeUnitEnum.DAY.getCode().equals(handleUnit)) {
-            results = handleLimit * 60 * 24;
-        }
-        return results;
     }
 
 
@@ -237,34 +138,36 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean handleTask(TpmRepairTaskEntity tpmRepairTask) {
-        //查询设备，更改设备状态
-        MdmDeviceEntity mdmDevice = new MdmDeviceEntity();
-        mdmDevice.setDeviceCode(tpmRepairTask.getDeviceCode());
-        MdmDeviceEntity data = remoteDeviceService.getDetails(mdmDevice).getData();
-        if (ObjectUtil.isEmpty(data)) {
-            throw new RuntimeException("访问设备数据失败，请授权或者检查主数据服务是否运行！");
-        }
-        List<TpmMaintenanceTaskEntity> maintenanceTaskList = tpmMaintenanceTaskMapper.selectList(new LambdaQueryWrapper<TpmMaintenanceTaskEntity>()
-                .eq(TpmMaintenanceTaskEntity::getDeviceCode, tpmRepairTask.getDeviceCode())
-                .eq(TpmMaintenanceTaskEntity::getState, MaintenanceTaskStateEnum.ING.getCode()));
-        if (CollUtil.isEmpty(maintenanceTaskList)) {
-            data.setDeviceState(DeviceStateEnum.IDLE.getCode());
-            data.setDeviceUsable(DeviceUsableEnum.YES.getCode());
-        } else {
-            data.setDeviceState(DeviceStateEnum.MAINTENANCE.getCode());
-            data.setDeviceUsable(DeviceUsableEnum.NO.getCode());
-        }
+        throw new com.kitex.common.core.exception.CheckedException("维修完成须先提交结果并由另一人独立验证，请使用维修验证工作台");
+    }
+
+    @Override
+    @Transactional(rollbackFor=Exception.class)
+    public Boolean completeVerifiedTask(Long verificationId) {
+        var proof=verificationMapper.selectById(verificationId);
+        if(proof==null || !"VERIFIED".equals(proof.getStatus()) || !Objects.equals(proof.getVerifierId(),SecurityUtils.getUser().getId()))
+            throw new com.kitex.common.core.exception.CheckedException("缺少同事务独立维修验证依据");
+        TpmRepairTaskEntity tpmRepairTask;
+        try { tpmRepairTask = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules().readValue(proof.getWorkJson(), TpmRepairTaskEntity.class); }
+        catch(Exception ex) { throw new com.kitex.common.core.exception.CheckedException("冻结维修结果无法读取"); }
+        var current=this.getById(proof.getTaskId());
+        if(current==null || !"0".equals(current.getState()) || !Objects.equals(proof.getTaskId(),tpmRepairTask.getId())
+            || !Objects.equals(proof.getTenantId(),current.getTenantId()) || !Objects.equals(proof.getTenantId(),tpmRepairTask.getTenantId())
+            || !Objects.equals(proof.getFactoryCode(),current.getFactoryCode()) || !Objects.equals(proof.getFactoryCode(),tpmRepairTask.getFactoryCode())
+            || !Objects.equals(proof.getTaskCode(),current.getTaskCode()) || !Objects.equals(proof.getTaskCode(),tpmRepairTask.getTaskCode())
+            || !Objects.equals(proof.getDeviceCode(),current.getDeviceCode()) || !Objects.equals(proof.getDeviceCode(),tpmRepairTask.getDeviceCode()))
+            throw new com.kitex.common.core.exception.CheckedException("冻结维修结果与当前任务身份或状态不一致");
         //保存主表
         LocalDateTime now = LocalDateTime.now();
         MomUser user = SecurityUtils.getUser();
-        tpmRepairTask.setRepairBy(user.getUsername());
-        tpmRepairTask.setRepairByName(user.getName());
+        tpmRepairTask.setRepairBy(proof.getApplicantCode());
+        tpmRepairTask.setRepairByName(proof.getApplicantName());
         tpmRepairTask.setRepairTime(now);
         tpmRepairTask.setState(RepairStateEnum.COMPLETE.getCode());
-        this.updateById(tpmRepairTask);
+        if(!this.updateById(tpmRepairTask))throw new com.kitex.common.core.exception.CheckedException("维修任务完成保存失败");
         //保存明细
         List<TpmRepairTaskDetailsEntity> detailsList = tpmRepairTask.getDetailsList();
-        if (CollUtil.isNotEmpty(detailsList)) {
+        {
             //逻辑变更
             //1.保存维修备件使用明细
             detailsList.forEach(item -> {
@@ -272,14 +175,15 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
                 item.setUseTime(now);
                 item.setTaskCode(tpmRepairTask.getTaskCode());
             });
-            tpmRepairTaskDetailsService.saveBatch(detailsList);
+            if (CollUtil.isNotEmpty(detailsList) && !tpmRepairTaskDetailsService.saveBatch(detailsList))
+                throw new com.kitex.common.core.exception.CheckedException("维修实际备件明细保存失败");
 
             //2.查询备件申请数据
             List<TpmSparePartsApplicationDetailsEntity> applyBySourceCode = tpmSparePartsApplicationService.getApplyBySourceCode(tpmRepairTask.getTaskCode(), SparePartsApplicationSourceEnum.FAULT.getCode());
             List<TpmSparePartsApplicationDetailsEntity> passApplicationDetailsList = applyBySourceCode.stream().filter(item -> item.getApprovalStatus()
                     .equals(SparePartsApplicationStateEnum.PASS.getCode())).toList();
 
-            Map<String, TpmSparePartsApplicationDetailsEntity> applicationSparePartsMap = applyBySourceCode.stream().collect(Collectors.toMap(TpmSparePartsApplicationDetailsEntity::getSparePartCode, Function.identity(), (k1, k2) -> k1));
+            Map<String, TpmSparePartsApplicationDetailsEntity> applicationSparePartsMap = passApplicationDetailsList.stream().collect(Collectors.toMap(TpmSparePartsApplicationDetailsEntity::getSparePartCode, Function.identity(), (k1, k2) -> k1));
 
             Map<String, BigDecimal> applicationMap = passApplicationDetailsList.stream().collect(Collectors.groupingBy(
                     TpmSparePartsApplicationDetailsEntity::getSparePartCode,
@@ -317,7 +221,8 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
                 application.setApprovalStatus(SparePartsApplicationStateEnum.WAIT.getCode());
                 application.setDetailsList(returnList);
                 //保存备件退回申请
-                tpmSparePartsApplicationService.addApply(application);
+                if(!tpmSparePartsApplicationService.addApply(application))
+                    throw new com.kitex.common.core.exception.CheckedException("未用备件退回申请保存失败");
 
             }
 
@@ -325,11 +230,15 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
         //生成维修记录
         TpmRepairRecordEntity repairRecord = new TpmRepairRecordEntity();
         BeanUtils.copyProperties(tpmRepairTask, repairRecord, "id");
-        tpmRepairRecordMapper.insert(repairRecord);
+        if(tpmRepairRecordMapper.insert(repairRecord)!=1)
+            throw new com.kitex.common.core.exception.CheckedException("维修记录保存失败");
         //保存备件信息
 
         //保存设备状态
-        remoteDeviceService.updateById(data).getData();
+        // 维修验证只结束本维修业务；不覆盖MDM的维修/保养/停用/报废资格，也不自动开机。
+        // 未投递的过期异常会被取消；已投递事实保留，PLAN正式发布前会再次核验TPM实时状态。
+        tpmPlanEventOutboxService.markRepairRecovered(tpmRepairTask);
+        noticeService.cancelPendingForTask(tpmRepairTask);
         return Boolean.TRUE;
     }
 

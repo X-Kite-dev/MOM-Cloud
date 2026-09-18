@@ -16,6 +16,8 @@ import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
 import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
+import com.kitex.mom.mdm.entity.MdmMaterialAuthorizationEntity;
+import com.kitex.mom.mdm.feign.RemoteMaterialAuthorizationService;
 import com.kitex.mom.pms.api.feign.RemotePurchaseReceiptService;
 import com.kitex.mom.pms.dto.WmsPurchaseReceiptSetQualifiedNumDTO;
 import com.kitex.mom.qms.dto.ReportListRespDTO;
@@ -48,6 +50,7 @@ import java.time.LocalTime;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import cn.hutool.json.JSONUtil;
 
 /**
  * 来料质检
@@ -80,6 +83,8 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
 
     private final RemoteMesTaskService remoteMesTaskService;
 
+    private final RemoteMaterialAuthorizationService remoteMaterialAuthorizationService;
+
 
     /**
      * 创建质检任务
@@ -90,10 +95,14 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
         if (this.existTask(createParam.getMatCode(), createParam.getSupplierCode(), createParam.getBatchNo())) {
             throw new RuntimeException("已经有同类型的任务,无法继续创建");
         }
+        MdmMaterialAuthorizationEntity authorization = resolveSupplierAuthorization(createParam);
+        if (authorization != null && authorization.getQualityStandardId() != null) {
+            createParam.setStandardId(authorization.getQualityStandardId());
+        }
         // 获取关联质检标准
         QmsQualityStandardEntity qualityStandard = null;
         // 若没传质检标准id  则去匹配一个
-        if (createParam.getStandardId() != null) {
+        if (createParam.getStandardId() == null) {
             qualityStandard = qualityStandardService.getOne(new LambdaQueryWrapper<QmsQualityStandardEntity>()
                     .eq(QmsQualityStandardEntity::getMatCode, createParam.getMatCode())
                     .eq(QmsQualityStandardEntity::getInspectionType, InspectionTaskTypeEnum.PURCHASE.name())
@@ -103,6 +112,11 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
         }
         if (Objects.isNull(qualityStandard)) {
             throw new RuntimeException("未找到质检标准，请先创建质检标准");
+        }
+        if (!InspectionTaskTypeEnum.PURCHASE.name().equals(qualityStandard.getInspectionType())
+                || !Objects.equals(qualityStandard.getPublished(), 1)
+                || !Objects.equals(qualityStandard.getMatCode(), createParam.getMatCode())) {
+            throw new RuntimeException("指定质检标准未发布、不是来料检验类型或与当前物料不匹配");
         }
 
         // 创建质检任务
@@ -115,6 +129,17 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
                 .setHandleNum(0)
                 .setInspectionNum(createParam.getInspectionNum())
                 .setStatus(InspectionTaskStatusEnum.WAIT.name()).setDeptCode(createParam.getDeptCode());
+        task.setInspectionLevel(authorization == null ? "NORMAL" : authorization.getInspectionLevel());
+        task.setOriginalInspectionMethod(qualityStandard.getInspectionMethod());
+        if (authorization != null) {
+            task.setMaterialAuthorizationId(authorization.getId());
+            task.setMaterialAuthorizationNo(authorization.getAuthorizationNo());
+            task.setMaterialAuthorizationValidEnd(authorization.getValidEnd());
+            task.setComplianceSnapshot(JSONUtil.toJsonStr(authorization));
+        }
+        if (isTightened(task)) {
+            task.setInspectionNum(createParam.getNum());
+        }
         if (InspectionMethodEnum.FULL.name().equals(qualityStandard.getInspectionMethod())) {
             task.setInspectionNum(createParam.getNum());
         }
@@ -125,7 +150,7 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
 
         // 生成任务质检项
         val details = this.generateDetail(task, qualityStandard);
-        if (InspectionMethodEnum.RANDOM.name().equals(qualityStandard.getInspectionMethod())) {
+        if (!isTightened(task) && InspectionMethodEnum.RANDOM.name().equals(qualityStandard.getInspectionMethod())) {
             Optional<Integer> maxNum = details.stream().map(QmsInspectionPurchaseTaskDetailEntity::getTotalNum).max(Integer::compareTo);
             if (maxNum.isPresent()) {
                 task.setInspectionNum(maxNum.get());
@@ -138,6 +163,27 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
         historyService.create(task);
 
         return task.getId();
+    }
+
+    private MdmMaterialAuthorizationEntity resolveSupplierAuthorization(InspectionPurchaseCreateParam createParam) {
+        if (StrUtil.hasBlank(createParam.getMatCode(), createParam.getSupplierCode())) {
+            return null;
+        }
+        try {
+            List<MdmMaterialAuthorizationEntity> records = remoteMaterialAuthorizationService.active(
+                    "SUPPLIER_CERTIFICATION", createParam.getMatCode(), createParam.getSupplierCode(), LocalDate.now()).getData();
+            if (CollUtil.isEmpty(records)) {
+                return null;
+            }
+            return records.stream().filter(item -> "TIGHTENED".equals(item.getInspectionLevel()))
+                    .findFirst().orElse(records.get(0));
+        } catch (Exception ex) {
+            throw new RuntimeException("读取供应商物料认证失败，禁止在合规状态未知时创建来料检验任务", ex);
+        }
+    }
+
+    private boolean isTightened(QmsInspectionPurchaseTaskEntity task) {
+        return task != null && "TIGHTENED".equals(task.getInspectionLevel());
     }
 
     /**
@@ -207,6 +253,9 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
 
         // 更新任务基础信息
         task.setNum(task.getNum() + appendParam.getNum());
+        if (isTightened(task)) {
+            task.setInspectionNum(task.getNum());
+        }
 
         // 计算质检项是否需要更新, 过滤出需要更新的任务详情进行更新
         val details = taskDetails.stream().map(o -> this.updateTaskDetails(o, task, qualityStandard))
@@ -253,6 +302,9 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
         }
         if (Objects.equals(task.getResult(), InspectionTaskResultEnum.EXEMPTION.name())) {
             throw new RuntimeException("任务已经免检");
+        }
+        if (isTightened(task)) {
+            throw new RuntimeException("加严检验任务不允许免检，必须完成全部检验项");
         }
         task.setStatus(InspectionTaskStatusEnum.FINISHED.name());
         task.setResult(InspectionTaskResultEnum.EXEMPTION.name());
@@ -327,16 +379,16 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
         Integer ac = null;
         Integer re = null;
         // 全检
-        if (InspectionMethodEnum.FULL.name().equals(qualityStandard.getInspectionMethod())) {
+        if (isTightened(task) || InspectionMethodEnum.FULL.name().equals(qualityStandard.getInspectionMethod())) {
             n = task.getNum();
         }
-        if (InspectionMethodEnum.FIXED.name().equals(qualityStandard.getInspectionMethod())) {
+        if (!isTightened(task) && InspectionMethodEnum.FIXED.name().equals(qualityStandard.getInspectionMethod())) {
             n = qualityStandard.getNum();
         }
-        if (InspectionMethodEnum.PENDING.name().equals(qualityStandard.getInspectionMethod())) {
+        if (!isTightened(task) && InspectionMethodEnum.PENDING.name().equals(qualityStandard.getInspectionMethod())) {
             n = task.getInspectionNum();
         }
-        if (InspectionMethodEnum.RANDOM.name().equals(qualityStandard.getInspectionMethod())) {
+        if (!isTightened(task) && InspectionMethodEnum.RANDOM.name().equals(qualityStandard.getInspectionMethod())) {
             // 获取当前抽样标准
             Frequency frequency = this.getInspectionFrequency(task.getNum(), standardItem);
             // 判断是否需要全检
@@ -392,7 +444,7 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
         Integer re = null;
         // 全检
         List<InspectionItemResultRecord> records = new ArrayList<>();
-        if (InspectionMethodEnum.FULL.name().equals(standard.getInspectionMethod())) {
+        if (isTightened(task) || InspectionMethodEnum.FULL.name().equals(standard.getInspectionMethod())) {
             records = IntStream.range(0, task.getNum())
                     .mapToObj(o -> new InspectionItemResultRecord())
                     .collect(Collectors.toList());
@@ -400,7 +452,7 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
             waitNum = task.getNum();
         }
         // 固定数量
-        if (InspectionMethodEnum.FIXED.name().equals(standard.getInspectionMethod())) {
+        if (!isTightened(task) && InspectionMethodEnum.FIXED.name().equals(standard.getInspectionMethod())) {
             // 若设置的固定数量大于质检数量, 则说明全检 设置检验数量为质检数量
             int checkNum = Math.min(standard.getNum(), task.getNum());
             records = IntStream.range(0, checkNum)
@@ -410,7 +462,7 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
             waitNum = checkNum;
         }
         // 发起质检时确定
-        if (InspectionMethodEnum.PENDING.name().equals(standard.getInspectionMethod())) {
+        if (!isTightened(task) && InspectionMethodEnum.PENDING.name().equals(standard.getInspectionMethod())) {
             // 若设置的固定数量大于质检数量, 则说明全检 设置检验数量为质检数量
             int checkNum = Math.min(task.getInspectionNum(), task.getNum());
             records = IntStream.range(0, checkNum)
@@ -420,7 +472,7 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
             waitNum = checkNum;
         }
         // 抽检
-        if (InspectionMethodEnum.RANDOM.name().equals(standard.getInspectionMethod())) {
+        if (!isTightened(task) && InspectionMethodEnum.RANDOM.name().equals(standard.getInspectionMethod())) {
             // 抽样数量
             Frequency frequency = this.getInspectionFrequency(task.getNum(), standardItem);
             // 是否是全检
@@ -688,7 +740,7 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
 
         if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())) {
             badInfoService.add(new QmsBadInfoEntity().setResourceTaskId(taskId).setResourceType(InspectionTaskTypeEnum.PURCHASE.name())
-                    .setNum(task.getNum()).setMatCode(task.getMatCode()).setMatName(task.getMatName())
+                    .setNum(task.getNum() == null ? null : java.math.BigDecimal.valueOf(task.getNum())).setMatCode(task.getMatCode()).setMatName(task.getMatName())
                     .setSupplierCode(task.getSupplierCode()).setSupplierName(task.getSupplierName())
                     .setBatchNo(task.getBatchNo()));
         } else {
@@ -909,19 +961,54 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void handleFinish(HandleFinishDTO dto) {
-        QmsInspectionPurchaseTaskEntity task = this.getById(dto.getId());
-        task.setHandleNum(task.getHandleNum() + dto.getHandleNum());
+        QmsInspectionPurchaseTaskEntity task = this.getOne(
+                new LambdaQueryWrapper<QmsInspectionPurchaseTaskEntity>()
+                        .eq(QmsInspectionPurchaseTaskEntity::getId, dto.getId()).last("FOR UPDATE"), false);
+        if (task == null) {
+            throw new RuntimeException("来料质检任务不存在");
+        }
+        if (!InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())
+                || !InspectionTaskStatusEnum.UNHANDLED.name().equals(task.getStatus())) {
+            throw new RuntimeException("只有待处置的不合格来料质检任务可以处置");
+        }
+        if (dto.getHandleNum() == null || dto.getHandleNum() <= 0) {
+            throw new RuntimeException("处置数量必须大于0");
+        }
+        try {
+            HandleResultEnum.valueOf(dto.getHandleResult());
+        } catch (Exception exception) {
+            throw new RuntimeException("请选择有效的处置结果");
+        }
+        if (StrUtil.isBlank(dto.getHandleRemark())) {
+            throw new RuntimeException("处置原因不能为空");
+        }
+        String requestId = StrUtil.blankToDefault(dto.getRequestId(), UUID.randomUUID().toString()).trim();
+        if (requestId.length() > 100) {
+            throw new RuntimeException("处置请求号长度不能超过100位");
+        }
+        QmsInspectionPurchaseHandleRecordEntity existing = handleRecordService.getOne(
+                new LambdaQueryWrapper<QmsInspectionPurchaseHandleRecordEntity>()
+                        .eq(QmsInspectionPurchaseHandleRecordEntity::getRequestId, requestId), false);
+        if (existing != null) {
+            if (Objects.equals(existing.getTaskId(), dto.getId())
+                    && Objects.equals(existing.getHandleNum(), dto.getHandleNum())
+                    && Objects.equals(existing.getHandleResult(), dto.getHandleResult())) {
+                return;
+            }
+            throw new RuntimeException("处置请求号已被其他业务使用");
+        }
+        task.setHandleNum(Objects.requireNonNullElse(task.getHandleNum(), 0) + dto.getHandleNum());
         if (task.getHandleNum() > task.getNum()) {
             throw new RuntimeException("处置数量不能大于未处置数量");
         }
         if (HandleResultEnum.CONCESSION.name().equals(dto.getHandleResult()) || HandleResultEnum.RELEASE.name().equals(dto.getHandleResult())) {
-            task.setUsableNum(task.getUsableNum() + dto.getHandleNum());
+            task.setUsableNum(Objects.requireNonNullElse(task.getUsableNum(), 0) + dto.getHandleNum());
         }
         if (HandleResultEnum.UNQUALIFIED.name().equals(dto.getHandleResult())) {
             // 入不合格品库
-            task.setUsableNum(task.getUsableNum() + dto.getHandleNum());
             badInfoService.add(new QmsBadInfoEntity().setResourceTaskId(task.getId()).setResourceType(InspectionTaskTypeEnum.PURCHASE.name())
-                    .setNum(dto.getHandleNum()).setMatCode(task.getMatCode()).setMatName(task.getMatName())
+                    .setRequestId("DISPOSITION:" + requestId)
+                    .setNum(dto.getHandleNum() == null ? null : java.math.BigDecimal.valueOf(dto.getHandleNum())).setMatCode(task.getMatCode()).setMatName(task.getMatName())
                     .setSupplierCode(task.getSupplierCode()).setSupplierName(task.getSupplierName())
                     .setBatchNo(task.getBatchNo()));
         }
@@ -935,12 +1022,10 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
         // 保存处理明细
         QmsInspectionPurchaseHandleRecordEntity record = new QmsInspectionPurchaseHandleRecordEntity();
         MomUser user = SecurityUtils.getUser();
-        record.setHandleNum(dto.getHandleNum()).setHandleRemark(dto.getHandleRemark()).setHandlePersonId(user.getId())
+        record.setRequestId(requestId).setHandleNum(dto.getHandleNum()).setHandleRemark(dto.getHandleRemark().trim()).setHandlePersonId(user.getId())
                 .setHandlePersonName(user.getName()).setHandleTime(new Date()).setHandleResult(dto.getHandleResult())
-                .setTaskId(task.getId()).setStatus(Boolean.TRUE);
-        if (HandleResultEnum.UNQUALIFIED.name().equals(dto.getHandleResult()) || HandleResultEnum.SMASH.name().equals(dto.getHandleResult())) {
-            record.setStatus(Boolean.TRUE);
-        }
+                .setTaskId(task.getId()).setStatus(HandleResultEnum.UNQUALIFIED.name().equals(dto.getHandleResult())
+                        || HandleResultEnum.SMASH.name().equals(dto.getHandleResult()));
         if (HandleResultEnum.CONCESSION.name().equals(dto.getHandleResult()) || HandleResultEnum.RELEASE.name().equals(dto.getHandleResult())) {
             // TODO 确定是否自动调用仓库接口 如果需要则加逻辑 如果不需要直接去掉
             // 如果是手动创建的，则不需要处理
@@ -949,6 +1034,25 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
             }
         }
         handleRecordService.save(record);
+
+        List<QmsInspectionPurchaseHandleRecordEntity> dispositions = handleRecordService.list(
+                new LambdaQueryWrapper<QmsInspectionPurchaseHandleRecordEntity>()
+                        .eq(QmsInspectionPurchaseHandleRecordEntity::getTaskId, task.getId()));
+        task.setHandleResult(dispositions.stream().map(QmsInspectionPurchaseHandleRecordEntity::getHandleResult)
+                .filter(StrUtil::isNotBlank).distinct().sorted().collect(Collectors.joining(",")));
+        if (Objects.equals(task.getHandleNum(), task.getNum())) {
+            boolean onlyAccepted = dispositions.stream().allMatch(item ->
+                    HandleResultEnum.RELEASE.name().equals(item.getHandleResult())
+                            || HandleResultEnum.CONCESSION.name().equals(item.getHandleResult()));
+            if (onlyAccepted) {
+                boolean concession = dispositions.stream().anyMatch(item ->
+                        HandleResultEnum.CONCESSION.name().equals(item.getHandleResult()));
+                task.setResult(concession ? InspectionTaskResultEnum.RECEIVE.name()
+                        : InspectionTaskResultEnum.RELEASE.name());
+            }
+            task.setStatus(InspectionTaskStatusEnum.FINISHED.name());
+        }
+        this.updateById(task);
     }
 
     /**

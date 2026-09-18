@@ -94,6 +94,24 @@ public class PmsContractEntity extends BaseEntity<PmsContractEntity> {
     @Schema(description = "合同需求说明")
     private String contractDemand;
 
+    @Schema(description = "合同正文全文")
+    private String contractBody;
+
+    @Schema(description = "合同正文格式（PLAIN/MARKDOWN）")
+    private String bodyFormat;
+
+    @Schema(description = "当前合同正文版本")
+    private Integer currentVersion;
+
+    @Schema(description = "当前合同正文事实指纹")
+    private String currentContentFingerprint;
+
+    @Schema(description = "最近一次成功正文变更申请ID")
+    private Long lastRevisionRequestId;
+
+    @Schema(description = "最近一次正文变更生效时间")
+    private LocalDateTime lastRevisedTime;
+
     /**
      * 供应商编码
      */
@@ -143,10 +161,19 @@ public class PmsContractEntity extends BaseEntity<PmsContractEntity> {
     private String phoneNumber;
 
     /**
-     * 状态（0 编辑 1 已签订 2 执行中 3 变更中 4 结算完成 5 归档）
+     * 状态（0 编辑 1 已签订 2 执行中 3 变更中 4 结算完成 5 归档 6 已终止）
      */
-    @Schema(description = "状态（0 编辑 1 已签订 2 执行中 3 变更中 4 结算完成 5 归档）")
+    @Schema(description = "状态（0 编辑 1 已签订 2 执行中 3 变更中 4 结算完成 5 归档 6 已终止）")
     private String status;
+
+    @Schema(description = "执行终止的合同终止申请ID")
+    private Long terminationRequestId;
+
+    @Schema(description = "合同终止时间")
+    private LocalDateTime terminatedTime;
+
+    @Schema(description = "合同终止原因")
+    private String terminationReason;
 
     /**
      * 工厂编码

@@ -22,6 +22,21 @@ public class MesWarehouseFeedDTO {
     @Schema(description = "物料编码")
     private String matCode;
 
+    @Schema(description = "WMS物料预留单号")
+    private String reservationNo;
+
+    @Schema(description = "BOM需求物料编码")
+    private String requirementMatCode;
+
+    @Schema(description = "BOM需求物料名称")
+    private String requirementMatName;
+
+    @Schema(description = "是否为替代料")
+    private Boolean substituteFlag;
+
+    @Schema(description = "替代比例")
+    private BigDecimal substituteRatio;
+
     /**
      * 物料名称
      */

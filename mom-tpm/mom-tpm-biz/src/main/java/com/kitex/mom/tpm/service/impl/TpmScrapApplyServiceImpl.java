@@ -4,6 +4,7 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.ObjectUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.kitex.common.core.util.R;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.entity.MdmDeviceEntity;
@@ -24,8 +25,10 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -52,6 +55,7 @@ public class TpmScrapApplyServiceImpl extends ServiceImpl<TpmScrapApplyMapper, T
     private final TpmCheckTaskDetailsService tpmCheckTaskDetailsService;
     private final EventPublisherUtil eventPublisherUtil;
     private final TpmDeviceMoldRelaService tpmDeviceMoldRelaService;
+    private final TpmPlanEventOutboxService tpmPlanEventOutboxService;
 
     @Override
     public Boolean saveApply(TpmScrapApplyEntity tpmScrapApply) {
@@ -86,10 +90,22 @@ public class TpmScrapApplyServiceImpl extends ServiceImpl<TpmScrapApplyMapper, T
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean handle(List<Long> toList, String type) {
+        if (CollUtil.isEmpty(toList) || (!ScrapStateEnum.PASS.getCode().equals(type)
+                && !ScrapStateEnum.CANCEL.getCode().equals(type))) {
+            throw new RuntimeException("报废审批对象或审批动作无效！");
+        }
+        Set<Long> requestedIds = new HashSet<>(toList);
         MomUser user = SecurityUtils.getUser();
         LocalDateTime timeNow = LocalDateTime.now();
         LocalDate dateNow = LocalDate.now();
-        List<TpmScrapApplyEntity> applyList = this.listByIds(toList);
+        List<TpmScrapApplyEntity> applyList = this.list(new LambdaQueryWrapper<TpmScrapApplyEntity>()
+                .in(TpmScrapApplyEntity::getId, requestedIds).last("FOR UPDATE"));
+        if (applyList.size() != requestedIds.size()) {
+            throw new RuntimeException("部分报废申请不存在、已删除或超出当前数据范围！");
+        }
+        if (applyList.stream().anyMatch(item -> !ScrapStateEnum.CREATE.getCode().equals(item.getState()))) {
+            throw new RuntimeException("仅待审批的报废申请允许通过或作废，禁止重复处理！");
+        }
         applyList.forEach(item -> {
             item.setReviewerCode(user.getUsername());
             item.setReviewerName(user.getName());
@@ -113,7 +129,11 @@ public class TpmScrapApplyServiceImpl extends ServiceImpl<TpmScrapApplyMapper, T
             });
             MdmDeviceEntity mdmDevice = new MdmDeviceEntity();
             mdmDevice.setDeviceList(deviceList);
-            remoteDeviceService.updateBatchById(mdmDevice);
+            R<Boolean> deviceUpdateResponse = remoteDeviceService.updateBatchById(mdmDevice);
+            if (deviceUpdateResponse == null || !deviceUpdateResponse.isOk()
+                    || !Boolean.TRUE.equals(deviceUpdateResponse.getData())) {
+                throw new RuntimeException("设备报废状态回写失败，本次审批已回滚！");
+            }
             applyList.forEach(item -> {
                 eventPublisherUtil.publishDeviceLifeCycleEvent(entity -> {
                     entity.setDeviceCode(item.getDeviceCode());
@@ -138,6 +158,8 @@ public class TpmScrapApplyServiceImpl extends ServiceImpl<TpmScrapApplyMapper, T
                 recordList.add(record);
             });
             tpmScrapRecordService.saveBatch(recordList);
+            // 报废审批事实与本地Outbox同事务落库；永久停机不虚构恢复时间，由工作台补替代产能窗口。
+            applyList.forEach(tpmPlanEventOutboxService::enqueueScrapUnavailable);
 
             //废除设备的所有信息
             //如果被绑定到模具上，删除绑定关系

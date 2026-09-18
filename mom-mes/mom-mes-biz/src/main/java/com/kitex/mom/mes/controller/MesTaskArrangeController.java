@@ -11,7 +11,10 @@ import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.*;
+import com.kitex.mom.mes.entity.MesChangeoverExecutionEntity;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
+import com.kitex.mom.mes.entity.MesTaskExecutionSegmentEntity;
+import com.kitex.mom.mes.entity.MesToolingExecutionEntity;
 import com.kitex.mom.mes.service.MesTaskArrangeService;
 import com.kitex.mom.tpm.dto.DeviceCheckTaskStartDto;
 import io.swagger.v3.oas.annotations.Operation;
@@ -60,11 +63,12 @@ public class MesTaskArrangeController {
         QueryWrapper<MesTaskArrangeEntity> autoQueryWrapper = new QueryWrapper<>();
         MomUser user = SecurityUtils.getUser();
         autoQueryWrapper
-//                .apply("FIND_IN_SET({0}, worker_code) > 0", user.getUsername())
+                .apply("{0} = ANY(string_to_array(worker_code, ','))", user.getUsername())
                 .eq(StrUtil.isNotEmpty(query.getStatus()), "status", query.getStatus())
-                .eq("shift_code", query.getShiftCode())
-                .eq("workshop_code", query.getWorkshopCode())
-                .apply("{0} = ANY(string_to_array(worksite_codes, ','))", query.getWorksiteCodes())
+                .eq(StrUtil.isNotEmpty(query.getShiftCode()), "shift_code", query.getShiftCode())
+                .eq(StrUtil.isNotEmpty(query.getWorkshopCode()), "workshop_code", query.getWorkshopCode())
+                .apply(StrUtil.isNotEmpty(query.getWorksiteCodes()),
+                        "{0} = ANY(string_to_array(worksite_codes, ','))", query.getWorksiteCodes())
                 .orderByDesc("create_time");
         return R.ok(service.page(pageParam, autoQueryWrapper));
     }
@@ -141,11 +145,31 @@ public class MesTaskArrangeController {
         return R.ok();
     }
 
+    @Operation(summary = "按APS锁定结果扫码领用工装")
+    @PostMapping("/tooling/check-in")
+    public R<Void> checkInToolings(@RequestBody MesToolingCheckInDTO dto) {
+        service.checkInToolings(dto);
+        return R.ok();
+    }
+
+    @Operation(summary = "查询派工任务工装执行记录")
+    @GetMapping("/tooling/executions")
+    public R<List<MesToolingExecutionEntity>> listToolingExecutions(Long arrangeId) {
+        return R.ok(service.listToolingExecutions(arrangeId));
+    }
+
     @Operation(summary = "任务开工", description = "任务开工")
     @PostMapping("/start")
+    @PreAuthorize("@pms.hasPermission('mesProduceTask:start')")
     public R<Void> start(Long id) {
         service.start(id);
         return R.ok();
+    }
+
+    @Operation(summary = "查询派工连续生产时间段")
+    @GetMapping("/execution/segments")
+    public R<List<MesTaskExecutionSegmentEntity>> executionSegments(Long arrangeId) {
+        return R.ok(service.listExecutionSegments(arrangeId));
     }
 
     @Operation(summary = "暂停", description = "暂停")
@@ -173,6 +197,19 @@ public class MesTaskArrangeController {
     @PostMapping("/deviceStart")
     public R<Void> deviceStart(@RequestBody DeviceCheckTaskStartDto deviceCheckTaskStartDto) {
         service.deviceStart(deviceCheckTaskStartDto);
+        return R.ok();
+    }
+
+    @Operation(summary = "开始换型并建立计时账")
+    @PostMapping("/changeover/begin")
+    public R<MesChangeoverExecutionEntity> beginChangeover(@RequestBody MesChangeoverStartDTO dto) {
+        return R.ok(service.beginChangeover(dto));
+    }
+
+    @Operation(summary = "取消未完成换型")
+    @PostMapping("/changeover/cancel")
+    public R<Void> cancelChangeover(@RequestBody MesChangeoverCancelDTO dto) {
+        service.cancelChangeover(dto);
         return R.ok();
     }
 

@@ -28,6 +28,14 @@ import java.util.List;
 @Schema(description = "入库通知单")
 public class WmsInNoticeEntity extends BaseEntity<WmsInNoticeEntity> {
 
+    @ExcelIgnore
+    @Schema(description = "来源系统永久幂等号")
+    private String sourceRequestId;
+
+    @ExcelIgnore
+    @Schema(description = "来源请求载荷指纹")
+    private String sourceRequestFingerprint;
+
     /**
      * 入库通知单状态;0待处理、1处理中、2已完成、3已作废
      */

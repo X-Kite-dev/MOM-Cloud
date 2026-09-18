@@ -6,6 +6,7 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.util.Date;
+import java.util.List;
 
 /**
  * 生产计划接收生成生产工单
@@ -84,6 +85,51 @@ public class MesTaskReceiveDTO {
 
     @Schema(description = "来源id")
     private Long resourceId;
+
+    @Schema(description = "返工永久幂等请求号")
+    private String reworkRequestId;
+
+    @Schema(description = "原生产工单编码")
+    private String sourceTaskCode;
+
+    @Schema(description = "来源质检类型 PROCEDURE/PRODUCT")
+    private String sourceInspectionType;
+
+    @Schema(description = "来源质检任务ID")
+    private Long sourceInspectionTaskId;
+
+    @Schema(description = "来源质量处置记录ID")
+    private Long sourceHandleRecordId;
+
+    @Schema(description = "返工执行工序；为空时取原路线最终工序")
+    private String reworkProcessCode;
+
+    @Schema(description = "返工原因/处置要求")
+    private String reworkReason;
+
+    @Schema(description = "计划批准的WMS物料预留关系快照JSON")
+    private String materialReservationSnapshot;
+
+    @Schema(description = "APS锁定后的工序资源、设备、人员与时间快照JSON")
+    private String apsOperationSnapshot;
+
+    @Schema(description = "APS正式任务ID")
+    private Long apsTaskId;
+
+    @Schema(description = "APS执行批次ID")
+    private Long apsBatchId;
+
+    @Schema(description = "APS执行批次号，作为MES接收永久幂等键")
+    private String apsBatchNo;
+
+    @Schema(description = "APS批次类型 SINGLE/SPLIT/MERGED")
+    private String apsBatchType;
+
+    @Schema(description = "APS批次来源与数量指纹")
+    private String apsBatchFingerprint;
+
+    @Schema(description = "APS批次包含的原计划数量分配")
+    private List<MesApsBatchAllocationDTO> apsBatchAllocations;
 
     /**
      * 工艺路线编码

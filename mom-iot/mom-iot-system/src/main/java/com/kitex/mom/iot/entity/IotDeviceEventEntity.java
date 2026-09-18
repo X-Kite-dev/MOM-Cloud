@@ -17,10 +17,15 @@ import java.time.LocalDateTime;
  * @date 2025-03-12
  */
 @Data
+@com.kitex.common.core.util.TenantTable
 @TableName("iot_device_event")
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "IoT设备事件数据")
 public class IotDeviceEventEntity extends BaseCore<IotDeviceEventEntity> {
+    @Schema(description = "采集时绑定的租户，禁止按设备当前归属覆盖历史")
+    private Long tenantId;
+    @Schema(description = "原始来源归属是否已经核验；未核验历史不进入业务读视图")
+    private Boolean scopeVerified;
 
 
     @TableId(type = IdType.ASSIGN_ID)
@@ -80,4 +85,22 @@ public class IotDeviceEventEntity extends BaseCore<IotDeviceEventEntity> {
     @Schema(description = "事件时间")
     private LocalDateTime eventTime;
 
-} 
+    @Schema(description = "所属工厂编码")
+    private String factoryCode;
+
+    @Schema(description = "投递/报工状态：PENDING、RETRY、DEAD为投递状态；SUCCESS、IGNORED、FAILED为MES业务回执")
+    private String mesForwardStatus;
+
+    @Schema(description = "MES自动报工受理消息")
+    private String mesForwardMessage;
+
+    @Schema(description = "MES自动报工事件台账ID")
+    private Long mesAutoReportEventId;
+
+    @Schema(description = "MES生成的报工记录ID")
+    private Long mesReportId;
+
+    @Schema(description = "最近一次转发MES时间")
+    private LocalDateTime mesForwardTime;
+
+}

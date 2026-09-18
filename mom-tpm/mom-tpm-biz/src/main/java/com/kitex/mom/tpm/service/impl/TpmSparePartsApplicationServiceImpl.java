@@ -135,6 +135,7 @@ public class TpmSparePartsApplicationServiceImpl extends ServiceImpl<TpmSparePar
      * @param handleType 0 审批不通过  1 审批通过
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Boolean outApproval(TpmSparePartsApplicationEntity application, String handleType) {
         //审批数据赋值
         MomUser user = SecurityUtils.getUser();
@@ -198,10 +199,12 @@ public class TpmSparePartsApplicationServiceImpl extends ServiceImpl<TpmSparePar
             //创建出库流水
             recordList.add(buildRecord(outBill));
         }
-        tpmSparePartsStockService.updateBatchById(tpmSparePartsStockList);
-        tpmSparePartsInOrOutRecordService.saveBatch(recordList);
+        if (!tpmSparePartsStockService.updateBatchById(tpmSparePartsStockList)
+                || !tpmSparePartsInOrOutRecordService.saveBatch(recordList)) {
+            throw new RuntimeException("备件出库库存或流水保存失败，审批整体回滚");
+        }
         application.setApprovalStatus(SparePartsApplicationStateEnum.PASS.getCode());
-        this.updateById(application);
+        if (!this.updateById(application)) throw new RuntimeException("备件出库审批状态保存失败，审批整体回滚");
         return Boolean.TRUE;
     }
 

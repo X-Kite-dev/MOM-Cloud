@@ -40,6 +40,32 @@ public interface PlnProductDemandService extends IService<PlnProductDemandEntity
      */
     Boolean savePlan(PlnProductDemandEntity planMesPlan);
 
+    /** 人工新增需求只能创建无外部来源的未接收草案。 */
+    Boolean saveManualPlan(PlnProductDemandEntity planMesPlan);
+
+    /**
+     * 更新未接收需求并复核需求仓库主数据。
+     */
+    Boolean updatePlan(PlnProductDemandEntity planMesPlan);
+
+    /** 仅供OMS在未接收、无下游事实时同步其权威订单需求。 */
+    Boolean updateFromOms(PlnProductDemandEntity planMesPlan);
+
+    /** 旧删除入口只能逐条删除无MRP/APS/MES事实的未接收草案。 */
+    Boolean deleteDrafts(Long[] ids);
+
+    /** OMS撤回其他模块前可先校验产品需求能否安全删除。 */
+    void assertDraftDeletable(Long id);
+
+    /** OMS订单变更评审预检：仅未接收草案或已接收但没有MRP/APS/MES事实的同源需求。 */
+    void assertOmsReviewChangeable(Long id, String orderCode, Long orderDetailId);
+
+    /** 仅由OMS异岗版本评审事务调用；冻结原数量/交期并保持需求接收状态。 */
+    PlnProductDemandEntity applyOmsReviewedChange(Long id, String orderCode, Long orderDetailId,
+            Long orderChangeVersionId,
+            java.math.BigDecimal beforeQuantity, java.time.LocalDate beforeDate,
+            java.math.BigDecimal afterQuantity, java.time.LocalDate afterDate);
+
     /**
      * 通过条件查询需求日期
      *

@@ -15,6 +15,10 @@ import java.util.List;
 @FeignClient(contextId = "remoteTpmDeviceService", value = Constants.Name)
 public interface RemoteTpmDeviceService {
 
+    @PostMapping("/tpmDeviceBase/pause/receipt")
+    R<com.kitex.mom.tpm.dto.TpmDevicePauseReceipt> devicePauseReceipt(
+            @RequestBody com.kitex.mom.tpm.dto.TpmDevicePauseCommand command);
+
 
     /**
      * 新增设备生命周期记录
@@ -26,16 +30,16 @@ public interface RemoteTpmDeviceService {
     /**
      * 设备暂停
      */
-    @GetMapping("/tpmDeviceBase/pause")
+    @PostMapping("/tpmDeviceBase/pause")
     R<Boolean> devicePause(@RequestParam("deviceCode") String deviceCode,
-                           @RequestParam(value = "deviceCode", required = false) String moldCode);
+                           @RequestParam(value = "moldCode", required = false) String moldCode);
 
     /**
      * 设备关机
      */
-    @GetMapping("/tpmDeviceBase/close")
+    @PostMapping("/tpmDeviceBase/close")
     R<Boolean> deviceClose(@RequestParam("deviceCode") String deviceCode,
-                           @RequestParam(value = "deviceCode", required = false) String moldCode);
+                           @RequestParam(value = "moldCode", required = false) String moldCode);
 
 
     /**

@@ -81,26 +81,19 @@
 
     <!-- 查询设备元数据 -->
     <select id="selectMetadataPage" resultType="com.kitex.mom.iot.entity.IotDevicePropertyEntity">
-        SELECT p.*, d.device_code, d.device_name
-        FROM iot_device_property p
-        LEFT JOIN iot_device d ON p.device_id = d.id
-        WHERE 1=1
+        SELECT p.*
+        FROM iot_device_property p JOIN iot_device d ON p.device_id=d.id
+          AND d.tenant_id=p.tenant_id AND d.factory_code=p.factory_code
+        WHERE p.del_flag='0' AND d.del_flag='0' AND p.scope_verified=true
+          AND p.tenant_id=#{tenantId} AND p.factory_code=#{factory}
+          AND p.product_id=#{productId} AND d.product_id=#{productId}
         <if test="deviceIds != null and deviceIds.size() > 0">
             AND p.device_id IN
-            <foreach collection="deviceIds" item="deviceId" open="(" separator="," close=")">
-                #{deviceId}
-            </foreach>
+            <foreach collection="deviceIds" item="deviceId" open="(" separator="," close=")">#{deviceId}</foreach>
         </if>
-        <if test="identifier != null and identifier != ''">
-            AND p.identifier = #{identifier}
-        </if>
-        <if test="startTime != null and startTime != ''">
-            AND p.create_time >= #{startTime}
-        </if>
-        <if test="endTime != null and endTime != ''">
-            AND p.create_time &lt;= #{endTime}
-        </if>
-        ORDER BY p.create_time DESC
+        AND p.identifier=#{identifier}
+        AND p.collect_time &gt;= CAST(#{startTime} AS timestamp) AND p.collect_time &lt; CAST(#{endTime} AS timestamp)
+        ORDER BY p.collect_time DESC,p.id DESC
     </select>
 
     <!-- 根据产品ID查询设备属性数据 -->
@@ -120,4 +113,4 @@
         </if>
         ORDER BY p.create_time DESC
     </select>
-</mapper> 
+</mapper>

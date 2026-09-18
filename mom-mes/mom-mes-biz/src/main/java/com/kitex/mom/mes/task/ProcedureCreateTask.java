@@ -2,6 +2,8 @@ package com.kitex.mom.mes.task;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.date.DateUtil;
+import cn.hutool.core.util.StrUtil;
+import com.kitex.admin.api.feign.RemoteParamService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.admin.api.entity.SysUserEntity;
 import com.kitex.admin.api.feign.RemoteUserService;
@@ -17,6 +19,8 @@ import com.kitex.mom.mes.entity.MesInspectionGenRecordEntity;
 import com.kitex.mom.mes.entity.MesInspectionRuleEntity;
 import com.kitex.mom.mes.entity.MesProduceTaskEntity;
 import com.kitex.mom.mes.entity.MesTaskEntity;
+import com.kitex.mom.mes.enums.MesProduceTaskStatusEnum;
+import com.kitex.mom.mes.enums.QualityGateStatusEnum;
 import com.kitex.mom.mes.service.MesInspectionGenRecordService;
 import com.kitex.mom.mes.service.MesInspectionRuleService;
 import com.kitex.mom.mes.service.MesProduceTaskService;
@@ -26,6 +30,7 @@ import com.kitex.mom.qms.api.feign.RemoteQualityStandardService;
 import com.kitex.mom.qms.dto.inspection.InspectionProcedureCreateParam;
 import com.kitex.mom.qms.entity.QmsQualityStandardEntity;
 import com.kitex.mom.qms.enums.InspectionTaskTypeEnum;
+import com.kitex.mom.qms.enums.InspectionMethodEnum;
 import com.kitex.mom.qms.enums.ProcedureLabelTypeEnum;
 import com.xxl.job.core.handler.annotation.XxlJob;
 import lombok.RequiredArgsConstructor;
@@ -57,67 +62,74 @@ public class ProcedureCreateTask {
     private final MesInspectionRuleService mesInspectionRuleService;
     private final MesTaskService mesTaskService;
     private final BatchGeneratorService batchGeneratorService;
+    private final RemoteParamService remoteParamService;
 
     @XxlJob("qmsPatrolCreate")
     public void createTask() {
         try {
             log.info("定时生成工序质检任务，开始时间：{}", DateUtil.format(new Date(), "yyyy-MM-dd HH:mm"));
             Date currentDate = new Date();
-            Calendar calendar = Calendar.getInstance();
-            calendar.setTime(currentDate);
-            calendar.add(Calendar.MINUTE, -10);
-            Date lastDate = calendar.getTime();
 
             // 获取当前班次
             String currentShiftCode = remoteClassesService.getRuleBanci(LocalDateTime.now()).getData();
 
             // 查询下次执行时间在此次定时任务执行期间的任务
             List<MesInspectionGenRecordEntity> recordList = genRecordService.list(new LambdaQueryWrapper<MesInspectionGenRecordEntity>()
-                    .between(MesInspectionGenRecordEntity::getNextTime, lastDate, currentDate));
+                    .isNotNull(MesInspectionGenRecordEntity::getNextTime)
+                    .le(MesInspectionGenRecordEntity::getNextTime, currentDate));
 
             // 查询下次班组在此次定时任务执行期间的任务
             List<MesInspectionGenRecordEntity> shiftRecordList = genRecordService.list(new LambdaQueryWrapper<MesInspectionGenRecordEntity>()
-                    .eq(MesInspectionGenRecordEntity::getNextTime, currentShiftCode));
+                    .eq(MesInspectionGenRecordEntity::getNextShift, currentShiftCode));
 
             // 循环创建
             recordList.forEach(record -> {
-                // 获取生产工序任务
-                MesProduceTaskEntity produceTask = produceTaskService.getOne(new LambdaQueryWrapper<MesProduceTaskEntity>()
-                        .eq(MesProduceTaskEntity::getCode, record.getProduceTaskCode()));
-                MesTaskEntity task = mesTaskService.getOne(new LambdaQueryWrapper<MesTaskEntity>()
-                        .eq(MesTaskEntity::getCode, record.getTaskCode()));
-                String taskRule = task.getBatchRuleCode();
-                // 根据物料匹配质检标准
-                QmsQualityStandardEntity standard = remoteQualityStandardService.getRandomStandard(new QmsQualityStandardEntity()
-                        .setMatCode(produceTask.getMatCode()).setInspectionType(InspectionTaskTypeEnum.PROCEDURE.name())).getData();
-
-                // 处理质检任务创建
-                processInspectionTask(record, produceTask, standard, null, currentShiftCode, taskRule);
+                try {
+                    processDueRecord(record, currentShiftCode);
+                } catch (Exception exception) {
+                    log.error("按时间生成中检任务失败, recordId={}, produceTaskCode={}",
+                            record.getId(), record.getProduceTaskCode(), exception);
+                }
             });
 
             shiftRecordList.forEach(shiftRecord -> {
-                // 如果存在，则说明已经创建，跳过创建
-                MesInspectionGenRecordEntity existRecord = genRecordService.getOne(new LambdaQueryWrapper<MesInspectionGenRecordEntity>()
-                        .eq(MesInspectionGenRecordEntity::getProduceTaskCode, shiftRecord.getProduceTaskCode())
-                        .eq(MesInspectionGenRecordEntity::getGenShiftCode, currentShiftCode));
-
-                // 获取生产工序任务
-                MesProduceTaskEntity produceTask = produceTaskService.getOne(new LambdaQueryWrapper<MesProduceTaskEntity>()
-                        .eq(MesProduceTaskEntity::getCode, shiftRecord.getProduceTaskCode()));
-                MesTaskEntity task = mesTaskService.getOne(new LambdaQueryWrapper<MesTaskEntity>()
-                        .eq(MesTaskEntity::getCode, shiftRecord.getTaskCode()));
-                String taskRule = task.getBatchRuleCode();
-                // 根据物料匹配质检标准
-                QmsQualityStandardEntity standard = remoteQualityStandardService.getRandomStandard(new QmsQualityStandardEntity()
-                        .setMatCode(produceTask.getMatCode()).setInspectionType(InspectionTaskTypeEnum.PROCEDURE.name())).getData();
-
-                // 处理质检任务创建
-                processInspectionTask(shiftRecord, produceTask, standard, existRecord, currentShiftCode, taskRule);
+                try {
+                    processDueRecord(shiftRecord, currentShiftCode);
+                } catch (Exception exception) {
+                    log.error("按班次生成中检任务失败, recordId={}, produceTaskCode={}",
+                            shiftRecord.getId(), shiftRecord.getProduceTaskCode(), exception);
+                }
             });
 
             log.info("定时生成工序质检任务。");
         } catch (Exception e) {
+            log.error("定时生成工序质检任务失败", e);
         }
+    }
+
+    private void processDueRecord(MesInspectionGenRecordEntity record, String currentShiftCode) {
+        MesProduceTaskEntity produceTask = produceTaskService.getOne(new LambdaQueryWrapper<MesProduceTaskEntity>()
+                .eq(MesProduceTaskEntity::getCode, record.getProduceTaskCode()));
+        if (produceTask == null || MesProduceTaskStatusEnum.FINISH.name().equals(produceTask.getStatus())) {
+            record.setNextTime(null).setNextShift(null);
+            record.setSyncMessage(produceTask == null ? "工序任务不存在，停止中检调度" : "工序已完工，停止中检调度");
+            genRecordService.updateById(record);
+            return;
+        }
+        MesTaskEntity task = mesTaskService.getOne(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getCode, record.getTaskCode()));
+        if (task == null) {
+            throw new IllegalStateException("未找到中检记录对应生产工单");
+        }
+        QmsQualityStandardEntity standard = null;
+        try {
+            standard = remoteQualityStandardService.getRandomStandard(
+                    new QmsQualityStandardEntity().setMatCode(produceTask.getMatCode())
+                            .setInspectionType(InspectionTaskTypeEnum.PROCEDURE.name())).getData();
+        } catch (Exception exception) {
+            log.error("读取中检质量标准失败, produceTaskCode={}", produceTask.getCode(), exception);
+        }
+        processInspectionTask(record, produceTask, standard, null, currentShiftCode, task.getBatchRuleCode());
     }
 
     /**
@@ -126,93 +138,93 @@ public class ProcedureCreateTask {
      * @param record           生成记录
      * @param produceTask      生产任务
      * @param standard         质检标准
-     * @param existRecord      已存在的记录（仅用于班次记录）
      * @param currentShiftCode 当前班次
      */
     private void processInspectionTask(MesInspectionGenRecordEntity record, MesProduceTaskEntity produceTask,
-                                       QmsQualityStandardEntity standard, MesInspectionGenRecordEntity existRecord,
+                                       QmsQualityStandardEntity standard, MesInspectionGenRecordEntity ignoredExistingRecord,
                                        String currentShiftCode, String ruleCode) {
-        // 处理班次记录已存在的情况
-        if (Objects.nonNull(existRecord)) {
-            record.setGenFlag("0");
-            record.setGenRemark("当前班次已存在质检任务");
+        LocalDateTime dueTime = record.getNextTime();
+        String dueShift = record.getNextShift();
+        String scheduleKey = dueTime == null ? dueShift : DateUtil.format(dueTime, "yyyyMMddHHmmss");
+        String sourceRequestId = "MES_QMS:" + produceTask.getCode() + ":MIDDLE:"
+                + StrUtil.blankToDefault(scheduleKey, String.valueOf(record.getId()));
+        MesInspectionGenRecordEntity generated = genRecordService.getOne(
+                new LambdaQueryWrapper<MesInspectionGenRecordEntity>()
+                        .eq(MesInspectionGenRecordEntity::getSourceRequestId, sourceRequestId), false);
+        if (generated != null) {
+            record.setNextTime(null).setNextShift(null);
             genRecordService.updateById(record);
             return;
         }
 
-        // 处理质检标准为空的情况
-        if (Objects.isNull(standard)) {
-            record.setGenFlag("0");
-            record.setGenRemark("未匹配到质检标准");
-            genRecordService.updateById(record);
-
-            String toUsers = produceTask.getCreateBy();
-            String message = "工序任务" + produceTask.getCode() + "未能匹配到质检标准，创建工序质检任务失败。下次任务将不会自动创建";
-            sendMessage(message, toUsers);
-            return;
+        MesInspectionGenRecordEntity newRecord = new MesInspectionGenRecordEntity()
+                .setProduceTaskCode(record.getProduceTaskCode()).setTaskCode(record.getTaskCode())
+                .setInspectionType(ProcedureLabelTypeEnum.MIDDLE.name()).setSourceRequestId(sourceRequestId)
+                .setRuleCode(record.getRuleCode()).setRuleName(record.getRuleName())
+                .setGenTime(LocalDateTime.now()).setBlockedCount(0).setFactoryCode(produceTask.getFactoryCode());
+        if (dueTime != null) {
+            newRecord.setNextTime(getNextTime(record.getRuleCode(), dueTime));
+        } else if (StrUtil.isNotBlank(dueShift)) {
+            newRecord.setGenShiftCode(dueShift).setNextShift(getNextShift(record.getRuleCode(), dueShift));
         }
 
-        String batchNo = "";
-        BatchGenerator generator = batchGeneratorService.getBatchGenerator(ruleCode);
-        if (Objects.nonNull(generator)) {
-            batchNo = generator.generateBatchNumber(produceTask.getTaskCode(), currentShiftCode);
-        }
-
-
-        // 创建工序质检任务
-        R<Long> LR = remoteProcedureService.create(new InspectionProcedureCreateParam()
-                .setNum(produceTask.getNoticeNum().intValue())
-                .setTaskCode(produceTask.getCode())
-                .setMatCode(produceTask.getMatCode())
-                .setMatName(produceTask.getMatName())
-                .setProcessCode(produceTask.getRouteCode())
-                .setProcessName(produceTask.getRouteName())
-                .setBatchNo(batchNo)
-                .setStandardId(standard.getId())
-                .setLabelType(ProcedureLabelTypeEnum.MIDDLE.getName()));
-
-        Long taskId = LR.getData();
-
-        // 处理创建结果
-        if (Objects.isNull(taskId)) {
-            String msg = LR.getMsg();
-            if (msg != null && msg.contains("\"msg\":\"")) {
-                int start = msg.indexOf("\"msg\":\"");
-                int end = msg.indexOf("\"", start + 7);
-                msg = msg.substring(start + 7, end);
+        Long taskId = null;
+        String failure = null;
+        try {
+            if (standard == null) {
+                throw new IllegalStateException("未匹配到已发布的工序质检标准");
             }
-            record.setGenFlag("0");
-            record.setGenRemark(msg);
-            String toUsers = produceTask.getCreateBy();
-            String message = "工序任务" + produceTask.getCode() + "创建失败。失败原因：" + msg + "。下次任务将不会自动创建";
-            sendMessage(message, toUsers);
+            String batchNo = "";
+            BatchGenerator generator = batchGeneratorService.getBatchGenerator(ruleCode);
+            if (generator != null) {
+                batchNo = generator.generateBatchNumber(produceTask.getTaskCode(), currentShiftCode);
+            }
+            InspectionProcedureCreateParam createParam = new InspectionProcedureCreateParam()
+                    .setNum(Math.max(1, produceTask.getNoticeNum().intValue()))
+                    .setTaskCode(produceTask.getCode()).setSourceTaskCode(produceTask.getCode())
+                    .setSourceRequestId(sourceRequestId).setMatCode(produceTask.getMatCode())
+                    .setMatName(produceTask.getMatName()).setMatSpec(produceTask.getMatSpec())
+                    .setProcessCode(produceTask.getRouteCode()).setProcessName(produceTask.getRouteName())
+                    .setBatchNo(batchNo).setStandardId(standard.getId()).setDeptCode(produceTask.getWorkshopCode())
+                    .setOrderNo(produceTask.getTaskCode()).setLabelType(ProcedureLabelTypeEnum.MIDDLE.name());
+            if (InspectionMethodEnum.PENDING.name().equals(standard.getInspectionMethod())) {
+                String inspectionNum = remoteParamService.getByKey("QMS_DEFAULT_NUM").getData();
+                if (StrUtil.isBlank(inspectionNum)) {
+                    throw new IllegalStateException("未配置QMS_DEFAULT_NUM抽检数量");
+                }
+                createParam.setInspectionNum(Integer.parseInt(inspectionNum));
+            }
+            R<Long> response = remoteProcedureService.create(createParam);
+            taskId = response == null ? null : response.getData();
+            if (taskId == null) {
+                throw new IllegalStateException(response == null ? "QMS未返回结果" : response.getMsg());
+            }
+        } catch (Exception exception) {
+            failure = rootMessage(exception);
+        }
+
+        if (taskId == null) {
+            newRecord.setGenFlag("0").setGenRemark("中检任务生成失败：" + failure)
+                    .setGateStatus(QualityGateStatusEnum.ERROR.name()).setSyncMessage(failure);
+            sendMessage("工序任务" + produceTask.getCode() + "创建中检失败：" + failure
+                    + "。请在质量门台账修复条件后重试", produceTask.getCreateBy());
         } else {
-            record.setGenFlag("1");
-            record.setGenRemark("生成成功");
-
-            // 保存新生成记录
-            MesInspectionGenRecordEntity newRecord = new MesInspectionGenRecordEntity()
-                    .setProduceTaskCode(record.getProduceTaskCode())
-                    .setTaskCode(record.getTaskCode())
-                    .setInspectionType(record.getInspectionType())
-                    .setInspectionId(taskId)
-                    .setRuleCode(record.getRuleCode())
-                    .setRuleName(record.getRuleName())
-                    .setFactoryCode(produceTask.getFactoryCode());
-
-            // 根据记录类型设置不同的时间字段
-            if (record.getNextTime() != null) {
-                newRecord.setGenTime(record.getNextTime())
-                        .setNextTime(getNextTime(record.getRuleCode(), record.getNextTime()));
-            } else {
-                newRecord.setGenShiftCode(record.getNextShift())
-                        .setNextShift(getNextShift(record.getRuleCode(), record.getNextShift()));
-            }
-
-            genRecordService.save(newRecord);
+            newRecord.setInspectionId(taskId).setGenFlag("1").setGenRemark("生成成功")
+                    .setGateStatus(QualityGateStatusEnum.PENDING.name())
+                    .setSyncMessage("等待中检结论");
         }
-
+        genRecordService.save(newRecord);
+        record.setNextTime(null).setNextShift(null);
         genRecordService.updateById(record);
+    }
+
+    private String rootMessage(Exception exception) {
+        Throwable current = exception;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        String message = StrUtil.blankToDefault(current.getMessage(), current.getClass().getSimpleName());
+        return message.length() > 800 ? message.substring(0, 800) : message;
     }
 
     /**

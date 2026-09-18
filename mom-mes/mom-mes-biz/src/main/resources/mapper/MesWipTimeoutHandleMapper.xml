@@ -4,7 +4,7 @@
 <mapper namespace="com.kitex.mom.mes.mapper.MesWipTimeoutHandleMapper">
     <select id="queryPage" resultType="com.kitex.mom.mes.entity.MesWipTimeoutHandleEntity">
         select * from mes_wip_timeout_handle
-        WHERE 1 = 1
+        WHERE del_flag='0' AND factory_code=#{query.factoryCode}
         <if test="query.configCode != null and query.configCode != ''">
             AND config_code = #{query.configCode}
         </if>
@@ -14,8 +14,20 @@
         <if test="query.routeCode != null and query.routeCode != ''">
             AND route_code = #{query.routeCode}
         </if>
+        <if test="query.productCode != null and query.productCode != ''">
+            AND product_code = #{query.productCode}
+        </if>
+        <if test="query.taskCode != null and query.taskCode != ''">
+            AND task_code LIKE CONCAT('%', #{query.taskCode}, '%')
+        </if>
         <if test="query.status != null and query.status != ''">
             AND status = #{query.status}
+        </if>
+        <if test="query.alertLevel != null">
+            AND alert_level = #{query.alertLevel}
+        </if>
+        <if test="query.transferCode != null and query.transferCode != ''">
+            AND transfer_code = #{query.transferCode}
         </if>
         order by create_time desc
     </select>

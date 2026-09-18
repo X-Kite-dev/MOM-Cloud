@@ -27,6 +27,9 @@ public class DeviceCheckTaskStartDto {
     @Schema(description = "换模")
     private Boolean changeMold;
 
+    @Schema(description = "MES换型执行账ID；换模必须先开始计时再提交完成")
+    private Long changeoverExecutionId;
+
     @Schema(description = "工作中心")
     private String worksiteCode;
 }

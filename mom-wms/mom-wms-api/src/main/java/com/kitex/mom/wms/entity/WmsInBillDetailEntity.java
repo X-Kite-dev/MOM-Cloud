@@ -12,6 +12,7 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 
 /**
  * 入库单明细
@@ -38,6 +39,21 @@ public class WmsInBillDetailEntity extends BaseEntity<WmsInBillDetailEntity> {
      */
     @Schema(description = "物料编码")
     private String matCode;
+
+    @Schema(description = "BOM需求物料编码")
+    private String requirementMatCode;
+
+    @Schema(description = "BOM需求物料名称")
+    private String requirementMatName;
+
+    @Schema(description = "是否为替代料")
+    private Boolean substituteFlag;
+
+    @Schema(description = "替代比例")
+    private BigDecimal substituteRatio;
+
+    @Schema(description = "WMS物料预留单号；生产退料入库通过后回补原预留")
+    private String reservationNo;
 
     /**
      * 物料名称

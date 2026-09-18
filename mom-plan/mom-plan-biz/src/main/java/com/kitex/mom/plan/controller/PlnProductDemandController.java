@@ -69,6 +69,10 @@ public class PlnProductDemandController {
                         planMesPlan.getProductName())
                 .like(StrUtil.isNotBlank(planMesPlan.getProductCode()), PlnProductDemandEntity::getProductCode,
                         planMesPlan.getProductCode())
+                .eq(StrUtil.isNotBlank(planMesPlan.getDemandWarehouseCode()), PlnProductDemandEntity::getDemandWarehouseCode,
+                        planMesPlan.getDemandWarehouseCode())
+                .eq(StrUtil.isNotBlank(planMesPlan.getFactoryCode()), PlnProductDemandEntity::getFactoryCode,
+                        planMesPlan.getFactoryCode())
                 .like(StrUtil.isNotBlank(planMesPlan.getSpecification()), PlnProductDemandEntity::getSpecification,
                         planMesPlan.getSpecification())
                 .eq(StrUtil.isNotBlank(planMesPlan.getPlanState()), PlnProductDemandEntity::getPlanState,
@@ -141,7 +145,7 @@ public class PlnProductDemandController {
     @PostMapping
     @PreAuthorize("@pms.hasPermission('plan_planMesPlan_add')")
     public R save(@RequestBody PlnProductDemandEntity planMesPlan) {
-        return R.ok(planMesPlanService.savePlan(planMesPlan));
+        return R.ok(planMesPlanService.saveManualPlan(planMesPlan));
     }
 
     /**
@@ -164,7 +168,7 @@ public class PlnProductDemandController {
     @PutMapping
     @PreAuthorize("@pms.hasPermission('plan_planMesPlan_edit')")
     public R update(@RequestBody PlnProductDemandEntity planMesPlan) {
-        return R.ok(planMesPlanService.updateById(planMesPlan));
+        return R.ok(planMesPlanService.updatePlan(planMesPlan));
     }
 
     /**
@@ -173,7 +177,7 @@ public class PlnProductDemandController {
     @Inner
     @PutMapping("/oms/update")
     public R omsUpdate(@RequestBody PlnProductDemandEntity planMesPlan) {
-        return R.ok(planMesPlanService.updateById(planMesPlan));
+        return R.ok(planMesPlanService.updateFromOms(planMesPlan));
     }
 
     /**
@@ -182,7 +186,7 @@ public class PlnProductDemandController {
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_send_withdraw')")
     public R delete(@RequestBody Long[] ids) {
-        return R.ok(planMesPlanService.removeById(ids));
+        return R.ok(planMesPlanService.deleteDrafts(ids));
     }
 
     /**

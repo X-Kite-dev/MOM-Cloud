@@ -41,9 +41,9 @@ public class PmsOrderDetailVO extends BaseEntity<PmsOrderDetailVO> {
     private String supplierName;
 
     /**
-     * 状态（0 未审核 1 审核中 2 审核通过 3 收货中 4 部分到货 5 完成收货 6 驳回）
+     * 状态（0 未审核 1 审核中 2 审核通过 3 收货中 4 部分到货 5 完成收货 6 驳回 7 已取消 8 部分到货后取消）
      */
-    @Schema(description = "状态（0 未审核 1 审核中 2 审核通过 3 收货中 4 部分到货 5 完成收货 6 驳回）")
+    @Schema(description = "状态（0 未审核 1 审核中 2 审核通过 3 收货中 4 部分到货 5 完成收货 6 驳回 7 已取消 8 部分到货后取消）")
     private String status;
 
     /**

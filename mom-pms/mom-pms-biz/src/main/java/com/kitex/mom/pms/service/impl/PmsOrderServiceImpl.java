@@ -94,6 +94,8 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
 
     private final PmsBusinessReconciliationService pmsBusinessReconciliationService;
 
+    private final PmsAgentPurchaseStatusOutboxService agentPurchaseStatusOutboxService;
+
     private final RemoteMaterialService remoteMaterialService;
 
     private final RemoteSeqConfigService remoteSeqConfigService;
@@ -127,13 +129,28 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
      * @return R
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Boolean updateDeep(PmsOrderAddDTO pmsOrder) {
-
-        // 校验状态
-        checkOrderSupplier(pmsOrder.getSupplierCode(), PmsOrderStatusEnum.NO_CHECK);
-
-        PmsOrderEntity pmsOrderEntity = this.getById(pmsOrder.getId());
+        if (pmsOrder == null || pmsOrder.getId() == null) throw new CheckedException("采购订单编辑必须指定订单");
+        PmsOrderEntity pmsOrderEntity = this.getOne(new LambdaQueryWrapper<PmsOrderEntity>()
+                .eq(PmsOrderEntity::getId, pmsOrder.getId()).last("FOR UPDATE"), false);
+        if (pmsOrderEntity == null || !Set.of(PmsOrderStatusEnum.NO_CHECK.getCode(),
+                PmsOrderStatusEnum.REJECT.getCode()).contains(pmsOrderEntity.getStatus())) {
+            throw new CheckedException("只有未审核或已驳回采购订单允许编辑；已审批订单必须走受控变更");
+        }
+        checkOrderSupplier(pmsOrder.getSupplierCode(), PmsOrderStatusEnum.NO_CHECK, pmsOrder.getId());
+        if (PmsOrderStatusEnum.NO_CHECK.getCode().equals(pmsOrderEntity.getStatus())
+                && !Boolean.TRUE.equals(pmsOrderEntity.getType())) {
+            rollbackOrderPlanAllocations(pmsOrderEntity.getId());
+        }
+        String sourceType = pmsOrderEntity.getSourceType();
+        String agentRequestId = pmsOrderEntity.getAgentRequestId();
+        Long agentMrpId = pmsOrderEntity.getAgentMrpId();
         BeanUtils.copyProperties(pmsOrder, pmsOrderEntity);
+        pmsOrderEntity.setStatus(PmsOrderStatusEnum.NO_CHECK.getCode());
+        pmsOrderEntity.setSourceType(sourceType);
+        pmsOrderEntity.setAgentRequestId(agentRequestId);
+        pmsOrderEntity.setAgentMrpId(agentMrpId);
         baseMapper.updateById(pmsOrderEntity);
 
         orderDetailSaveOrUpdate(pmsOrder, pmsOrderEntity);
@@ -148,9 +165,14 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
      * @param statusEnum   状态枚举
      */
     private void checkOrderSupplier(String supplierCode, PmsOrderStatusEnum statusEnum) {
+        checkOrderSupplier(supplierCode, statusEnum, null);
+    }
+
+    private void checkOrderSupplier(String supplierCode, PmsOrderStatusEnum statusEnum, Long excludeOrderId) {
         LambdaQueryWrapper<PmsOrderEntity> queryWrapper = Wrappers.lambdaQuery();
         queryWrapper.eq(PmsOrderEntity::getSupplierCode, supplierCode);
         queryWrapper.eq(PmsOrderEntity::getStatus, statusEnum.getCode());
+        queryWrapper.ne(excludeOrderId != null, PmsOrderEntity::getId, excludeOrderId);
         long count = this.count(queryWrapper);
         if (count > 0) {
             throw new CheckedException(String.format("供应商编码【%s】存在状态【%s】的采购订单，请先处理", supplierCode, statusEnum.getDesc()));
@@ -211,6 +233,16 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean removeDeep(Long[] ids) {
+        if (ids == null || ids.length == 0) return Boolean.TRUE;
+        List<PmsOrderEntity> orders = this.list(new LambdaQueryWrapper<PmsOrderEntity>()
+                .in(PmsOrderEntity::getId, Arrays.asList(ids)).last("FOR UPDATE"));
+        if (orders.size() != Arrays.stream(ids).distinct().count()
+                || orders.stream().anyMatch(order -> !PmsOrderStatusEnum.NO_CHECK.getCode().equals(order.getStatus()))) {
+            throw new CheckedException("只能删除全部存在且未审核的采购订单；已审批订单必须保留历史并走受控变更");
+        }
+        for (PmsOrderEntity order : orders) {
+            if (!Boolean.TRUE.equals(order.getType())) rollbackOrderPlanAllocations(order.getId());
+        }
         baseMapper.deleteBatchIds(CollUtil.toList(ids));
         pmsOrderDetailMapper.delete(Wrappers.<PmsOrderDetailEntity>lambdaQuery().in(PmsOrderDetailEntity::getPmsOrderId, ids));
         return Boolean.TRUE;
@@ -227,6 +259,11 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
         PmsOrderVO resultVo = new PmsOrderVO();
         List<PmsOrderNoticeVO> resultList = new ArrayList<>();
         PmsOrderEntity pmsOrderEntity = this.getById(id);
+        if (pmsOrderEntity == null || !Set.of(PmsOrderStatusEnum.CHECK_SUCCESS.getCode(),
+                PmsOrderStatusEnum.RECEIVING.getCode(), PmsOrderStatusEnum.PART_RECEIVE.getCode())
+                .contains(pmsOrderEntity.getStatus())) {
+            throw new CheckedException("采购订单不存在、未审核通过、已完成或已取消，不能生成收料单");
+        }
         BeanUtils.copyProperties(pmsOrderEntity, resultVo);
         List<PmsOrderDetailEntity> pmsOrderDetailEntities = pmsOrderDetailMapper.selectList(new LambdaQueryWrapper<PmsOrderDetailEntity>()
                 .eq(PmsOrderDetailEntity::getPmsOrderId, pmsOrderEntity.getId()));
@@ -266,22 +303,41 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean inNoticeSave(PmsInNoticeOrderDTO pmsInNoticeOrderDTO) {
+        if (pmsInNoticeOrderDTO == null || pmsInNoticeOrderDTO.getOrderDetailId() == null
+                || StrUtil.isBlank(pmsInNoticeOrderDTO.getPmsOrderNo()) || pmsInNoticeOrderDTO.getNum() == null
+                || pmsInNoticeOrderDTO.getNum() <= 0) {
+            throw new CheckedException("采购到货回写必须指定订单、订单行和正数到货量");
+        }
         PmsOrderEntity pmsOrderEntity = this.getOne(new LambdaQueryWrapper<PmsOrderEntity>()
-                .eq(PmsOrderEntity::getPmsOrderNo, pmsInNoticeOrderDTO.getPmsOrderNo()));
-        PmsOrderDetailEntity pmsOrderDetailEntity = pmsOrderDetailMapper.selectOne(new QueryWrapper<PmsOrderDetailEntity>()
-                .select("sum(order_num - IFNULL(arrival_num,0)) as orderNum")
-                .eq("pms_order_id", pmsOrderEntity.getId()));
-        Double noArrivalNum = pmsOrderDetailEntity.getOrderNum();
-        PmsOrderDetailEntity pmsOrderDetail = pmsOrderDetailMapper.selectById(pmsInNoticeOrderDTO.getOrderDetailId());
+                .eq(PmsOrderEntity::getPmsOrderNo, pmsInNoticeOrderDTO.getPmsOrderNo()).last("FOR UPDATE"));
+        if (pmsOrderEntity == null || !Set.of(PmsOrderStatusEnum.CHECK_SUCCESS.getCode(), PmsOrderStatusEnum.RECEIVING.getCode(),
+                PmsOrderStatusEnum.PART_RECEIVE.getCode()).contains(pmsOrderEntity.getStatus())) {
+            throw new CheckedException("采购订单不存在、未审核通过或已完成收货");
+        }
+        PmsOrderDetailEntity pmsOrderDetail = pmsOrderDetailMapper.selectOne(new LambdaQueryWrapper<PmsOrderDetailEntity>()
+                .eq(PmsOrderDetailEntity::getId, pmsInNoticeOrderDTO.getOrderDetailId()).last("FOR UPDATE"));
+        if (pmsOrderDetail == null || !Objects.equals(pmsOrderEntity.getId(), pmsOrderDetail.getPmsOrderId())
+                || !Objects.equals(pmsOrderEntity.getFactoryCode(), pmsOrderDetail.getFactoryCode())
+                || (StrUtil.isNotBlank(pmsInNoticeOrderDTO.getMatCode())
+                && !Objects.equals(pmsInNoticeOrderDTO.getMatCode(), pmsOrderDetail.getMatCode()))) {
+            throw new CheckedException("采购到货订单行与订单、工厂或物料不一致");
+        }
         Double inNum = pmsInNoticeOrderDTO.getNum();
         Double arrivalNum = Optional.ofNullable(pmsOrderDetail.getArrivalNum()).orElse(0.0);
-        double addNum = pmsInNoticeOrderDTO.getNum() + arrivalNum;
+        double addNum = inNum + arrivalNum;
+        if (addNum - Optional.ofNullable(pmsOrderDetail.getOrderNum()).orElse(0.0) > 0.00000001) {
+            throw new CheckedException("累计到货量不能超过采购订单行订购数量");
+        }
 
         // 更新采购订单明细数量
         pmsOrderDetail.setArrivalNum(addNum);
         pmsOrderDetailMapper.updateById(pmsOrderDetail);
 
-        if (addNum >= noArrivalNum) {
+        boolean fullyReceived = pmsOrderDetailMapper.selectList(new LambdaQueryWrapper<PmsOrderDetailEntity>()
+                        .eq(PmsOrderDetailEntity::getPmsOrderId, pmsOrderEntity.getId())).stream()
+                .allMatch(detail -> Optional.ofNullable(detail.getArrivalNum()).orElse(0.0) + 0.00000001
+                        >= Optional.ofNullable(detail.getOrderNum()).orElse(0.0));
+        if (fullyReceived) {
             pmsOrderEntity.setStatus(PmsOrderStatusEnum.COMPLETE.getCode());
 
             // 如果订单完成，自动生成业务对账单
@@ -553,6 +609,11 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
     public Boolean check(Long[] ids) {
         List<PmsOrderEntity> pmsOrderEntities = this.listByIds(Arrays.asList(ids));
 
+        if (pmsOrderEntities.size() != Arrays.stream(ids).distinct().count()
+                || pmsOrderEntities.stream().anyMatch(order -> !PmsOrderStatusEnum.NO_CHECK.getCode().equals(order.getStatus()))) {
+            throw new CheckedException("只能提交全部存在且未审核的采购订单；驳回订单须先编辑形成新版本");
+        }
+
         // 校验状态
         pmsOrderEntities.forEach(pmsOrder -> {
             checkOrderSupplier(pmsOrder.getSupplierCode(), PmsOrderStatusEnum.CHECKING);
@@ -613,15 +674,33 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
         return Boolean.TRUE;
     }
 
+    private void rollbackOrderPlanAllocations(Long orderId) {
+        List<PmsPlanEntity> allocations = pmsOrderDetailMapper.selectList(
+                        new LambdaQueryWrapper<PmsOrderDetailEntity>()
+                                .eq(PmsOrderDetailEntity::getPmsOrderId, orderId)).stream()
+                .filter(detail -> StrUtil.isNotBlank(detail.getPmsPlanNo()))
+                .map(detail -> {
+                    PmsPlanEntity allocation = new PmsPlanEntity();
+                    allocation.setPmsPlanNo(detail.getPmsPlanNo());
+                    allocation.setPlanOrderNum(Optional.ofNullable(detail.getOrderNum()).orElse(0D));
+                    return allocation;
+                }).toList();
+        pmsPlanService.rollbackPlanOrderNum(allocations);
+    }
+
     /**
      * 审核-流程结束修改状态
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Boolean processBackChangeState(FlowInstanceBizRecordEntity backDTO) {
         // 审批结果
         String result = backDTO.getResult();
         FlowResultEnum resultEnum = FlowResultEnum.getByCode(result);
-        boolean approveRes = FlowResultEnum.AGREE.getCode().equals(resultEnum == null ? "" : resultEnum.getCode());
+        if (resultEnum == null) {
+            throw new CheckedException("采购订单审批回调结果无效");
+        }
+        boolean approveRes = FlowResultEnum.AGREE.getCode().equals(resultEnum.getCode());
         // 表单数据
         Map<String, Object> formData = backDTO.getFormData();
         Map<String, Object> formDataEntity = new HashMap<>();
@@ -629,13 +708,34 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
             formDataEntity.put(fieldEnum.getCode(), formData.get(fieldEnum.getName()));
         }
         PmsOrderEntity entity = BeanUtil.toBean(formDataEntity, PmsOrderEntity.class);
-        // 更新数据
-        return this.update(new LambdaUpdateWrapper<PmsOrderEntity>()
-                .set(resultEnum != null, PmsOrderEntity::getStatus, approveRes ?
-                        PmsOrderStatusEnum.CHECK_SUCCESS.getCode() : PmsOrderStatusEnum.REJECT.getCode())
-                .set(PmsOrderEntity::getCheckReason, entity.getCheckReason())
-                .eq(PmsOrderEntity::getPmsOrderNo, backDTO.getBillId())
-        );
+        PmsOrderEntity current = getOne(new LambdaQueryWrapper<PmsOrderEntity>()
+                .eq(PmsOrderEntity::getPmsOrderNo, backDTO.getBillId()).last("FOR UPDATE"), false);
+        if (current == null) throw new CheckedException("采购订单审批回调对应订单不存在");
+        String targetStatus = approveRes ? PmsOrderStatusEnum.CHECK_SUCCESS.getCode() : PmsOrderStatusEnum.REJECT.getCode();
+        if (Objects.equals(current.getStatus(), targetStatus)) return Boolean.TRUE;
+        if (!PmsOrderStatusEnum.CHECKING.getCode().equals(current.getStatus())) {
+            throw new CheckedException("采购订单已不处于审批中，拒绝过期或冲突回调");
+        }
+        if (!approveRes) {
+            List<PmsPlanEntity> rollbacks = pmsOrderDetailMapper.selectList(new LambdaQueryWrapper<PmsOrderDetailEntity>()
+                            .eq(PmsOrderDetailEntity::getPmsOrderId, current.getId())).stream()
+                    .filter(detail -> StrUtil.isNotBlank(detail.getPmsPlanNo()))
+                    .map(detail -> {
+                        PmsPlanEntity plan = new PmsPlanEntity();
+                        plan.setPmsPlanNo(detail.getPmsPlanNo());
+                        plan.setPlanOrderNum(Optional.ofNullable(detail.getOrderNum()).orElse(0D));
+                        return plan;
+                    }).toList();
+            pmsPlanService.rollbackPlanOrderNum(rollbacks);
+        }
+        current.setStatus(targetStatus);
+        current.setCheckReason(entity.getCheckReason());
+        if (!this.updateById(current)) throw new CheckedException("采购订单审批结果保存失败");
+        if (!approveRes && "AGENT_SHORTAGE".equals(current.getSourceType())) {
+            agentPurchaseStatusOutboxService.enqueueRejected(current,
+                    StrUtil.blankToDefault(entity.getCheckReason(), "PMS正式审批驳回"));
+        }
+        return Boolean.TRUE;
     }
 
     /**

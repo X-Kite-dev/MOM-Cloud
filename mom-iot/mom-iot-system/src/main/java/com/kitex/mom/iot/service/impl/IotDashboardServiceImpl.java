@@ -29,6 +29,7 @@ import java.util.List;
 public class IotDashboardServiceImpl implements IotDashboardService {
 
     private final IotProductMapper productMapper;
+    private final IotDeviceDataAccess dataAccess;
     private final IotDeviceMapper deviceMapper;
     private final IotDeviceConnectionMapper deviceConnectionMapper;
     private final IotDevicePropertyMapper devicePropertyMapper;
@@ -41,6 +42,7 @@ public class IotDashboardServiceImpl implements IotDashboardService {
      */
     @Override
     public IotDashboardStatisticsDTO getStatistics() {
+        dataAccess.factory("read");
         IotDashboardStatisticsDTO statistics = new IotDashboardStatisticsDTO();
 
         // 产品统计
@@ -78,15 +80,15 @@ public class IotDashboardServiceImpl implements IotDashboardService {
 
         // 属性消息
         int todayPropertyMessages = Math.toIntExact(devicePropertyMapper.selectCount(
-                new LambdaQueryWrapper<IotDevicePropertyEntity>().ge(IotDevicePropertyEntity::getCollectTime, todayStart)));
+                new LambdaQueryWrapper<IotDevicePropertyEntity>().eq(IotDevicePropertyEntity::getScopeVerified,true).ge(IotDevicePropertyEntity::getCollectTime, todayStart)));
         int monthPropertyMessages = Math.toIntExact(devicePropertyMapper.selectCount(
-                new LambdaQueryWrapper<IotDevicePropertyEntity>().ge(IotDevicePropertyEntity::getCollectTime, monthStart)));
+                new LambdaQueryWrapper<IotDevicePropertyEntity>().eq(IotDevicePropertyEntity::getScopeVerified,true).ge(IotDevicePropertyEntity::getCollectTime, monthStart)));
 
         // 事件消息
         int todayEventMessages = Math.toIntExact(deviceEventMapper.selectCount(
-                new LambdaQueryWrapper<IotDeviceEventEntity>().ge(IotDeviceEventEntity::getEventTime, todayStart)));
+                new LambdaQueryWrapper<IotDeviceEventEntity>().eq(IotDeviceEventEntity::getScopeVerified,true).ge(IotDeviceEventEntity::getEventTime, todayStart)));
         int monthEventMessages = Math.toIntExact(deviceEventMapper.selectCount(
-                new LambdaQueryWrapper<IotDeviceEventEntity>().ge(IotDeviceEventEntity::getEventTime, monthStart)));
+                new LambdaQueryWrapper<IotDeviceEventEntity>().eq(IotDeviceEventEntity::getScopeVerified,true).ge(IotDeviceEventEntity::getEventTime, monthStart)));
 
         statistics.setTodayMessages(todayPropertyMessages + todayEventMessages);
         statistics.setMonthMessages(monthPropertyMessages + monthEventMessages);
@@ -104,6 +106,8 @@ public class IotDashboardServiceImpl implements IotDashboardService {
      */
     @Override
     public IotMessageTrendDTO getMessageTrend(String timeRange, LocalDateTime startTime, LocalDateTime endTime) {
+        dataAccess.factory("read");
+        com.kitex.mom.iot.service.impl.IotAlarmService.require((startTime==null&&endTime==null)||(startTime!=null&&endTime!=null&&startTime.isBefore(endTime)&&!endTime.isAfter(startTime.plusDays(31))),"自定义统计时间须成对提供且跨度最多31天");
         IotMessageTrendDTO trendDTO = new IotMessageTrendDTO();
         List<String> xAxis = new ArrayList<>();
         List<Integer> series = new ArrayList<>();
@@ -153,12 +157,12 @@ public class IotDashboardServiceImpl implements IotDashboardService {
 
             // 统计该时间段内的消息数量
             int propertyCount = Math.toIntExact(devicePropertyMapper.selectCount(
-                    new LambdaQueryWrapper<IotDevicePropertyEntity>()
+                    new LambdaQueryWrapper<IotDevicePropertyEntity>().eq(IotDevicePropertyEntity::getScopeVerified,true)
                             .ge(IotDevicePropertyEntity::getCollectTime, pointTime)
                             .lt(IotDevicePropertyEntity::getCollectTime, nextPointTime)));
 
             int eventCount = Math.toIntExact(deviceEventMapper.selectCount(
-                    new LambdaQueryWrapper<IotDeviceEventEntity>()
+                    new LambdaQueryWrapper<IotDeviceEventEntity>().eq(IotDeviceEventEntity::getScopeVerified,true)
                             .ge(IotDeviceEventEntity::getEventTime, pointTime)
                             .lt(IotDeviceEventEntity::getEventTime, nextPointTime)));
 
@@ -190,12 +194,12 @@ public class IotDashboardServiceImpl implements IotDashboardService {
 
             // 统计该时间段内的消息数量
             int propertyCount = Math.toIntExact(devicePropertyMapper.selectCount(
-                    new LambdaQueryWrapper<IotDevicePropertyEntity>()
+                    new LambdaQueryWrapper<IotDevicePropertyEntity>().eq(IotDevicePropertyEntity::getScopeVerified,true)
                             .ge(IotDevicePropertyEntity::getCollectTime, pointTime)
                             .lt(IotDevicePropertyEntity::getCollectTime, nextPointTime)));
 
             int eventCount = Math.toIntExact(deviceEventMapper.selectCount(
-                    new LambdaQueryWrapper<IotDeviceEventEntity>()
+                    new LambdaQueryWrapper<IotDeviceEventEntity>().eq(IotDeviceEventEntity::getScopeVerified,true)
                             .ge(IotDeviceEventEntity::getEventTime, pointTime)
                             .lt(IotDeviceEventEntity::getEventTime, nextPointTime)));
 
@@ -227,12 +231,12 @@ public class IotDashboardServiceImpl implements IotDashboardService {
 
             // 统计该时间段内的消息数量
             int propertyCount = Math.toIntExact(devicePropertyMapper.selectCount(
-                    new LambdaQueryWrapper<IotDevicePropertyEntity>()
+                    new LambdaQueryWrapper<IotDevicePropertyEntity>().eq(IotDevicePropertyEntity::getScopeVerified,true)
                             .ge(IotDevicePropertyEntity::getCollectTime, pointTime)
                             .lt(IotDevicePropertyEntity::getCollectTime, nextPointTime)));
 
             int eventCount = Math.toIntExact(deviceEventMapper.selectCount(
-                    new LambdaQueryWrapper<IotDeviceEventEntity>()
+                    new LambdaQueryWrapper<IotDeviceEventEntity>().eq(IotDeviceEventEntity::getScopeVerified,true)
                             .ge(IotDeviceEventEntity::getEventTime, pointTime)
                             .lt(IotDeviceEventEntity::getEventTime, nextPointTime)));
 
@@ -252,7 +256,7 @@ public class IotDashboardServiceImpl implements IotDashboardService {
      */
     private void generateCustomRangeTrend(LocalDateTime startTime, LocalDateTime endTime, IotMessageTrendDTO trendDTO) {
         // 计算时间间隔（小时）
-        long hours = java.time.Duration.between(startTime, endTime).toHours();
+        double hours = java.time.Duration.between(startTime, endTime).toMillis() / 3600000.0;
 
         List<String> xAxis = new ArrayList<>();
         List<Integer> series = new ArrayList<>();
@@ -292,12 +296,12 @@ public class IotDashboardServiceImpl implements IotDashboardService {
 
             // 统计该时间段内的消息数量
             int propertyCount = Math.toIntExact(devicePropertyMapper.selectCount(
-                    new LambdaQueryWrapper<IotDevicePropertyEntity>()
+                    new LambdaQueryWrapper<IotDevicePropertyEntity>().eq(IotDevicePropertyEntity::getScopeVerified,true)
                             .ge(IotDevicePropertyEntity::getCollectTime, pointTime)
                             .lt(IotDevicePropertyEntity::getCollectTime, nextPointTime)));
 
             int eventCount = Math.toIntExact(deviceEventMapper.selectCount(
-                    new LambdaQueryWrapper<IotDeviceEventEntity>()
+                    new LambdaQueryWrapper<IotDeviceEventEntity>().eq(IotDeviceEventEntity::getScopeVerified,true)
                             .ge(IotDeviceEventEntity::getEventTime, pointTime)
                             .lt(IotDeviceEventEntity::getEventTime, nextPointTime)));
 
@@ -307,4 +311,4 @@ public class IotDashboardServiceImpl implements IotDashboardService {
         trendDTO.setXAxis(xAxis);
         trendDTO.setSeries(series);
     }
-} 
+}

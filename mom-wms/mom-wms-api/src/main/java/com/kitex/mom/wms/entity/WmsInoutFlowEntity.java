@@ -10,6 +10,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * 出入库流水
@@ -29,6 +30,33 @@ public class WmsInoutFlowEntity extends BaseEntity<WmsInoutFlowEntity> {
      */
     @Schema(description = "单据id")
     private Long billId;
+
+    @Schema(description = "出入库单明细ID；精确追溯到本次实际操作行")
+    private Long billDetailId;
+
+    @Schema(description = "调拨源实时库存ID")
+    private Long sourceStockId;
+
+    @Schema(description = "库存证据类型：SALES_SHIPMENT等；NULL为历史普通流水")
+    private String stockProofType;
+
+    @Schema(description = "调拨入库/取消返还对应的发起出库流水ID")
+    private Long sourceFlowId;
+
+    @Schema(description = "调拨流水动作：ISSUE/RECEIVE/CANCEL_RETURN/OVER_ISSUE_ADJUST/OVER_ACCEPT/OVER_RETURN")
+    private String transferAction;
+
+    @Schema(description = "接收、取消或差异处置命令永久幂等号")
+    private String operationRequestId;
+
+    @Schema(description = "分批接收记录ID")
+    private Long transferReceiptId;
+
+    @Schema(description = "短溢收差异单ID")
+    private Long varianceCaseId;
+
+    @Schema(description = "短溢收差异明细ID")
+    private Long varianceLineId;
 
     /**
      * 单据号
@@ -167,6 +195,36 @@ public class WmsInoutFlowEntity extends BaseEntity<WmsInoutFlowEntity> {
      */
     @Schema(description = "有效截止日期")
     private LocalDate matValidEndDate;
+
+    @Schema(description = "源库存首次入库时间快照")
+    private LocalDateTime stockInTime;
+
+    @Schema(description = "质量结论快照")
+    private String qualityResult;
+
+    @Schema(description = "标准质量状态快照")
+    private String qualityStatus;
+
+    @Schema(description = "质量隔离单号快照")
+    private String qualityHoldNo;
+
+    @Schema(description = "质量状态来源类型快照")
+    private String qualitySourceType;
+
+    @Schema(description = "质量状态来源业务ID快照")
+    private String qualitySourceId;
+
+    @Schema(description = "是否要求质检快照")
+    private String isQualityTest;
+
+    @Schema(description = "质检任务ID快照")
+    private Long qualityTaskId;
+
+    @Schema(description = "有效期检测状态快照")
+    private Boolean expirationStatus;
+
+    @Schema(description = "呆滞物料检测状态快照")
+    private Boolean slowMaterialStatus;
 
     /**
      * 车间名称

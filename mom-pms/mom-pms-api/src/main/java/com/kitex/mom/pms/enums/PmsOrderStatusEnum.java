@@ -16,7 +16,9 @@ public enum PmsOrderStatusEnum {
     RECEIVING("3", "收货中"),
     PART_RECEIVE("4", "部分到货"),
     COMPLETE("5", "完成收货"),
-    REJECT("6", "驳回");
+    REJECT("6", "驳回"),
+    CANCELLED("7", "已取消"),
+    PART_CANCELLED("8", "部分到货后取消");
 
     private final String code;
     private final String desc;

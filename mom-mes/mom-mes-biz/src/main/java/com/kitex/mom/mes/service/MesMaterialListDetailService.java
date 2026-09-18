@@ -6,6 +6,7 @@ import com.kitex.mom.mes.entity.MesMaterialListDetailEntity;
 import com.kitex.mom.mes.vo.MesMaterialListPickVO;
 import com.kitex.mom.mes.vo.MesMaterialListReturnVO;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -64,10 +65,11 @@ public interface MesMaterialListDetailService extends IService<MesMaterialListDe
      * @param materialListId 用料清单ID
      * @param taskId         工单ID
      * @param bomId          BOM ID
+     * @param bomVersion     BOM版本
      * @param planQuantity   计划数量
      * @return 创建结果
      */
-    boolean createMaterialDetailsByBom(Long materialListId, Long taskId, Long bomId, java.math.BigDecimal planQuantity);
+    boolean createMaterialDetailsByBom(Long materialListId, Long taskId, Long bomId, String bomVersion, BigDecimal planQuantity);
 
     /**
      * 更新明细的领料状态
@@ -85,5 +87,5 @@ public interface MesMaterialListDetailService extends IService<MesMaterialListDe
      * @param requiredQuantity 需求数量
      * @return 是否充足
      */
-    boolean checkMaterialStock(String materialCode, java.math.BigDecimal requiredQuantity);
+    boolean checkMaterialStock(String materialCode, BigDecimal requiredQuantity);
 }

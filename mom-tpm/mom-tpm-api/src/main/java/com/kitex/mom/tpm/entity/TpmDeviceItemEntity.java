@@ -106,6 +106,18 @@ public class TpmDeviceItemEntity extends Model<TpmDeviceItemEntity> {
     @Schema(description = "标准下限")
     private BigDecimal standardMin;
 
+    @TableField(exist = false)
+    @Schema(description = "不合格处置：WARN、BLOCK、REPAIR")
+    private String failureAction;
+
+    @TableField(exist = false)
+    @Schema(description = "默认预计恢复分钟数")
+    private Integer defaultRecoveryMinutes;
+
+    @TableField(exist = false)
+    @Schema(description = "不合格处置指引")
+    private String failureGuidance;
+
 
     @TableField(exist = false)
     @Schema(description = "新增项目id集合")

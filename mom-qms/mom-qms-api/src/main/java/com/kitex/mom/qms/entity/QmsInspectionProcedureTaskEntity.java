@@ -27,6 +27,12 @@ import java.util.Date;
 @TableName("qms_inspection_procedure_task")
 public class QmsInspectionProcedureTaskEntity extends BaseEntity<QmsInspectionProcedureTaskEntity> {
 
+    @Schema(description = "MES工序任务编码")
+    private String sourceTaskCode;
+
+    @Schema(description = "来源系统永久幂等请求号")
+    private String sourceRequestId;
+
     @Deprecated
     @Schema(description = "任务名称")
     private String name;

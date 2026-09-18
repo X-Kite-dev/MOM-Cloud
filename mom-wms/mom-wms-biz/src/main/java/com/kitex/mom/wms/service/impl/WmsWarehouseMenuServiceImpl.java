@@ -307,7 +307,11 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
                             // 三级菜单(页面菜单)
                             WmsWarehouseMenuEntity pageMenu = savePageMenu(liveStockMenuEnum.getName(), liveStockMenuEnum.getUrl(), liveStockMenuEnum.getSort(), warehouseCode, biz, bizMenu.getId(), insertMenus, snowflake);
                             // 按钮权限 库存明细的权限是：后边加上页面编码和仓库编码
-                            for (ButtonLiveStockTypeEnum value : ButtonLiveStockTypeEnum.values()) {
+                            if (LiveStockMenuTypeEnum.QUALITY_STATUS.equals(liveStockMenuEnum)) {
+                                createButton("查看", "wmsQualityStatus:show", 1, pageMenu.getId(), insertMenus, snowflake);
+                                createButton("重试同步", "wmsQualityStatus:retry", 2, pageMenu.getId(), insertMenus, snowflake);
+                                createButton("确认实物执行", "wmsQualityStatus:execute", 3, pageMenu.getId(), insertMenus, snowflake);
+                            } else for (ButtonLiveStockTypeEnum value : ButtonLiveStockTypeEnum.values()) {
                                 createButton(value.getName(), value.getCode() + "_" + liveStockMenuEnum.getCode() + "_" + warehouseCode, value.getSort(), pageMenu.getId(), insertMenus, snowflake);
                             }
                         }

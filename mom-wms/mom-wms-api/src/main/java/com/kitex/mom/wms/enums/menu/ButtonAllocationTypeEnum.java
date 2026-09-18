@@ -24,6 +24,11 @@ public enum ButtonAllocationTypeEnum {
     ADD("wms_wmsAllocationBill_add", "新增", 2),
 
     /**
+     * 取消在途调拨并返还源仓
+     */
+    CANCEL("wms_wmsAllocationBill_cancel", "取消", 4),
+
+    /**
      * 导入导出
      */
     EXPORT("wms_wmsAllocationBill_export", "导入导出", 3);

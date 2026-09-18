@@ -9,14 +9,17 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.excel.annotation.RequestExcel;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.common.barcode.dto.req.PrintReq;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
+import com.kitex.mom.mdm.entity.MdmSchedulingFamilyEntity;
 import com.kitex.mom.mdm.enums.MatTypeEnum;
 import com.kitex.mom.mdm.service.MdmMaterialService;
+import com.kitex.mom.mdm.service.MdmSchedulingFamilyService;
 import com.kitex.mom.mdm.utils.DynamicRefreshUtils;
 import com.kitex.mom.mdm.vo.excel.MdmMaterialExcelVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -48,6 +51,7 @@ import java.util.stream.Collectors;
 public class MdmMaterialController {
 
     private final MdmMaterialService mdmMaterialService;
+    private final MdmSchedulingFamilyService schedulingFamilyService;
 
     /**
      * 分页查询
@@ -247,6 +251,7 @@ public class MdmMaterialController {
     @PostMapping
     @PreAuthorize("@pms.hasPermission('mdm_mdmMaterial_add')")
     public R<Boolean> save(@RequestBody MdmMaterialEntity mdmMaterial) {
+        resolveSchedulingFamily(mdmMaterial);
         mdmMaterialService.save(mdmMaterial);
         DynamicRefreshUtils.refreshMdm(mdmMaterial);
         return R.ok();
@@ -263,9 +268,28 @@ public class MdmMaterialController {
     @PutMapping
     @PreAuthorize("@pms.hasPermission('mdm_mdmMaterial_edit')")
     public R<Boolean> updateById(@RequestBody MdmMaterialEntity mdmMaterial) {
+        resolveSchedulingFamily(mdmMaterial);
         mdmMaterialService.updateById(mdmMaterial);
         DynamicRefreshUtils.refreshMdm(mdmMaterial);
         return R.ok();
+    }
+
+    private void resolveSchedulingFamily(MdmMaterialEntity material) {
+        if (StrUtil.isBlank(material.getSchedulingFamilyCode())) {
+            material.setSchedulingFamilyCode(null);
+            material.setSchedulingFamilyName(null);
+            return;
+        }
+        MdmSchedulingFamilyEntity family = schedulingFamilyService.getOne(
+                new LambdaQueryWrapper<MdmSchedulingFamilyEntity>()
+                        .eq(MdmSchedulingFamilyEntity::getFamilyCode, material.getSchedulingFamilyCode().trim())
+                        .eq(MdmSchedulingFamilyEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
+                        .eq(MdmSchedulingFamilyEntity::getEnabled, true), false);
+        if (family == null) {
+            throw new com.kitex.common.core.exception.CheckedException("APS排产产品族不存在或未启用");
+        }
+        material.setSchedulingFamilyCode(family.getFamilyCode());
+        material.setSchedulingFamilyName(family.getFamilyName());
     }
 
     /**

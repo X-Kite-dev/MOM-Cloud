@@ -30,6 +30,12 @@ import java.time.LocalDateTime;
 @TenantTable
 public class MesScrapMaterialEntity extends BaseEntity<MesScrapMaterialEntity> {
 
+    @Schema(description = "新增报废记录永久幂等号")
+    private String requestId;
+
+    @Schema(description = "新增报废记录业务载荷指纹")
+    private String requestFingerprint;
+
     /**
      * 物料编码
      */
@@ -78,6 +84,21 @@ public class MesScrapMaterialEntity extends BaseEntity<MesScrapMaterialEntity> {
      */
     @Schema(description = "物料类型（原料报废，制程报废）")
     private String materialType;
+
+    @Schema(description = "废品类型编码")
+    private String scrapType;
+
+    @Schema(description = "来源MES工单ID；制程报废必填")
+    private Long sourceTaskId;
+
+    @Schema(description = "来源APS执行批次号")
+    private String apsBatchNo;
+
+    @Schema(description = "来源类型 MANUAL/QMS_PROCEDURE/QMS_PRODUCT")
+    private String sourceType;
+
+    @Schema(description = "来源业务对象标识")
+    private String sourceReference;
 
     /**
      * 所属组织
@@ -129,9 +150,12 @@ public class MesScrapMaterialEntity extends BaseEntity<MesScrapMaterialEntity> {
     @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime auditTime;
 
+    @Schema(description = "审核版本；撤销后再次审核递增，保证每轮正反向记账幂等")
+    private Integer auditVersion;
+
     /**
      * 备注
      */
     @Schema(description = "备注")
     private String remark;
-} 
+}

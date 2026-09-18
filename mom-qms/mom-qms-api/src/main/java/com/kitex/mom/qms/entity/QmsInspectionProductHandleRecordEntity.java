@@ -26,6 +26,9 @@ import java.util.Date;
 @TableName("qms_inspection_product_handle_record")
 public class QmsInspectionProductHandleRecordEntity extends BaseEntity<QmsInspectionProductHandleRecordEntity> {
 
+    @Schema(description = "处置请求永久幂等号")
+    private String requestId;
+
     @Schema(description = "来源任务id")
     private Long taskId;
 

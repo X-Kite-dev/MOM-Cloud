@@ -3,6 +3,8 @@ package com.kitex.mom.mes.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.entity.MesInspectionRuleEntity;
 
+import java.util.Collection;
+
 /**
  * 质检任务生成规则
  *
@@ -33,4 +35,9 @@ public interface MesInspectionRuleService extends IService<MesInspectionRuleEnti
      * @return
      */
     MesInspectionRuleEntity getRuleByMatCode(String matCode);
-} 
+
+    /**
+     * 删除尚未启用且没有生成历史的规则。
+     */
+    void removeData(Collection<Long> ids);
+}

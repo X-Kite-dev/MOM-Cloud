@@ -5,9 +5,12 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.qms.dto.req.QmsBadHandleReq;
 import com.kitex.mom.qms.dto.req.QmsBadJudgeReq;
+import com.kitex.mom.qms.dto.req.QmsBadVerifyReq;
 import com.kitex.mom.qms.entity.QmsBadInfoDetailEntity;
 import com.kitex.mom.qms.entity.QmsBadInfoEntity;
+import com.kitex.mom.qms.entity.QmsBadOperationEntity;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -72,5 +75,19 @@ public interface QmsBadInfoService extends IService<QmsBadInfoEntity> {
      * @param req
      */
     void handle(QmsBadHandleReq req);
+
+    void verify(QmsBadVerifyReq req);
+    void executeMes(com.kitex.mom.qms.dto.req.QmsBadMesExecuteReq req);
+    void syncMes(Long detailId);
+    void discoverMesReconcile(Long detailId);
+    Map<String,Object> syncMesInBackground(com.kitex.mom.qms.entity.QmsMesReceiptReconcileEntity job);
+    com.kitex.mom.qms.dto.QmsMesCaseDecision mesDecision(Long detailId);
+    Map<String,Object> mesContext(Long detailId);
+
+    void retryHold(Long id);
+
+    void retryDisposition(Long detailId);
+
+    List<QmsBadOperationEntity> operations(Long id);
 
 }

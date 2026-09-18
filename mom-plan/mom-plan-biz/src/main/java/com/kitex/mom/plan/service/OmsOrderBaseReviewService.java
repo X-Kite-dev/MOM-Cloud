@@ -3,6 +3,7 @@ package com.kitex.mom.plan.service;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.oms.dto.OmsOrderBaseReviewPageDto;
+import com.kitex.mom.oms.dto.OmsOrderChangeReviewCommand;
 import com.kitex.mom.oms.entity.OmsOrderBaseReviewEntity;
 import com.kitex.mom.oms.vo.OmsOrderBaseReviewExportVo;
 
@@ -40,6 +41,8 @@ public interface OmsOrderBaseReviewService extends IService<OmsOrderBaseReviewEn
      * @param remark     评审意见
      */
     Boolean review(Long[] ids, String reviewType, String remark);
+
+    Boolean reviewChange(OmsOrderChangeReviewCommand command);
 
     /**
      * 查询各订单评审状态的数量

@@ -34,24 +34,15 @@ public class MesWipTimeoutConfigController {
     @Operation(summary = "新增")
     @PostMapping("/add")
     @PreAuthorize("@pms.hasPermission('mesWipTimeoutConfig:add')")
-    public R<Void> add(@RequestBody MesWipTimeoutConfigEntity params) {
-        service.save(params);
-        return R.ok();
+    public R<MesWipTimeoutConfigEntity> add(@RequestBody MesWipTimeoutConfigEntity params) {
+        return R.ok(service.saveData(params));
     }
 
     @Operation(summary = "编辑")
     @PostMapping("/update")
     @PreAuthorize("@pms.hasPermission('mesWipTimeoutConfig:update')")
     public R<Void> update(@RequestBody MesWipTimeoutConfigEntity entity) {
-        service.updateById(entity);
-        return R.ok();
-    }
-
-    @Operation(summary = "设置（记录操作人）")
-    @PostMapping("/set")
-    @PreAuthorize("@pms.hasPermission('mesWipTimeoutConfig:update')")
-    public R<Void> set(@RequestBody MesWipTimeoutConfigEntity entity) {
-        service.set(entity);
+        service.updateData(entity);
         return R.ok();
     }
 
@@ -66,7 +57,7 @@ public class MesWipTimeoutConfigController {
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('mesWipTimeoutConfig:delete')")
     public R<Void> removeById(@RequestBody Long[] ids) {
-        service.removeBatchByIds(CollUtil.toList(ids));
+        service.removeUnused(CollUtil.toList(ids));
         return R.ok();
     }
 }

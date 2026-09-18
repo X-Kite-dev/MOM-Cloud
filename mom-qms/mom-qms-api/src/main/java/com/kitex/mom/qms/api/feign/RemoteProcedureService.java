@@ -1,8 +1,10 @@
 package com.kitex.mom.qms.api.feign;
 
 import com.kitex.common.core.util.R;
+import com.kitex.common.feign.annotation.NoToken;
 import com.kitex.mom.qms.Constants;
 import com.kitex.mom.qms.dto.inspection.InspectionProcedureCreateParam;
+import com.kitex.mom.qms.dto.QmsProcedureSourceWithdrawalDTO;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureTaskDetailEntity;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureTaskEntity;
 import org.springframework.cloud.openfeign.FeignClient;
@@ -31,5 +33,10 @@ public interface RemoteProcedureService {
 
     @GetMapping("/inspection/procedure/task/findDetailsByTaskId")
     R<List<QmsInspectionProcedureTaskDetailEntity>> findDetailsByTaskId(@RequestParam("taskId") Long taskId);
+
+    @PostMapping("/inspection/procedure/task/internal/source-withdrawal")
+    @NoToken
+    R<QmsProcedureSourceWithdrawalDTO.Receipt> withdrawByMesSource(
+            @RequestBody QmsProcedureSourceWithdrawalDTO.Command command);
 
 }

@@ -10,7 +10,9 @@ import com.kitex.mom.mdm.entity.MdmCustomerPartEntity;
 import com.kitex.mom.mdm.feign.RemoteCustomerPartService;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
+import com.kitex.mom.mes.dto.MesTaskReportResult;
 import com.kitex.mom.mes.entity.MesTaskReportEntity;
+import com.kitex.mom.mes.enums.ReportModeEnum;
 import com.kitex.mom.mes.process.AbstractProcessOperation;
 import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
@@ -18,10 +20,7 @@ import jakarta.annotation.Resource;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 一物一码报工实现
@@ -36,12 +35,8 @@ import java.util.Map;
 @Component
 public class OneCodeProcessOperation extends AbstractProcessOperation {
 
-    private static final String CODE = "ONE_CODE";
-
     @Resource
     private RemoteCustomerPartService partService;
-
-    private MomUser currentUser;
 
     public OneCodeProcessOperation(MesWarehouseLiveStockService liveStockService, RemoteParamService remoteParamService, RemoteMaterialService materialService, MesWarehouseFeedService feedService) {
         super(liveStockService, remoteParamService, materialService, feedService);
@@ -50,8 +45,8 @@ public class OneCodeProcessOperation extends AbstractProcessOperation {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Map<String, Object> execute(MesTaskReportVO params) {
-        currentUser = SecurityUtils.getUser();
+    public MesTaskReportResult execute(MesTaskReportVO params) {
+        MomUser currentUser = SecurityUtils.getUser();
         // 1. 验证参数
         if (StrUtil.isEmpty(params.getTransferCode())) {
             throw new RuntimeException("报工条码/流转卡不能为空");
@@ -63,55 +58,11 @@ public class OneCodeProcessOperation extends AbstractProcessOperation {
         validateOneCode(params.getTransferCode(), params.getMatCode());
 
         // 3. 报工
-        MesTaskReportEntity report = report(params);
-        // 4.  物料消耗
-        use(params);
-        // 5. 在制品入库
-        in(params);
+        MesTaskReportEntity report = createReport(params, currentUser);
 
-        // 4. 返回处理结果
-        Map<String, Object> resultMap = new HashMap<>(2);
-        String reportMessage = currentUser.getName() + "于" + DateUtil.format(report.getReportTime(), "yyyy-MM-dd HH:mm:ss") + "进行一物一码报工，合格数量为：" + report.getReportNum();
-        resultMap.put("report", report);
-        resultMap.put("reportMessage", reportMessage);
-        return resultMap;
-    }
-
-    /**
-     * 进行报工 一物一码记录条码的报工记录
-     *
-     * @param vo
-     * @return
-     */
-    @Override
-    public MesTaskReportEntity report(MesTaskReportVO vo) {
-        MesTaskReportEntity report = new MesTaskReportEntity();
-        report.setArrangeCode(vo.getArrangeCode());
-        report.setTaskCode(vo.getTaskCode());
-        report.setProduceTaskCode(vo.getProduceTaskCode());
-        report.setMatCode(vo.getMatCode());
-        report.setMatName(vo.getMatName());
-        report.setMatSpec(vo.getMatSpec());
-        report.setTransferCode(vo.getTransferCode());
-        report.setReportNum(vo.getPassNum());
-        report.setType(vo.getType());
-        report.setReportTime(LocalDateTime.now());
-        report.setWorkerCode(currentUser.getUsername());
-        report.setWorkerName(currentUser.getName());
-        report.setDeviceCode(vo.getDeviceCode());
-        report.setDeviceName(vo.getDeviceName());
-        return report;
-    }
-
-    /**
-     * 物料消耗
-     *
-     * @param params
-     */
-    @Override
-    public void use(MesTaskReportVO params) {
-        // 判断当前物料是否进行投料。如果投料则进行消耗对应投料的物料
-        super.use(params);
+        // 4. 返回处理结果；公共物料消耗和产出入账由工厂统一执行。
+        String reportMessage = operatorName(params, currentUser) + "于" + DateUtil.format(report.getReportTime(), "yyyy-MM-dd HH:mm:ss") + "进行一物一码报工，合格数量为：" + report.getReportNum();
+        return new MesTaskReportResult().setReport(report).setReportMessage(reportMessage);
     }
 
     /**
@@ -139,7 +90,7 @@ public class OneCodeProcessOperation extends AbstractProcessOperation {
 
 
     @Override
-    public String getCode() {
-        return CODE;
+    public ReportModeEnum getMode() {
+        return ReportModeEnum.ONE_CODE;
     }
-} 
+}

@@ -14,7 +14,9 @@ import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.excel.annotation.RequestExcel;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
+import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.mdm.entity.MdmWarehouseEntity;
+import com.kitex.mom.mdm.enums.WarehouseTypeEnum;
 import com.kitex.mom.mdm.service.MdmWarehouseService;
 import com.kitex.mom.mdm.vo.MdmWarehouseModelTreeVO;
 import com.kitex.mom.mdm.vo.excel.MdmWarehouseExcelVO;
@@ -116,6 +118,21 @@ public class MdmWarehouseController {
                 .like(StrUtil.isNotEmpty(mdmWarehouse.getWarehouseName()), MdmWarehouseEntity::getWarehouseName, mdmWarehouse.getWarehouseName())
                 .orderByAsc(MdmWarehouseEntity::getSort);
         return R.ok(mdmWarehouseService.list(queryWrapper));
+    }
+
+    @Inner
+    @GetMapping("/productEnabled")
+    public R<List<MdmWarehouseEntity>> getEnabledProductWarehouses() {
+        String factory = FactoryContextHolder.getFactoryCode();
+        if (StrUtil.isBlank(factory) || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())) {
+            throw new com.kitex.common.core.exception.CheckedException("成品仓查询必须处于精确工厂上下文");
+        }
+        return R.ok(mdmWarehouseService.list(new LambdaQueryWrapper<MdmWarehouseEntity>()
+                .eq(MdmWarehouseEntity::getFactoryCode, factory)
+                .eq(MdmWarehouseEntity::getWarehouseType, WarehouseTypeEnum.PRODUCT.getCode())
+                .eq(MdmWarehouseEntity::getStatus, true)
+                .orderByAsc(MdmWarehouseEntity::getSort)
+                .orderByAsc(MdmWarehouseEntity::getId)));
     }
 
     /**

@@ -68,6 +68,12 @@ public class MesInspectionRuleEntity extends BaseEntity<MesInspectionRuleEntity>
     private String status;
 
     /**
+     * 质量门控制模式：NONE关闭、WARN仅预警、BLOCK严格阻断。
+     */
+    @Schema(description = "质量门控制模式 NONE/WARN/BLOCK")
+    private String gateMode;
+
+    /**
      * 物料名称
      */
     @Schema(description = "物料名称")
@@ -99,4 +105,4 @@ public class MesInspectionRuleEntity extends BaseEntity<MesInspectionRuleEntity>
     @Schema(description = "工厂编码 - 数据所属的工厂编码")
     @TableField(fill = FieldFill.INSERT)
     private String factoryCode;
-} 
+}

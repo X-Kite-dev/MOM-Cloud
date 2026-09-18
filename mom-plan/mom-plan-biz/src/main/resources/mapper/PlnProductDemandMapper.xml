@@ -4,7 +4,7 @@
 <mapper namespace="com.kitex.mom.plan.mapper.PlnProductDemandMapper">
 
     <select id="getDemandDate" resultType="com.kitex.mom.plan.vo.PlnTemporaryDemandDateVO">
-        select product_code as productCode, sum(need_num) as num, DATE_FORMAT(plan_end_date, '%m-%d') AS monthDay
+        select product_code as productCode, sum(need_num) as num, to_char(plan_end_date, 'MM-DD') AS monthDay
         FROM pln_product_demand ${ew.getCustomSqlSegment}
     </select>
 

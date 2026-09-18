@@ -25,6 +25,12 @@ public class MesTaskReportOmsVO implements Serializable {
     @Schema(description = "工单编码")
     private String taskCode;
 
+    @Schema(description = "原生产计划号；APS合批时用于区分来源")
+    private String planNo;
+
+    @Schema(description = "APS执行批次号")
+    private String apsBatchNo;
+
     @Schema(description = "物料编码")
     private String matCode;
 
@@ -54,6 +60,9 @@ public class MesTaskReportOmsVO implements Serializable {
 
     @Schema(description = "总需求数量")
     private BigDecimal noticeNum;
+
+    @Schema(description = "该原生产计划在APS执行批次中的分配量")
+    private BigDecimal sourceAllocatedQuantity;
 
     @Schema(description = "合格数量")
     private BigDecimal qualifiedNum;

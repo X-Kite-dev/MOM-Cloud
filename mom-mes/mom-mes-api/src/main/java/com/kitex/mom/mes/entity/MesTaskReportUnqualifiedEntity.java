@@ -31,6 +31,12 @@ import java.time.LocalDateTime;
 public class MesTaskReportUnqualifiedEntity extends BaseEntity<MesTaskReportUnqualifiedEntity> {
 
     /**
+     * 不合格上报请求唯一号
+     */
+    @Schema(description = "不合格上报请求唯一号")
+    private String requestId;
+
+    /**
      * 派工单号
      */
     @Schema(description = "派工单号")
@@ -112,4 +118,3 @@ public class MesTaskReportUnqualifiedEntity extends BaseEntity<MesTaskReportUnqu
     private String factoryCode;
 
 }
-

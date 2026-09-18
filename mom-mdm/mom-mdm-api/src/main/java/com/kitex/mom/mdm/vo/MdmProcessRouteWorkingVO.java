@@ -45,7 +45,13 @@ public class MdmProcessRouteWorkingVO extends BaseEntity<MdmProcessRouteWorkingV
      * 前置工序编码
      */
     @Schema(description = "前置工序编码")
-    private String preRouteCode;
+    private String[] preRouteCode;
+
+    /**
+     * 后置工序编码
+     */
+    @Schema(description = "后置工序编码")
+    private String[] nextRouteCode;
 
     /**
      * 车间编码
@@ -77,6 +83,12 @@ public class MdmProcessRouteWorkingVO extends BaseEntity<MdmProcessRouteWorkingV
     @Schema(description = "转序时间要求（分钟）")
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private BigDecimal timeVal;
+
+    @Schema(description = "允许达到转移批量后与后序重叠执行")
+    private Boolean overlapEnabled;
+
+    @Schema(description = "放行后序开工的最小合格转移批量")
+    private BigDecimal transferBatchQuantity;
 
     /**
      * 类型 一物一码/数量

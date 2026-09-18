@@ -98,6 +98,12 @@ public class MdmProcessRouteWorkingEntity extends BaseEntity<MdmProcessRouteWork
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private BigDecimal timeVal;
 
+    @Schema(description = "允许达到转移批量后与后序重叠执行")
+    private Boolean overlapEnabled;
+
+    @Schema(description = "放行后序开工的最小合格转移批量")
+    private BigDecimal transferBatchQuantity;
+
     /**
      * 工厂编码
      */

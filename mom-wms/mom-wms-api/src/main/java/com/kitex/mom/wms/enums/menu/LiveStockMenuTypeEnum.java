@@ -28,7 +28,9 @@ public enum LiveStockMenuTypeEnum {
     /**
      * 拣货区
      */
-    PICKING_AREA("picking_area", "拣货区", "/pickingArea/index", 4);
+    PICKING_AREA("picking_area", "拣货区", "/pickingArea/index", 4),
+    /** 质量隔离与实物处置事务 */
+    QUALITY_STATUS("quality_status", "质量库存处置", "/qualityStatus/index", 5);
 
     private final String code;
 

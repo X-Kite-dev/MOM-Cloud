@@ -85,6 +85,21 @@ public class TpmCheckItemEntity extends BaseEntity<TpmCheckItemEntity> {
     private BigDecimal standardMin;
 
     /**
+     * 不合格后的标准处置：WARN仅告警、BLOCK封锁生产、REPAIR必须完成维修后才能解除。
+     */
+    @Schema(description = "不合格处置：WARN仅告警、BLOCK封锁生产、REPAIR转维修")
+    private String failureAction;
+
+    /**
+     * 形成生产封锁时的默认预计恢复分钟数；为空时进入待补预测队列。
+     */
+    @Schema(description = "不合格导致生产封锁时的默认预计恢复分钟数")
+    private Integer defaultRecoveryMinutes;
+
+    @Schema(description = "不合格处置指引")
+    private String failureGuidance;
+
+    /**
      * 备注
      */
     @Schema(description = "备注")

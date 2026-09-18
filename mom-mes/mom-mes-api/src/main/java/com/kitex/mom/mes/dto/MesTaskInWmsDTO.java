@@ -15,6 +15,9 @@ import java.math.BigDecimal;
 @Schema(description = "生产工单入库DTO")
 public class MesTaskInWmsDTO {
 
+    @Schema(description = "本次入库永久幂等号；APS批次工单必填，失败重试必须复用")
+    private String requestId;
+
     /**
      * 工单ID
      */

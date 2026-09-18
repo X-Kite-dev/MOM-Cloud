@@ -18,6 +18,12 @@ import java.util.Date;
 @Schema(description = "创建成品质检任务参数")
 public class InspectionProductCreateParam {
 
+    @Schema(description = "来源系统永久幂等请求号")
+    private String sourceRequestId;
+
+    @Schema(description = "MES工序任务编码")
+    private String sourceTaskCode;
+
     @Schema(description = "id")
     private Long id;
 

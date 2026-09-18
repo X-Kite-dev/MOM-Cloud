@@ -28,6 +28,12 @@ import java.util.Date;
 @TableName(value = "qms_inspection_product_task", autoResultMap = true)
 public class QmsInspectionProductTaskEntity extends BaseEntity<QmsInspectionProductTaskEntity> {
 
+    @Schema(description = "MES工序任务编码")
+    private String sourceTaskCode;
+
+    @Schema(description = "来源系统永久幂等请求号")
+    private String sourceRequestId;
+
     @Schema(description = "任务名称")
     private String name;
 

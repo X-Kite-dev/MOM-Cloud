@@ -13,6 +13,7 @@ import com.kitex.admin.api.feign.RemoteDictService;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.excel.vo.ErrorMessage;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
 import com.kitex.mom.mdm.entity.MdmCustomerEntity;
@@ -28,6 +29,7 @@ import com.kitex.mom.oms.enums.OrderStateEnum;
 import com.kitex.mom.oms.enums.YesOrNoStateEnum;
 import com.kitex.mom.oms.vo.OmsOrderBaseExportVo;
 import com.kitex.mom.oms.vo.OmsOrderBaseImportVo;
+import com.kitex.mom.plan.entity.PlnProductDemandEntity;
 import com.kitex.mom.plan.mapper.OmsOrderBaseMapper;
 import com.kitex.mom.plan.service.*;
 import com.kitex.mom.wms.api.feign.RemoteLiveStockService;
@@ -63,6 +65,8 @@ public class OmsOrderBaseServiceImpl extends ServiceImpl<OmsOrderBaseMapper, Oms
     private final RemoteSeqConfigService remoteSeqConfigService;
     //订单跟踪
     private final OmsOrderBaseTrackService omsOrderBaseTrackService;
+    //PLAN来源需求：旧订单草稿入口不得改写已有下游业务事实
+    private final PlnProductDemandService productDemandService;
     //实时库存
     private final RemoteLiveStockService remoteLiveStockService;
     //字典
@@ -110,20 +114,33 @@ public class OmsOrderBaseServiceImpl extends ServiceImpl<OmsOrderBaseMapper, Oms
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveOrder(OmsOrderBaseEntity omsOrderBase) {
-        //主表信息完善保存
-        omsOrderBase.setOrderState(OrderStateEnum.CREATE.getCode());
-        boolean father = this.save(omsOrderBase);
-        //子表信息完善保存
-        if (CollUtil.isEmpty(omsOrderBase.getOrderDetailsList())) {
-            throw new CheckedException("订单交付信息不能为空！");
+        if (omsOrderBase == null || StrUtil.isBlank(omsOrderBase.getOrderCode())
+                || CollUtil.isEmpty(omsOrderBase.getOrderDetailsList())) {
+            throw new CheckedException("新建订单必须提供订单号和交付行");
         }
-        omsOrderBase.getOrderDetailsList().forEach(item -> {
-            item.setOrderCode(omsOrderBase.getOrderCode());
-            item.setDeliveredNum(BigDecimal.ZERO);
-            item.setChangeSign(YesOrNoStateEnum.NO.getCode());
-        });
+        String selectedFactory = FactoryContextHolder.getFactoryCode();
+        if (StrUtil.isNotBlank(selectedFactory)) {
+            if (StrUtil.isNotBlank(omsOrderBase.getFactoryCode())
+                    && !Objects.equals(selectedFactory, omsOrderBase.getFactoryCode())) {
+                throw new CheckedException("新建订单的工厂与当前授权工厂不一致");
+            }
+            omsOrderBase.setFactoryCode(selectedFactory);
+        }
+        if (StrUtil.isBlank(omsOrderBase.getFactoryCode())) {
+            throw new CheckedException("新建订单必须明确工厂");
+        }
+        if (this.count(new LambdaQueryWrapper<OmsOrderBaseEntity>()
+                .eq(OmsOrderBaseEntity::getOrderCode, omsOrderBase.getOrderCode())) != 0) {
+            throw new CheckedException("订单号已存在，禁止重复建立订单");
+        }
+        omsOrderBase.setId(null);
+        omsOrderBase.setOrderState(OrderStateEnum.CREATE.getCode());
+        prepareDraftLines(omsOrderBase, omsOrderBase.getOrderDetailsList());
+        boolean father = this.save(omsOrderBase);
+        if (!father) throw new CheckedException("新建订单主记录保存失败");
         boolean child = omsOrderDetailsService.saveBatch(omsOrderBase.getOrderDetailsList());
-        return father && child;
+        if (!child) throw new CheckedException("新建订单交付行保存失败");
+        return Boolean.TRUE;
     }
 
     /**
@@ -132,21 +149,37 @@ public class OmsOrderBaseServiceImpl extends ServiceImpl<OmsOrderBaseMapper, Oms
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean updateOrderById(OmsOrderBaseEntity omsOrderBase) {
-        //主表信息更新
-        boolean update = this.updateById(omsOrderBase);
-        //子表信息更新
-        if (CollUtil.isEmpty(omsOrderBase.getOrderDetailsList())) {
-            throw new CheckedException("订单交付信息不能为空！");
+        if (omsOrderBase == null || omsOrderBase.getId() == null
+                || CollUtil.isEmpty(omsOrderBase.getOrderDetailsList())) {
+            throw new CheckedException("订单草稿编辑必须指定订单和非空交付行");
         }
-        omsOrderDetailsService.remove(new LambdaQueryWrapper<OmsOrderDetailsEntity>()
-                .eq(OmsOrderDetailsEntity::getOrderCode, omsOrderBase.getOrderCode()));
-        omsOrderBase.getOrderDetailsList().forEach(item -> {
-            item.setId(null);
-            item.setOrderCode(omsOrderBase.getOrderCode());
-            item.setDeliveredNum(BigDecimal.ZERO);
-        });
-        boolean child = omsOrderDetailsService.saveBatch(omsOrderBase.getOrderDetailsList());
-        return update && child;
+        OmsOrderBaseEntity persisted = lockEditableDraft(omsOrderBase.getId());
+        if (!Objects.equals(persisted.getOrderCode(), omsOrderBase.getOrderCode())
+                || (StrUtil.isNotBlank(omsOrderBase.getFactoryCode())
+                && !Objects.equals(persisted.getFactoryCode(), omsOrderBase.getFactoryCode()))
+                || (StrUtil.isNotBlank(omsOrderBase.getOrderState())
+                && !OrderStateEnum.CREATE.getCode().equals(omsOrderBase.getOrderState()))) {
+            throw new CheckedException("草稿编辑不得变更订单号、工厂或订单状态");
+        }
+        List<OmsOrderDetailsEntity> oldLines = requireEditableDraftLines(persisted);
+        prepareDraftLines(persisted, omsOrderBase.getOrderDetailsList());
+        boolean updated = this.update(new UpdateWrapper<OmsOrderBaseEntity>().lambda()
+                .set(OmsOrderBaseEntity::getProductCode, omsOrderBase.getProductCode())
+                .set(OmsOrderBaseEntity::getProductName, omsOrderBase.getProductName())
+                .set(OmsOrderBaseEntity::getProductSpec, omsOrderBase.getProductSpec())
+                .set(OmsOrderBaseEntity::getCustomerCode, omsOrderBase.getCustomerCode())
+                .set(OmsOrderBaseEntity::getCustomerName, omsOrderBase.getCustomerName())
+                .set(OmsOrderBaseEntity::getCustomerPartCode, omsOrderBase.getCustomerPartCode())
+                .set(OmsOrderBaseEntity::getOrderType, omsOrderBase.getOrderType())
+                .eq(OmsOrderBaseEntity::getId, persisted.getId())
+                .eq(OmsOrderBaseEntity::getOrderState, OrderStateEnum.CREATE.getCode()));
+        if (!updated) throw new CheckedException("订单草稿头更新失败");
+        List<Long> oldIds = oldLines.stream().map(OmsOrderDetailsEntity::getId).toList();
+        if (!omsOrderDetailsService.removeByIds(oldIds)) throw new CheckedException("订单草稿旧交付行删除失败");
+        if (!omsOrderDetailsService.saveBatch(omsOrderBase.getOrderDetailsList())) {
+            throw new CheckedException("订单草稿新交付行保存失败");
+        }
+        return Boolean.TRUE;
     }
 
     /**
@@ -157,16 +190,73 @@ public class OmsOrderBaseServiceImpl extends ServiceImpl<OmsOrderBaseMapper, Oms
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean removeOrderByIds(ArrayList<Long> idList) {
-        if (CollUtil.isEmpty(idList)) {
-            throw new RuntimeException("删除数据不能为空！");
+        if (CollUtil.isEmpty(idList) || idList.stream().anyMatch(Objects::isNull)
+                || new HashSet<>(idList).size() != idList.size()) {
+            throw new CheckedException("删除订单草稿必须指定不重复的订单ID");
         }
-        //查询数据
-        List<OmsOrderBaseEntity> orderBaseList = this.list(new LambdaQueryWrapper<OmsOrderBaseEntity>().in(BaseEntity::getId, idList));
-        List<String> orderCodeList = orderBaseList.stream().map(OmsOrderBaseEntity::getOrderCode).collect(Collectors.toList());
-        //删除主子表
-        boolean removeFather = this.removeBatchByIds(idList);
-        boolean removeChild = omsOrderDetailsService.remove(new LambdaQueryWrapper<OmsOrderDetailsEntity>().in(OmsOrderDetailsEntity::getOrderCode, orderCodeList));
-        return removeFather && removeChild;
+        for (Long id : idList.stream().sorted().toList()) {
+            OmsOrderBaseEntity draft = lockEditableDraft(id);
+            List<Long> detailIds = requireEditableDraftLines(draft).stream()
+                    .map(OmsOrderDetailsEntity::getId).toList();
+            if (!omsOrderDetailsService.removeByIds(detailIds) || !this.removeById(id)) {
+                throw new CheckedException("订单草稿删除失败：" + draft.getOrderCode());
+            }
+        }
+        return Boolean.TRUE;
+    }
+
+    private OmsOrderBaseEntity lockEditableDraft(Long id) {
+        OmsOrderBaseEntity draft = this.getOne(new LambdaQueryWrapper<OmsOrderBaseEntity>()
+                .eq(OmsOrderBaseEntity::getId, id).last("FOR UPDATE"), false);
+        if (draft == null || !OrderStateEnum.CREATE.getCode().equals(draft.getOrderState())
+                || StrUtil.isBlank(draft.getOrderCode()) || StrUtil.isBlank(draft.getFactoryCode())) {
+            throw new CheckedException("只允许编辑或删除未提交的完整订单草稿：" + id);
+        }
+        String selectedFactory = FactoryContextHolder.getFactoryCode();
+        if (StrUtil.isNotBlank(selectedFactory) && !Objects.equals(selectedFactory, draft.getFactoryCode())) {
+            throw new CheckedException("当前工厂无权修改订单草稿：" + draft.getOrderCode());
+        }
+        if (this.count(new LambdaQueryWrapper<OmsOrderBaseEntity>()
+                .eq(OmsOrderBaseEntity::getOrderCode, draft.getOrderCode())) != 1
+                || omsOrderBaseReviewService.count(new LambdaQueryWrapper<OmsOrderBaseReviewEntity>()
+                .eq(OmsOrderBaseReviewEntity::getOrderCode, draft.getOrderCode())) != 0
+                || omsOrderBaseTrackService.count(new LambdaQueryWrapper<OmsOrderBaseTrackEntity>()
+                .eq(OmsOrderBaseTrackEntity::getOrderCode, draft.getOrderCode())) != 0
+                || productDemandService.count(new LambdaQueryWrapper<PlnProductDemandEntity>()
+                .eq(PlnProductDemandEntity::getSaleOrderCode, draft.getOrderCode())) != 0) {
+            throw new CheckedException("订单号重复或已有评审、跟踪、PLAN来源事实，须走受控变更/撤回：" + draft.getOrderCode());
+        }
+        return draft;
+    }
+
+    private List<OmsOrderDetailsEntity> requireEditableDraftLines(OmsOrderBaseEntity draft) {
+        List<OmsOrderDetailsEntity> lines = omsOrderDetailsService.list(new LambdaQueryWrapper<OmsOrderDetailsEntity>()
+                .eq(OmsOrderDetailsEntity::getOrderCode, draft.getOrderCode())
+                .orderByAsc(OmsOrderDetailsEntity::getId).last("FOR UPDATE"));
+        if (lines.isEmpty() || lines.stream().anyMatch(line ->
+                !Objects.equals(line.getFactoryCode(), draft.getFactoryCode())
+                        || (line.getState() != null && !OrderStateEnum.CREATE.getCode().equals(line.getState()))
+                        || Optional.ofNullable(line.getDeliveredNum()).orElse(BigDecimal.ZERO).signum() != 0)) {
+            throw new CheckedException("订单草稿交付行存在跨工厂、非草稿或已交付事实，禁止直接删改");
+        }
+        return lines;
+    }
+
+    private void prepareDraftLines(OmsOrderBaseEntity draft, List<OmsOrderDetailsEntity> lines) {
+        Set<String> productDates = new HashSet<>();
+        for (OmsOrderDetailsEntity line : lines) {
+            if (line == null || StrUtil.isBlank(line.getProductCode()) || line.getDeliverTime() == null
+                    || line.getDeliverNum() == null || line.getDeliverNum().signum() <= 0
+                    || !productDates.add(line.getProductCode() + "\u0001" + line.getDeliverTime())) {
+                throw new CheckedException("订单草稿交付行必须有产品、正数量、日期且产品交期不能重复");
+            }
+            line.setId(null);
+            line.setOrderCode(draft.getOrderCode());
+            line.setFactoryCode(draft.getFactoryCode());
+            line.setState(OrderStateEnum.CREATE.getCode());
+            line.setDeliveredNum(BigDecimal.ZERO);
+            line.setChangeSign(YesOrNoStateEnum.NO.getCode());
+        }
     }
 
 
@@ -179,6 +269,12 @@ public class OmsOrderBaseServiceImpl extends ServiceImpl<OmsOrderBaseMapper, Oms
     @Override
     @Transactional(rollbackFor = Exception.class)
     public R importOrder(List<OmsOrderBaseImportVo> omsOrderBaseImportVoList, BindingResult bindingResult, String factoryCode) {
+        String selectedFactory = FactoryContextHolder.getFactoryCode();
+        if (StrUtil.isBlank(factoryCode) || (StrUtil.isNotBlank(selectedFactory)
+                && !Objects.equals(selectedFactory, factoryCode))) {
+            throw new CheckedException("订单导入必须指定当前授权工厂");
+        }
+        if (CollUtil.isEmpty(omsOrderBaseImportVoList)) throw new CheckedException("订单导入内容不能为空");
         // 通用校验获取失败的数据
         List<ErrorMessage> errorMessageList = (List<ErrorMessage>) bindingResult.getTarget();
         //获取所有客户信息
@@ -210,7 +306,18 @@ public class OmsOrderBaseServiceImpl extends ServiceImpl<OmsOrderBaseMapper, Oms
         List<OmsOrderDetailsEntity> orderDetailsList = new ArrayList<>();
         Map<String, OmsOrderBaseImportVo> orderMap = new HashMap<>();
         for (OmsOrderBaseImportVo orderBaseImportVo : omsOrderBaseImportVoList) {
+            if (orderBaseImportVo == null) throw new CheckedException("订单导入存在空白明细行");
             Set<String> errorMsg = new HashSet<>();
+            if (StrUtil.isBlank(orderBaseImportVo.getGroupCode())
+                    || StrUtil.isBlank(orderBaseImportVo.getCustomerCode())
+                    || StrUtil.isBlank(orderBaseImportVo.getOrderType())) {
+                errorMsg.add("组号、客户和订单类型均为必填");
+            }
+            if (StrUtil.isBlank(orderBaseImportVo.getProductCode())
+                    || orderBaseImportVo.getDeliverTime() == null || orderBaseImportVo.getDeliverNum() == null
+                    || orderBaseImportVo.getDeliverNum().signum() <= 0) {
+                errorMsg.add("产品、交期和正数量均为必填");
+            }
             //判断产品编码的有效性
             MdmMaterialEntity material = materialMap.get(orderBaseImportVo.getProductCode());
             if (ObjectUtil.isEmpty(material)) {
@@ -231,14 +338,15 @@ public class OmsOrderBaseServiceImpl extends ServiceImpl<OmsOrderBaseMapper, Oms
             if (ObjectUtil.isEmpty(importVo)) {
                 orderMap.put(orderBaseImportVo.getGroupCode(), orderBaseImportVo);
             } else {
-                if (!(orderBaseImportVo.getCustomerCode().equals(importVo.getCustomerCode()) &&
-                        orderBaseImportVo.getOrderType().equals(importVo.getOrderType()))) {
+                if (!(Objects.equals(orderBaseImportVo.getCustomerCode(), importVo.getCustomerCode()) &&
+                        Objects.equals(orderBaseImportVo.getOrderType(), importVo.getOrderType()))) {
                     errorMsg.add(orderBaseImportVo.getGroupCode() + "该组号数据未满足导入说明第4条要求！");
                 }
             }
             //数据不合法
             if (CollUtil.isNotEmpty(errorMsg)) {
-                errorMessageList.add(new ErrorMessage(orderBaseImportVo.getLineNum() + 1L, errorMsg));
+                errorMessageList.add(new ErrorMessage(
+                        Optional.ofNullable(orderBaseImportVo.getLineNum()).orElse(0L) + 1L, errorMsg));
             }
         }
         if (CollUtil.isNotEmpty(errorMessageList)) {
@@ -257,6 +365,7 @@ public class OmsOrderBaseServiceImpl extends ServiceImpl<OmsOrderBaseMapper, Oms
                         customerPartMap.get(importVo.getCustomerCode() + "_" + importVo.getProductCode()).getPartNumber() : null);
                 omsOrderBase.setOrderType(orderTypeMap.get(importVo.getOrderType()));
                 omsOrderBase.setOrderState(OrderStateEnum.CREATE.getCode());
+                omsOrderBase.setFactoryCode(factoryCode);
                 orderBaseList.add(omsOrderBase);
 
                 //构建子表数据
@@ -279,14 +388,17 @@ public class OmsOrderBaseServiceImpl extends ServiceImpl<OmsOrderBaseMapper, Oms
                                 omsOrderDetails.setDeliverNum(vo.getDeliverNum());
                                 omsOrderDetails.setDeliveredNum(BigDecimal.ZERO);
                                 omsOrderDetails.setChangeSign(YesOrNoStateEnum.NO.getCode());
+                                omsOrderDetails.setState(OrderStateEnum.CREATE.getCode());
+                                omsOrderDetails.setFactoryCode(factoryCode);
                                 omsOrderDetails.setRemark(vo.getRemark());
                                 orderDetailsList.add(omsOrderDetails);
                             });
                 }
             }
             //保存信息
-            this.saveBatch(orderBaseList);
-            omsOrderDetailsService.saveBatch(orderDetailsList);
+            if (!this.saveBatch(orderBaseList) || !omsOrderDetailsService.saveBatch(orderDetailsList)) {
+                throw new CheckedException("订单导入保存失败，整批回滚");
+            }
             return R.ok(null, "订单导入成功！");
         }
 

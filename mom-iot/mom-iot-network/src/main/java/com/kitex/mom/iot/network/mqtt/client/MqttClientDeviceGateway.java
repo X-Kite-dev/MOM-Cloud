@@ -99,7 +99,7 @@ public class MqttClientDeviceGateway extends AbstractDeviceGateway {
             // 设备中的信息
             log.info("获取设备转码之后的信息 -》 {}", deviceMessage.getProperties());
             // 发送消息到
-            handleMessageHelpr.handleMessage(deviceMessage);
+            handleMessageHelpr.handleMessage(getId(), deviceMessage);
 
         });
 

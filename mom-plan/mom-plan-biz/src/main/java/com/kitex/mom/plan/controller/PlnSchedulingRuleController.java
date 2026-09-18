@@ -10,9 +10,13 @@ import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.*;
 import com.kitex.mom.plan.service.PlnDemandMonthService;
 import com.kitex.mom.plan.service.PlnSchedulingEngineService;
+import com.kitex.mom.plan.service.PlnOperationSchedulingService;
+import com.kitex.mom.plan.service.PlnResourceLoadService;
 import com.kitex.mom.plan.service.PlnSchedulingRuleService;
 import com.kitex.mom.plan.service.SchedulingContext;
 import com.kitex.mom.plan.vo.PlnDemandMonthReadinessVO;
+import com.kitex.mom.plan.vo.PlnResourceLoadOperationVO;
+import com.kitex.mom.plan.vo.PlnResourceLoadVO;
 import com.kitex.mom.plan.vo.PlnSchedulingGanttDetailVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -37,7 +41,11 @@ public class PlnSchedulingRuleController {
 
     private final PlnSchedulingRuleService plnSchedulingRuleService;
     private final PlnSchedulingEngineService plnSchedulingEngineService;
+    private final com.kitex.mom.plan.service.impl.PlnSchedulingExecutionService controlledExecutionService;
     private final PlnDemandMonthService plnDemandMonthService;
+    private final PlnOperationSchedulingService operationSchedulingService;
+    private final PlnResourceLoadService resourceLoadService;
+    private final com.kitex.mom.plan.service.PlnSchedulingBatchService schedulingBatchService;
 
     /**
      * 新增规则集
@@ -68,8 +76,15 @@ public class PlnSchedulingRuleController {
     @GetMapping("/tasks/page")
 //    @PreAuthorize("@pms.hasPermission('plan_plnSchedulingRule_view')")
     public R<Page<PlnSchedulingTaskEntity>> pageTask(@ParameterObject SearchPage page,
-                                                     @RequestParam(required = false) String mode) {
-        return R.ok(plnSchedulingRuleService.pageTask(page, mode));
+                                                     @RequestParam(required = false) String mode,
+                                                     @RequestParam(required = false) String taskNo,
+                                                     @RequestParam(required = false) Boolean resultArchived) {
+        return R.ok(plnSchedulingRuleService.pageTask(page, mode, taskNo,resultArchived));
+    }
+
+    /** Java调用兼容；HTTP入口仍只有上方带可选归档过滤的映射。 */
+    public R<Page<PlnSchedulingTaskEntity>> pageTask(SearchPage page,String mode,String taskNo) {
+        return pageTask(page,mode,taskNo,null);
     }
 
     /**
@@ -218,7 +233,50 @@ public class PlnSchedulingRuleController {
         return R.ok(plnSchedulingRuleService.listTaskDetails(taskId));
     }
 
-    @Operation(summary = "调整排产明细分配日期", description = "scheduledEndDate 不传时自动按产率+工作日历计算，传入时以手动值为准")
+    @Operation(summary = "查询任务工序级资源排程", description = "返回每道工序的资源、有效工时、开始结束时间和约束解释")
+    @GetMapping("/tasks/{taskId}/operations")
+    public R<List<PlnSchedulingOperationEntity>> taskOperations(
+            @PathVariable Long taskId,
+            @RequestParam(required = false) Long issueId,
+            @RequestParam(required = false) String resourceCode) {
+        return R.ok(operationSchedulingService.listTaskOperations(taskId, issueId, resourceCode));
+    }
+
+    @Operation(summary = "查询APS排产批次数量账", description = "返回批次头、来源计划分配、三段数量合计和守恒指纹")
+    @GetMapping("/tasks/{taskId}/batchLedger")
+    public R<PlnSchedulingBatchLedgerDTO> batchLedger(@PathVariable Long taskId) {
+        return R.ok(schedulingBatchService.ledger(taskId));
+    }
+
+    @Operation(summary = "配置APS拆批合批", description = "仅允许待确认正式任务；按数量指纹防并发覆盖，调整后立即重新执行有限产能排程")
+    @PutMapping("/tasks/{taskId}/batches")
+    public R<PlnSchedulingBatchLedgerDTO> configureBatches(@PathVariable Long taskId,
+                                                            @RequestBody PlnSchedulingBatchConfigureDTO dto) {
+        if (dto == null) {
+            throw new CheckedException("排产批次调整参数不能为空");
+        }
+        dto.setTaskId(taskId);
+        return R.ok(plnSchedulingEngineService.configureBatches(dto));
+    }
+
+    @Operation(summary = "查询APS资源日负荷", description = "按工位、设备、人员和工装展开日能力、占用、负荷率及瓶颈状态；未指定任务时只统计正式锁定工序")
+    @GetMapping("/resourceLoads")
+    public R<List<PlnResourceLoadVO>> resourceLoads(@ParameterObject PlnResourceLoadQueryDTO query) {
+        return R.ok(resourceLoadService.queryDailyLoads(query));
+    }
+
+    @Operation(summary = "查询资源负荷关联工序", description = "从资源日负荷下钻到构成占用的具体排产工序")
+    @GetMapping("/resourceLoads/operations")
+    public R<List<PlnResourceLoadOperationVO>> resourceLoadOperations(
+            @RequestParam(required = false) Long taskId,
+            @RequestParam String resourceType,
+            @RequestParam String resourceCode,
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate loadDate) {
+        return R.ok(resourceLoadService.queryLoadOperations(taskId, resourceType, resourceCode, loadDate));
+    }
+
+    @Operation(summary = "调整排产明细开工日期", description = "以计划员指定的开工日期重新执行工序级有限产能排程，结束日期由工序结果自动计算")
     @PutMapping("/tasks/{taskId}/details/scheduleDate")
     public R<java.util.Map<String, java.time.LocalDate>> adjustTaskDetailScheduleDate(@PathVariable Long taskId,
                                                                                       @RequestBody PlnSchedulingAdjustDateDTO dto) {
@@ -249,13 +307,32 @@ public class PlnSchedulingRuleController {
     @PostMapping("/run")
 //    @PreAuthorize("@pms.hasPermission('plan_plnSchedulingRule_run')")
     public R<Boolean> run(@RequestBody PlnSchedulingRunDTO runDTO) {
-        try {
-            Boolean result = plnSchedulingEngineService.run(runDTO);
-            String warning = SchedulingContext.getAndClearWarning();
-            return warning != null ? R.ok(result, warning) : R.ok(result);
-        } finally {
-            SchedulingContext.clear();
-        }
+        throw new CheckedException("请使用受控运行入口：先预览、冻结请求，再执行；旧入口无永久请求号，不再允许绕过运行留痕");
+    }
+
+    @Operation(summary = "生成APS多候选情景", description = "对同一来源快照执行2至5个真实有限产能候选求解，计算交期、换型、周期和等待指标并排名")
+    @PostMapping("/scenarios")
+    public R<PlnSchedulingScenarioDTO> runScenario(@RequestBody PlnSchedulingScenarioRunDTO runDTO) {
+        return R.ok(controlledExecutionService.runScenario(runDTO));
+    }
+
+    @Operation(summary = "查询APS多候选情景", description = "返回情景来源指纹、选择审计和全部候选任务指标")
+    @GetMapping("/scenarios/{scenarioNo}")
+    public R<PlnSchedulingScenarioDTO> getScenario(@PathVariable String scenarioNo) {
+        return R.ok(plnSchedulingEngineService.getScenario(scenarioNo));
+    }
+
+    @Operation(summary = "按ID查询APS多候选情景", description = "用于从候选任务行重新打开完整方案对比")
+    @GetMapping("/scenarios/id/{scenarioId}")
+    public R<PlnSchedulingScenarioDTO> getScenarioById(@PathVariable Long scenarioId) {
+        return R.ok(plnSchedulingEngineService.getScenarioById(scenarioId));
+    }
+
+    @Operation(summary = "选择APS候选方案", description = "按来源快照防陈旧选择；一次选择后其余候选永久失效，只有被选方案可进入正式锁定")
+    @PostMapping("/scenarios/{scenarioNo}/select")
+    public R<PlnSchedulingScenarioDTO> selectScenarioCandidate(
+            @PathVariable String scenarioNo, @RequestBody PlnSchedulingScenarioSelectDTO selectDTO) {
+        return R.ok(plnSchedulingEngineService.selectScenarioCandidate(scenarioNo, selectDTO));
     }
 
     @Operation(summary = "确认正式排产锁定", description = "确认正式排产锁定")

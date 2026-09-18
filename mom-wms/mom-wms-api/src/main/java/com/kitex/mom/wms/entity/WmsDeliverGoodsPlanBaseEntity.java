@@ -150,6 +150,19 @@ public class WmsDeliverGoodsPlanBaseEntity extends BaseEntity<WmsDeliverGoodsPla
     @Schema(description = "关联发货单列表")
     private List<WmsDeliverGoodsBaseEntity> deliverList;
 
+    @TableField(exist = false)
+    private String salesReservationNo;
+    @TableField(exist = false)
+    private String salesReservationStatus;
+    @TableField(exist = false)
+    private BigDecimal salesReservedNum;
+    @TableField(exist = false)
+    private BigDecimal salesConsumedNum;
+    @TableField(exist = false)
+    private BigDecimal salesReleasedNum;
+    @TableField(exist = false)
+    private BigDecimal salesActiveReservedNum;
+
 
     /**
      * 工厂编码 - 数据所属的工厂编码

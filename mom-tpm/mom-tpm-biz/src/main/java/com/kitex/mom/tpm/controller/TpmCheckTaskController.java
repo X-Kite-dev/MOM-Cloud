@@ -10,6 +10,7 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.mom.tpm.dto.DeviceChangeMoldDto;
 import com.kitex.mom.tpm.dto.DeviceCheckTaskStartDto;
+import com.kitex.mom.tpm.dto.TpmCheckTaskDTO;
 import com.kitex.mom.tpm.entity.TpmCheckTaskEntity;
 import com.kitex.mom.tpm.service.TpmCheckTaskService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -59,6 +60,7 @@ public class TpmCheckTaskController {
         wrapper.like(StrUtil.isNotBlank(tpmCheckTask.getDeviceName()), TpmCheckTaskEntity::getDeviceName, tpmCheckTask.getDeviceName());
         wrapper.like(StrUtil.isNotBlank(tpmCheckTask.getHandlePersonName()), TpmCheckTaskEntity::getHandlePersonName, tpmCheckTask.getHandlePersonName());
         wrapper.eq(StrUtil.isNotBlank(tpmCheckTask.getState()), TpmCheckTaskEntity::getState, tpmCheckTask.getState());
+        wrapper.eq(StrUtil.isNotBlank(tpmCheckTask.getBlockStatus()), TpmCheckTaskEntity::getBlockStatus, tpmCheckTask.getBlockStatus());
         wrapper.orderByAsc(TpmCheckTaskEntity::getState);
         wrapper.orderByDesc(BaseCore::getCreateTime);
         return R.ok(tpmCheckTaskService.page(page.toMpPage(), wrapper));
@@ -148,6 +150,13 @@ public class TpmCheckTaskController {
     @Operation(summary = "处理点/巡检任务", description = "处理点/巡检任务并记录结果")
     public R handle(@RequestBody TpmCheckTaskEntity tpmCheckTask) {
         return R.ok(tpmCheckTaskService.handle(tpmCheckTask));
+    }
+
+    @PostMapping("/release-block")
+    @PreAuthorize("@pms.hasPermission('tpm_tpmCheckTask_release')")
+    @Operation(summary = "解除点检生产封锁", description = "独立复核点检或维修证据后解除设备生产封锁")
+    public R<Boolean> releaseBlock(@RequestBody TpmCheckTaskDTO.ReleaseCommand command) {
+        return R.ok(tpmCheckTaskService.releaseBlock(command));
     }
 
 

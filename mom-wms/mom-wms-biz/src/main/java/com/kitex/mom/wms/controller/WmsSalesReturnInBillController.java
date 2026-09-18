@@ -11,9 +11,11 @@ import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.wms.dto.WmsInBillDetailQueryDTO;
 import com.kitex.mom.wms.entity.WmsInBillEntity;
+import com.kitex.mom.wms.entity.WmsOmsSalesReturnEventOutboxEntity;
 import com.kitex.mom.wms.enums.InBillTypeEnum;
 import com.kitex.mom.wms.service.inBill.WmsInBillFactory;
 import com.kitex.mom.wms.service.inBill.WmsInBillHandler;
+import com.kitex.mom.wms.service.impl.WmsOmsSalesReturnEventOutboxService;
 import com.kitex.mom.wms.vo.WmsInBillDetailExcelVO;
 import com.kitex.mom.wms.vo.WmsInBillExcelVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -22,6 +24,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpHeaders;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -40,6 +43,25 @@ import java.util.List;
 public class WmsSalesReturnInBillController {
 
     private final String billType = InBillTypeEnum.SALES_RETURN.getCode();
+    private final WmsOmsSalesReturnEventOutboxService omsSalesReturnEventOutboxService;
+
+    @GetMapping("/{billId}/omsReturnEvents")
+    @PreAuthorize("@pms.hasPermission('wms_salesReturnOmsEvent_view')")
+    public R<List<WmsOmsSalesReturnEventOutboxEntity>> omsReturnEvents(@PathVariable Long billId) {
+        return R.ok(omsSalesReturnEventOutboxService.listByInBill(billId));
+    }
+
+    @PostMapping("/omsReturnEvents/{eventId}/retry")
+    @PreAuthorize("@pms.hasPermission('wms_salesReturnOmsEvent_retry')")
+    public R<WmsOmsSalesReturnEventOutboxEntity> retryOmsReturnEvent(@PathVariable Long eventId) {
+        return R.ok(omsSalesReturnEventOutboxService.retry(eventId));
+    }
+
+    @PostMapping("/omsReturnEvents/{eventId}/reconcile")
+    @PreAuthorize("@pms.hasPermission('wms_salesReturnOmsEvent_view')")
+    public R<WmsOmsSalesReturnEventOutboxEntity> reconcileOmsReturnEvent(@PathVariable Long eventId) {
+        return R.ok(omsSalesReturnEventOutboxService.reconcile(eventId));
+    }
 
     /**
      * 分页查询
@@ -50,7 +72,7 @@ public class WmsSalesReturnInBillController {
      */
     @Operation(summary = "分页查询", description = "分页查询")
     @GetMapping("/page")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_view')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_view_in_salesReturn')")
     public R getWmsInBillPage(@ParameterObject SearchPage page, @ParameterObject WmsInBillDetailQueryDTO wmsInBill) {
         QueryWrapper<WmsInBillEntity> wrapper = getMainQueryWrapper(wmsInBill);
         WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
@@ -66,7 +88,7 @@ public class WmsSalesReturnInBillController {
      */
     @Operation(summary = "分页查询明细", description = "分页查询明细")
     @GetMapping("/pageDetails")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_view')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_view_in_salesReturn')")
     public R getWmsInBillPageDetails(@ParameterObject SearchPage page, @ParameterObject WmsInBillDetailQueryDTO params) {
         params.setBillType(billType);
         WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
@@ -82,7 +104,7 @@ public class WmsSalesReturnInBillController {
      */
     @Operation(summary = "通过id查询", description = "通过id查询")
     @GetMapping("/{id}")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_view')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_view_in_salesReturn')")
     public R getById(@PathVariable("id") Long id) {
         WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
         return R.ok(handler.selectById(id));
@@ -97,7 +119,7 @@ public class WmsSalesReturnInBillController {
     @Operation(summary = "新增入库单", description = "新增入库单")
     @SysLog("新增入库单")
     @PostMapping
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_add')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_add_in_salesReturn')")
     public R save(@RequestBody WmsInBillEntity wmsInBill) {
         wmsInBill.setBillType(billType);
         WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
@@ -113,8 +135,9 @@ public class WmsSalesReturnInBillController {
     @Operation(summary = "新增入库单并直接审核通过", description = "新增入库单并直接审核通过")
     @SysLog("新增入库单并直接审核通过")
     @PostMapping("/addAndPass")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_add_review')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_add_review_salesReturn')")
     public R addAndPass(@RequestBody WmsInBillEntity wmsInBill) {
+        wmsInBill.setBillType(billType);
         WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
         return R.ok(handler.addAndPass(wmsInBill));
     }
@@ -128,7 +151,7 @@ public class WmsSalesReturnInBillController {
     @Operation(summary = "修改入库单", description = "修改入库单")
     @SysLog("修改入库单")
     @PutMapping
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_edit')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_edit_in_salesReturn')")
     public R updateById(@RequestBody WmsInBillEntity wmsInBill) {
         WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
         return R.ok(handler.updateDeep(wmsInBill));
@@ -143,7 +166,7 @@ public class WmsSalesReturnInBillController {
     @Operation(summary = "通过id删除入库单", description = "通过id删除入库单")
     @SysLog("通过id删除入库单")
     @DeleteMapping
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_del')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_del_in_salesReturn')")
     public R removeById(@RequestBody String[] ids) {
         WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
         return R.ok(handler.removeDeep(ids));
@@ -157,7 +180,7 @@ public class WmsSalesReturnInBillController {
      */
     @Operation(summary = "提交入库单", description = "提交入库单")
     @GetMapping("/commitBill")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_commit')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_commit_in_salesReturn')")
     public R commitBill(Long id) {
         WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
         return R.ok(handler.commitBill(id));
@@ -171,7 +194,7 @@ public class WmsSalesReturnInBillController {
      */
     @Operation(summary = "审核通过入库单", description = "审核通过入库单")
     @GetMapping("/passBill")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_review')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_review_in_salesReturn')")
     public R passBill(Long id) {
         WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
         return R.ok(handler.passBill(id));
@@ -185,7 +208,7 @@ public class WmsSalesReturnInBillController {
      */
     @Operation(summary = "审核驳回入库单", description = "审核驳回入库单")
     @PostMapping("/rejectBill")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_review')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_review_in_salesReturn')")
     public R rejectBill(@RequestBody WmsInBillEntity params) {
         WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
         return R.ok(handler.rejectBill(params));
@@ -200,7 +223,7 @@ public class WmsSalesReturnInBillController {
      */
     @ResponseExcel
     @GetMapping("/exportMain")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_export')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_export_in_salesReturn')")
     public List<WmsInBillExcelVO> exportMain(WmsInBillDetailQueryDTO wmsInNotice, Long[] ids) {
         QueryWrapper<WmsInBillEntity> wrapper = new QueryWrapper<>();
         if (ArrayUtil.isNotEmpty(ids)) {
@@ -221,7 +244,7 @@ public class WmsSalesReturnInBillController {
      */
     @ResponseExcel
     @GetMapping("/exportDetails")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsInBill_export')")
+    @PreAuthorize("@pms.hasPermission('wms_bill_export_in_salesReturn')")
     public List<WmsInBillDetailExcelVO> exportDetails(WmsInBillDetailQueryDTO params, Long[] ids) {
         params.setBillType(billType);
         WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);

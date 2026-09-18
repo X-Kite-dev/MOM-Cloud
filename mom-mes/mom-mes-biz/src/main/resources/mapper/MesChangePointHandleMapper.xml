@@ -9,10 +9,22 @@
             AND config_code = #{query.configCode}
         </if>
         <if test="query.configContent != null and query.configContent != '' ">
-            AND config_content = #{query.configContent}
+            AND config_content LIKE CONCAT('%', #{query.configContent}, '%')
         </if>
-        <if test="query.noticePersonCode != null and query.noticePersonCode != '' ">
-            AND #{query.noticePersonCode} = ANY(string_to_array(notice_person_code, ','))
+        <if test="query.category != null and query.category != '' ">
+            AND category = #{query.category}
+        </if>
+        <if test="query.status != null and query.status != '' ">
+            AND status = #{query.status}
+        </if>
+        <if test="query.taskCode != null and query.taskCode != '' ">
+            AND task_code = #{query.taskCode}
+        </if>
+        <if test="query.routeCode != null and query.routeCode != '' ">
+            AND route_code = #{query.routeCode}
+        </if>
+        <if test="query.transferCode != null and query.transferCode != '' ">
+            AND transfer_code = #{query.transferCode}
         </if>
         order by create_time desc
     </select>

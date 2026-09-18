@@ -81,6 +81,18 @@ public class PlnProductDemandEntity extends BaseEntity<PlnProductDemandEntity> {
     private String productUnit;
 
     /**
+     * 生产需求领料仓库编码
+     */
+    @Schema(description = "生产需求领料仓库编码")
+    private String demandWarehouseCode;
+
+    /**
+     * 生产需求领料仓库名称（接收时冻结）
+     */
+    @Schema(description = "生产需求领料仓库名称（接收时冻结）")
+    private String demandWarehouseName;
+
+    /**
      * 需求时间
      */
     @Schema(description = "需求时间")
@@ -91,6 +103,9 @@ public class PlnProductDemandEntity extends BaseEntity<PlnProductDemandEntity> {
      */
     @Schema(description = "需求数量")
     private BigDecimal needNum;
+
+    @Schema(description = "MRP同一需求时间桶内的库存分配优先级；数值越大越优先，默认100")
+    private Integer mrpPriority;
 
     /**
      * 完成数量
@@ -103,6 +118,21 @@ public class PlnProductDemandEntity extends BaseEntity<PlnProductDemandEntity> {
      */
     @Schema(description = "计划状态 - 0: 未接受, 1: 已接收 2 已生成mrp")
     private String planState;
+
+    @Schema(description = "需求来源类型，例如QUALITY_SUPPLEMENT")
+    private String sourceType;
+
+    @Schema(description = "来源业务记录ID")
+    private Long sourceId;
+
+    @Schema(description = "来源业务单号")
+    private String sourceNo;
+
+    @Schema(description = "来源数量快照")
+    private BigDecimal sourceQuantitySnapshot;
+
+    @Schema(description = "来源权威事实指纹")
+    private String sourceEvidenceFingerprint;
 
     /**
      * 工厂编码 - 数据所属的工厂编码

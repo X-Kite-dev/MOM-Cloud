@@ -46,11 +46,32 @@ public class MesWarehouseMaterialInBillEntity extends BaseEntity<MesWarehouseMat
     @Schema(description = "来源单号")
     private String resourceNo;
 
+    @Schema(description = "WMS出库明细id，用于发料回调和补偿重放幂等")
+    private Long wmsOutDetailId;
+
     /**
      * 物料编码
      */
     @Schema(description = "物料编码")
     private String matCode;
+
+    @Schema(description = "WMS物料预留单号")
+    private String reservationNo;
+
+    @Schema(description = "BOM需求物料编码")
+    private String requirementMatCode;
+
+    @Schema(description = "BOM需求物料名称")
+    private String requirementMatName;
+
+    @Schema(description = "BOM需求数量当量")
+    private BigDecimal requirementMatNum;
+
+    @Schema(description = "是否为替代料")
+    private Boolean substituteFlag;
+
+    @Schema(description = "替代比例")
+    private BigDecimal substituteRatio;
 
     /**
      * 物料名称
@@ -129,6 +150,9 @@ public class MesWarehouseMaterialInBillEntity extends BaseEntity<MesWarehouseMat
      */
     @Schema(description = "实际入库数量")
     private BigDecimal inNum;
+
+    /** 首次进入受控签收时冻结的历史净收量，不伪造历史签收操作。 */
+    private BigDecimal receiptBaselineQuantity;
 
     /**
      * 入库时间

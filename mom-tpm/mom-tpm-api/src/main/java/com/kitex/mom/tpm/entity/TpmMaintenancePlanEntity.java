@@ -2,6 +2,7 @@ package com.kitex.mom.tpm.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
 import com.kitex.common.core.entity.BaseEntity;
+import com.kitex.common.core.util.TenantTable;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -16,6 +17,7 @@ import java.util.List;
  * @date 2025-02-06 15:07:31
  */
 @Data
+@TenantTable
 @TableName("tpm_maintenance_plan")
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "保养计划表")

@@ -10,5 +10,11 @@ public class AndonRecordHandleVO {
 
     private Long id;
 
+    private String requestId;
+
+    private String rootCause;
+
+    private String correctiveAction;
+
     private String result;
 }

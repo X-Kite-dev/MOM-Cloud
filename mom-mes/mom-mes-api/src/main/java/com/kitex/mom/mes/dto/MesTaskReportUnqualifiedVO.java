@@ -14,6 +14,9 @@ import java.math.BigDecimal;
 @Data
 public class MesTaskReportUnqualifiedVO {
 
+    @Schema(description = "不合格上报请求唯一号，用于网络重试幂等", maxLength = 64)
+    private String requestId;
+
     @Schema(description = "流转码/条码")
     private String transferCode;
 

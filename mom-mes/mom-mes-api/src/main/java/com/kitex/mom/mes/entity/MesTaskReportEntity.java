@@ -31,6 +31,34 @@ import java.time.LocalDateTime;
 public class MesTaskReportEntity extends BaseEntity<MesTaskReportEntity> {
 
     /**
+     * 报工请求唯一号
+     */
+    @Schema(description = "报工请求唯一号")
+    private String requestId;
+
+    /**
+     * EFFECTIVE-有效，REVERSED-已冲销
+     */
+    @Schema(description = "报工状态：EFFECTIVE-有效，REVERSED-已冲销")
+    private String status;
+
+    @Schema(description = "冲销请求唯一号")
+    private String reverseRequestId;
+
+    @Schema(description = "冲销原因")
+    private String reverseReason;
+
+    @Schema(description = "冲销时间")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime reverseTime;
+
+    @Schema(description = "冲销人工号")
+    private String reverseWorkerCode;
+
+    @Schema(description = "冲销人姓名")
+    private String reverseWorkerName;
+
+    /**
      * 派工单号
      */
     @Schema(description = "派工单号")
@@ -84,6 +112,14 @@ public class MesTaskReportEntity extends BaseEntity<MesTaskReportEntity> {
     @Schema(description = "报工数量")
     private BigDecimal reportNum;
 
+    @Schema(description = "本次报工实际使用的基本单位；历史未冻结保持空，不用当前主数据补造")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String reportUnit;
+
+    @Schema(description = "本次实际执行的报工模式，历史未冻结保持空")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String reportMode;
+
 
     /**
      * 报工时间
@@ -104,6 +140,60 @@ public class MesTaskReportEntity extends BaseEntity<MesTaskReportEntity> {
     @Schema(description = "类型 手动 自动")
     private String type;
 
+    @Schema(description = "自动报工来源事件号；人工报工为空")
+    private String sourceEventId;
+
+    @Schema(description = "设备事件发生时间；人工报工为空")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime sourceEventTime;
+
+    @Schema(description = "自动工位人工接管报工时的原因")
+    private String manualOverrideReason;
+
+    @Schema(description = "报工时质量门模式")
+    private String qualityGateMode;
+
+    @Schema(description = "报工时质量门状态 PASSED/WARN/NONE")
+    private String qualityGateStatus;
+
+    @Schema(description = "报工时质量门判定说明")
+    private String qualityGateMessage;
+
+    @Schema(description = "质量数量状态 NOT_REQUIRED/PENDING/PARTIAL/RELEASED/REJECTED")
+    private String qualityQuantityStatus;
+
+    @Schema(description = "本次报工已质量放行数量")
+    private BigDecimal qualityReleasedNum;
+
+    @Schema(description = "本次报工待判数量")
+    private BigDecimal qualityPendingNum;
+
+    @Schema(description = "本次报工质量拒绝数量")
+    private BigDecimal qualityRejectedNum;
+
+    @Schema(description = "质量数量最近同步时间")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime qualitySyncTime;
+
+    @Schema(description = "报工时设备运行门阶段")
+    private String deviceGateStage;
+
+    @Schema(description = "报工时设备运行门判定结果")
+    private Boolean deviceGateAllowed;
+
+    @Schema(description = "报工时设备状态编码")
+    private String deviceGateState;
+
+    @Schema(description = "报工时设备状态名称")
+    private String deviceGateStateName;
+
+    @Schema(description = "报工时设备运行门判定说明")
+    private String deviceGateMessage;
+
+    @Schema(description = "报工时设备运行门检查时间")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime deviceGateCheckTime;
+
     /**
      * 设备编码
      */
@@ -123,4 +213,3 @@ public class MesTaskReportEntity extends BaseEntity<MesTaskReportEntity> {
     @TableField(fill = FieldFill.INSERT)
     private String factoryCode;
 }
-

@@ -4,6 +4,10 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.entity.MesWrapEntity;
+import com.kitex.mom.mes.dto.MesWrapRepackCommand;
+import com.kitex.mom.mes.dto.MesWrapUnpackCommand;
+
+import java.math.BigDecimal;
 
 /**
  * 箱码管理
@@ -27,4 +31,10 @@ public interface MesWrapService extends IService<MesWrapEntity> {
      */
     IPage<MesWrapEntity> queryPage(Page<MesWrapEntity> pageParam, MesWrapEntity query);
 
-} 
+    void unpack(MesWrapUnpackCommand command);
+
+    String repack(MesWrapRepackCommand command);
+
+    void registerQuantityPackage(MesWrapEntity wrap, Long reportId, String transferCode, BigDecimal quantity);
+
+}

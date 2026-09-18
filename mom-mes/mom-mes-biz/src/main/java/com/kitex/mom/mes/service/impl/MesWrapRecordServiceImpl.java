@@ -1,16 +1,11 @@
 package com.kitex.mom.mes.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.mes.entity.MesWrapRecordEntity;
 import com.kitex.mom.mes.mapper.MesWrapRecordMapper;
-import com.kitex.mom.mes.service.MesTaskArrangeService;
 import com.kitex.mom.mes.service.MesWrapRecordService;
-import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
-
-import java.math.BigDecimal;
 
 /**
  * 包装装箱扫码记录
@@ -19,10 +14,7 @@ import java.math.BigDecimal;
  * @since 2025-04-01
  */
 @Service
-@AllArgsConstructor
 public class MesWrapRecordServiceImpl extends ServiceImpl<MesWrapRecordMapper, MesWrapRecordEntity> implements MesWrapRecordService {
-
-    private final MesTaskArrangeService arrangeService;
 
     /**
      * 删除
@@ -31,13 +23,6 @@ public class MesWrapRecordServiceImpl extends ServiceImpl<MesWrapRecordMapper, M
      */
     @Override
     public void removeData(Long id) {
-        MesWrapRecordEntity record = this.getById(id);
-        this.removeById(record);
-
-        MesTaskArrangeEntity arrange = arrangeService.getOne(new LambdaQueryWrapper<MesTaskArrangeEntity>()
-                .eq(MesTaskArrangeEntity::getCode, record.getArrangeCode()));
-        arrange.setCompleteNum(arrange.getCompleteNum().subtract(BigDecimal.ONE));
-        arrangeService.updateById(arrange);
-        // TODO 删除记录后 退料问题
+        throw new CheckedException("装箱明细不能直接删除，请通过报工冲销恢复库存、物料和生产数量");
     }
-} 
+}

@@ -139,9 +139,11 @@ public class MdmStationSettingServiceImpl extends ServiceImpl<MdmStationSettingM
 
         // 设置状态
         bindings.forEach(binding -> {
+            normalizeCapacity(binding);
             binding.setId(null);
             binding.setStatus(true);
         });
+        validateResourceGroupConsistency(bindings, procedureCode, null);
 
         this.remove(new LambdaQueryWrapper<MdmStationSettingEntity>()
                 .eq(MdmStationSettingEntity::getProcedureCode, bindings.get(0).getProcedureCode()));
@@ -167,6 +169,8 @@ public class MdmStationSettingServiceImpl extends ServiceImpl<MdmStationSettingM
      */
     @Override
     public Boolean saveProcedureStationBind(MdmStationSettingEntity bind) {
+        normalizeCapacity(bind);
+        validateResourceGroupConsistency(List.of(bind), null, null);
         // 检查是否已存在绑定
         if (this.isBindExists(bind.getProcedureCode(), bind.getStationId(), null)) {
             throw new CheckedException("该工序和工位的绑定关系已存在");
@@ -193,6 +197,8 @@ public class MdmStationSettingServiceImpl extends ServiceImpl<MdmStationSettingM
      */
     @Override
     public Boolean updateProcedureStationBind(MdmStationSettingEntity bind) {
+        normalizeCapacity(bind);
+        validateResourceGroupConsistency(List.of(bind), null, bind.getId());
         // 检查是否已存在绑定
         if (this.isBindExists(null, bind.getStationId(), bind.getId())) {
             throw new CheckedException("该工位已绑定其他工序");
@@ -204,6 +210,73 @@ public class MdmStationSettingServiceImpl extends ServiceImpl<MdmStationSettingM
         // 上级信息处理
         bindHandler(stationByAllParent.get(0), bind);
         return this.updateById(bind);
+    }
+
+    private void normalizeCapacity(MdmStationSettingEntity bind) {
+        if (bind == null) {
+            throw new CheckedException("工序工位配置不能为空");
+        }
+        int parallelCapacity = Optional.ofNullable(bind.getParallelCapacity()).orElse(1);
+        if (parallelCapacity < 1 || parallelCapacity > 100) {
+            throw new CheckedException("工位并行槽位数必须为1至100");
+        }
+        if (bind.getStationCapacity() != null && bind.getStationCapacity().signum() <= 0) {
+            throw new CheckedException("工位产能必须大于0");
+        }
+        if (bind.getStandardWorkingTime() != null && bind.getStandardWorkingTime().signum() <= 0) {
+            throw new CheckedException("标准工时必须大于0");
+        }
+        bind.setParallelCapacity(parallelCapacity);
+        bind.setPriority(Optional.ofNullable(bind.getPriority()).orElse(1000));
+        bind.setIsPrimary(Boolean.TRUE.equals(bind.getIsPrimary()));
+        if (StrUtil.isBlank(bind.getResourceGroupCode())) {
+            bind.setResourceGroupCode(null);
+            bind.setResourceGroupName(null);
+            bind.setResourceGroupCapacity(null);
+            return;
+        }
+        bind.setResourceGroupCode(bind.getResourceGroupCode().trim());
+        if (StrUtil.isBlank(bind.getResourceGroupName())) {
+            throw new CheckedException("配置共享资源组时资源组名称不能为空");
+        }
+        bind.setResourceGroupName(bind.getResourceGroupName().trim());
+        int groupCapacity = Optional.ofNullable(bind.getResourceGroupCapacity()).orElse(1);
+        if (groupCapacity < 1 || groupCapacity > 100) {
+            throw new CheckedException("共享资源组并行容量必须为1至100");
+        }
+        bind.setResourceGroupCapacity(groupCapacity);
+    }
+
+    /** 同一租户内相同资源组编码必须保持名称和共享容量一致，避免跨工厂排程时得到相互矛盾的能力。 */
+    private void validateResourceGroupConsistency(List<MdmStationSettingEntity> bindings,
+                                                  String replacingProcedureCode, Long excludeId) {
+        Map<String, MdmStationSettingEntity> definitions = new LinkedHashMap<>();
+        for (MdmStationSettingEntity binding : bindings) {
+            if (StrUtil.isBlank(binding.getResourceGroupCode())) {
+                continue;
+            }
+            MdmStationSettingEntity previous = definitions.putIfAbsent(binding.getResourceGroupCode(), binding);
+            if (previous != null && (!Objects.equals(previous.getResourceGroupName(), binding.getResourceGroupName())
+                    || !Objects.equals(previous.getResourceGroupCapacity(), binding.getResourceGroupCapacity()))) {
+                throw new CheckedException("同一批次中资源组[" + binding.getResourceGroupCode() + "]的名称或容量不一致");
+            }
+        }
+        for (MdmStationSettingEntity definition : definitions.values()) {
+            List<MdmStationSettingEntity> existing = this.list(new LambdaQueryWrapper<MdmStationSettingEntity>()
+                    .eq(MdmStationSettingEntity::getResourceGroupCode, definition.getResourceGroupCode())
+                    .eq(MdmStationSettingEntity::getStatus, true)
+                    .ne(StrUtil.isNotBlank(replacingProcedureCode), MdmStationSettingEntity::getProcedureCode,
+                            replacingProcedureCode)
+                    .ne(excludeId != null, MdmStationSettingEntity::getId, excludeId));
+            boolean conflict = existing.stream().anyMatch(item ->
+                    !Objects.equals(item.getResourceGroupName(), definition.getResourceGroupName())
+                            || !Objects.equals(Optional.ofNullable(item.getResourceGroupCapacity()).orElse(1),
+                            definition.getResourceGroupCapacity()));
+            if (conflict) {
+                throw new CheckedException("资源组[" + definition.getResourceGroupCode()
+                        + "]已存在不同名称或共享容量，请统一配置后再保存");
+            }
+        }
     }
 
     /**
@@ -337,12 +410,28 @@ public class MdmStationSettingServiceImpl extends ServiceImpl<MdmStationSettingM
                 e.setStationId(mdmFactoryModelAncestorVO.getStationId());
                 e.setStationName(mdmFactoryModelAncestorVO.getStationName());
                 e.setStatus(Boolean.TRUE);
+                try {
+                    normalizeCapacity(e);
+                    validateResourceGroupConsistency(List.of(e), null, null);
+                } catch (CheckedException ex) {
+                    errorMsg.add(ex.getMessage());
+                }
+                if (!errorMsg.isEmpty()) {
+                    errorMessageList.add(new ErrorMessage(vo.getLineNum() + 1, errorMsg));
+                    continue;
+                }
                 insertList.add(e);
                 uniqueKey.add(key);
             } else {
                 // 数据不合法情况
                 errorMessageList.add(new ErrorMessage(vo.getLineNum() + 1, errorMsg));
             }
+        }
+        try {
+            validateResourceGroupConsistency(insertList, null, null);
+        } catch (CheckedException ex) {
+            errorMessageList.add(new ErrorMessage(1L, Set.of(ex.getMessage())));
+            return R.failed(errorMessageList);
         }
         this.saveBatch(insertList);
         if (CollUtil.isNotEmpty(errorMessageList)) {

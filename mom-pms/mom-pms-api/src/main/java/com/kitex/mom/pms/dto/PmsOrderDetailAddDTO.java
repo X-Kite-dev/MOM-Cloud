@@ -85,6 +85,8 @@ public class PmsOrderDetailAddDTO {
      */
     @Schema(description = "单价")
     private BigDecimal price;
+    private Long priceId;
+    private Long materialAuthorizationId;
     /**
      * 工厂编码 - 数据所属的工厂编码
      */

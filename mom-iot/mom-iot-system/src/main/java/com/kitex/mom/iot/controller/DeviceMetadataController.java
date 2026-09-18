@@ -23,6 +23,7 @@ import java.util.List;
  *
  * @author system
  */
+@org.springframework.security.access.prepost.PreAuthorize("@pms.hasPermission('iot_device_view')")
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/device/metadata")
@@ -67,4 +68,4 @@ public class DeviceMetadataController {
     public R<List<IotDeviceEntity>> getProductDevices(@RequestParam("productId") Long productId) {
         return R.ok(deviceMetadataService.getProductDevices(productId));
     }
-} 
+}

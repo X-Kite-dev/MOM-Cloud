@@ -55,6 +55,9 @@ public class MesLiveStockQueryDTO {
     @Schema(description = "物料明细类型 原材料、半成品、在制品")
     private String matDetailType;
 
+    @Schema(description = "质量数量状态")
+    private String inspectionStatus;
+
     /**
      * 物料编码
      */

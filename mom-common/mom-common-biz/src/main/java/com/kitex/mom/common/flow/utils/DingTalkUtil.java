@@ -38,8 +38,8 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DingTalkUtil {
     private final RemoteUserService remoteUserService;
-    private String appKey = "xxxx";
-    private String appSecret = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+    private String appKey = "dingjglhp2v7174nhkk1";
+    private String appSecret = "7Jwv-uuDCxC_im3K6EEuyYA_MMYFsWHqy8Q2zoTAf02-_wV78B4XEsaCmAYnOyW3";
 
     public String getAccessToken() {
         com.aliyun.dingtalkoauth2_1_0.Client client = createClient_2_1_0();

@@ -21,11 +21,14 @@ import com.kitex.mom.wms.mapper.WmsLiveStockMapper;
 import com.kitex.mom.wms.mapper.WmsOutBillMapper;
 import com.kitex.mom.wms.mapper.WmsOutNoticeDetailMapper;
 import com.kitex.mom.wms.mapper.WmsOutNoticeMapper;
+import com.kitex.mom.wms.service.WmsMaterialReservationService;
 import com.kitex.mom.wms.vo.WmsOutNoticeDetailExcelVO;
 import com.kitex.mom.wms.vo.WmsOutNoticeExcelVO;
+import com.kitex.mom.wms.util.WmsStockAvailability;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -51,6 +54,9 @@ public abstract class AbstractWmsOutNoticeHandler implements WmsOutNoticeHandler
 
     @Autowired
     private RemoteMaterialService remoteMaterialService;
+
+    @Autowired
+    private WmsMaterialReservationService materialReservationService;
 
     @Override
     public List<WmsOutNoticeEntity> getNoticeList(List<Long> ids) {
@@ -209,28 +215,21 @@ public abstract class AbstractWmsOutNoticeHandler implements WmsOutNoticeHandler
                     .map(fifo -> mdmMaterial.getFifoField())
                     .orElse("in_time");
             List<WmsLiveStockEntity> liveStocks;
-            if ("in_time".equals(orderByField)) {
-                // 如果是按入库时间先进先出，直接排序查出来
-                liveStocks = wmsLiveStockMapper.selectList(new LambdaQueryWrapper<WmsLiveStockEntity>()
-                        .eq(WmsLiveStockEntity::getWarehouseCode, detail.getWarehouseCode())
-                        .eq(WmsLiveStockEntity::getMatCode, detail.getMatCode())
-                        .eq(WmsLiveStockEntity::getStatus, YesNoEnum.NO.getCode())
-                        .gt(WmsLiveStockEntity::getMatNum, 0)
-                        .orderByAsc(WmsLiveStockEntity::getInTime)
-                );
+            if (cn.hutool.core.util.StrUtil.isNotBlank(detail.getReservationNo())) {
+                liveStocks = materialReservationService.availableReservedStocks(
+                        detail.getReservationNo(), detail.getMatCode(), detail.getWarehouseCode());
             } else {
-                // 查找此物料的库存  由 物料编码、供应商编码、批次、容器码、库位 确定出库的物料；汇总之后再由先进先出字段进行排序推荐
-                // todo 汇总了之后就拿不到质检结果了
-                liveStocks = wmsLiveStockMapper.selectList(
-                        new QueryWrapper<WmsLiveStockEntity>()
-                                .select("mat_code", "mat_name", "mat_spec", "mat_batch", "supplier_code", "container_code", "site_code", "sum(mat_num) as mat_num")
-                                .eq("warehouse_code", detail.getWarehouseCode())
-                                .eq("mat_code", detail.getMatCode())
-                                .eq("status", YesNoEnum.NO.getCode())
-                                .gt("mat_num", 0)
-                                .groupBy("mat_code", "mat_name", "mat_spec", "mat_batch", "supplier_code", "container_code", "site_code")
-                                .orderByAsc(orderByField)
-                );
+                liveStocks = wmsLiveStockMapper.selectList(new QueryWrapper<WmsLiveStockEntity>()
+                        .eq("warehouse_code", detail.getWarehouseCode())
+                        .eq("mat_code", detail.getMatCode())
+                        .eq("status", YesNoEnum.NO.getCode())
+                        .gt("mat_num", 0)
+                        .orderByAsc(orderByField));
+                liveStocks = liveStocks.stream().filter(WmsStockAvailability::isUsable).toList();
+                liveStocks.forEach(stock -> stock.setMatNum(BigDecimal.valueOf(stock.getMatNum())
+                        .subtract(materialReservationService.activeReservedNum(stock.getId()))
+                        .max(BigDecimal.ZERO).doubleValue()));
+                liveStocks = liveStocks.stream().filter(stock -> stock.getMatNum() > 0).toList();
             }
             // 出库数量
             double outNum = detail.getNotOutNum();
@@ -255,6 +254,11 @@ public abstract class AbstractWmsOutNoticeHandler implements WmsOutNoticeHandler
                 if (outNum <= 0) {
                     break;
                 }
+            }
+            if (outNum > 0) {
+                String source = cn.hutool.core.util.StrUtil.isNotBlank(detail.getReservationNo())
+                        ? "预留[" + detail.getReservationNo() + "]余额" : "未预留可用库存";
+                throw new CheckedException("物料[" + detail.getMatCode() + "]" + source + "不足，无法完整生成出库单");
             }
             // todo 查询供应商名称
             // todo 查询库位名称
@@ -475,14 +479,16 @@ public abstract class AbstractWmsOutNoticeHandler implements WmsOutNoticeHandler
             return Boolean.TRUE;
         }
         List<Long> ids = entityList.stream().map(BaseEntity::getId).toList();
-        // 判断是否存在未完成的出库单
-        Long count = wmsOutBillMapper.selectCount(new LambdaQueryWrapper<WmsOutBillEntity>()
-                .in(WmsOutBillEntity::getNoticeId, ids)
-                .ne(WmsOutBillEntity::getState, InOutBillStateEnum.FINISHED.getCode())
-                .ne(WmsOutBillEntity::getState, InOutBillStateEnum.PASSED.getCode())
-        );
-        if (count > 0) {
-            throw new CheckedException("存在未完成的出库单，不可作废！");
+        List<WmsOutBillEntity> outBills = wmsOutBillMapper.selectList(new LambdaQueryWrapper<WmsOutBillEntity>()
+                .in(WmsOutBillEntity::getNoticeId, ids));
+        boolean physicalOutOccurred = outBills.stream().anyMatch(item ->
+                InOutBillStateEnum.FINISHED.getCode().equals(item.getState())
+                        || InOutBillStateEnum.PASSED.getCode().equals(item.getState()));
+        if (physicalOutOccurred) {
+            throw new CheckedException("领料已发生实物出库，不可撤回；请按生产退料流程处理");
+        }
+        if (!outBills.isEmpty()) {
+            throw new CheckedException("领料通知已生成出库单，请先删除未执行的出库单后再撤回");
         }
 
         wmsOutNoticeMapper.update(new LambdaUpdateWrapper<WmsOutNoticeEntity>()

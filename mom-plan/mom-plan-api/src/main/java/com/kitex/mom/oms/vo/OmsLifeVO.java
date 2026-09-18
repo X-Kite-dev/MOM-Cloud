@@ -42,4 +42,10 @@ public class OmsLifeVO implements Serializable {
      */
     @Schema(description = "发货")
     private List<OmsLifeWmsDeliverVO> deliverList;
+
+    @Schema(description = "跨域履约摘要")
+    private OmsFulfillmentSummaryVO fulfillmentSummary;
+
+    @Schema(description = "按业务先后排列的履约里程碑")
+    private List<OmsFulfillmentMilestoneVO> fulfillmentMilestones;
 }

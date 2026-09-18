@@ -10,6 +10,9 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
 /**
  * <p>
  * 箱码管理 实体类
@@ -68,6 +71,21 @@ public class MesWrapEntity extends BaseEntity<MesWrapEntity> {
     @Schema(description = "成品PRODUCT 半成品HALF")
     private String wrapType;
 
+    @Schema(description = "包装状态 OPEN/SEALED/UNPACKED/VOID")
+    private String status;
+
+    @Schema(description = "箱内当前数量")
+    private BigDecimal currentQuantity;
+
+    @Schema(description = "包装来源模式 PACKAGE_ONE_CODE/PACKAGE_QUANTITY/REPACK")
+    private String sourceMode;
+
+    @Schema(description = "最近拆箱时间")
+    private LocalDateTime unpackTime;
+
+    @Schema(description = "最近重组时间")
+    private LocalDateTime repackTime;
+
     /**
      * 所属组织
      */
@@ -82,4 +100,3 @@ public class MesWrapEntity extends BaseEntity<MesWrapEntity> {
     private String taskType;
 
 }
-

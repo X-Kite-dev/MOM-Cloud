@@ -14,6 +14,14 @@ import java.util.Map;
 @FeignClient(contextId = "remoteDeviceService", value = Constants.Name)
 public interface RemoteDeviceService {
 
+    @PostMapping("/mdmDevice/controlled-pause")
+    R<com.kitex.mom.mdm.entity.MdmDevicePauseReceipt> controlledPause(
+            @RequestBody com.kitex.mom.mdm.dto.MdmDevicePauseCommand command);
+
+    @PostMapping("/mdmDevice/controlled-pause/close")
+    R<com.kitex.mom.mdm.entity.MdmDevicePauseReceipt> controlledClose(
+            @RequestBody com.kitex.mom.mdm.dto.MdmDevicePauseCommand command);
+
     /**
      * 分页查询设备信息
      *

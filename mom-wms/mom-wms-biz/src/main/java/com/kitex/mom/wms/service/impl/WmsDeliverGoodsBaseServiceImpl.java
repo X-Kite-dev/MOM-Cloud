@@ -13,9 +13,7 @@ import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
-import com.kitex.mom.oms.dto.OmsUpdateOrderDeliverDto;
 import com.kitex.mom.oms.enums.YesOrNoStateEnum;
-import com.kitex.mom.oms.feign.RemoteOmsOrderService;
 import com.kitex.mom.wms.entity.*;
 import com.kitex.mom.wms.enums.*;
 import com.kitex.mom.wms.mapper.WmsDeliverGoodsBaseMapper;
@@ -26,6 +24,7 @@ import com.kitex.mom.wms.service.WmsDeliverGoodsBaseService;
 import com.kitex.mom.wms.service.WmsDeliverGoodsDetailsService;
 import com.kitex.mom.wms.service.WmsDeliverGoodsPlanBaseService;
 import com.kitex.mom.wms.service.WmsDeliverGoodsRecordService;
+import com.kitex.mom.wms.service.WmsSalesStockReservationService;
 import com.kitex.mom.wms.service.outBill.WmsOutBillFactory;
 import com.kitex.mom.wms.service.outBill.WmsOutBillHandler;
 import com.kitex.mom.wms.service.outNotice.WmsOutNoticeFactory;
@@ -62,10 +61,11 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
     private final WmsOutBillDetailMapper wmsOutBillDetailMapper;
     //通知详情
     private final WmsOutNoticeDetailMapper wmsOutNoticeDetailMapper;
-    //订单
-    private final RemoteOmsOrderService remoteOmsOrderService;
+    //销售出库事实必须与WMS本地事务同箱，随后异步投递OMS永久收件箱。
+    private final WmsOmsDeliveryEventOutboxService omsDeliveryOutboxService;
     //发货记录
     private final WmsDeliverGoodsRecordService wmsDeliverGoodsRecordService;
+    private final WmsSalesStockReservationService salesStockReservationService;
 
 
     /**
@@ -272,6 +272,7 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean updateDeliverByBill(WmsOutBillEntity bill) {
+        if (omsDeliveryOutboxService.hasBillEvents(bill.getId())) return Boolean.TRUE;
         //获取对应发货单
         WmsDeliverGoodsBaseEntity goodsBase = this.getById(bill.getDocumentId());
         //1.数据准备
@@ -279,11 +280,19 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
         //出库详情
         List<WmsOutBillDetailEntity> billDetailList = wmsOutBillDetailMapper.selectList(new LambdaQueryWrapper<WmsOutBillDetailEntity>()
                 .eq(WmsOutBillDetailEntity::getBillId, bill.getId()));
+        if (CollUtil.isEmpty(billDetailList) || billDetailList.stream().anyMatch(item ->
+                item.getNoticeDetailId() == null || item.getOperateNum() == null
+                        || !Double.isFinite(item.getOperateNum()) || item.getOperateNum() <= 0)) {
+            throw new CheckedException("出库单明细缺失、通知来源缺失或操作数量非正，禁止审核通过");
+        }
         //根据出库详情查询通知单
         List<Long> noticeIds = billDetailList.stream().map(WmsOutBillDetailEntity::getNoticeDetailId).distinct().collect(Collectors.toList());
         List<WmsOutNoticeDetailEntity> noticeDetailList = wmsOutNoticeDetailMapper.selectList(new LambdaQueryWrapper<WmsOutNoticeDetailEntity>()
                 .in(BaseEntity::getId, noticeIds));
         Map<Long, WmsOutNoticeDetailEntity> noticeDetailMap = noticeDetailList.stream().collect(Collectors.toMap(BaseEntity::getId, Function.identity()));
+        if (noticeDetailMap.size() != noticeIds.size()) {
+            throw new CheckedException("出库单引用的通知明细缺失，禁止无来源发货");
+        }
         //构建Map 发货明细id - 操作数量
         Map<Long, BigDecimal> operateMap = new HashMap<>();
         for (WmsOutBillDetailEntity wmsOutBillDetailEntity : billDetailList) {
@@ -304,7 +313,12 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
         WmsDeliverGoodsBaseEntity deliverGoodsBase = Optional.ofNullable(this.getById(bill.getDocumentId())).orElseThrow(() -> new CheckedException("未查找到对应发货单！"));
         //明细
         List<WmsDeliverGoodsDetailsEntity> deliverGoodsDetailsList = wmsDeliverGoodsDetailsService.list(new LambdaQueryWrapper<WmsDeliverGoodsDetailsEntity>()
-                .eq(WmsDeliverGoodsDetailsEntity::getDeliverCode, deliverGoodsBase.getDeliverCode()));
+                .eq(WmsDeliverGoodsDetailsEntity::getDeliverCode, deliverGoodsBase.getDeliverCode())
+                .orderByAsc(WmsDeliverGoodsDetailsEntity::getId).last("FOR UPDATE"));
+        if (operateMap.keySet().stream().anyMatch(id -> deliverGoodsDetailsList.stream()
+                .noneMatch(item -> Objects.equals(item.getId(), id)))) {
+            throw new CheckedException("出库通知明细不属于当前发货单，禁止漏记发货事实");
+        }
         //更新明细数据，构建发货记录
         List<WmsDeliverGoodsRecordEntity> recordList = new ArrayList<>();
         Map<String, BigDecimal> operatePlanMap = new HashMap<>();
@@ -314,10 +328,14 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
             if (ObjectUtil.isNotEmpty(operateNum)) {
                 //构建发货计划使用的Map
                 if (StrUtil.isNotBlank(item.getDeliverPlanCode())) {
-                    operatePlanMap.put(item.getDeliverPlanCode(), operateNum);
+                    operatePlanMap.merge(item.getDeliverPlanCode(), operateNum, BigDecimal::add);
                 }
                 //更新数量 和状态
                 BigDecimal deliveredNum = item.getDeliveredNum();
+                if (deliveredNum == null || item.getDeliverNum() == null
+                        || deliveredNum.add(operateNum).compareTo(item.getDeliverNum()) > 0) {
+                    throw new CheckedException("发货单明细超出可发数量或历史数量缺失，禁止出库通过");
+                }
                 item.setDeliveredNum(deliveredNum.add(operateNum));
                 if (item.getDeliverNum().compareTo(item.getDeliveredNum()) <= 0) {
                     item.setDeliverState(DeliverStateEnum.COMPLETE.getCode());
@@ -353,13 +371,23 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
         }
         this.updateById(deliverGoodsBase);
 
-        List<String> planCodes = deliverGoodsDetailsList.stream().map(WmsDeliverGoodsDetailsEntity::getDeliverPlanCode).collect(Collectors.toList());
+        List<String> planCodes = new ArrayList<>(operatePlanMap.keySet());
+        if (!YesOrNoStateEnum.YES.getCode().equals(deliverGoodsBase.getReissueSign())
+                && !YesOrNoStateEnum.NO.getCode().equals(deliverGoodsBase.getReissueSign())) {
+            throw new CheckedException("发货单补发标识缺失或非法，禁止跳过计划及OMS发运事实更新");
+        }
+        boolean exceptionReplacement = deliverGoodsBase.getExceptionResolutionCaseId() != null;
         //如果是补发单据，更新发货计划的补发数量
         if (YesOrNoStateEnum.YES.getCode().equals(deliverGoodsBase.getReissueSign())) {
+            if (exceptionReplacement && deliverGoodsBase.getOriginalDeliveryId() == null) {
+                throw new CheckedException("补发单缺少客户异常处置单或原发货单来源，禁止出库");
+            }
             //更新发货计划数据
             if (CollUtil.isNotEmpty(planCodes)) {
                 List<WmsDeliverGoodsPlanBaseEntity> planBaseList = wmsDeliverGoodsPlanBaseService.list(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
-                        .in(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, planCodes));
+                        .in(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, planCodes)
+                        .orderByAsc(WmsDeliverGoodsPlanBaseEntity::getId).last("FOR UPDATE"));
+                validateOperatedPlans(deliverGoodsBase, deliverGoodsDetailsList, operateMap, planCodes, planBaseList);
                 planBaseList.forEach(item -> {
                     BigDecimal operateNum = operatePlanMap.get(item.getDeliverPlanCode());
                     if (ObjectUtil.isNotEmpty(operateNum)) {
@@ -369,6 +397,14 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
                     }
                 });
                 wmsDeliverGoodsPlanBaseService.updateBatchById(planBaseList);
+                for (WmsDeliverGoodsPlanBaseEntity plan : planBaseList) {
+                    BigDecimal shipped = operatePlanMap.get(plan.getDeliverPlanCode());
+                    if (exceptionReplacement && plan.getOrderCodeDetails() != null
+                            && shipped != null && shipped.signum() > 0) {
+                        omsDeliveryOutboxService.enqueueReplacement(bill, plan, shipped,
+                                deliverGoodsBase.getExceptionResolutionCaseId());
+                    }
+                }
             }
         }
         //如果是非补发单据，更新发货计划的发货数量和状态，订单数据根据订单号、产品、发货时间进行匹配更新，匹配不到的不做更新
@@ -376,12 +412,18 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
             //3.更新发货计划数据
             if (CollUtil.isNotEmpty(planCodes)) {
                 List<WmsDeliverGoodsPlanBaseEntity> planBaseList = wmsDeliverGoodsPlanBaseService.list(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
-                        .in(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, planCodes));
+                        .in(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, planCodes)
+                        .orderByAsc(WmsDeliverGoodsPlanBaseEntity::getId).last("FOR UPDATE"));
+                validateOperatedPlans(deliverGoodsBase, deliverGoodsDetailsList, operateMap, planCodes, planBaseList);
                 planBaseList.forEach(item -> {
                     BigDecimal operateNum = operatePlanMap.get(item.getDeliverPlanCode());
                     if (ObjectUtil.isNotEmpty(operateNum)) {
                         //更新数量 和状态
                         BigDecimal deliveredNum = item.getDeliveredNum();
+                        if (deliveredNum == null || item.getDeliverNum() == null
+                                || deliveredNum.add(operateNum).compareTo(item.getDeliverNum()) > 0) {
+                            throw new CheckedException("发货计划超出订单可交付数量或历史数量缺失，禁止出库通过");
+                        }
                         item.setDeliveredNum(deliveredNum.add(operateNum));
                         if (item.getDeliverNum().compareTo(item.getDeliveredNum()) <= 0) {
                             item.setDeliverState(DeliverStateEnum.COMPLETE.getCode());
@@ -392,22 +434,13 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
                 });
                 wmsDeliverGoodsPlanBaseService.updateBatchById(planBaseList);
 
-                //4.更新订单数据 - 退货的数据不更新到订单
-                List<WmsDeliverGoodsPlanBaseEntity> planBaseEntities = planBaseList.stream().filter(item -> StrUtil.isNotBlank(item.getOrderCode())).collect(Collectors.toList());
-                if (CollUtil.isNotEmpty(planBaseEntities)) {
-                    List<OmsUpdateOrderDeliverDto> orderDeliverDtos = planBaseEntities.stream().map(item -> {
-                        BigDecimal operateNum = operatePlanMap.get(item.getDeliverPlanCode());
-                        OmsUpdateOrderDeliverDto omsUpdateOrderDeliverDto = new OmsUpdateOrderDeliverDto();
-                        omsUpdateOrderDeliverDto.setWmsBillNo(bill.getBillNo());
-                        omsUpdateOrderDeliverDto.setOrderCode(item.getOrderCode());
-                        omsUpdateOrderDeliverDto.setProductCode(item.getProductCode());
-                        omsUpdateOrderDeliverDto.setDeliverTime(item.getPlanDeliverTime());
-                        omsUpdateOrderDeliverDto.setOperateNum(ObjectUtil.isNotEmpty(operateNum) ? operateNum : BigDecimal.ZERO);
-                        return omsUpdateOrderDeliverDto;
-                    }).collect(Collectors.toList());
-                    R<Boolean> booleanR = remoteOmsOrderService.updateOrderDeliver(orderDeliverDtos);
-                    if (booleanR.getCode() != 0) {
-                        throw new RuntimeException("更新订单信息失败!");
+                //4.仅OMS精确来源行进入同事务Outbox；补发、退货均不累计OMS原订单交付量。
+                for (WmsDeliverGoodsPlanBaseEntity plan : planBaseList) {
+                    if (plan.getOrderCodeDetails() != null) {
+                        BigDecimal shipped = operatePlanMap.get(plan.getDeliverPlanCode());
+                        if (shipped != null && shipped.signum() > 0) {
+                            omsDeliveryOutboxService.enqueue(bill, plan, shipped);
+                        }
                     }
                 }
             }
@@ -415,36 +448,73 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
         return Boolean.TRUE;
     }
 
+    private void validateOperatedPlans(WmsDeliverGoodsBaseEntity delivery,
+                                       List<WmsDeliverGoodsDetailsEntity> details,
+                                       Map<Long, BigDecimal> operated,
+                                       List<String> planCodes,
+                                       List<WmsDeliverGoodsPlanBaseEntity> plans) {
+        Map<String, WmsDeliverGoodsPlanBaseEntity> unique = new HashMap<>();
+        for (WmsDeliverGoodsPlanBaseEntity plan : plans) {
+            if (unique.putIfAbsent(plan.getDeliverPlanCode(), plan) != null) {
+                throw new CheckedException("发货计划号重复，禁止出库数量归属歧义");
+            }
+        }
+        if (unique.size() != planCodes.size()) {
+            throw new CheckedException("出库引用的发货计划缺失，禁止漏记计划及OMS回传事实");
+        }
+        for (WmsDeliverGoodsDetailsEntity detail : details) {
+            if (!operated.containsKey(detail.getId()) || StrUtil.isBlank(detail.getDeliverPlanCode())) continue;
+            WmsDeliverGoodsPlanBaseEntity plan = unique.get(detail.getDeliverPlanCode());
+            if (plan == null || !Objects.equals(plan.getFactoryCode(), delivery.getFactoryCode())
+                    || !Objects.equals(plan.getOrderCode(), detail.getOrderCode())
+                    || !Objects.equals(plan.getProductCode(), detail.getProductCode())) {
+                throw new CheckedException("出库发货明细与计划的工厂、订单或产品不一致");
+            }
+        }
+    }
+
     /**
      * 创建销售通知单
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Boolean create(Long id) {
-        WmsDeliverGoodsBaseEntity deliverGoodsBase = this.getById(id);
+        WmsDeliverGoodsBaseEntity deliverGoodsBase = baseMapper.selectOne(
+                new LambdaQueryWrapper<WmsDeliverGoodsBaseEntity>()
+                        .eq(WmsDeliverGoodsBaseEntity::getId, id).last("FOR UPDATE"), false);
+        if (deliverGoodsBase == null) throw new CheckedException("发货单不存在");
         List<String> errorMsg = checkExistOutNoticeOrBill(deliverGoodsBase);
         if (CollUtil.isNotEmpty(errorMsg)) {
             throw new RuntimeException("操作失败！失败原因：" + String.join(";", errorMsg));
         }
         List<WmsDeliverGoodsDetailsEntity> deliverDetailsList = wmsDeliverGoodsDetailsService.list(new LambdaQueryWrapper<WmsDeliverGoodsDetailsEntity>()
-                .eq(WmsDeliverGoodsDetailsEntity::getDeliverCode, deliverGoodsBase.getDeliverCode()));
+                .eq(WmsDeliverGoodsDetailsEntity::getDeliverCode, deliverGoodsBase.getDeliverCode())
+                .orderByAsc(WmsDeliverGoodsDetailsEntity::getId).last("FOR UPDATE"));
         // 3.同步创建成品仓库 销售发货通知单
         List<MdmMaterialEntity> matList = remoteMaterialService.getList().getData();
         if (CollUtil.isEmpty(matList)) {
             throw new RuntimeException("获取物料数据失败！物料数据未维护或者访问数据失败！");
         }
         Map<String, MdmMaterialEntity> matMap = matList.stream().collect(Collectors.toMap(MdmMaterialEntity::getMaterialCode, Function.identity(), (k1, k2) -> k1));
+        Set<String> planCodes = deliverDetailsList.stream().map(WmsDeliverGoodsDetailsEntity::getDeliverPlanCode)
+                .filter(StrUtil::isNotBlank).collect(Collectors.toSet());
+        Map<String, WmsDeliverGoodsPlanBaseEntity> plansByCode = planCodes.isEmpty() ? Map.of()
+                : wmsDeliverGoodsPlanBaseService.list(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
+                .in(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, planCodes)
+                .orderByAsc(WmsDeliverGoodsPlanBaseEntity::getId).last("FOR UPDATE")).stream()
+                .collect(Collectors.toMap(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, Function.identity(), (a, b) -> {
+                    throw new CheckedException("发货计划号重复，不能绑定销售库存预留");
+                }));
+        Map<Long, WmsSalesStockReservationEntity> salesReservations = salesStockReservationService.reservationsByPlanIds(
+                plansByCode.values().stream().map(WmsDeliverGoodsPlanBaseEntity::getId).collect(Collectors.toSet()));
         try {
             //构建数据
-            BigDecimal deliverNum = deliverDetailsList.stream().map(WmsDeliverGoodsDetailsEntity::getDeliverNum).reduce(BigDecimal.ZERO, BigDecimal::add);
-            BigDecimal deliveredNum = deliverDetailsList.stream().map(WmsDeliverGoodsDetailsEntity::getDeliveredNum).reduce(BigDecimal.ZERO, BigDecimal::add);
             //主表
             WmsOutNoticeEntity wmsOutNotice = new WmsOutNoticeEntity();
             wmsOutNotice.setState(InOutNoticeStateEnum.READY.getCode());
             wmsOutNotice.setWarehouseCode(deliverGoodsBase.getWarehouseCode());
             wmsOutNotice.setWarehouseName(deliverGoodsBase.getWarehouseName());
-            wmsOutNotice.setNoticeOutNum(Double.valueOf(String.valueOf(deliverNum.subtract(deliveredNum))));
             wmsOutNotice.setAllOutNum(0.0);
-            wmsOutNotice.setAllNotOutNum(Double.valueOf(String.valueOf(deliverNum.subtract(deliveredNum))));
             wmsOutNotice.setBillType(billType);
             wmsOutNotice.setDocumentId(deliverGoodsBase.getId());
             wmsOutNotice.setDocumentTable(DocumentEnum.DELIVER.getCode());
@@ -459,13 +529,31 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
                 wmsOutNoticeDetail.setMatSpec(ObjectUtil.isNotEmpty(mdmMaterial) ? mdmMaterial.getSpecificationModel() : null);
                 wmsOutNoticeDetail.setMatGroup(ObjectUtil.isNotEmpty(mdmMaterial) ? mdmMaterial.getGroupCode() : null);
                 wmsOutNoticeDetail.setMatGroupName(ObjectUtil.isNotEmpty(mdmMaterial) ? mdmMaterial.getGroupName() : null);
-                wmsOutNoticeDetail.setNoticeOutNum(Double.valueOf(String.valueOf(item.getDeliverNum().subtract(item.getDeliveredNum()))));
+                BigDecimal noticeQuantity = item.getDeliverNum().subtract(item.getDeliveredNum());
+                WmsDeliverGoodsPlanBaseEntity plan = plansByCode.get(item.getDeliverPlanCode());
+                WmsSalesStockReservationEntity salesReservation = plan == null ? null : salesReservations.get(plan.getId());
+                if (salesReservation != null) {
+                    BigDecimal active = Optional.ofNullable(salesReservation.getReservedNum()).orElse(BigDecimal.ZERO)
+                            .subtract(Optional.ofNullable(salesReservation.getConsumedNum()).orElse(BigDecimal.ZERO))
+                            .subtract(Optional.ofNullable(salesReservation.getReleasedNum()).orElse(BigDecimal.ZERO))
+                            .max(BigDecimal.ZERO);
+                    if (active.signum() > 0) {
+                        noticeQuantity = noticeQuantity.min(active);
+                        wmsOutNoticeDetail.setReservationNo(salesReservation.getReservationNo());
+                    }
+                }
+                wmsOutNoticeDetail.setNoticeOutNum(noticeQuantity.doubleValue());
                 wmsOutNoticeDetail.setDocumentId(item.getId());
                 wmsOutNoticeDetail.setDocumentTable(DocumentEnum.DELIVER.getCode());
                 wmsOutNoticeDetail.setFactoryCode(deliverGoodsBase.getFactoryCode());
                 return wmsOutNoticeDetail;
             }).collect(Collectors.toList());
             noticeDetailList = noticeDetailList.stream().filter(item -> item.getNoticeOutNum().compareTo(0.0) > 0).collect(Collectors.toList());
+            if (noticeDetailList.isEmpty()) throw new CheckedException("当前发货单没有可下发的剩余数量");
+            double noticeQuantity = noticeDetailList.stream().map(WmsOutNoticeDetailEntity::getNoticeOutNum)
+                    .reduce(0D, Double::sum);
+            wmsOutNotice.setNoticeOutNum(noticeQuantity);
+            wmsOutNotice.setAllNotOutNum(noticeQuantity);
             wmsOutNotice.setDetailList(noticeDetailList);
             //保存
             WmsOutNoticeHandler handler = WmsOutNoticeFactory.getHandler(billType);

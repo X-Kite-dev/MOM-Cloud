@@ -12,6 +12,10 @@ import java.math.BigDecimal;
 @Accessors(chain = true)
 public class MesWarehouseUseDTO {
 
+    private Long reportId;
+
+    private String reportRequestId;
+
     private String arrangeCode;
 
     private BigDecimal reportNum;
@@ -21,5 +25,9 @@ public class MesWarehouseUseDTO {
     private String processRouteCode;
 
     private String snapshot;
+
+    private String bomSnapshot;
+
+    private String factoryCode;
 
 }

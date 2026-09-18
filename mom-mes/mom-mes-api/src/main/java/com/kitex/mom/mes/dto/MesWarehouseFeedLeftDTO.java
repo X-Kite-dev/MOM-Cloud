@@ -26,6 +26,14 @@ public class MesWarehouseFeedLeftDTO {
 
     private String matCode;
 
+    private String reservationNo;
+
+    private String requirementMatCode;
+
+    private Boolean substituteFlag;
+
+    private BigDecimal substituteRatio;
+
     private String matName;
 
     private String matSpec;

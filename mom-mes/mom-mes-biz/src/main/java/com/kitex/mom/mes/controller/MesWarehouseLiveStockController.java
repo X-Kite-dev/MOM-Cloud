@@ -71,6 +71,7 @@ public class MesWarehouseLiveStockController {
         }
         wrapper.like(StrUtil.isNotBlank(liveStock.getMatCode()), MesWarehouseLiveStockEntity::getMatCode, liveStock.getMatCode())
                 .like(StrUtil.isNotBlank(liveStock.getMatName()), MesWarehouseLiveStockEntity::getMatName, liveStock.getMatName())
+                .eq(StrUtil.isNotBlank(liveStock.getInspectionStatus()), MesWarehouseLiveStockEntity::getInspectionStatus, liveStock.getInspectionStatus())
                 .in(CollUtil.isNotEmpty(liveStock.getSiteCode()), MesWarehouseLiveStockEntity::getSiteCode, liveStock.getSiteCode());
         return wrapper;
     }
@@ -141,6 +142,11 @@ public class MesWarehouseLiveStockController {
     @PostMapping
     @PreAuthorize("@pms.hasPermission('mes_mesWarehouseLiveStock_add')")
     public R save(@RequestBody MesWarehouseLiveStockEntity mesWarehouseLiveStock) {
+        if(mesWarehouseLiveStock.getQualityCaseId()!=null || mesWarehouseLiveStock.getQualityOriginCaseId()!=null || mesWarehouseLiveStock.getQualityDispositionReceiptId()!=null || mesWarehouseLiveStock.getQualityReleaseReceiptId()!=null) throw new com.kitex.common.core.exception.CheckedException("质量案件库存及处置谱系只能由专用命令生成");
+        if (mesWarehouseLiveStock.getPhysicalLocationCode()!=null || mesWarehouseLiveStock.getPhysicalLocationName()!=null || mesWarehouseLiveStock.getPhysicalConfirmedTime()!=null)
+            throw new com.kitex.common.core.exception.CheckedException("现场位置确认须由实际转运交接生成，不得手工伪造");
+        if (mesWarehouseLiveStock.getMaterialReceiptId() != null || mesWarehouseLiveStock.getSourceReportId() != null)
+            throw new com.kitex.common.core.exception.CheckedException("不得通过手工库存新增伪造报工或签收来源");
         return R.ok(mesWarehouseLiveStockService.save(mesWarehouseLiveStock));
     }
 
@@ -150,7 +156,11 @@ public class MesWarehouseLiveStockController {
     @Operation(summary = "线边库实时库存入库", description = "线边库实时库存入库")
     @SysLog("线边库实时库存入库")
     @PostMapping("/inStock")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehouseLiveStock_add')")
     public R inStock(@Validated @RequestBody MesWarehouseLiveStockInoutDTO mesWarehouseLiveStock) {
+        if (mesWarehouseLiveStock.getMaterialReceiptId() != null || mesWarehouseLiveStock.getSourceReportId() != null
+                || com.kitex.mom.mes.enums.WarehouseInBizTypeEnum.RECEPTION.getCode().equals(mesWarehouseLiveStock.getBizType()))
+            throw new com.kitex.common.core.exception.CheckedException("生产签收和报工库存须由对应业务命令生成");
         return R.ok(mesWarehouseLiveStockService.inStock(mesWarehouseLiveStock));
     }
 
@@ -160,8 +170,9 @@ public class MesWarehouseLiveStockController {
     @Operation(summary = "线边库实时库存出库", description = "线边库实时库存出库")
     @SysLog("线边库实时库存出库")
     @PostMapping("/outStock")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehouseLiveStock_edit')")
     public R outStock(@Validated @RequestBody MesWarehouseLiveStockInoutDTO mesWarehouseLiveStock) {
-        return R.ok(mesWarehouseLiveStockService.outStock(mesWarehouseLiveStock));
+        throw new com.kitex.common.core.exception.CheckedException("通用HTTP出库入口已关闭：请使用报工、退料或冲销等受控业务命令，不能直接提交跳过质量/任务约束的库存参数");
     }
 
     /**
@@ -175,7 +186,7 @@ public class MesWarehouseLiveStockController {
     @PutMapping
     @PreAuthorize("@pms.hasPermission('mes_mesWarehouseLiveStock_edit')")
     public R updateById(@RequestBody MesWarehouseLiveStockEntity mesWarehouseLiveStock) {
-        return R.ok(mesWarehouseLiveStockService.updateById(mesWarehouseLiveStock));
+        return R.ok(mesWarehouseLiveStockService.updateManual(mesWarehouseLiveStock));
     }
 
     /**
@@ -189,7 +200,7 @@ public class MesWarehouseLiveStockController {
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('mes_mesWarehouseLiveStock_del')")
     public R removeById(@RequestBody Long[] ids) {
-        return R.ok(mesWarehouseLiveStockService.removeBatchByIds(CollUtil.toList(ids)));
+        return R.ok(mesWarehouseLiveStockService.removeManual(ids));
     }
 
     /**

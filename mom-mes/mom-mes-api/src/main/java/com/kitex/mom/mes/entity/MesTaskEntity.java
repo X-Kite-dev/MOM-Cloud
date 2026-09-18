@@ -29,6 +29,8 @@ import java.util.List;
 @Schema(description = "生产工单")
 @TableName("mes_task")
 public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    private Long reworkMaterialPlanId;
 
     /**
      * 工单编码
@@ -202,6 +204,72 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
     @Schema(description = "来源id")
     private String resourceId;
 
+    @Schema(description = "返工永久幂等请求号")
+    private String reworkRequestId;
+
+    @Schema(description = "原生产工单编码")
+    private String sourceTaskCode;
+
+    @Schema(description = "来源质检类型")
+    private String sourceInspectionType;
+
+    @Schema(description = "来源质检任务ID")
+    private Long sourceInspectionTaskId;
+
+    @Schema(description = "来源质量处置记录ID")
+    private Long sourceHandleRecordId;
+
+    @Schema(description = "返工执行工序")
+    private String reworkProcessCode;
+
+    @Schema(description = "返工原因/处置要求")
+    private String reworkReason;
+
+    @Schema(description = "MES完工回传QMS状态 PENDING/SUCCEEDED/FAILED")
+    private String reworkCallbackStatus;
+
+    @Schema(description = "MES完工回传QMS说明")
+    private String reworkCallbackMessage;
+
+    @Schema(description = "MES完工回传QMS次数")
+    private Integer reworkCallbackCount;
+
+    @Schema(description = "返工复检任务ID")
+    private Long reinspectionTaskId;
+
+    @Schema(description = "返工复检同步状态 WAIT/PARTIAL/RELEASED/REJECTED/FAILED")
+    private String reinspectionStatus;
+
+    @Schema(description = "返工复检同步说明")
+    private String reinspectionMessage;
+
+    @Schema(description = "返工复检累计放行数量")
+    private BigDecimal reworkQualifiedNum;
+
+    @Schema(description = "返工复检累计拒绝数量")
+    private BigDecimal reworkRejectedNum;
+
+    @Schema(description = "计划批准的WMS物料预留关系快照JSON")
+    private String materialReservationSnapshot;
+
+    @Schema(description = "APS锁定后的工序资源、设备、人员与时间快照JSON")
+    private String apsOperationSnapshot;
+
+    @Schema(description = "APS正式任务ID")
+    private Long apsTaskId;
+
+    @Schema(description = "APS执行批次ID")
+    private Long apsBatchId;
+
+    @Schema(description = "APS执行批次号，MES接收永久幂等键")
+    private String apsBatchNo;
+
+    @Schema(description = "APS批次类型 SINGLE/SPLIT/MERGED")
+    private String apsBatchType;
+
+    @Schema(description = "APS批次来源与数量指纹")
+    private String apsBatchFingerprint;
+
     /**
      * 车间编码
      */
@@ -252,4 +320,3 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
     @TableField(fill = FieldFill.INSERT)
     private String factoryCode;
 }
-

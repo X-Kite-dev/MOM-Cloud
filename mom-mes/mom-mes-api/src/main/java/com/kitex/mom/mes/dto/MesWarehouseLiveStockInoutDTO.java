@@ -17,6 +17,8 @@ import java.time.LocalDateTime;
 @Data
 @Schema(description = "线边库实时库存出入库参数")
 public class MesWarehouseLiveStockInoutDTO {
+    /** 受控线边签收操作ID，只能由业务服务赋值。 */
+    private Long materialReceiptId;
 
     /**
      * 业务类型
@@ -34,6 +36,9 @@ public class MesWarehouseLiveStockInoutDTO {
     @Schema(description = "工序任务编号")
     private String produceTaskCode;
 
+    @Schema(description = "出库时是否允许使用未绑定生产任务的公共线边库存")
+    private Boolean allowUnassignedProduceTask;
+
     @Schema(description = "工序编码")
     private String routeCode;
 
@@ -46,12 +51,33 @@ public class MesWarehouseLiveStockInoutDTO {
     @Schema(description = "单据id")
     private Long billId;
 
+    @Schema(description = "来源业务唯一号")
+    private String resourceNo;
+
+    @Schema(description = "库存来源报工记录ID")
+    private Long sourceReportId;
+
     /**
      * 物料编码
      */
     @NotBlank(message = "物料编码为空")
     @Schema(description = "物料编码")
     private String matCode;
+
+    @Schema(description = "WMS物料预留单号")
+    private String reservationNo;
+
+    @Schema(description = "BOM需求物料编码")
+    private String requirementMatCode;
+
+    @Schema(description = "BOM需求物料名称")
+    private String requirementMatName;
+
+    @Schema(description = "是否使用替代料")
+    private Boolean substituteFlag;
+
+    @Schema(description = "替代比例")
+    private BigDecimal substituteRatio;
 
     /**
      * 物料名称
@@ -178,6 +204,9 @@ public class MesWarehouseLiveStockInoutDTO {
      */
     @Schema(description = "质检状态")
     private String inspectionStatus;
+
+    @Schema(description = "内部冲销是否允许扣减待判或拒绝库存")
+    private Boolean allowQualityBlocked;
 
     /**
      * 物料明细类型 原材料、半成品、在制品

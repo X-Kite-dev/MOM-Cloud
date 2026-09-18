@@ -4,6 +4,15 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.entity.MesChangePointHandleEntity;
+import com.kitex.mom.mes.dto.ChangePointAcceptCommand;
+import com.kitex.mom.mes.dto.ChangePointCancelCommand;
+import com.kitex.mom.mes.dto.ChangePointHandleCommand;
+import com.kitex.mom.mes.dto.ChangePointTriggerCommand;
+import com.kitex.mom.mes.dto.ChangePointVerifyCommand;
+import com.kitex.mom.mes.entity.MesChangePointOperationEntity;
+import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
+
+import java.util.List;
 
 
 /**
@@ -28,12 +37,28 @@ public interface MesChangePointHandleService extends IService<MesChangePointHand
      *
      * @param mesChangePointHandle
      */
-    void notice(MesChangePointHandleEntity mesChangePointHandle);
+    MesChangePointHandleEntity trigger(ChangePointTriggerCommand command);
 
     /**
      * 处理
      *
      * @param mesChangePointHandle
      */
-    void handle(MesChangePointHandleEntity mesChangePointHandle);
+    void accept(ChangePointAcceptCommand command);
+
+    void handle(ChangePointHandleCommand command);
+
+    void verify(ChangePointVerifyCommand command);
+
+    void cancel(ChangePointCancelCommand command);
+
+    void retryInspection(Long id);
+
+    List<MesChangePointOperationEntity> operations(Long id);
+
+    void assertStartAllowed(MesTaskArrangeEntity arrange);
+
+    void assertReportAllowed(MesTaskArrangeEntity arrange);
+
+    void scanSla();
 }

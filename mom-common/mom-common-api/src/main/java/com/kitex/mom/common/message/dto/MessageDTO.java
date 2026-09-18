@@ -52,6 +52,13 @@ public class MessageDTO {
     private String message;
 
     /**
+     * 调用方允许的投递通道。空值保持原业务配置行为；SYSTEM 表示站内信，
+     * 其余值必须与业务消息当前绑定的外部通道类型一致。
+     */
+    @Schema(description = "本次允许投递的通道，例如SYSTEM,DINGDING,WECHAT")
+    private List<String> requestedChannels;
+
+    /**
      * 业务消息配置
      */
     @Schema(description = "业务消息配置")

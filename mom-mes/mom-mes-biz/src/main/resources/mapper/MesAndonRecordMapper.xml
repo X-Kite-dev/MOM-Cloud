@@ -22,6 +22,11 @@
         t1.create_time,
         t1.ex_desc,
         t1.receive_time,
+        t1.response_deadline,
+        t1.handle_deadline,
+        t1.escalation_count,
+        t1.escalation_step,
+        t1.next_escalation_time,
         t1.handler_name,
         t1.handler_code,
         t2.staff_name,
@@ -29,10 +34,11 @@
         t2.notice_type
         FROM
         mes_andon_notice t2
-        LEFT JOIN mes_andon_record t1 ON t1.CODE = t2.record_code
-        WHERE t2.del_flag = '0'
+        JOIN mes_andon_record t1 ON t1.CODE = t2.record_code AND t1.tenant_id = t2.tenant_id
+          AND t1.factory_code = t2.factory_code AND t1.del_flag = '0'
+        WHERE t2.del_flag = '0' AND t1.factory_code = #{factoryCode}
         <if test="query.typeName != null and query.typeName != '' ">
-            AND t1.typeName LIKE CONCAT('%',#{query.typeName},'%')
+            AND t1.type_name LIKE CONCAT('%',#{query.typeName},'%')
         </if>
         <if test="query.code != null and query.code != '' ">
             AND t1.code LIKE CONCAT('%',#{query.code},'%')

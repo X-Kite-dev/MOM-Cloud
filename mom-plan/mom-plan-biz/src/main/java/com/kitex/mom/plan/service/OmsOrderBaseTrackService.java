@@ -66,11 +66,6 @@ public interface OmsOrderBaseTrackService extends IService<OmsOrderBaseTrackEnti
     Boolean withdraw(Long id);
 
     /**
-     * 更新订单发货信息
-     */
-    Boolean updateOrderDeliver(List<OmsUpdateOrderDeliverDto> deliverDtoList);
-
-    /**
      * 查询各订单跟踪状态的数量
      *
      * @return

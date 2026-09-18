@@ -6,6 +6,7 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.entity.BaseEntity;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.oms.enums.YesOrNoStateEnum;
@@ -57,6 +58,8 @@ public class WmsDeliverGoodsReturnServiceImpl extends ServiceImpl<WmsDeliverGood
     private final WmsInNoticeMapper wmsInNoticeMapper;
 
     private final WmsDeliverGoodsReturnDetailsService wmsDeliverGoodsReturnDetailsService;
+
+    private final WmsOmsSalesReturnEventOutboxService omsSalesReturnEventOutboxService;
 
     /**
      * 根据id查询
@@ -306,61 +309,117 @@ public class WmsDeliverGoodsReturnServiceImpl extends ServiceImpl<WmsDeliverGood
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void updateReturnByBill(WmsInBillEntity bill) {
-        //入库单 bill
-        //入库详情
+        if (bill == null || bill.getId() == null || bill.getDocumentId() == null
+                || !DocumentEnum.D_RETURN.getCode().equals(bill.getDocumentTable())
+                || bill.getInTime() == null || StrUtil.isBlank(bill.getFactoryCode())) {
+            throw new CheckedException("销售退货入库单缺少退货来源、工厂或实收时间");
+        }
         List<WmsInBillDetailEntity> billDetailList = wmsInBillDetailMapper.selectList(new LambdaQueryWrapper<WmsInBillDetailEntity>()
-                .eq(WmsInBillDetailEntity::getBillId, bill.getId()));
-
-        List<Long> noticeDetailsList = billDetailList.stream().map(WmsInBillDetailEntity::getNoticeDetailId).distinct().toList();
-
-
+                .eq(WmsInBillDetailEntity::getBillId, bill.getId()).orderByAsc(WmsInBillDetailEntity::getId));
+        if (CollUtil.isEmpty(billDetailList) || billDetailList.stream().anyMatch(item -> item.getId() == null
+                || item.getNoticeDetailId() == null || item.getOperateNum() == null || item.getOperateNum() <= 0d)) {
+            throw new CheckedException("销售退货实收入库明细、通知来源或正数量不完整");
+        }
+        List<Long> noticeDetailsList = billDetailList.stream().map(WmsInBillDetailEntity::getNoticeDetailId)
+                .distinct().toList();
         List<WmsInNoticeDetailEntity> wmsInNoticeDetailList = wmsInNoticeDetailMapper.selectByIds(noticeDetailsList);
+        if (wmsInNoticeDetailList.size() != noticeDetailsList.size()) {
+            throw new CheckedException("销售退货入库引用的通知明细缺失");
+        }
         Map<Long, WmsInNoticeDetailEntity> inNoticeDetailMap = wmsInNoticeDetailList.stream().collect(Collectors.toMap(BaseEntity::getId, Function.identity()));
-
-
-        WmsDeliverGoodsReturnEntity deliverReturnBase = this.getById(bill.getDocumentId());
-        //更细发货计划和发货单发货明细
+        WmsDeliverGoodsReturnEntity deliverReturnBase = this.getOne(new LambdaQueryWrapper<WmsDeliverGoodsReturnEntity>()
+                .eq(BaseEntity::getId, bill.getDocumentId()).last("FOR UPDATE"), false);
+        if (deliverReturnBase == null || !ObjectUtil.equal(deliverReturnBase.getFactoryCode(), bill.getFactoryCode())) {
+            throw new CheckedException("销售退货申请不存在或与入库单工厂不一致");
+        }
         List<WmsDeliverGoodsReturnDetailsEntity> detailsList = wmsDeliverGoodsReturnDetailsService.list(new LambdaQueryWrapper<WmsDeliverGoodsReturnDetailsEntity>()
-                .eq(WmsDeliverGoodsReturnDetailsEntity::getReturnId, deliverReturnBase.getId()));
+                .eq(WmsDeliverGoodsReturnDetailsEntity::getReturnId, deliverReturnBase.getId())
+                .orderByAsc(WmsDeliverGoodsReturnDetailsEntity::getId).last("FOR UPDATE"));
         Map<Long, WmsDeliverGoodsReturnDetailsEntity> returnDetailMap = detailsList.stream().collect(Collectors.toMap(WmsDeliverGoodsReturnDetailsEntity::getId, Function.identity()));
-
-        List<String> planCodes = detailsList.stream().filter(item -> StrUtil.isNotBlank(item.getDeliverPlanCode())).map(WmsDeliverGoodsReturnDetailsEntity::getDeliverPlanCode).distinct().toList();
-        List<Long> detailsIds = detailsList.stream().filter(item -> ObjectUtil.isNotEmpty(item.getBaseDetailsId())).map(WmsDeliverGoodsReturnDetailsEntity::getBaseDetailsId).distinct().toList();
-
-        //查询发货计划
+        for (WmsInNoticeDetailEntity notice : wmsInNoticeDetailList) {
+            if (!DocumentEnum.D_RETURN.getCode().equals(notice.getDocumentTable())
+                    || !returnDetailMap.containsKey(notice.getDocumentId())) {
+                throw new CheckedException("入库通知明细未精确关联当前销售退货申请明细");
+            }
+        }
+        List<String> planCodes = detailsList.stream().filter(item -> StrUtil.isNotBlank(item.getDeliverPlanCode()))
+                .map(WmsDeliverGoodsReturnDetailsEntity::getDeliverPlanCode).distinct().toList();
+        List<Long> detailsIds = detailsList.stream().filter(item -> item.getBaseDetailsId() != null)
+                .map(WmsDeliverGoodsReturnDetailsEntity::getBaseDetailsId).distinct().toList();
+        Map<String, WmsDeliverGoodsPlanBaseEntity> planBaseMap = new java.util.HashMap<>();
         if (CollUtil.isNotEmpty(planCodes)) {
             List<WmsDeliverGoodsPlanBaseEntity> planBaseList = wmsDeliverGoodsPlanBaseMapper.selectList(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
-                    .in(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, planCodes));
-            Map<String, WmsDeliverGoodsPlanBaseEntity> planBaseMap = planBaseList.stream().collect(Collectors.toMap(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, Function.identity()));
-
-            for (WmsInBillDetailEntity wmsInBillDetailEntity : billDetailList) {
-                WmsInNoticeDetailEntity notice = inNoticeDetailMap.get(wmsInBillDetailEntity.getNoticeDetailId());
-                WmsDeliverGoodsReturnDetailsEntity returnDetails = returnDetailMap.get(notice.getDocumentId());
-                WmsDeliverGoodsPlanBaseEntity planBase = planBaseMap.get(returnDetails.getDeliverPlanCode());
-                BigDecimal returnNum = planBase.getReturnNum();
-                planBase.setReturnNum(returnNum.add(BigDecimal.valueOf(wmsInBillDetailEntity.getOperateNum())));
+                    .in(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, planCodes)
+                    .orderByAsc(WmsDeliverGoodsPlanBaseEntity::getId).last("FOR UPDATE"));
+            for (WmsDeliverGoodsPlanBaseEntity plan : planBaseList) {
+                if (planBaseMap.putIfAbsent(plan.getDeliverPlanCode(), plan) != null) {
+                    throw new CheckedException("销售退货原发货计划号重复，数量归属存在歧义");
+                }
             }
-            wmsDeliverGoodsPlanBaseMapper.updateById(planBaseList);
+            if (planBaseMap.size() != planCodes.size()) throw new CheckedException("销售退货原发货计划缺失");
         }
-
-        //查询明细
+        Map<Long, WmsDeliverGoodsDetailsEntity> deliverGoodsDetailsMap = new java.util.HashMap<>();
         if (CollUtil.isNotEmpty(detailsIds)) {
             List<WmsDeliverGoodsDetailsEntity> deliverGoodsDetailsList = wmsDeliverGoodsDetailsMapper.selectList(new LambdaQueryWrapper<WmsDeliverGoodsDetailsEntity>()
-                    .in(WmsDeliverGoodsDetailsEntity::getId, detailsIds));
-            Map<Long, WmsDeliverGoodsDetailsEntity> deliverGoodsDetailsMap = deliverGoodsDetailsList.stream().collect(Collectors.toMap(WmsDeliverGoodsDetailsEntity::getId, Function.identity()));
-
-            for (WmsInBillDetailEntity wmsInBillDetailEntity : billDetailList) {
-                WmsInNoticeDetailEntity notice = inNoticeDetailMap.get(wmsInBillDetailEntity.getNoticeDetailId());
-                WmsDeliverGoodsReturnDetailsEntity returnDetails = returnDetailMap.get(notice.getDocumentId());
-                WmsDeliverGoodsDetailsEntity goodsDetails = deliverGoodsDetailsMap.get(returnDetails.getBaseDetailsId());
-                BigDecimal returnNum = goodsDetails.getReturnNum();
-                goodsDetails.setReturnNum(returnNum.add(BigDecimal.valueOf(wmsInBillDetailEntity.getOperateNum())));
+                    .in(WmsDeliverGoodsDetailsEntity::getId, detailsIds).orderByAsc(WmsDeliverGoodsDetailsEntity::getId)
+                    .last("FOR UPDATE"));
+            deliverGoodsDetailsMap.putAll(deliverGoodsDetailsList.stream().collect(Collectors.toMap(WmsDeliverGoodsDetailsEntity::getId, Function.identity())));
+            if (deliverGoodsDetailsMap.size() != detailsIds.size()) {
+                throw new CheckedException("销售退货原发货单明细缺失");
             }
-            wmsDeliverGoodsDetailsMapper.updateById(deliverGoodsDetailsList);
         }
-
-
+        Map<String, BigDecimal> planIncrement = new java.util.HashMap<>();
+        Map<Long, BigDecimal> detailIncrement = new java.util.HashMap<>();
+        for (WmsInBillDetailEntity billDetail : billDetailList) {
+            WmsInNoticeDetailEntity notice = inNoticeDetailMap.get(billDetail.getNoticeDetailId());
+            WmsDeliverGoodsReturnDetailsEntity returnDetail = returnDetailMap.get(notice.getDocumentId());
+            BigDecimal quantity = BigDecimal.valueOf(billDetail.getOperateNum());
+            if (!ObjectUtil.equal(billDetail.getFactoryCode(), bill.getFactoryCode())
+                    || !ObjectUtil.equal(notice.getFactoryCode(), bill.getFactoryCode())
+                    || !ObjectUtil.equal(billDetail.getMatCode(), returnDetail.getProductCode())
+                    || !ObjectUtil.equal(notice.getMatCode(), returnDetail.getProductCode())) {
+                throw new CheckedException("销售退货入库明细与退货申请的工厂或产品不一致");
+            }
+            WmsDeliverGoodsDetailsEntity deliveryDetail = deliverGoodsDetailsMap.get(returnDetail.getBaseDetailsId());
+            WmsDeliverGoodsPlanBaseEntity plan = planBaseMap.get(returnDetail.getDeliverPlanCode());
+            if (deliveryDetail == null || plan == null
+                    || !ObjectUtil.equal(deliveryDetail.getDeliverPlanCode(), plan.getDeliverPlanCode())
+                    || !ObjectUtil.equal(deliveryDetail.getProductCode(), plan.getProductCode())
+                    || !ObjectUtil.equal(returnDetail.getProductCode(), plan.getProductCode())) {
+                throw new CheckedException("销售退货无法精确追溯同产品的原发货明细和计划");
+            }
+            planIncrement.merge(plan.getDeliverPlanCode(), quantity, BigDecimal::add);
+            detailIncrement.merge(deliveryDetail.getId(), quantity, BigDecimal::add);
+        }
+        for (Map.Entry<String, BigDecimal> entry : planIncrement.entrySet()) {
+            WmsDeliverGoodsPlanBaseEntity plan = planBaseMap.get(entry.getKey());
+            BigDecimal current = ObjectUtil.defaultIfNull(plan.getReturnNum(), BigDecimal.ZERO);
+            if (plan.getDeliveredNum() == null || current.add(entry.getValue()).compareTo(plan.getDeliveredNum()) > 0) {
+                throw new CheckedException("销售退货实收累计超过原发货计划已发数量");
+            }
+            plan.setReturnNum(current.add(entry.getValue()));
+            if (wmsDeliverGoodsPlanBaseMapper.updateById(plan) != 1) throw new CheckedException("原发货计划退货累计保存失败");
+        }
+        for (Map.Entry<Long, BigDecimal> entry : detailIncrement.entrySet()) {
+            WmsDeliverGoodsDetailsEntity detail = deliverGoodsDetailsMap.get(entry.getKey());
+            BigDecimal current = ObjectUtil.defaultIfNull(detail.getReturnNum(), BigDecimal.ZERO);
+            if (detail.getDeliveredNum() == null || current.add(entry.getValue()).compareTo(detail.getDeliveredNum()) > 0) {
+                throw new CheckedException("销售退货实收累计超过原发货单明细已发数量");
+            }
+            detail.setReturnNum(current.add(entry.getValue()));
+            if (wmsDeliverGoodsDetailsMapper.updateById(detail) != 1) throw new CheckedException("原发货明细退货累计保存失败");
+        }
+        for (WmsInBillDetailEntity billDetail : billDetailList) {
+            WmsDeliverGoodsReturnDetailsEntity returnDetail = returnDetailMap.get(
+                    inNoticeDetailMap.get(billDetail.getNoticeDetailId()).getDocumentId());
+            WmsDeliverGoodsPlanBaseEntity plan = planBaseMap.get(returnDetail.getDeliverPlanCode());
+            if (plan.getOrderCodeDetails() != null) {
+                omsSalesReturnEventOutboxService.enqueue(bill, billDetail, deliverReturnBase, returnDetail,
+                        plan, BigDecimal.valueOf(billDetail.getOperateNum()));
+            }
+        }
     }
 
 }

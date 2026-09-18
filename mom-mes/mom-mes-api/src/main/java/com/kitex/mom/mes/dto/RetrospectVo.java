@@ -13,6 +13,10 @@ import java.util.List;
  */
 @Data
 public class RetrospectVo {
+    @Schema(description = "证据模式；旧汇总不代表完整实际消耗谱系")
+    private String evidenceMode;
+    @Schema(description = "证据缺口及使用边界")
+    private List<String> warnings;
 
     @Schema(description = "原材料信息")
     private List<MatRetrospectDTO> mat;

@@ -10,6 +10,8 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.math.BigDecimal;
 
 /**
  * 排产任务
@@ -33,7 +35,7 @@ public class PlnSchedulingTaskEntity extends BaseEntity<PlnSchedulingTaskEntity>
     @Schema(description = "运行模式: simulate/official")
     private String mode;
 
-    @Schema(description = "任务状态: PENDING/RUNNING/SUCCESS/FAILED/PARTIAL")
+    @Schema(description = "任务状态: PENDING/RUNNING/SIMULATED/WAIT_CONFIRM/SUCCESS/FAILED/PARTIAL/SUPERSEDED/CANCELLED")
     private String taskStatus;
 
     @Schema(description = "计划日期")
@@ -50,6 +52,28 @@ public class PlnSchedulingTaskEntity extends BaseEntity<PlnSchedulingTaskEntity>
 
     @Schema(description = "备注")
     private String remark;
+
+    @Schema(description = "所属多候选排产情景ID；为空表示普通单方案任务")
+    private Long scenarioId;
+    private String candidateCode;
+    private String candidateName;
+    @Schema(description = "DELIVERY_FIRST、BALANCED_GLOBAL或CHANGEOVER_FIRST")
+    private String sequenceStrategy;
+    private Integer crossPriorityWindowDays;
+    private String objectiveWeightsSnapshot;
+    private String candidateMetricsSnapshot;
+    private BigDecimal candidateScore;
+    private Integer candidateRank;
+    private Boolean candidateFeasible;
+    private Boolean selectedCandidate;
+    private LocalDateTime evaluatedTime;
+
+    @Schema(description = "结果归档标签，不代表释放资源或撤回生产")
+    private Boolean resultArchived;
+    @Schema(description = "任务生命周期操作版本；历史基线为0")
+    private Integer lifecycleVersion;
+    @Schema(description = "受控运行请求ID；原子绑定唯一求解结果，不覆盖原失败尝试")
+    private Long executionId;
 
     @Schema(description = "工厂编码")
     @TableField(fill = FieldFill.INSERT)

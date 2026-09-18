@@ -122,6 +122,15 @@ public class PlnIssueMonthEntity extends BaseEntity<PlnIssueMonthEntity> {
     @Schema(description = "来源类型")
     private String type;
 
+    @Schema(description = "下达PMS后回写的采购/外协计划ID")
+    private Long downstreamPlanId;
+
+    @Schema(description = "下达PMS后回写的采购/外协计划号")
+    private String downstreamPlanNo;
+
+    @Schema(description = "PLAN月计划推送PMS时的来源SHA-256指纹")
+    private String downstreamPlanFingerprint;
+
     /**
      * 工厂编码
      */

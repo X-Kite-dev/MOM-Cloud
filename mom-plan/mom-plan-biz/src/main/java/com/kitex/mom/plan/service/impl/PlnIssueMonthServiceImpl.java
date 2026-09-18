@@ -33,6 +33,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -302,6 +304,8 @@ public class PlnIssueMonthServiceImpl extends ServiceImpl<PlnIssueMonthMapper, P
      * @param mdmMaterialEntity   物料
      */
     private void savePmsPlan(PlnIssueMonthEntity plnIssueMonthEntity, MdmMaterialEntity mdmMaterialEntity) {
+        if (mdmMaterialEntity == null) throw new CheckedException("月计划物料主数据不存在：" + plnIssueMonthEntity.getProductCode());
+        String sourceFingerprint = sourceFingerprint(plnIssueMonthEntity);
         PmsPlanEntity pmsPlan = new PmsPlanEntity();
         pmsPlan.setPmsPlanNo(remoteSeqConfigService.create("pms_plan").getData());
         pmsPlan.setOrderNo(plnIssueMonthEntity.getIssueMonthNo());
@@ -315,9 +319,35 @@ public class PlnIssueMonthServiceImpl extends ServiceImpl<PlnIssueMonthMapper, P
         pmsPlan.setStatus(PmsPlanStatusEnum.NO_CREATEK.getCode());
         pmsPlan.setType(plnIssueMonthEntity.getMaterialAttribute());
         pmsPlan.setFactoryCode(plnIssueMonthEntity.getFactoryCode());
-        Boolean data = remotePmsPlanService.save(pmsPlan).getData();
-        if (data == null || !data) {
+        pmsPlan.setSourceIssueMonthId(plnIssueMonthEntity.getId());
+        pmsPlan.setSourceIssueMonthFingerprint(sourceFingerprint);
+        com.kitex.common.core.util.R<PmsPlanEntity> response = remotePmsPlanService.saveFromPlanSource(pmsPlan);
+        PmsPlanEntity data = response == null ? null : response.getData();
+        if (response == null || !response.isOk() || data == null) {
             throw new CheckedException("采购模块推送失败");
+        }
+        if (!Objects.equals(data.getSourceIssueMonthId(), plnIssueMonthEntity.getId())
+                || !Objects.equals(data.getSourceIssueMonthFingerprint(), sourceFingerprint)
+                || !Objects.equals(data.getOrderNo(), plnIssueMonthEntity.getIssueMonthNo())
+                || !Objects.equals(data.getMatCode(), plnIssueMonthEntity.getProductCode())) {
+            throw new CheckedException("PMS返回的采购/外协计划来源不一致");
+        }
+        plnIssueMonthEntity.setDownstreamPlanId(data.getId());
+        plnIssueMonthEntity.setDownstreamPlanNo(data.getPmsPlanNo());
+        plnIssueMonthEntity.setDownstreamPlanFingerprint(sourceFingerprint);
+        if (!updateById(plnIssueMonthEntity)) throw new CheckedException("PMS采购/外协计划精确关联回写失败");
+    }
+
+    private String sourceFingerprint(PlnIssueMonthEntity source) {
+        String value = String.join("|", Objects.toString(source.getId(), ""), Objects.toString(source.getIssueMonthNo(), ""),
+                Objects.toString(source.getProductCode(), ""), Objects.toString(source.getNum(), ""),
+                Objects.toString(source.getDemandTime(), ""), Objects.toString(source.getMaterialAttribute(), ""),
+                Objects.toString(source.getFactoryCode(), ""), Objects.toString(source.getType(), ""));
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new CheckedException("PLAN月计划来源指纹生成失败");
         }
     }
 }

@@ -8,7 +8,21 @@ import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.mom.wms.entity.WmsDeliverGoodsBaseEntity;
+import com.kitex.mom.wms.entity.WmsOmsDeliveryEventOutboxEntity;
+import com.kitex.mom.wms.dto.WmsShipmentCustodyCommand;
+import com.kitex.mom.wms.dto.WmsShipmentExceptionResolutionCommand;
+import com.kitex.mom.wms.entity.WmsShipmentCustodyEntity;
+import com.kitex.mom.wms.entity.WmsShipmentCustodyOperationEntity;
+import com.kitex.mom.wms.entity.WmsShipmentReceiptDetailEntity;
+import com.kitex.mom.wms.entity.WmsOmsCustomerReceiptOutboxEntity;
+import com.kitex.mom.wms.entity.WmsShipmentExceptionResolutionEntity;
+import com.kitex.mom.wms.entity.WmsOmsCustomerExceptionResolutionOutboxEntity;
 import com.kitex.mom.wms.service.WmsDeliverGoodsBaseService;
+import com.kitex.mom.wms.service.impl.WmsOmsDeliveryEventOutboxService;
+import com.kitex.mom.wms.service.impl.WmsShipmentCustodyService;
+import com.kitex.mom.wms.service.impl.WmsOmsCustomerReceiptOutboxService;
+import com.kitex.mom.wms.service.impl.WmsShipmentExceptionResolutionService;
+import com.kitex.common.log.annotation.SysLog;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -35,6 +49,93 @@ import java.util.Map;
 public class WmsDeliverGoodsBaseController {
 
     private final WmsDeliverGoodsBaseService wmsDeliverGoodsBaseService;
+    private final WmsOmsDeliveryEventOutboxService omsDeliveryEventOutboxService;
+    private final WmsShipmentCustodyService shipmentCustodyService;
+    private final WmsOmsCustomerReceiptOutboxService customerReceiptOutboxService;
+    private final WmsShipmentExceptionResolutionService exceptionResolutionService;
+
+    @GetMapping("/custody/byDelivery/{deliveryId}")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentCustody_view')")
+    public R<List<WmsShipmentCustodyEntity>> custodyByDelivery(@PathVariable Long deliveryId){return R.ok(shipmentCustodyService.listByDelivery(deliveryId));}
+    @GetMapping("/custody/{id}/operations")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentCustody_view')")
+    public R<List<WmsShipmentCustodyOperationEntity>> custodyOperations(@PathVariable Long id){return R.ok(shipmentCustodyService.operations(id));}
+    @GetMapping("/custody/{id}/receiptDetails")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentCustody_view')")
+    public R<List<WmsShipmentReceiptDetailEntity>> custodyReceiptDetails(@PathVariable Long id){return R.ok(shipmentCustodyService.receiptDetails(id));}
+    @PostMapping("/custody/handover")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentCustody_handover')") @SysLog("销售发运承运交接")
+    public R<WmsShipmentCustodyEntity> custodyHandover(@RequestBody WmsShipmentCustodyCommand.Handover command){return R.ok(shipmentCustodyService.handover(command));}
+    @PostMapping("/custody/{id}/cancel")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentCustody_cancel')") @SysLog("取消销售发运承运交接")
+    public R<WmsShipmentCustodyEntity> custodyCancel(@PathVariable Long id,@RequestBody WmsShipmentCustodyCommand.Cancel command){return R.ok(shipmentCustodyService.cancel(id,command));}
+    @PostMapping("/custody/{id}/depart")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentCustody_depart')") @SysLog("销售发运门岗离场")
+    public R<WmsShipmentCustodyEntity> custodyDepart(@PathVariable Long id,@RequestBody WmsShipmentCustodyCommand.Depart command){return R.ok(shipmentCustodyService.depart(id,command));}
+    @PostMapping("/custody/{id}/receipt")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentCustody_receipt')") @SysLog("登记客户实收")
+    public R<WmsShipmentCustodyEntity> custodyReceipt(@PathVariable Long id,@RequestBody WmsShipmentCustodyCommand.Receipt command){return R.ok(shipmentCustodyService.receipt(id,command));}
+    @GetMapping("/custody/{id}/omsEvents")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentCustody_view')")
+    public R<List<WmsOmsCustomerReceiptOutboxEntity>> custodyOmsEvents(@PathVariable Long id){return R.ok(customerReceiptOutboxService.listByCustody(id));}
+    @PostMapping("/custody/omsEvent/{id}/retry")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentCustody_event_retry')") @SysLog("重试客户实收OMS事件")
+    public R<WmsOmsCustomerReceiptOutboxEntity> retryCustodyOmsEvent(@PathVariable Long id){return R.ok(customerReceiptOutboxService.retry(id));}
+    @PostMapping("/custody/omsEvent/{id}/reconcile")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentCustody_view')")
+    public R<WmsOmsCustomerReceiptOutboxEntity> reconcileCustodyOmsEvent(@PathVariable Long id){return R.ok(customerReceiptOutboxService.reconcile(id));}
+
+    @GetMapping("/custody/{id}/exceptionResolution")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentException_view')")
+    public R<WmsShipmentExceptionResolutionEntity> exceptionResolution(@PathVariable Long id){return R.ok(exceptionResolutionService.byCustody(id));}
+    @PostMapping("/custody/exceptionResolution/apply")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentException_apply')") @SysLog("申请客户交付异常处置")
+    public R<WmsShipmentExceptionResolutionEntity> applyExceptionResolution(@RequestBody WmsShipmentExceptionResolutionCommand.Apply command){return R.ok(exceptionResolutionService.apply(command));}
+    @PostMapping("/custody/exceptionResolution/{id}/approve")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentException_approve')") @SysLog("审批客户交付异常处置")
+    public R<WmsShipmentExceptionResolutionEntity> approveExceptionResolution(@PathVariable Long id,@RequestBody WmsShipmentExceptionResolutionCommand.Decision command){return R.ok(exceptionResolutionService.approve(id,command));}
+    @PostMapping("/custody/exceptionResolution/{id}/reject")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentException_approve')") @SysLog("驳回客户交付异常处置")
+    public R<WmsShipmentExceptionResolutionEntity> rejectExceptionResolution(@PathVariable Long id,@RequestBody WmsShipmentExceptionResolutionCommand.Decision command){return R.ok(exceptionResolutionService.reject(id,command));}
+    @PostMapping("/custody/exceptionResolution/{id}/settle")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentException_settle')") @SysLog("登记客户交付异常结算")
+    public R<WmsShipmentExceptionResolutionEntity> settleExceptionResolution(@PathVariable Long id,@RequestBody WmsShipmentExceptionResolutionCommand.Settlement command){return R.ok(exceptionResolutionService.settle(id,command));}
+    @PostMapping("/custody/exceptionResolution/{id}/reconcile")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentException_close')") @SysLog("客户交付异常结案对账")
+    public R<WmsShipmentExceptionResolutionEntity> reconcileExceptionResolution(@PathVariable Long id,@RequestBody WmsShipmentExceptionResolutionCommand.Reconcile command){return R.ok(exceptionResolutionService.reconcile(id,command));}
+    @GetMapping("/custody/exceptionResolution/{id}/omsEvents")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentException_view')")
+    public R<List<WmsOmsCustomerExceptionResolutionOutboxEntity>> exceptionResolutionOmsEvents(@PathVariable Long id){return R.ok(exceptionResolutionService.omsEvents(id));}
+    @PostMapping("/custody/exceptionResolution/omsEvent/{id}/retry")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentException_event_retry')")
+    public R<WmsOmsCustomerExceptionResolutionOutboxEntity> retryExceptionResolutionOms(@PathVariable Long id){return R.ok(exceptionResolutionService.retryOms(id));}
+    @PostMapping("/custody/exceptionResolution/omsEvent/{id}/reconcile")
+    @PreAuthorize("@pms.hasPermission('wms_shipmentException_view')")
+    public R<WmsOmsCustomerExceptionResolutionOutboxEntity> reconcileExceptionResolutionOms(@PathVariable Long id){return R.ok(exceptionResolutionService.reconcileOms(id));}
+
+    @GetMapping("/omsEvent/byBill/{billId}")
+    @PreAuthorize("@pms.hasPermission('wms_wmsDeliverGoodsBase_view')")
+    public R<List<WmsOmsDeliveryEventOutboxEntity>> omsEventByBill(@PathVariable Long billId) {
+        return R.ok(omsDeliveryEventOutboxService.listByBill(billId));
+    }
+
+    @GetMapping("/omsEvent/byDelivery/{deliveryId}")
+    @PreAuthorize("@pms.hasPermission('wms_wmsDeliverGoodsBase_view')")
+    public R<List<WmsOmsDeliveryEventOutboxEntity>> omsEventByDelivery(@PathVariable Long deliveryId) {
+        return R.ok(omsDeliveryEventOutboxService.listByDelivery(deliveryId));
+    }
+
+    @PostMapping("/omsEvent/{id}/retry")
+    @PreAuthorize("@pms.hasPermission('wms_wmsDeliverGoodsBase_create')")
+    public R<WmsOmsDeliveryEventOutboxEntity> retryOmsEvent(@PathVariable Long id) {
+        return R.ok(omsDeliveryEventOutboxService.retry(id));
+    }
+
+    @PostMapping("/omsEvent/{id}/reconcile")
+    @PreAuthorize("@pms.hasPermission('wms_wmsDeliverGoodsBase_view')")
+    public R<WmsOmsDeliveryEventOutboxEntity> reconcileOmsEvent(@PathVariable Long id) {
+        return R.ok(omsDeliveryEventOutboxService.reconcile(id));
+    }
 
     /**
      * 发货单基础表分页查询

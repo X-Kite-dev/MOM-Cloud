@@ -5,7 +5,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
 import com.kitex.common.query.enums.CommonQuery;
+import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.qms.dto.ReportListRespDTO;
+import com.kitex.mom.qms.dto.QmsProcedureSourceWithdrawalDTO;
 import com.kitex.mom.qms.dto.inspection.InspectionAppendParam;
 import com.kitex.mom.qms.dto.inspection.InspectionCheckResultBatchParam;
 import com.kitex.mom.qms.dto.inspection.InspectionCheckResultParam;
@@ -22,6 +24,7 @@ import com.kitex.mom.qms.entity.QmsInspectionProcedureTaskEntity;
 import com.kitex.mom.qms.service.InspectionProcedureHandleRecordService;
 import com.kitex.mom.qms.service.InspectionProcedureHistoryService;
 import com.kitex.mom.qms.service.InspectionProcedureTaskService;
+import com.kitex.mom.qms.service.QmsReworkOrderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -51,6 +54,7 @@ public class InspectionProcedureTaskController {
     private final InspectionProcedureHistoryService historyService;
 
     private final InspectionProcedureHandleRecordService handleRecordService;
+    private final QmsReworkOrderService reworkOrderService;
 
     @Operation(summary = "判断是否已经有同类型任务", description = "判断是否已经有同类型任务")
     @GetMapping("/existTask")
@@ -151,13 +155,23 @@ public class InspectionProcedureTaskController {
 
     @Operation(summary = "作废质检任务", description = "作废质检任务")
     @PostMapping("/canceled")
+    @PreAuthorize("@pms.hasPermission('procedureTask:cancel')")
     public R<Void> canceled(Long taskId, String reason) {
         service.canceled(taskId, reason);
         return R.ok();
     }
 
+    @Operation(summary = "MES来源计划级联作废未开始的工序质检任务")
+    @Inner
+    @PostMapping("/internal/source-withdrawal")
+    public R<QmsProcedureSourceWithdrawalDTO.Receipt> withdrawByMesSource(
+            @RequestBody QmsProcedureSourceWithdrawalDTO.Command command) {
+        return R.ok(service.withdrawByMesSource(command));
+    }
+
     @Operation(summary = "免检质检任务", description = "免检质检任务")
     @PostMapping("/exemption")
+    @PreAuthorize("@pms.hasPermission('procedureTask:exemption')")
     public R<Void> exemption(Long taskId) {
         service.exemption(taskId);
         return R.ok();
@@ -194,6 +208,7 @@ public class InspectionProcedureTaskController {
 
     @Operation(summary = "处置", description = "作废质检任务")
     @PostMapping("/handleFinish")
+    @PreAuthorize("@pms.hasPermission('procedureTask:handle')")
     public R<Void> handleFinish(@RequestBody HandleFinishDTO dto) {
         service.handleFinish(dto);
         return R.ok();
@@ -201,9 +216,9 @@ public class InspectionProcedureTaskController {
 
     @Operation(summary = "返工返修", description = "返工返修")
     @PostMapping("/handleRework")
-    public R<Void> handleRework(Long id) {
-        service.handleRework(id);
-        return R.ok();
+    @PreAuthorize("@pms.hasPermission('procedureTask:handle')")
+    public R<com.kitex.mom.qms.entity.QmsReworkOrderEntity> handleRework(Long id) {
+        return R.ok(reworkOrderService.create("PROCEDURE", id));
     }
 
     /**

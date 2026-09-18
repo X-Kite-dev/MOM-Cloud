@@ -7,6 +7,11 @@
         SELECT
         bill_no,
         mat_code,
+        reservation_no,
+        requirement_mat_code,
+        MAX(requirement_mat_name) AS requirement_mat_name,
+        MAX(substitute_flag) AS substitute_flag,
+        MAX(substitute_ratio) AS substitute_ratio,
         MAX(mat_name) AS mat_name,
         MAX(mat_spec) AS mat_spec,
         MAX(mat_unit) AS mat_unit,
@@ -46,6 +51,8 @@
         GROUP BY
         bill_no,
         mat_code,
+        reservation_no,
+        requirement_mat_code,
         warehouse_code,
         site_code,
         mat_batch

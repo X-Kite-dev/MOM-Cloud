@@ -52,6 +52,9 @@ public class MesTaskCurrentWorkVO {
     @Schema(description = "工位名称")
     private String worksiteName;
 
+    @Schema(description = "报工触发类型：MANUAL/AUTO")
+    private String worksiteType;
+
     @Schema(description = "下达数量")
     private BigDecimal noticeNum;
 
@@ -82,9 +85,15 @@ public class MesTaskCurrentWorkVO {
     @Schema(description = "批次号")
     private String batchNo;
 
+    @Schema(description = "包装规则编码")
+    private String wrapRuleCode;
+
+    @Schema(description = "包装容量")
+    private String wrapCapacity;
+
     @Schema(description = "是否已开始")
     private Boolean isStarted;
 
     @Schema(description = "优先级（数字越小优先级越高）")
     private Integer priority;
-} 
+}

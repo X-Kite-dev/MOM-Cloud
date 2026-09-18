@@ -6,6 +6,7 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.oms.dto.OmsOrderBaseReviewPageDto;
+import com.kitex.mom.oms.dto.OmsOrderChangeReviewCommand;
 import com.kitex.mom.oms.entity.OmsOrderBaseReviewEntity;
 import com.kitex.mom.oms.vo.OmsOrderBaseReviewExportVo;
 import com.kitex.mom.plan.service.OmsOrderBaseReviewService;
@@ -101,6 +102,14 @@ public class OmsOrderBaseReviewController {
                              @RequestParam("reviewType") String reviewType,
                              @RequestParam(value = "remark", required = false, defaultValue = "无") String remark) {
         return R.ok(omsOrderBaseReviewService.review(ids, reviewType, remark));
+    }
+
+    @Operation(summary = "受控订单变更复核", description = "批量同事务、按版本冻结事实和永久幂等请求号复核")
+    @SysLog("受控订单变更复核")
+    @PostMapping("/reviewChange")
+    @PreAuthorize("@pms.hasPermission('oms_omsOrderBase_review')")
+    public R<Boolean> reviewChange(@RequestBody OmsOrderChangeReviewCommand command) {
+        return R.ok(omsOrderBaseReviewService.reviewChange(command));
     }
 
 }

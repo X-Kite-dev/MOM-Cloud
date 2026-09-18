@@ -5,6 +5,7 @@ import lombok.Data;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 
 /**
  * 物料详情传输实体
@@ -20,6 +21,12 @@ public class WmsDetailDTO {
      */
     @Schema(description = "单据id")
     private Long billId;
+
+    @Schema(description = "调拨发起出库流水ID，接收时必须回传")
+    private Long flowId;
+
+    @Schema(description = "调拨源实时库存ID")
+    private Long sourceStockId;
 
     /**
      * 物料编码
@@ -74,6 +81,24 @@ public class WmsDetailDTO {
      */
     @Schema(description = "操作数量（包装数量）")
     private Double operateNum;
+
+    @Schema(description = "发起调拨数量")
+    private BigDecimal issuedQuantity;
+
+    @Schema(description = "已累计接收数量，不含隔离中的溢收")
+    private BigDecimal receivedQuantity;
+
+    @Schema(description = "仍在途数量")
+    private BigDecimal inTransitQuantity;
+
+    @Schema(description = "最终短收数量")
+    private BigDecimal shortQuantity;
+
+    @Schema(description = "隔离或已处置的溢收数量")
+    private BigDecimal overQuantity;
+
+    @Schema(description = "行状态：IN_TRANSIT/PARTIAL/RECEIVED/VARIANCE_PENDING/VARIANCE_RESOLVED/CANCELLED")
+    private String transferLineState;
 
     /**
      * 供应商

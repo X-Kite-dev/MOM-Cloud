@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.util.List;
+import java.math.BigDecimal;
 
 /**
  * 工序列表
@@ -13,6 +14,10 @@ import java.util.List;
  */
 @Data
 public class MdmProcessRouteWorkingDTO {
+    /** 返工工艺转换也必须保留实际用料，最终由返工补料方案冻结。 */
+    private java.util.List<ProcessProcedureDTO.ProcessProcedureMatDTO> mdmProcessProcedureMatList;
+    /** 保留工单冻结SOP引用；null为历史未声明，空列表才表示明确无附件。 */
+    private java.util.List<MesSopReferenceDTO> mdmProcessProcedureSopList;
 
     /**
      * 工艺路线编码
@@ -48,7 +53,15 @@ public class MdmProcessRouteWorkingDTO {
      * 前置工序编码
      */
     @Schema(description = "前置工序编码")
-    private String preRouteCode;
+    private String[] preRouteCode;
+
+    @Schema(description = "后置工序编码")
+    private String[] nextRouteCode;
+
+    private Boolean overlapEnabled;
+    private BigDecimal transferBatchQuantity;
+    private Boolean timeCheck;
+    private BigDecimal timeVal;
 
     /**
      * 工厂编码 - 数据所属的工厂编码

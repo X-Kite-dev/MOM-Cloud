@@ -1,8 +1,17 @@
 package com.kitex.mom.mes.api.feign;
 
 import com.kitex.common.core.util.R;
+import com.kitex.common.feign.annotation.InternalCall;
+import com.kitex.common.feign.annotation.NoToken;
 import com.kitex.mom.mes.Constants;
 import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
+import com.kitex.mom.mes.dto.MesDurationEvidenceDTO;
+import com.kitex.mom.mes.dto.MesReworkInspectionResultDTO;
+import com.kitex.mom.mes.dto.MesApsLocalScheduleDTO;
+import com.kitex.mom.mes.dto.MesQualityDispositionDTO;
+import com.kitex.mom.mes.dto.MesPlanSourceMappingDTO;
+import com.kitex.mom.mes.dto.MesPlanWithdrawalDTO;
+import com.kitex.mom.mes.dto.MesSourceQuantityMappingDTO;
 import com.kitex.mom.mes.dto.PlanMesQueryDTO;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.vo.MesTaskReportOmsVO;
@@ -26,6 +35,28 @@ public interface RemoteMesTaskService {
      */
     @PostMapping("/mesTask/add")
     R<Boolean> add(@RequestBody MesTaskReceiveDTO receive);
+
+    @PostMapping("/mesTask/rework")
+    R<String> addRework(@RequestBody MesTaskReceiveDTO receive);
+
+    @PostMapping("/mesTask/rework/inspection-result")
+    R<Void> syncReworkInspection(@RequestBody MesReworkInspectionResultDTO result);
+
+    @PostMapping("/mesTask/quality-disposition")
+    R<Void> recordQualityDisposition(@RequestBody MesQualityDispositionDTO command);
+
+    @GetMapping("/mesTask/internal/plan-source-mapping")
+    R<MesPlanSourceMappingDTO> planSourceMapping(@RequestParam(value = "taskCode", required = false) String taskCode,
+                                                 @RequestParam(value = "produceTaskCode", required = false) String produceTaskCode,
+                                                 @RequestParam("factoryCode") String factoryCode);
+
+    @PostMapping("/mesTask/internal/plan-withdraw")
+    @NoToken
+    R<MesPlanWithdrawalDTO.Receipt> withdrawPlan(@RequestBody MesPlanWithdrawalDTO.Command command);
+
+    @GetMapping("/mesTask/internal/source-quantity-mapping")
+    R<MesSourceQuantityMappingDTO> sourceQuantityMapping(@RequestParam("requestId") String requestId,
+                                                          @RequestParam("factoryCode") String factoryCode);
 
     /**
      * 根据生产订单号查询生产工单最后一道工序的报工记录
@@ -60,5 +91,19 @@ public interface RemoteMesTaskService {
      */
     @PostMapping("/mesTask/update")
     R<Void> update(@RequestBody MesTaskEntity mesTask);
+
+    @InternalCall
+    @GetMapping("/mesApsSchedule/internal/operation-states")
+    R<MesApsLocalScheduleDTO.StateBundle> apsOperationStates(@RequestParam("planNo") String planNo,
+                                                             @RequestParam("factoryCode") String factoryCode);
+
+    @InternalCall
+    @PostMapping("/mesApsSchedule/internal/apply")
+    R<MesApsLocalScheduleDTO.ApplyReceipt> applyApsLocalSchedule(
+            @RequestBody MesApsLocalScheduleDTO.ApplyCommand command);
+
+    @InternalCall
+    @PostMapping("/mesDurationEvidence/internal/query")
+    R<MesDurationEvidenceDTO.Bundle> durationEvidence(@RequestBody MesDurationEvidenceDTO.Query query);
 
 }

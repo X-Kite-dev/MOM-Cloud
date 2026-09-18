@@ -1,6 +1,11 @@
 package com.kitex.mom.mes.process;
 
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import cn.hutool.core.util.StrUtil;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.admin.api.feign.RemoteParamService;
+import com.kitex.common.security.service.MomUser;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
@@ -10,17 +15,24 @@ import com.kitex.mom.mes.dto.ProcessProcedureDTO;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.entity.MesTaskReportEntity;
+import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
 import com.kitex.mom.mes.enums.MesWarehouseMatDetailTypeEnum;
+import com.kitex.mom.mes.enums.MesTaskTypeEnum;
+import com.kitex.mom.mes.enums.ReportStatusEnum;
 import com.kitex.mom.mes.enums.WarehouseInBizTypeEnum;
+import com.kitex.mom.mes.enums.YesNoEnum;
 import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
 import com.kitex.mom.mes.util.MesTaskUtils;
+import com.kitex.mom.mes.util.MesMaterialSubstituteResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
+import java.time.LocalDateTime;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -35,24 +47,56 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
 
     private final MesWarehouseFeedService feedService;
 
-    @Override
-    public Map<String, Object> execute(MesTaskReportVO params) {
-        log.info(String.format("开始执行工序%s的报工", params.getWorksiteCode()));
-        // 1. 报工
-        report(params);
-
-        // 2. 物料消耗
-        use(params);
-        // 3. 在制品入库
-
-        in(params);
-        return Map.of();
+    /**
+     * 各报工模式共用的报工记录构造，避免模式之间形成不同的数据口径。
+     */
+    protected MesTaskReportEntity createReport(MesTaskReportVO vo, MomUser currentUser) {
+        String workerCode = currentUser == null ? vo.getOperatorCode() : currentUser.getUsername();
+        String workerName = currentUser == null ? vo.getOperatorName() : currentUser.getName();
+        if (StrUtil.isBlank(workerCode) || StrUtil.isBlank(workerName)) {
+            throw new CheckedException("报工操作主体不可识别");
+        }
+        MesTaskReportEntity report = new MesTaskReportEntity()
+                .setRequestId(vo.getRequestId())
+                .setStatus(ReportStatusEnum.EFFECTIVE.name())
+                .setArrangeCode(vo.getArrangeCode())
+                .setTaskCode(vo.getTaskCode())
+                .setProduceTaskCode(vo.getProduceTaskCode())
+                .setMatCode(vo.getMatCode())
+                .setMatName(vo.getMatName())
+                .setMatSpec(vo.getMatSpec())
+                .setTransferCode(vo.getTransferCode())
+                .setReportNum(vo.getPassNum())
+                .setType(vo.getType())
+                .setSourceEventId(vo.getSourceEventId())
+                .setSourceEventTime(vo.getSourceEventTime())
+                .setManualOverrideReason(vo.getManualOverrideReason())
+                .setQualityGateMode(vo.getQualityGateMode())
+                .setQualityGateStatus(vo.getQualityGateStatus())
+                .setQualityGateMessage(vo.getQualityGateMessage())
+                .setQualityQuantityStatus(vo.getQualityQuantityStatus())
+                .setQualityReleasedNum(vo.getQualityReleasedNum())
+                .setQualityPendingNum(vo.getQualityPendingNum())
+                .setQualityRejectedNum(vo.getQualityRejectedNum())
+                .setQualitySyncTime(LocalDateTime.now())
+                .setDeviceGateStage(vo.getDeviceGateStage())
+                .setDeviceGateAllowed(vo.getDeviceGateAllowed())
+                .setDeviceGateState(vo.getDeviceGateState())
+                .setDeviceGateStateName(vo.getDeviceGateStateName())
+                .setDeviceGateMessage(vo.getDeviceGateMessage())
+                .setDeviceGateCheckTime(vo.getDeviceGateCheckTime())
+                .setReportTime(vo.getSourceEventTime() == null ? LocalDateTime.now() : vo.getSourceEventTime())
+                .setWorkerCode(workerCode)
+                .setWorkerName(workerName)
+                .setDeviceCode(vo.getDeviceCode())
+                .setDeviceName(vo.getDeviceName())
+                .setFactoryCode(vo.getFactoryCode());
+        report.setId(IdWorker.getId());
+        return report;
     }
 
-    @Override
-    public MesTaskReportEntity report(MesTaskReportVO params) {
-        log.info("开始报工");
-        return new MesTaskReportEntity();
+    protected String operatorName(MesTaskReportVO vo, MomUser currentUser) {
+        return currentUser == null ? StrUtil.blankToDefault(vo.getOperatorName(), "设备自动报工") : currentUser.getName();
     }
 
     /**
@@ -68,38 +112,102 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
         MesTaskArrangeEntity arrange = params.getTaskArrange();
         MesTaskEntity task = params.getTask();
         // 倒冲则直接在线边库中扣除
-        if (backFlushFlag.equals("1")) {
+        if ("1".equals(backFlushFlag)) {
             ProcessProcedureDTO currentProcess = MesTaskUtils.getCurrentProcess(params.getTask(), params.getTaskArrange().getRouteCode());
             // 工序的物料信息
             List<ProcessProcedureDTO.ProcessProcedureMatDTO> mdmProcessProcedureMatList = currentProcess.getMdmProcessProcedureMatList();
-            mdmProcessProcedureMatList.forEach(item -> {
-                MdmMaterialEntity rawMat = matService.getDetails(item.getMaterialCode()).getData();
-                if (Objects.isNull(rawMat) || Objects.equals(rawMat.getStatus(), 0)) {
-                    throw new RuntimeException("物料不可用，报工失败");
-                }
-                MesWarehouseLiveStockInoutDTO out = new MesWarehouseLiveStockInoutDTO();
-                out.setBillNo(arrange.getCode());
-                out.setProduceTaskCode(arrange.getProduceTaskCode());
-                out.setMatCode(rawMat.getMaterialCode());
-                out.setMatName(rawMat.getMaterialName());
-                out.setMatSpec(rawMat.getSpecificationModel());
-                out.setMatUnit(rawMat.getBasicUnit());
-                out.setNum(params.getPassNum().multiply(item.getQuantity()));
-//                out.setSiteCode(params.getWorksiteCode());
-//                out.setSiteName(workCenterEntity.getName());
-                out.setMatBatch(arrange.getBatchNo());
-                out.setMatDetailType(MesWarehouseMatDetailTypeEnum.RAW.name());
-                out.setBizType(WarehouseInBizTypeEnum.BACK_FLUSH_OUT.getCode());
-                liveStockService.outStock(out);
-            });
+            if (mdmProcessProcedureMatList == null || mdmProcessProcedureMatList.isEmpty()) {
+                return;
+            }
+            for (ProcessProcedureDTO.ProcessProcedureMatDTO item : mdmProcessProcedureMatList) {
+                backflush(params, arrange, item);
+            }
         } else {
             // 消耗投料
-            // 消耗投料
-            feedService.use(new MesWarehouseUseDTO().setReportNum(params.getPassNum()).setArrangeCode(arrange.getCode())
-                    .setProcessRouteCode(task.getProcessRouteCode()).setRouteCode(arrange.getRouteCode()).setSnapshot(task.getProcessRouteSnapshot()));
+            feedService.use(new MesWarehouseUseDTO()
+                    .setReportId(params.getReportId())
+                    .setReportRequestId(params.getRequestId())
+                    .setReportNum(params.getPassNum())
+                    .setArrangeCode(arrange.getCode())
+                    .setProcessRouteCode(task.getProcessRouteCode())
+                    .setRouteCode(arrange.getRouteCode())
+                    .setSnapshot(task.getProcessRouteSnapshot())
+                    .setBomSnapshot(task.getBomSnapshot())
+                    .setFactoryCode(arrange.getFactoryCode()));
         }
 
 
+    }
+
+    private void backflush(MesTaskReportVO params, MesTaskArrangeEntity arrange,
+                           ProcessProcedureDTO.ProcessProcedureMatDTO requirement) {
+        MesMaterialSubstituteResolver.Policy policy = MesMaterialSubstituteResolver.resolvePolicy(
+                params.getTask().getBomSnapshot(), requirement.getMaterialCode());
+        BigDecimal totalRequirement = params.getPassNum().multiply(requirement.getQuantity());
+        BigDecimal remainingRequirement = totalRequirement;
+        List<MesMaterialSubstituteResolver.Candidate> candidates = policy.candidates();
+        if (!policy.allowMixed()) {
+            candidates = policy.candidates().stream()
+                    .filter(candidate -> availableBackflush(arrange, candidate.actualMatCode())
+                            .compareTo(totalRequirement.multiply(candidate.ratio())) >= 0)
+                    .findFirst().map(List::of)
+                    .orElseThrow(() -> new CheckedException("需求物料[" + requirement.getMaterialCode()
+                            + "]不允许混用，主料及任一替代料库存均无法单独满足倒冲"));
+        }
+        for (MesMaterialSubstituteResolver.Candidate candidate : candidates) {
+            if (remainingRequirement.compareTo(BigDecimal.ZERO) == 0) {
+                break;
+            }
+            BigDecimal availableActual = availableBackflush(arrange, candidate.actualMatCode());
+            if (availableActual.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            BigDecimal actualNeeded = remainingRequirement.multiply(candidate.ratio());
+            BigDecimal consumeActual = availableActual.min(actualNeeded);
+            BigDecimal satisfiedRequirement = consumeActual.compareTo(actualNeeded) == 0
+                    ? remainingRequirement
+                    : consumeActual.divide(candidate.ratio(), 12, RoundingMode.DOWN);
+            if (satisfiedRequirement.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            MdmMaterialEntity actualMaterial = matService.getDetails(candidate.actualMatCode()).getData();
+            if (actualMaterial == null || !Boolean.TRUE.equals(actualMaterial.getStatus())) {
+                throw new CheckedException("倒冲物料[" + candidate.actualMatCode() + "]不存在或未启用");
+            }
+            MesWarehouseLiveStockInoutDTO out = new MesWarehouseLiveStockInoutDTO();
+            out.setBillId(params.getReportId());
+            out.setBillNo(arrange.getCode());
+            out.setResourceNo(params.getRequestId());
+            out.setProduceTaskCode(arrange.getProduceTaskCode());
+            out.setAllowUnassignedProduceTask(Boolean.TRUE);
+            out.setRequirementMatCode(requirement.getMaterialCode());
+            out.setRequirementMatName(requirement.getMaterialName());
+            out.setSubstituteFlag(candidate.substitute());
+            out.setSubstituteRatio(candidate.ratio());
+            out.setMatCode(actualMaterial.getMaterialCode());
+            out.setMatName(actualMaterial.getMaterialName());
+            out.setMatSpec(actualMaterial.getSpecificationModel());
+            out.setMatUnit(actualMaterial.getBasicUnit());
+            out.setNum(consumeActual);
+            out.setMatDetailType(MesWarehouseMatDetailTypeEnum.RAW.name());
+            out.setBizType(WarehouseInBizTypeEnum.BACK_FLUSH_OUT.getCode());
+            out.setFactoryCode(arrange.getFactoryCode());
+            liveStockService.outStock(out);
+            remainingRequirement = remainingRequirement.subtract(satisfiedRequirement);
+        }
+        if (remainingRequirement.compareTo(BigDecimal.ZERO) > 0) {
+            throw new CheckedException("需求物料[" + requirement.getMaterialCode() + "]倒冲库存不足，尚缺需求当量："
+                    + remainingRequirement.setScale(6, RoundingMode.HALF_UP));
+        }
+    }
+
+    private BigDecimal availableBackflush(MesTaskArrangeEntity arrange, String actualMatCode) {
+        var request=new MesWarehouseLiveStockInoutDTO();request.setMatCode(actualMatCode);request.setFactoryCode(arrange.getFactoryCode());
+        request.setProduceTaskCode(arrange.getProduceTaskCode());request.setAllowUnassignedProduceTask(true);request.setNum(BigDecimal.ONE);
+        request.setMatDetailType(MesWarehouseMatDetailTypeEnum.RAW.name());request.setBizType(WarehouseInBizTypeEnum.BACK_FLUSH_OUT.getCode());
+        return liveStockService.previewOutCandidates(request)
+                .stream().map(MesWarehouseLiveStockEntity::getNum).filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
 
@@ -122,7 +230,10 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
         MesTaskArrangeEntity arrange = params.getTaskArrange();
 //        String nextRouteCode = routeWorking.getNextRouteCode();
         MesWarehouseLiveStockInoutDTO in = new MesWarehouseLiveStockInoutDTO();
+        in.setBillId(params.getReportId());
+        in.setSourceReportId(params.getReportId());
         in.setBillNo(arrange.getCode());
+        in.setResourceNo(params.getRequestId());
         in.setProduceTaskCode(arrange.getProduceTaskCode());
         in.setRouteCode(arrange.getRouteCode());
         in.setRouteName(arrange.getRouteName());
@@ -130,26 +241,22 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
         in.setMatName(arrange.getMatName());
         in.setMatSpec(arrange.getMatSpec());
         in.setMatBatch(arrange.getBatchNo());
+        in.setMatBarcode(params.getTransferCode());
 //        in.setMatUnit(arrange.getBasicUnit());
 //            in.setMatBarcode();
-        in.setNum(params.getCompleteNum());
+        in.setNum(params.getPassNum());
+        in.setInspectionStatus(params.getQualityQuantityStatus());
+        in.setMatUnit(params.getMatUnit());
         in.setSiteCode(arrange.getRouteCode());
         in.setSiteName(arrange.getRouteName());
 
-        // 如果没有后置工序则认为进行入线边库存
-        // 1. 成品计划入库
-        // 2. 零件计划
-//        if(StrUtil.isBlank(nextRouteCode)){
-//            if("PRODUCT".equals(task.getType())){
-//                // 成品入库
-//                in.setMatDetailType(MesWarehouseMatDetailTypeEnum.PRODUCT.name());
-//            }else{
-//                in.setMatDetailType(MesWarehouseMatDetailTypeEnum.SEMI_FINISHED.name());
-//            }
-//        }else{
-//            // 在制品入库
-//            in.setMatDetailType(MesWarehouseMatDetailTypeEnum.WIP.name());
-//        }
+        if (Boolean.TRUE.equals(arrange.getLastRoute())) {
+            in.setMatDetailType(MesTaskTypeEnum.PRODUCT.name().equals(task.getType())
+                    ? MesWarehouseMatDetailTypeEnum.PRODUCT.name()
+                    : MesWarehouseMatDetailTypeEnum.SEMI_FINISHED.name());
+        } else {
+            in.setMatDetailType(MesWarehouseMatDetailTypeEnum.WIP.name());
+        }
         in.setBizType(WarehouseInBizTypeEnum.PROCESS_PRODUCT_IN.getCode());
         in.setFactoryCode(arrange.getFactoryCode());
         liveStockService.inStock(in);

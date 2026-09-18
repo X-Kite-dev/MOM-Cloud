@@ -33,6 +33,7 @@ import java.util.List;
 @Slf4j
 @RequiredArgsConstructor
 public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMapper, MesMaterialListEntity> implements MesMaterialListService {
+    private final MesReworkMaterialPlanService reworkMaterialPlans;
 
     private final MesTaskMapper mesTaskMapper;
     private final RemoteBomService remoteBomService;
@@ -57,11 +58,12 @@ public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMappe
     @Transactional(rollbackFor = Exception.class)
     public boolean createMaterialListByTask(Long taskId) {
         try {
-            MesTaskEntity task = mesTaskMapper.selectById(taskId);
+            MesTaskEntity task = mesTaskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>().eq(MesTaskEntity::getId,taskId).last("FOR UPDATE"));
             if (task == null) {
                 log.error("工单不存在，taskId: {}", taskId);
                 return false;
             }
+            reworkMaterialPlans.assertReady(task);
 
             MesMaterialListEntity existingList = this.getOne(
                     new LambdaQueryWrapper<MesMaterialListEntity>()
@@ -75,6 +77,8 @@ public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMappe
             }
 
             MesMaterialListEntity materialList = new MesMaterialListEntity();
+            materialList.setTenantId(task.getTenantId());
+            materialList.setFactoryCode(task.getFactoryCode());
             materialList.setTaskId(taskId);
             materialList.setTaskCode(task.getCode());
             materialList.setProductCode(task.getMatCode());
@@ -84,7 +88,8 @@ public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMappe
             materialList.setBomVersion(task.getBomVersion());
             materialList.setBomSnapshot(task.getBomSnapshot());
             materialList.setPlanQuantity(task.getNoticeNum());
-            materialList.setStatus(MesMaterialListStatusEnum.NEW.getCode());
+            materialList.setStatus(reworkMaterialPlans.approvedWithoutMaterials(task)
+                    ? MesMaterialListStatusEnum.COMPLETED.getCode() : MesMaterialListStatusEnum.NEW.getCode());
 
             boolean saveResult = this.save(materialList);
             if (!saveResult) {
@@ -93,7 +98,7 @@ public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMappe
             }
 
             boolean createDetailsResult = materialListDetailService.createMaterialDetailsByBom(
-                    materialList.getId(), taskId, task.getBomId(), task.getNoticeNum()
+                    materialList.getId(), taskId, task.getBomId(), task.getBomVersion(), task.getNoticeNum()
             );
 
             if (!createDetailsResult) {
@@ -128,17 +133,22 @@ public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMappe
                 return false;
             }
 
-            MesTaskEntity task = mesTaskMapper.selectById(materialList.getTaskId());
+            MesTaskEntity task = mesTaskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>().eq(MesTaskEntity::getId,materialList.getTaskId()).last("FOR UPDATE"));
             if (task == null) {
                 log.error("关联工单不存在，taskId: {}", materialList.getTaskId());
                 return false;
             }
+            reworkMaterialPlans.assertReady(task);
 
             materialList.setBomId(task.getBomId());
             materialList.setBomVersion(task.getBomVersion());
             materialList.setBomSnapshot(task.getBomSnapshot());
             materialList.setPlanQuantity(task.getNoticeNum());
-            materialList.setStatus(MesMaterialListStatusEnum.NEW.getCode());
+            if (reworkMaterialPlans.approvedWithoutMaterials(task)) {
+                materialList.setStatus(MesMaterialListStatusEnum.COMPLETED.getCode());
+            } else if (!"REWORK".equals(task.getResourceType())) {
+                materialList.setStatus(MesMaterialListStatusEnum.NEW.getCode());
+            }
 
             boolean updateResult = this.updateById(materialList);
             if (!updateResult) {
@@ -147,7 +157,7 @@ public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMappe
             }
 
             boolean createDetailsResult = materialListDetailService.createMaterialDetailsByBom(
-                    id, materialList.getTaskId(), task.getBomId(), task.getNoticeNum()
+                    id, materialList.getTaskId(), task.getBomId(), task.getBomVersion(), task.getNoticeNum()
             );
 
             if (!createDetailsResult) {
@@ -168,6 +178,10 @@ public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMappe
     public boolean checkMaterialListCompleted(Long id) {
         List<MesMaterialListDetailDTO> details = materialListDetailService.getDetailsByMaterialListId(id);
         if (details.isEmpty()) {
+            var list = getById(id);
+            if (list != null && reworkMaterialPlans.approvedWithoutMaterials(mesTaskMapper.selectById(list.getTaskId()))) {
+                return updateMaterialListStatus(id, MesMaterialListStatusEnum.COMPLETED.getCode());
+            }
             return false;
         }
 

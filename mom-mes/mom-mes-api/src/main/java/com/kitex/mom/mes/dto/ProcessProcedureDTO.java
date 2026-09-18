@@ -22,7 +22,15 @@ public class ProcessProcedureDTO {
     private Integer orderNum;
 
     @Schema(description = "前置工序编码")
-    private String preRouteCode;
+    private String[] preRouteCode;
+
+    @Schema(description = "后置工序编码")
+    private String[] nextRouteCode;
+
+    private Boolean overlapEnabled;
+    private BigDecimal transferBatchQuantity;
+    private Boolean timeCheck;
+    private BigDecimal timeVal;
 
     @Schema(description = "车间编码")
     private String workshopCode;
@@ -150,4 +158,4 @@ public class ProcessProcedureDTO {
         @Schema(description = "型号")
         private String model;
     }
-} 
+}

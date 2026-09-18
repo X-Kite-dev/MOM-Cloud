@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 /**
  * 生产报工
@@ -15,6 +16,12 @@ import java.math.BigDecimal;
  */
 @Data
 public class MesTaskReportVO {
+
+    @Schema(hidden = true)
+    private Long reportId;
+
+    @Schema(description = "报工请求唯一号，用于网络重试幂等", maxLength = 64)
+    private String requestId;
 
     @Schema(description = "流转码/条码")
     private String transferCode;
@@ -43,11 +50,68 @@ public class MesTaskReportVO {
     @Schema(description = "物料规格")
     private String matSpec;
 
+    @Schema(description = "物料基本单位")
+    private String matUnit;
+
     @Schema(description = "总需求数量")
     private BigDecimal noticeNum;
 
     @Schema(description = "类型 手动 自动")
     private String type;
+
+    @Schema(description = "自动工位人工接管原因；手工报工自动工位时必填", maxLength = 500)
+    private String manualOverrideReason;
+
+    @Schema(hidden = true)
+    private String sourceEventId;
+
+    @Schema(hidden = true)
+    private LocalDateTime sourceEventTime;
+
+    @Schema(hidden = true)
+    private String operatorCode;
+
+    @Schema(hidden = true)
+    private String operatorName;
+
+    @Schema(hidden = true)
+    private String qualityGateMode;
+
+    @Schema(hidden = true)
+    private String qualityGateStatus;
+
+    @Schema(hidden = true)
+    private String qualityGateMessage;
+
+    @Schema(hidden = true)
+    private String qualityQuantityStatus;
+
+    @Schema(hidden = true)
+    private BigDecimal qualityReleasedNum;
+
+    @Schema(hidden = true)
+    private BigDecimal qualityPendingNum;
+
+    @Schema(hidden = true)
+    private BigDecimal qualityRejectedNum;
+
+    @Schema(hidden = true)
+    private String deviceGateStage;
+
+    @Schema(hidden = true)
+    private Boolean deviceGateAllowed;
+
+    @Schema(hidden = true)
+    private String deviceGateState;
+
+    @Schema(hidden = true)
+    private String deviceGateStateName;
+
+    @Schema(hidden = true)
+    private String deviceGateMessage;
+
+    @Schema(hidden = true)
+    private LocalDateTime deviceGateCheckTime;
 
     @Schema(description = "包装规则编码")
     private String wrapRuleCode;

@@ -15,6 +15,8 @@ public class PlnSchedulingRunDTO {
 
     @Schema(description = "运行模式: simulate/official")
     private String mode;
+    @Schema(description = "工单排序求解器：GREEDY_WINDOW或BEAM_WINDOW；不是外部有限产能求解器")
+    private String sequenceSolverCode;
 
     @Schema(description = "触发方式: AUTO/MANUAL")
     private String triggerType;
@@ -29,5 +31,6 @@ public class PlnSchedulingRunDTO {
     private Integer planNum;
 
     @Schema(description = "排产目标ID列表")
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(contentUsing = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     private List<Long> targetIds;
 }

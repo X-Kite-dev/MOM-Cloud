@@ -2,6 +2,7 @@ package com.kitex.mom.wms.dto.app;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 /**
@@ -12,6 +13,13 @@ import lombok.Data;
  */
 @Data
 public class WmsAllocationBillAppDTO {
+
+    @Schema(description = "调拨单ID，由服务端保存表头后写入流水")
+    private Long allocationBillId;
+
+    @Schema(description = "永久幂等请求号")
+    @NotBlank(message = "请求唯一号不能为空")
+    private String requestId;
 
     /**
      * 调拨单号

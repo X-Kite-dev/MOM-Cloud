@@ -73,7 +73,7 @@ public class MesScrapMaterialController {
     @PostMapping
 //    @PreAuthorize("@pms.hasPermission('mesScrapMaterial:add')")
     public R<Void> save(@RequestBody MesScrapMaterialEntity mesScrapMaterial) {
-        service.save(mesScrapMaterial);
+        service.create(mesScrapMaterial);
         return R.ok();
     }
 
@@ -88,7 +88,7 @@ public class MesScrapMaterialController {
     @PutMapping
 //    @PreAuthorize("@pms.hasPermission('mesScrapMaterial:edit')")
     public R<Void> updateById(@RequestBody MesScrapMaterialEntity mesScrapMaterial) {
-        service.updateById(mesScrapMaterial);
+        service.edit(mesScrapMaterial);
         return R.ok();
     }
 
@@ -103,7 +103,7 @@ public class MesScrapMaterialController {
     @DeleteMapping
 //    @PreAuthorize("@pms.hasPermission('mesScrapMaterial:del')")
     public R<Void> removeById(@RequestBody List<Long> ids) {
-        service.removeByIds(ids);
+        service.deletePending(ids);
         return R.ok();
     }
 
@@ -176,4 +176,4 @@ public class MesScrapMaterialController {
         service.cancelAudit(id);
         return R.ok();
     }
-} 
+}

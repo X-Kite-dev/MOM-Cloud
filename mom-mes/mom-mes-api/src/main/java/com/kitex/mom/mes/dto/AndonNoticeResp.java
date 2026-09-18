@@ -154,6 +154,16 @@ public class AndonNoticeResp {
     @Schema(description = "接收时间", name = "receiveTime")
     private LocalDateTime receiveTime;
 
+    private LocalDateTime responseDeadline;
+
+    private LocalDateTime handleDeadline;
+
+    private Integer escalationCount;
+
+    private Integer escalationStep;
+
+    private LocalDateTime nextEscalationTime;
+
     /**
      * 处理时间
      */
@@ -199,4 +209,3 @@ public class AndonNoticeResp {
     @Schema(description = "类别 handle处理人，notice通知人", name = "noticeType")
     private String noticeType;
 }
-

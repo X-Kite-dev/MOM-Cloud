@@ -5,17 +5,20 @@ import cn.afterturn.easypoi.excel.entity.TemplateExportParams;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.query.enums.CommonQuery;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
 import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
+import com.kitex.mom.qms.dto.QmsProcedureSourceWithdrawalDTO;
 import com.kitex.mom.qms.dto.ReportListRespDTO;
 import com.kitex.mom.qms.dto.inspection.*;
 import com.kitex.mom.qms.dto.req.InspectionProcedureTaskReq;
@@ -23,6 +26,7 @@ import com.kitex.mom.qms.dto.resp.*;
 import com.kitex.mom.qms.entity.*;
 import com.kitex.mom.qms.enums.*;
 import com.kitex.mom.qms.mapper.QmsInspectionProcedureTaskMapper;
+import com.kitex.mom.qms.mapper.QmsProcedureSourceWithdrawalReceiptMapper;
 import com.kitex.mom.qms.service.*;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
@@ -39,6 +43,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -76,29 +81,80 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
 
     private final RemoteMesTaskService remoteMesTaskService;
 
+    private final QmsReworkResultPublisher reworkResultPublisher;
+
+    private final QmsPlanEventOutboxService qmsPlanEventOutboxService;
+
+    private final QmsProcedureSourceWithdrawalReceiptMapper sourceWithdrawalReceiptMapper;
+
     /**
      * 创建质检任务
      */
     @Transactional(rollbackFor = Exception.class)
     public Long create(InspectionProcedureCreateParam createParam) {
-        // 判断是否已经有同类型任务
-        if (this.existTask(createParam.getMatCode(), createParam.getProcessCode(), createParam.getBatchNo())) {
+        if (createParam == null || StrUtil.isBlank(createParam.getMatCode())
+                || StrUtil.isBlank(createParam.getProcessCode()) || StrUtil.isBlank(createParam.getLabelType())) {
+            throw new RuntimeException("工序质检必须提供物料、工序和首中末标签类型");
+        }
+        if (createParam.getNum() == null || createParam.getNum() <= 0) {
+            throw new RuntimeException("工序质检数量必须大于0");
+        }
+        if (StrUtil.isNotBlank(createParam.getSourceRequestId())) {
+            String sourceRequestId = createParam.getSourceRequestId().trim();
+            if (sourceRequestId.length() > 200) {
+                throw new RuntimeException("质检来源请求号长度不能超过200位");
+            }
+            QmsInspectionProcedureTaskEntity existing = this.lambdaQuery()
+                    .eq(QmsInspectionProcedureTaskEntity::getSourceRequestId, sourceRequestId).one();
+            if (existing != null) {
+                if (Objects.equals(existing.getSourceTaskCode(), createParam.getSourceTaskCode())
+                        && Objects.equals(existing.getMatCode(), createParam.getMatCode())
+                        && Objects.equals(existing.getProcessCode(), createParam.getProcessCode())
+                        && Objects.equals(existing.getLabelType(), createParam.getLabelType())) {
+                    return existing.getId();
+                }
+                throw new RuntimeException("质检来源请求号已被其他业务使用");
+            }
+            createParam.setSourceRequestId(sourceRequestId);
+        } else if (this.existTask(createParam.getMatCode(), createParam.getProcessCode(), createParam.getBatchNo())) {
+            // 兼容没有来源请求号的旧调用。
             throw new RuntimeException("已经有同类型的任务,无法继续创建");
         }
         // 获取关联质检标准
-        val qualityStandard = qualityStandardService.getById(createParam.getStandardId());
+        QmsQualityStandardEntity qualityStandard;
+        if (createParam.getStandardId() == null) {
+            qualityStandard = qualityStandardService.getOne(new LambdaQueryWrapper<QmsQualityStandardEntity>()
+                    .eq(QmsQualityStandardEntity::getMatCode, createParam.getMatCode())
+                    .eq(QmsQualityStandardEntity::getInspectionType, InspectionTaskTypeEnum.PROCEDURE.name())
+                    .eq(QmsQualityStandardEntity::getPublished, 1));
+        } else {
+            qualityStandard = qualityStandardService.getById(createParam.getStandardId());
+        }
+        if (qualityStandard == null) {
+            throw new RuntimeException("未找到已发布的工序质检标准，请先维护质量标准");
+        }
+        if (!InspectionTaskTypeEnum.PROCEDURE.name().equals(qualityStandard.getInspectionType())
+                || !Objects.equals(qualityStandard.getPublished(), 1)
+                || !Objects.equals(qualityStandard.getMatCode(), createParam.getMatCode())) {
+            throw new RuntimeException("指定质量标准未发布、不是工序检验类型或与当前物料不匹配");
+        }
 
         // 创建质检任务
         val task = new QmsInspectionProcedureTaskEntity().setBatchNo(createParam.getBatchNo())
+                .setSourceTaskCode(StrUtil.blankToDefault(createParam.getSourceTaskCode(), createParam.getTaskCode()))
+                .setSourceRequestId(createParam.getSourceRequestId())
                 .setMatCode(createParam.getMatCode()).setMatName(createParam.getMatName()).setMatSpec(createParam.getMatSpec())
                 .setProcessCode(createParam.getProcessCode()).setProcessName(createParam.getProcessName())
                 .setStandardId(qualityStandard.getId()).setStandardName(qualityStandard.getStandardName())
                 .setNum(createParam.getNum()).setStatus(InspectionTaskStatusEnum.WAIT.name())
                 .setHandleNum(0)
                 .setInspectionNum(createParam.getInspectionNum())
+                .setLabelType(createParam.getLabelType())
+                .setMatBarcode(createParam.getMatBarcode())
                 .setOrderNo(createParam.getOrderNo())
                 .setOrderId(createParam.getOrderId())
-                .setDeptCode(createParam.getDeptCode());
+                .setDeptCode(createParam.getDeptCode())
+                .setLatestAppendTime(new Date());
         if (InspectionMethodEnum.FULL.name().equals(qualityStandard.getInspectionMethod())) {
             task.setInspectionNum(createParam.getNum());
         }
@@ -222,6 +278,169 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         historyService.canceled(task, reason);
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public QmsProcedureSourceWithdrawalDTO.Receipt withdrawByMesSource(
+            QmsProcedureSourceWithdrawalDTO.Command command) {
+        requireWithdrawal(command != null && StrUtil.isNotBlank(command.getRequestId())
+                        && StrUtil.isNotBlank(command.getFactoryCode())
+                        && CollUtil.isNotEmpty(command.getSourceTaskCodes())
+                        && command.getExpectedTaskIds() != null && StrUtil.isNotBlank(command.getReason()),
+                "QMS来源质检撤回必须提供请求号、工厂、MES工序任务、精确QMS任务ID和原因");
+        String requestId = command.getRequestId().trim();
+        String factoryCode = command.getFactoryCode().trim();
+        String reason = command.getReason().trim();
+        requireWithdrawal(requestId.length() <= 64 && factoryCode.length() <= 100 && reason.length() <= 500,
+                "QMS来源质检撤回请求号、工厂或原因长度不合法");
+        List<String> sourceTaskCodes = command.getSourceTaskCodes().stream()
+                .filter(StrUtil::isNotBlank).map(String::trim).distinct().sorted().toList();
+        List<Long> taskIds = command.getExpectedTaskIds().stream()
+                .filter(Objects::nonNull).distinct().sorted().toList();
+        requireWithdrawal(sourceTaskCodes.size() == command.getSourceTaskCodes().size()
+                        && taskIds.size() == command.getExpectedTaskIds().size(),
+                "MES工序任务编码或QMS任务ID不能为空、重复");
+        requireWithdrawal(sourceTaskCodes.size() <= 200 && taskIds.size() <= 200,
+                "单次来源质检撤回最多支持200个工序和200张质检任务");
+        String taskSetFingerprint = sha256Withdrawal(factoryCode + '|'
+                + String.join(",", sourceTaskCodes) + '|' + taskIds.stream().map(String::valueOf).collect(Collectors.joining(",")));
+        String expectedEvidence = StrUtil.blankToDefault(command.getExpectedEvidenceFingerprint(), "").trim();
+        requireWithdrawal(Boolean.TRUE.equals(command.getPreview()) || expectedEvidence.length() == 64,
+                "执行QMS来源质检撤回必须提供64位冻结证据指纹");
+        String requestFingerprint = sha256Withdrawal(taskSetFingerprint + '|' + expectedEvidence + '|' + reason);
+
+        if (!Boolean.TRUE.equals(command.getPreview())) {
+            sourceWithdrawalReceiptMapper.lockKey("REQUEST:" + requestId);
+            QmsProcedureSourceWithdrawalReceiptEntity replay = sourceWithdrawalReceiptMapper.selectOne(
+                    new LambdaQueryWrapper<QmsProcedureSourceWithdrawalReceiptEntity>()
+                            .eq(QmsProcedureSourceWithdrawalReceiptEntity::getRequestId, requestId));
+            if (replay != null) {
+                requireWithdrawal(Objects.equals(replay.getRequestFingerprint(), requestFingerprint),
+                        "QMS来源质检撤回幂等号已被不同命令使用");
+                return sourceWithdrawalReceipt(replay, "ALREADY_WITHDRAWN");
+            }
+        }
+        sourceWithdrawalReceiptMapper.lockKey("TASK-SET:" + taskSetFingerprint);
+
+        List<QmsInspectionProcedureTaskEntity> tasks = taskIds.isEmpty() ? List.of() : list(
+                new LambdaQueryWrapper<QmsInspectionProcedureTaskEntity>()
+                        .in(QmsInspectionProcedureTaskEntity::getId, taskIds)
+                        .eq(QmsInspectionProcedureTaskEntity::getFactoryCode, factoryCode)
+                        .orderByAsc(QmsInspectionProcedureTaskEntity::getId).last("FOR UPDATE"));
+        requireWithdrawal(tasks.size() == taskIds.size(), "MES质检生成账关联的QMS任务缺失或跨工厂");
+        List<QmsInspectionProcedureTaskEntity> allForSources = list(
+                new LambdaQueryWrapper<QmsInspectionProcedureTaskEntity>()
+                        .in(QmsInspectionProcedureTaskEntity::getSourceTaskCode, sourceTaskCodes)
+                        .eq(QmsInspectionProcedureTaskEntity::getFactoryCode, factoryCode)
+                        .orderByAsc(QmsInspectionProcedureTaskEntity::getId));
+        List<Long> actualTaskIds = allForSources.stream().map(QmsInspectionProcedureTaskEntity::getId)
+                .distinct().sorted().toList();
+        requireWithdrawal(actualTaskIds.equals(taskIds),
+                "QMS按MES工序来源查询到的任务与MES质检生成账不一致，禁止遗漏或猜测作废");
+        requireWithdrawal(tasks.stream().allMatch(task -> sourceTaskCodes.contains(task.getSourceTaskCode())),
+                "QMS任务与MES工序来源不一致");
+
+        QmsProcedureSourceWithdrawalReceiptEntity completed = sourceWithdrawalReceiptMapper.selectOne(
+                new LambdaQueryWrapper<QmsProcedureSourceWithdrawalReceiptEntity>()
+                        .eq(QmsProcedureSourceWithdrawalReceiptEntity::getTaskSetFingerprint, taskSetFingerprint)
+                        .eq(QmsProcedureSourceWithdrawalReceiptEntity::getStatus, "SUCCEEDED")
+                        .orderByDesc(QmsProcedureSourceWithdrawalReceiptEntity::getHandledTime)
+                        .orderByDesc(QmsProcedureSourceWithdrawalReceiptEntity::getId).last("LIMIT 1"));
+        if (completed != null) {
+            requireWithdrawal(tasks.stream().allMatch(task -> InspectionTaskStatusEnum.FINISHED.name().equals(task.getStatus())
+                            && InspectionTaskResultEnum.CANCELED.name().equals(task.getResult())),
+                    "QMS来源撤回回执存在但任务状态不一致，须先完成账实核查");
+            return sourceWithdrawalReceipt(completed, "ALREADY_WITHDRAWN");
+        }
+
+        List<Map<String, Object>> taskFacts = new ArrayList<>();
+        for (QmsInspectionProcedureTaskEntity task : tasks) {
+            requireWithdrawal(InspectionTaskStatusEnum.WAIT.name().equals(task.getStatus())
+                            && StrUtil.isBlank(task.getResult()) && task.getLatestInspectionTime() == null
+                            && Optional.ofNullable(task.getUsableNum()).orElse(0) == 0
+                            && Optional.ofNullable(task.getHandleNum()).orElse(0) == 0,
+                    "QMS工序质检任务[" + task.getId() + "]已开始、追加、判定或处置，不能随MES计划直接作废");
+            List<QmsInspectionProcedureHistoryEntity> histories = historyService.list(
+                    new LambdaQueryWrapper<QmsInspectionProcedureHistoryEntity>()
+                            .eq(QmsInspectionProcedureHistoryEntity::getTaskId, task.getId())
+                            .orderByAsc(QmsInspectionProcedureHistoryEntity::getId));
+            requireWithdrawal(histories.size() == 1
+                            && InspectionHistoryTypeEnum.CREATE.name().equals(histories.get(0).getType())
+                            && Objects.equals(histories.get(0).getNum(), task.getNum()),
+                    "QMS工序质检任务[" + task.getId() + "]历史账并非仅首次创建，不能直接作废");
+            long resultCount = recordService.count(new LambdaQueryWrapper<QmsInspectionProcedureItemResultRecordEntity>()
+                    .eq(QmsInspectionProcedureItemResultRecordEntity::getTaskId, task.getId()));
+            long handleCount = handleRecordService.count(new LambdaQueryWrapper<QmsInspectionProcedureHandleRecordEntity>()
+                    .eq(QmsInspectionProcedureHandleRecordEntity::getTaskId, task.getId()));
+            requireWithdrawal(resultCount == 0 && handleCount == 0,
+                    "QMS工序质检任务[" + task.getId() + "]已有检验或处置记录，不能直接作废");
+            Map<String, Object> fact = new LinkedHashMap<>();
+            fact.put("task", Arrays.asList(task.getId(), task.getSourceTaskCode(), task.getSourceRequestId(),
+                    task.getOrderNo(), task.getMatCode(), task.getProcessCode(), task.getLabelType(), task.getNum(),
+                    task.getStatus(), task.getResult(), task.getUsableNum(), task.getHandleNum(),
+                    task.getLatestAppendTime(), task.getLatestInspectionTime(), task.getFactoryCode()));
+            fact.put("history", histories.stream().map(history -> Arrays.asList(history.getId(), history.getType(),
+                    history.getNum(), history.getTime())).toList());
+            fact.put("itemResultCount", resultCount);
+            fact.put("handleCount", handleCount);
+            taskFacts.add(fact);
+        }
+        Map<String, Object> evidenceFacts = new LinkedHashMap<>();
+        evidenceFacts.put("factoryCode", factoryCode);
+        evidenceFacts.put("sourceTaskCodes", sourceTaskCodes);
+        evidenceFacts.put("tasks", taskFacts);
+        String evidenceSnapshot = JSONUtil.toJsonStr(evidenceFacts);
+        String actualEvidence = sha256Withdrawal(evidenceSnapshot);
+        if (Boolean.TRUE.equals(command.getPreview())) {
+            return new QmsProcedureSourceWithdrawalDTO.Receipt().setRequestId(requestId).setStatus("ELIGIBLE")
+                    .setCancelledTaskCount(0).setTaskIds(taskIds).setEvidenceFingerprint(actualEvidence)
+                    .setEvidenceSnapshot(evidenceSnapshot).setHandledTime(LocalDateTime.now())
+                    .setMessage(tasks.isEmpty() ? "MES工序没有关联QMS质检任务，无需作废"
+                            : "关联QMS工序质检任务均未开始，可随MES计划受控作废");
+        }
+        requireWithdrawal(Objects.equals(expectedEvidence, actualEvidence),
+                "QMS工序质检事实已变化，请重新申请计划撤回");
+        for (QmsInspectionProcedureTaskEntity task : tasks) {
+            task.setStatus(InspectionTaskStatusEnum.FINISHED.name()).setResult(InspectionTaskResultEnum.CANCELED.name());
+            requireWithdrawal(updateById(task), "QMS工序质检任务[" + task.getId() + "]作废失败");
+            historyService.canceled(task, reason);
+        }
+        QmsProcedureSourceWithdrawalReceiptEntity receipt = new QmsProcedureSourceWithdrawalReceiptEntity()
+                .setRequestId(requestId).setRequestFingerprint(requestFingerprint)
+                .setTaskSetFingerprint(taskSetFingerprint).setSourceTaskCodes(JSONUtil.toJsonStr(sourceTaskCodes))
+                .setTaskIds(taskIds.stream().map(String::valueOf).collect(Collectors.joining(",")))
+                .setCancelledTaskCount(tasks.size()).setExpectedEvidenceFingerprint(expectedEvidence)
+                .setActualEvidenceFingerprint(actualEvidence).setEvidenceSnapshot(evidenceSnapshot)
+                .setStatus("SUCCEEDED").setReason(reason)
+                .setMessage("已受控作废" + tasks.size() + "张未开始的QMS工序质检任务")
+                .setHandledTime(LocalDateTime.now()).setFactoryCode(factoryCode);
+        requireWithdrawal(sourceWithdrawalReceiptMapper.insert(receipt) == 1, "QMS来源质检撤回回执保存失败");
+        return sourceWithdrawalReceipt(receipt, "SUCCEEDED");
+    }
+
+    private QmsProcedureSourceWithdrawalDTO.Receipt sourceWithdrawalReceipt(
+            QmsProcedureSourceWithdrawalReceiptEntity receipt, String status) {
+        List<Long> taskIds = StrUtil.isBlank(receipt.getTaskIds()) ? List.of()
+                : Arrays.stream(receipt.getTaskIds().split(",")).map(Long::valueOf).toList();
+        return new QmsProcedureSourceWithdrawalDTO.Receipt().setRequestId(receipt.getRequestId()).setStatus(status)
+                .setCancelledTaskCount(receipt.getCancelledTaskCount()).setTaskIds(taskIds)
+                .setEvidenceFingerprint(receipt.getActualEvidenceFingerprint())
+                .setEvidenceSnapshot(receipt.getEvidenceSnapshot()).setHandledTime(receipt.getHandledTime())
+                .setMessage(receipt.getMessage());
+    }
+
+    private String sha256Withdrawal(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception exception) {
+            throw new CheckedException("QMS来源质检撤回指纹生成失败");
+        }
+    }
+
+    private void requireWithdrawal(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
     /**
      * 免检质检任务
      */
@@ -237,8 +456,12 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         if (Objects.equals(task.getResult(), InspectionTaskResultEnum.EXEMPTION.name())) {
             throw new RuntimeException("任务已经免检");
         }
+        if (!InspectionTaskStatusEnum.WAIT.name().equals(task.getStatus())) {
+            throw new RuntimeException("只有尚未开始的质检任务可以免检，不合格任务必须走正式处置");
+        }
         task.setStatus(InspectionTaskStatusEnum.FINISHED.name());
         task.setResult(InspectionTaskResultEnum.EXEMPTION.name());
+        task.setUsableNum(task.getNum()).setHandleNum(task.getNum()).setHandleResult(InspectionTaskResultEnum.EXEMPTION.name());
         this.updateById(task);
         // 保存历史
         historyService.exemption(task);
@@ -515,6 +738,10 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         if (Objects.isNull(task)) {
             throw new RuntimeException("质检任务不存在");
         }
+        assertInspectionWritable(task);
+        if (taskDetail.getWaitNum() == null || taskDetail.getWaitNum() <= 0) {
+            throw new RuntimeException("该质检项已达到应检数量，请勿重复提交");
+        }
         // 获取关联质检标准
         val qualityStandard = qualityStandardService.getById(task.getStandardId());
         // 查询关联质检项配置
@@ -560,6 +787,18 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
     @Transactional(rollbackFor = Exception.class)
     public void batchTemporarilySave(InspectionCheckResultBatchParam param) {
         QmsInspectionProcedureTaskEntity task = this.getById(param.getTaskId());
+        if (task == null) {
+            throw new RuntimeException("质检任务不存在");
+        }
+        assertInspectionWritable(task);
+        if (CollUtil.isEmpty(param.getResults())) {
+            throw new RuntimeException("请填写质检结果");
+        }
+        long distinctDetails = param.getResults().stream().map(InspectionCheckResultParam::getDetailId)
+                .filter(Objects::nonNull).distinct().count();
+        if (distinctDetails != param.getResults().size()) {
+            throw new RuntimeException("同一质检项不能在一次提交中重复出现");
+        }
         val qualityStandard = qualityStandardService.getById(task.getStandardId());
         List<QmsQualityStandardItemEntity> items = qualityStandardItemService.list(new LambdaQueryWrapper<QmsQualityStandardItemEntity>()
                 .eq(QmsQualityStandardItemEntity::getStandardId, qualityStandard.getId()));
@@ -568,6 +807,12 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         List<QmsInspectionProcedureTaskDetailEntity> updateDetails = new ArrayList<>();
         results.forEach(result -> {
             val taskDetail = procedureTaskDetailService.getById(result.getDetailId());
+            if (taskDetail == null || !Objects.equals(taskDetail.getTaskId(), task.getId())) {
+                throw new RuntimeException("质检项不属于当前任务");
+            }
+            if (taskDetail.getWaitNum() == null || taskDetail.getWaitNum() <= 0) {
+                throw new RuntimeException("质检项[" + taskDetail.getName() + "]已达到应检数量，请勿重复提交");
+            }
             InspectionItemResultRecord submitRecord = result.getRecord();
             val standardItem = this.findQualityStandardItemByTaskDetail(items, taskDetail);
             submitRecord.setQualified(qualityStandardItemService.judgementCheckResult(submitRecord, standardItem));
@@ -627,15 +872,18 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
             }
             this.updateById(task);
 
-//            // 如果不合格 入不合格品管理
-//            if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())) {
-//                badInfoService.add(new QmsBadInfo().setResourceTaskId(task.getId()).setResourceType(InspectionTaskTypeEnum.PROCEDURE.name())
-//                        .setNum(task.getNum()).setMatCode(task.getMatCode()).setMatName(task.getMatName())
-//                        .setBatchNo(task.getBatchNo()));
-//            }
+            if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())) {
+                badInfoService.add(new QmsBadInfoEntity().setResourceTaskId(task.getId())
+                        .setResourceType(InspectionTaskTypeEnum.PROCEDURE.name()).setNum(task.getNum() == null ? null : java.math.BigDecimal.valueOf(task.getNum()))
+                        .setMatCode(task.getMatCode()).setMatName(task.getMatName()).setBatchNo(task.getBatchNo()));
+            }
 
             // 保存历史
             historyService.check(task);
+            if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())
+                    && StrUtil.isNotBlank(task.getOrderNo())) {
+                qmsPlanEventOutboxService.enqueueIsolation("PROCEDURE", task.getId());
+            }
         }
 
     }
@@ -648,6 +896,9 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         val task = this.getById(taskId);
         if (Objects.isNull(task)) {
             throw new RuntimeException("质检任务未找到");
+        }
+        if (StrUtil.isNotBlank(task.getResult())) {
+            return;
         }
 
         // 查询到质检项
@@ -670,12 +921,24 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         // 如果不合格 入不合格品管理
         if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())) {
             badInfoService.add(new QmsBadInfoEntity().setResourceTaskId(taskId).setResourceType(InspectionTaskTypeEnum.PROCEDURE.name())
-                    .setNum(task.getNum()).setMatCode(task.getMatCode()).setMatName(task.getMatName())
+                    .setNum(task.getNum() == null ? null : java.math.BigDecimal.valueOf(task.getNum())).setMatCode(task.getMatCode()).setMatName(task.getMatName())
                     .setBatchNo(task.getBatchNo()));
         }
 
         // 保存历史
         historyService.check(task);
+        if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())
+                && StrUtil.isNotBlank(task.getOrderNo())) {
+            qmsPlanEventOutboxService.enqueueIsolation("PROCEDURE", task.getId());
+        }
+        reworkResultPublisher.publish(InspectionTaskTypeEnum.PROCEDURE.name(), task.getId());
+    }
+
+    private void assertInspectionWritable(QmsInspectionProcedureTaskEntity task) {
+        if (!InspectionTaskStatusEnum.WAIT.name().equals(task.getStatus())
+                && !InspectionTaskStatusEnum.RUNNING.name().equals(task.getStatus())) {
+            throw new RuntimeException("当前质检任务已结束或进入处置，不能继续填写检验结果");
+        }
     }
 
 
@@ -857,16 +1120,57 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void handleFinish(HandleFinishDTO dto) {
-        QmsInspectionProcedureTaskEntity task = this.getById(dto.getId());
-        task.setHandleNum(task.getHandleNum() + dto.getHandleNum());
+        // 锁定质检任务，避免两个不同请求同时处置导致累计数量越界。
+        QmsInspectionProcedureTaskEntity task = this.getOne(
+                new LambdaQueryWrapper<QmsInspectionProcedureTaskEntity>()
+                        .eq(QmsInspectionProcedureTaskEntity::getId, dto.getId()).last("FOR UPDATE"), false);
+        if (task == null) {
+            throw new RuntimeException("工序质检任务不存在");
+        }
+        if (dto.getHandleNum() == null || dto.getHandleNum() <= 0) {
+            throw new RuntimeException("处置数量必须大于0");
+        }
+        try {
+            HandleResultEnum.valueOf(dto.getHandleResult());
+        } catch (Exception exception) {
+            throw new RuntimeException("请选择有效的处置结果");
+        }
+        if (StrUtil.isBlank(dto.getHandleRemark())) {
+            throw new RuntimeException("处置原因不能为空");
+        }
+        String requestId = StrUtil.blankToDefault(dto.getRequestId(), UUID.randomUUID().toString()).trim();
+        if (requestId.length() > 100) {
+            throw new RuntimeException("处置请求号长度不能超过100位");
+        }
+        QmsInspectionProcedureHandleRecordEntity existing = handleRecordService.getOne(
+                new LambdaQueryWrapper<QmsInspectionProcedureHandleRecordEntity>()
+                        .eq(QmsInspectionProcedureHandleRecordEntity::getRequestId, requestId), false);
+        if (existing != null) {
+            if (Objects.equals(existing.getTaskId(), dto.getId())
+                    && Objects.equals(existing.getHandleNum(), dto.getHandleNum())
+                    && Objects.equals(existing.getHandleResult(), dto.getHandleResult())) {
+                return;
+            }
+            throw new RuntimeException("处置请求号已被其他业务使用");
+        }
+        if (!InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())
+                || !InspectionTaskStatusEnum.UNHANDLED.name().equals(task.getStatus())) {
+            throw new RuntimeException("只有待处置的不合格工序质检任务可以处置");
+        }
+        task.setHandleNum(Objects.requireNonNullElse(task.getHandleNum(), 0) + dto.getHandleNum());
         if (task.getHandleNum() > task.getNum()) {
             throw new RuntimeException("处置数量不能大于未处置数量");
         }
+        if (HandleResultEnum.RELEASE.name().equals(dto.getHandleResult())
+                || HandleResultEnum.CONCESSION.name().equals(dto.getHandleResult())) {
+            // 可用量只累计真正允许继续流转的数量，供MES按数量解除隔离。
+            task.setUsableNum(Objects.requireNonNullElse(task.getUsableNum(), 0) + dto.getHandleNum());
+        }
         if (HandleResultEnum.UNQUALIFIED.name().equals(dto.getHandleResult())) {
             // 入不合格品库
-            task.setUsableNum(task.getUsableNum() + dto.getHandleNum());
             badInfoService.add(new QmsBadInfoEntity().setResourceTaskId(task.getId()).setResourceType(InspectionTaskTypeEnum.PROCEDURE.name())
-                    .setNum(dto.getHandleNum()).setMatCode(task.getMatCode()).setMatName(task.getMatName())
+                    .setRequestId("DISPOSITION:" + requestId)
+                    .setNum(dto.getHandleNum() == null ? null : java.math.BigDecimal.valueOf(dto.getHandleNum())).setMatCode(task.getMatCode()).setMatName(task.getMatName())
                     .setBatchNo(task.getBatchNo()));
         }
         this.updateById(task);
@@ -874,13 +1178,40 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         // 保存处理明细
         QmsInspectionProcedureHandleRecordEntity record = new QmsInspectionProcedureHandleRecordEntity();
         MomUser user = SecurityUtils.getUser();
-        record.setHandleNum(dto.getHandleNum()).setHandleRemark(dto.getHandleRemark()).setHandlePersonId(user.getId())
+        record.setRequestId(requestId).setHandleNum(dto.getHandleNum()).setHandleRemark(dto.getHandleRemark().trim()).setHandlePersonId(user.getId())
                 .setHandlePersonName(user.getName()).setHandleTime(new Date()).setHandleResult(dto.getHandleResult())
                 .setTaskId(task.getId()).setStatus(Boolean.FALSE);
         if (HandleResultEnum.UNQUALIFIED.name().equals(dto.getHandleResult()) || HandleResultEnum.SMASH.name().equals(dto.getHandleResult())) {
             record.setStatus(Boolean.TRUE);
         }
         handleRecordService.save(record);
+        if (Set.of(HandleResultEnum.RELEASE.name(), HandleResultEnum.CONCESSION.name(),
+                HandleResultEnum.REWORK.name(), HandleResultEnum.SMASH.name()).contains(dto.getHandleResult())
+                && StrUtil.isNotBlank(task.getOrderNo())) {
+            qmsPlanEventOutboxService.enqueueDisposition("PROCEDURE", task.getId(), record.getId());
+        }
+
+        List<QmsInspectionProcedureHandleRecordEntity> dispositions = handleRecordService.list(
+                new LambdaQueryWrapper<QmsInspectionProcedureHandleRecordEntity>()
+                        .eq(QmsInspectionProcedureHandleRecordEntity::getTaskId, task.getId()));
+        String handleResults = dispositions.stream()
+                .map(QmsInspectionProcedureHandleRecordEntity::getHandleResult)
+                .filter(StrUtil::isNotBlank).distinct().sorted().collect(Collectors.joining(","));
+        task.setHandleResult(handleResults);
+        if (Objects.equals(task.getHandleNum(), task.getNum())) {
+            boolean onlyAccepted = dispositions.stream().allMatch(item ->
+                    HandleResultEnum.RELEASE.name().equals(item.getHandleResult())
+                            || HandleResultEnum.CONCESSION.name().equals(item.getHandleResult()));
+            if (onlyAccepted) {
+                boolean concession = dispositions.stream().anyMatch(item ->
+                        HandleResultEnum.CONCESSION.name().equals(item.getHandleResult()));
+                task.setResult(concession ? InspectionTaskResultEnum.RECEIVE.name()
+                        : InspectionTaskResultEnum.RELEASE.name());
+            }
+            task.setStatus(InspectionTaskStatusEnum.FINISHED.name());
+        }
+        this.updateById(task);
+        reworkResultPublisher.publish(InspectionTaskTypeEnum.PROCEDURE.name(), task.getId());
     }
 
     /**

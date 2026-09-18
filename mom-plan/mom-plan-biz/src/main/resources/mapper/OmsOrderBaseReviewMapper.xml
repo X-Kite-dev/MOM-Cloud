@@ -28,6 +28,8 @@
         base.order_type,
         base.order_state,
         base.change_type,
+        base.change_applicant_name,
+        base.change_reviewer_name,
         base.remark,
         SUM(details.deliver_num) as orderNum,
         ROUND((SUM(details.deliver_num) - SUM(details.delivered_num)),2) as un_deliver_num,

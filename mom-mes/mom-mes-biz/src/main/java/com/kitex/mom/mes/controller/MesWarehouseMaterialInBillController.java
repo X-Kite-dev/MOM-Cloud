@@ -86,6 +86,7 @@ public class MesWarehouseMaterialInBillController {
     @Operation(summary = "直接新增并入库", description = "直接新增并入库")
     @SysLog("直接新增并入库")
     @PostMapping
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehouseMaterialInBill_add')")
     public R save(@RequestBody MesWarehouseMaterialInBillEntity mesWarehouseMaterialInBill) {
         return R.ok(mesWarehouseMaterialInBillService.saveRecord(mesWarehouseMaterialInBill));
     }
@@ -99,7 +100,7 @@ public class MesWarehouseMaterialInBillController {
     @Operation(summary = "新增生产领料-通过出库单", description = "新增生产领料-通过出库单")
     @SysLog("新增生产领料-通过出库单")
     @PostMapping("/saveByWmsOutBill")
-    @PreAuthorize("@pms.hasPermission('mes_mesWarehouseMaterialInBill_add')")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehouseMaterialInBill_add') or @pms.hasPermission('mes_materialReceipt_import')")
     public R saveByWmsOutBill(@RequestBody List<Long> ids) {
         return R.ok(mesWarehouseMaterialInBillService.saveByWmsOutBill(ids));
     }
@@ -113,6 +114,7 @@ public class MesWarehouseMaterialInBillController {
     @Operation(summary = "设置库位并入库", description = "设置库位并入库")
     @SysLog("设置库位并入库")
     @PostMapping("/inStock")
+    @PreAuthorize("@pms.hasPermission('mes_materialReceipt_receive')")
     public R inStock(@RequestBody MesWarehouseMaterialInBillEntity list) {
         return R.ok(mesWarehouseMaterialInBillService.inStock(list));
     }
@@ -128,7 +130,7 @@ public class MesWarehouseMaterialInBillController {
     @PutMapping
     @PreAuthorize("@pms.hasPermission('mes_mesWarehouseMaterialInBill_edit')")
     public R updateById(@RequestBody MesWarehouseMaterialInBillEntity mesWarehouseMaterialInBill) {
-        return R.ok(mesWarehouseMaterialInBillService.updateById(mesWarehouseMaterialInBill));
+        throw new com.kitex.common.core.exception.CheckedException("收料来源及数量不可直接修改；签收错误请通过异岗复核冲销后重新签收");
     }
 
     /**
@@ -142,7 +144,7 @@ public class MesWarehouseMaterialInBillController {
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('mes_mesWarehouseMaterialInBill_del')")
     public R removeById(@RequestBody Long[] ids) {
-        return R.ok(mesWarehouseMaterialInBillService.removeBatchByIds(CollUtil.toList(ids)));
+        throw new com.kitex.common.core.exception.CheckedException("收料通知是WMS发料事实，不可直接删除；请通过原业务退料或签收冲销处理");
     }
 
 

@@ -16,6 +16,11 @@ import java.time.LocalDate;
 @Schema(description = "订单生命周期DTO")
 public class OmsOrderLifeCycleDTO {
     /**
+     * 来源系统永久幂等号
+     */
+    @Schema(description = "来源系统永久幂等号；同号重试载荷必须一致")
+    private String requestId;
+    /**
      * 下达号
      */
     @Schema(description = "下达号")
@@ -56,6 +61,33 @@ public class OmsOrderLifeCycleDTO {
      */
     @Schema(description = "完成数量")
     private BigDecimal finishNum;
+
+    @Schema(description = "MES直接不合格上报数量增量")
+    private BigDecimal unqualifiedNum;
+
+    @Schema(description = "QMS已隔离数量增量")
+    private BigDecimal qualityIsolatedNum;
+
+    @Schema(description = "QMS放行或让步接收数量增量")
+    private BigDecimal qualityReleasedNum;
+
+    @Schema(description = "QMS质量判退数量增量")
+    private BigDecimal qualityRejectedNum;
+
+    @Schema(description = "已审批报废数量增量；撤销审批时为负数")
+    private BigDecimal scrapNum;
+
+    @Schema(description = "质量处置发起返工数量增量")
+    private BigDecimal reworkNum;
+
+    @Schema(description = "返工完工数量增量")
+    private BigDecimal reworkCompletedNum;
+
+    @Schema(description = "返工复检放行数量增量")
+    private BigDecimal reworkQualifiedNum;
+
+    @Schema(description = "返工复检拒绝数量增量")
+    private BigDecimal reworkRejectedNum;
 
     /**
      * 完成时间

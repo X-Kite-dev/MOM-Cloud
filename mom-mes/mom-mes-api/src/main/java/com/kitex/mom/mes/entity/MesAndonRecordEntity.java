@@ -26,6 +26,15 @@ import java.time.LocalDateTime;
 @Schema(description = "安灯信息处理记录")
 public class MesAndonRecordEntity extends BaseEntity<MesAndonRecordEntity> {
 
+    @Schema(description = "调用方幂等请求号")
+    private String requestId;
+
+    @Schema(description = "创建命令指纹，历史为空不可冒充幂等回执")
+    private String requestFingerprint;
+
+    @Schema(description = "影响生产的派工安灯须经独立复产批准后解除生产阻断")
+    private Boolean productionReleaseRequired;
+
     /**
      * 流程编号
      */
@@ -110,11 +119,41 @@ public class MesAndonRecordEntity extends BaseEntity<MesAndonRecordEntity> {
     @Schema(description = "故障描述")
     private String exDesc;
 
+    @Schema(description = "关联生产工单号")
+    private String taskCode;
+
+    @Schema(description = "关联生产任务号")
+    private String produceTaskCode;
+
+    @Schema(description = "关联派工单号")
+    private String arrangeCode;
+
+    @Schema(description = "关联设备编码")
+    private String deviceCode;
+
+    @Schema(description = "关联工位编码")
+    private String worksiteCode;
+
+    @Schema(description = "是否影响生产")
+    private Boolean impactProduction;
+
+    @Schema(description = "是否已联动暂停生产任务")
+    private Boolean productionPaused;
+
+    @Schema(description = "生产暂停联动结果")
+    private String productionPauseResult;
+
     /**
      * 处理结果
      */
     @Schema(description = "处理结果")
     private String result;
+
+    @Schema(description = "根本原因")
+    private String rootCause;
+
+    @Schema(description = "纠正措施")
+    private String correctiveAction;
 
     /**
      * 处理人工号
@@ -134,6 +173,21 @@ public class MesAndonRecordEntity extends BaseEntity<MesAndonRecordEntity> {
     @Schema(description = "流程状态 unreceive未接收，unhandle未处理，up_unreceive升级未接收，up_unhandle升级未处理，handled已处理，closed已闭环，cancel已撤")
     private String state;
 
+    @Schema(description = "接收截止时间")
+    private LocalDateTime responseDeadline;
+
+    @Schema(description = "处理截止时间")
+    private LocalDateTime handleDeadline;
+
+    @Schema(description = "当前升级层级，0为初始处理人")
+    private Integer escalationStep;
+
+    @Schema(description = "累计升级次数")
+    private Integer escalationCount;
+
+    @Schema(description = "下次升级扫描时间")
+    private LocalDateTime nextEscalationTime;
+
     /**
      * 接收时间
      */
@@ -151,6 +205,24 @@ public class MesAndonRecordEntity extends BaseEntity<MesAndonRecordEntity> {
      */
     @Schema(description = "闭环时间")
     private LocalDateTime closeTime;
+
+    @Schema(description = "验证结果 PASS通过、REJECT驳回")
+    private String verificationResult;
+
+    @Schema(description = "验证说明")
+    private String verificationRemark;
+
+    @Schema(description = "验证人工号")
+    private String verifierCode;
+
+    @Schema(description = "验证人姓名")
+    private String verifierName;
+
+    @Schema(description = "验证时间")
+    private LocalDateTime verificationTime;
+
+    @Schema(description = "撤销原因")
+    private String cancelReason;
 
     /**
      * 接收人

@@ -21,6 +21,7 @@ import com.kitex.mom.qms.entity.QmsInspectionPurchaseTaskEntity;
 import com.kitex.mom.qms.service.InspectionPurchaseHandleRecordService;
 import com.kitex.mom.qms.service.InspectionPurchaseHistoryService;
 import com.kitex.mom.qms.service.InspectionPurchaseTaskService;
+import com.kitex.mom.qms.service.QmsReworkOrderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -49,6 +50,7 @@ public class InspectionPurchaseTaskController {
     private final InspectionPurchaseHistoryService historyService;
 
     private final InspectionPurchaseHandleRecordService handleRecordService;
+    private final QmsReworkOrderService reworkOrderService;
 
     @Operation(summary = "判断是否已经有同类型任务", description = "判断是否已经有同类型任务")
     @GetMapping("/existTask")
@@ -189,9 +191,8 @@ public class InspectionPurchaseTaskController {
 
     @Operation(summary = "返工返修", description = "返工返修")
     @PostMapping("/handleRework")
-    public R<Void> handleRework(Long id) {
-        service.handleRework(id);
-        return R.ok();
+    public R<com.kitex.mom.qms.entity.QmsReworkOrderEntity> handleRework(Long id) {
+        return R.ok(reworkOrderService.create("PURCHASE", id));
     }
 
     /**

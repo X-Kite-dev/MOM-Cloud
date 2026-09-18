@@ -13,7 +13,8 @@ public enum PmsPlanStatusEnum {
     NO_CREATEK("0", "未下发"),
     CREATEING("1", "下发中"),
     CREATE("2", "已下发"),
-    COMPLETE("3", "完成");
+    COMPLETE("3", "完成"),
+    CANCELLED("4", "已撤回");
 
     private final String code;
     private final String desc;

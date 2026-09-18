@@ -170,6 +170,15 @@ public class MdmMaterialEntity extends BaseEntity<MdmMaterialEntity> {
     private BigDecimal changeoverTime;
 
     /**
+     * APS排产产品族编码。与库存/财务物料分组解耦，用于顺序相关换型规则。
+     */
+    @Schema(description = "APS排产产品族编码")
+    private String schedulingFamilyCode;
+
+    @Schema(description = "APS排产产品族名称")
+    private String schedulingFamilyName;
+
+    /**
      * 模具规格
      */
     @Schema(description = "模具规格")

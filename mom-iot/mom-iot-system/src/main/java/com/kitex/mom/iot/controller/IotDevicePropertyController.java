@@ -24,6 +24,7 @@ import java.util.Map;
  * @author system
  * @date 2025-03-12
  */
+@org.springframework.security.access.prepost.PreAuthorize("@pms.hasPermission('iot_device_view')")
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/device/property")
@@ -31,6 +32,14 @@ import java.util.Map;
 public class IotDevicePropertyController {
 
     private final IotDevicePropertyService devicePropertyService;
+
+    @GetMapping("/chart/window")
+    @Operation(summary = "按精确时间窗口读取原始趋势，结束时刻不含")
+    public R<Map<String,Object>> chartWindow(@RequestParam Long deviceId,@RequestParam String identifier,
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(pattern="yyyy-MM-dd HH:mm:ss") LocalDateTime startTime,
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(pattern="yyyy-MM-dd HH:mm:ss") LocalDateTime endTime) {
+        return R.ok(devicePropertyService.getPropertyChartData(deviceId,identifier,startTime,endTime));
+    }
 
     /**
      * 分页查询设备属性数据列表
@@ -85,21 +94,7 @@ public class IotDevicePropertyController {
             @Parameter(description = "开始时间") @RequestParam(required = false) LocalDateTime startTime,
             @Parameter(description = "结束时间") @RequestParam(required = false) LocalDateTime endTime) {
 
-        LambdaQueryWrapper<IotDevicePropertyEntity> queryWrapper = new LambdaQueryWrapper<>();
-
-        // 使用条件构造器的条件参数
-        queryWrapper.eq(deviceId != null, IotDevicePropertyEntity::getDeviceId, deviceId)
-                .eq(StrUtil.isNotBlank(deviceCode), IotDevicePropertyEntity::getDeviceCode, deviceCode)
-                .eq(productId != null, IotDevicePropertyEntity::getProductId, productId)
-                .eq(StrUtil.isNotBlank(productCode), IotDevicePropertyEntity::getProductCode, productCode)
-                .eq(StrUtil.isNotBlank(identifier), IotDevicePropertyEntity::getIdentifier, identifier)
-                .eq(StrUtil.isNotBlank(name), IotDevicePropertyEntity::getName, name)
-                .ge(startTime != null, IotDevicePropertyEntity::getCollectTime, startTime)
-                .le(endTime != null, IotDevicePropertyEntity::getCollectTime, endTime)
-                .orderByDesc(IotDevicePropertyEntity::getCollectTime)
-                .last("LIMIT 100");
-
-        return R.ok(devicePropertyService.list(queryWrapper));
+        return R.ok(devicePropertyService.details(deviceId,deviceCode,productId,productCode,identifier,name,startTime,endTime));
     }
 
     /**
@@ -134,6 +129,7 @@ public class IotDevicePropertyController {
             @Parameter(description = "属性标识符") @RequestParam String identifier,
             @Parameter(description = "开始时间") @RequestParam(required = false) LocalDate startTime,
             @Parameter(description = "结束时间") @RequestParam(required = false) LocalDate endTime) {
-        return R.ok(devicePropertyService.getPropertyChartData(deviceId, identifier, startTime.atStartOfDay(), endTime.atStartOfDay()));
+        com.kitex.mom.iot.service.impl.IotAlarmService.require(startTime!=null&&endTime!=null,"请提供开始日期和结束日期（含结束日）");
+        return R.ok(devicePropertyService.getPropertyChartData(deviceId,identifier,startTime.atStartOfDay(),endTime.plusDays(1).atStartOfDay()));
     }
-} 
+}

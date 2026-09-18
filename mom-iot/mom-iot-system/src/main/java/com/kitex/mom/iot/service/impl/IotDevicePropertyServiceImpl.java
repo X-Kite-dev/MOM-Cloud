@@ -19,6 +19,8 @@ import com.kitex.mom.iot.service.IotDevicePropertyService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import static com.kitex.mom.iot.service.impl.IotAlarmService.require;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -41,156 +43,82 @@ public class IotDevicePropertyServiceImpl extends ServiceImpl<IotDevicePropertyM
     private final IotProductMapper iotProductMapper;
 
     private final IotProductModelMapper iotProductModelMapper;
+    private final IotAlarmEvaluator alarmEvaluator;
+    private final IotDeviceDataAccess dataAccess;
 
-    @Override
-    public IPage<IotDevicePropertyEntity> getDevicePropertyPage(Page<IotDevicePropertyEntity> page, IotDevicePropertyEntity property) {
-        return baseMapper.selectPage(page, new LambdaQueryWrapper<IotDevicePropertyEntity>()
-                .eq(property.getDeviceId() != null, IotDevicePropertyEntity::getDeviceId, property.getDeviceId())
-                .eq(StrUtil.isNotBlank(property.getIdentifier()), IotDevicePropertyEntity::getIdentifier, property.getIdentifier())
-                .orderByDesc(IotDevicePropertyEntity::getCreateTime));
+    private LambdaQueryWrapper<IotDevicePropertyEntity> scoped(Long id, String code) {
+        var device=dataAccess.device(id,code,"read");
+        return new LambdaQueryWrapper<IotDevicePropertyEntity>()
+                .eq(IotDevicePropertyEntity::getTenantId,dataAccess.tenant()).eq(IotDevicePropertyEntity::getScopeVerified,true)
+                .eq(IotDevicePropertyEntity::getFactoryCode,device.getFactoryCode()).eq(IotDevicePropertyEntity::getDeviceId,device.getId());
     }
-
+    @Override
+    public IPage<IotDevicePropertyEntity> getDevicePropertyPage(Page<IotDevicePropertyEntity> page,IotDevicePropertyEntity property) {
+        require(property!=null,"请提供设备查询条件");
+        var query=scoped(property.getDeviceId(),property.getDeviceCode())
+                .eq(StrUtil.isNotBlank(property.getIdentifier()),IotDevicePropertyEntity::getIdentifier,property.getIdentifier())
+                .eq(property.getProductId()!=null,IotDevicePropertyEntity::getProductId,property.getProductId())
+                .eq(StrUtil.isNotBlank(property.getProductCode()),IotDevicePropertyEntity::getProductCode,property.getProductCode())
+                .orderByDesc(IotDevicePropertyEntity::getCollectTime,IotDevicePropertyEntity::getId);
+        return baseMapper.selectPage(new Page<>(Math.max(1,page.getCurrent()),Math.max(1,Math.min(500,page.getSize()))),query);
+    }
     @Override
     public List<IotDevicePropertyEntity> getLatestPropertiesByDeviceId(Long deviceId) {
-        // 获取该设备的所有不同标识符
-        List<String> identifiers = baseMapper.selectList(
-                        new LambdaQueryWrapper<IotDevicePropertyEntity>()
-                                .eq(IotDevicePropertyEntity::getDeviceId, deviceId)
-                                .groupBy(IotDevicePropertyEntity::getIdentifier)
-                                .select(IotDevicePropertyEntity::getIdentifier))
-                .stream()
-                .map(IotDevicePropertyEntity::getIdentifier)
-                .collect(Collectors.toList());
-
-        // 对每个标识符获取最新的一条记录
-        List<IotDevicePropertyEntity> result = new ArrayList<>();
-        for (String identifier : identifiers) {
-            IotDevicePropertyEntity latestProperty = getLatestPropertyByDeviceIdAndIdentifier(deviceId, identifier);
-            if (latestProperty != null) {
-                result.add(latestProperty);
-            }
-        }
-
-        return result;
+        var device=dataAccess.device(deviceId,null,"read");
+        return baseMapper.latestScoped(device.getId(),dataAccess.tenant(),device.getFactoryCode());
     }
-
     @Override
-    public IotDevicePropertyEntity getLatestPropertyByDeviceIdAndIdentifier(Long deviceId, String identifier) {
-        return baseMapper.selectOne(
-                new LambdaQueryWrapper<IotDevicePropertyEntity>()
-                        .eq(IotDevicePropertyEntity::getDeviceId, deviceId)
-                        .eq(IotDevicePropertyEntity::getIdentifier, identifier)
-                        .orderByDesc(IotDevicePropertyEntity::getCreateTime)
-                        .last("LIMIT 1"));
+    public IotDevicePropertyEntity getLatestPropertyByDeviceIdAndIdentifier(Long deviceId,String identifier) {
+        require(StrUtil.isNotBlank(identifier),"属性标识不能为空");
+        return baseMapper.selectOne(scoped(deviceId,null).eq(IotDevicePropertyEntity::getIdentifier,identifier)
+                .orderByDesc(IotDevicePropertyEntity::getCollectTime,IotDevicePropertyEntity::getId).last("LIMIT 1"));
     }
-
     @Override
     public List<IotDevicePropertyEntity> getLatestPropertiesByDeviceCode(String deviceCode) {
-        // 查询设备的属性记录
-        List<IotDevicePropertyEntity> properties = baseMapper.selectList(
-                new LambdaQueryWrapper<IotDevicePropertyEntity>()
-                        .eq(IotDevicePropertyEntity::getDeviceCode, deviceCode)
-                        .orderByDesc(IotDevicePropertyEntity::getCreateTime));
-
-        // 按标识符分组，只保留每个标识符的最新记录
-        Map<String, IotDevicePropertyEntity> latestProperties = new HashMap<>();
-        for (IotDevicePropertyEntity property : properties) {
-            String identifier = property.getIdentifier();
-            if (!latestProperties.containsKey(identifier)) {
-                latestProperties.put(identifier, property);
-            }
-        }
-
-        return new ArrayList<>(latestProperties.values());
+        var device=dataAccess.device(null,deviceCode,"read");
+        return baseMapper.latestScoped(device.getId(),dataAccess.tenant(),device.getFactoryCode());
     }
-
-    /**
-     * 获取属性历史记录
-     *
-     * @param deviceId
-     * @param identifier
-     * @return
-     */
     @Override
-    public List<IotDevicePropertyEntity> getPropertyHistory(Long deviceId, String identifier) {
-        try {
-            // 获取属性历史记录
-            return baseMapper.selectList(
-                    new LambdaQueryWrapper<IotDevicePropertyEntity>()
-                            .eq(IotDevicePropertyEntity::getDeviceId, deviceId)
-                            .eq(IotDevicePropertyEntity::getIdentifier, identifier)
-                            .orderByDesc(IotDevicePropertyEntity::getCreateTime));
-        } catch (Exception e) {
-            log.error("获取属性历史记录失败: {}", e.getMessage(), e);
-        }
-        return Collections.emptyList();
+    public List<IotDevicePropertyEntity> getPropertyHistory(Long deviceId,String identifier) {
+        require(StrUtil.isNotBlank(identifier),"属性标识不能为空");
+        var result=baseMapper.selectList(scoped(deviceId,null).eq(IotDevicePropertyEntity::getIdentifier,identifier)
+                .orderByDesc(IotDevicePropertyEntity::getCollectTime,IotDevicePropertyEntity::getId).last("LIMIT 501"));
+        require(result.size()<=500,"历史记录超过500条，请使用分页历史查询，不返回截断的完整历史");
+        return result;
     }
-
-    /**
-     * 获取设备属性一个月内的历史数据用于图表展示
-     *
-     * @param deviceId   设备ID
-     * @param identifier 属性标识符
-     * @return 图表数据，包含时间和值
-     */
     @Override
-    public Map<String, Object> getPropertyChartData(Long deviceId, String identifier) {
-        // 获取一个月前的时间
-        LocalDateTime oneMonthAgo = LocalDateTime.now().minusMonths(1);
-        LocalDateTime now = LocalDateTime.now();
-
-        return getPropertyChartData(deviceId, identifier, oneMonthAgo, now);
+    public Map<String,Object> getPropertyChartData(Long deviceId,String identifier) {
+        LocalDateTime end=LocalDateTime.now();
+        return getPropertyChartData(deviceId,identifier,end.minusDays(31),end);
     }
-
-    /**
-     * 获取设备属性历史数据用于图表展示，根据指定时间范围
-     *
-     * @param deviceId   设备ID
-     * @param identifier 属性标识符
-     * @param startTime  开始时间
-     * @param endTime    结束时间
-     * @return 图表数据，包含时间和值
-     */
     @Override
-    public Map<String, Object> getPropertyChartData(Long deviceId, String identifier, LocalDateTime startTime, LocalDateTime endTime) {
-        try {
-            // 查询指定时间范围内的属性数据
-            List<IotDevicePropertyEntity> properties = baseMapper.selectList(
-                    new LambdaQueryWrapper<IotDevicePropertyEntity>()
-                            .eq(IotDevicePropertyEntity::getDeviceId, deviceId)
-                            .eq(IotDevicePropertyEntity::getIdentifier, identifier)
-                            .ge(startTime != null, IotDevicePropertyEntity::getCollectTime, startTime)
-                            .le(endTime != null, IotDevicePropertyEntity::getCollectTime, endTime)
-                            .orderByAsc(IotDevicePropertyEntity::getCollectTime));
-
-            if (CollUtil.isEmpty(properties)) {
-                return Collections.emptyMap();
-            }
-
-            // 提取属性名称和单位
-            String propertyName = properties.get(0).getName();
-            String unit = properties.get(0).getUnit();
-
-            // 准备图表数据
-            List<LocalDateTime> timestamps = new ArrayList<>();
-            List<String> values = new ArrayList<>();
-
-            for (IotDevicePropertyEntity property : properties) {
-                timestamps.add(property.getCollectTime());
-                values.add(property.getValue());
-            }
-
-            Map<String, Object> result = new HashMap<>();
-            result.put("name", propertyName);
-            result.put("unit", unit);
-            result.put("timestamps", timestamps);
-            result.put("values", values);
-
-            return result;
-        } catch (Exception e) {
-            log.error("获取属性图表数据失败: {}", e.getMessage(), e);
-            return Collections.emptyMap();
-        }
+    public Map<String,Object> getPropertyChartData(Long deviceId,String identifier,LocalDateTime startTime,LocalDateTime endTime) {
+        require(StrUtil.isNotBlank(identifier),"属性标识不能为空");
+        require(startTime!=null&&endTime!=null&&startTime.isBefore(endTime)
+                && !endTime.isAfter(startTime.plusDays(31)),"趋势须指定起止时间，范围最多31天，结束时间不含本时刻");
+        var records=baseMapper.selectList(scoped(deviceId,null).eq(IotDevicePropertyEntity::getIdentifier,identifier)
+                .ge(IotDevicePropertyEntity::getCollectTime,startTime).lt(IotDevicePropertyEntity::getCollectTime,endTime)
+                .orderByAsc(IotDevicePropertyEntity::getCollectTime,IotDevicePropertyEntity::getId).last("LIMIT 5001"));
+        require(records.size()<=5000,"趋势超过5000个原始点，请缩小时间范围；不抽样隐藏尖峰");
+        Map<String,Object> result=new LinkedHashMap<>();
+        result.put("name",records.isEmpty()?identifier:records.get(0).getName());
+        result.put("unit",records.isEmpty()?"":records.get(0).getUnit());
+        result.put("timestamps",records.stream().map(IotDevicePropertyEntity::getCollectTime).toList());
+        result.put("values",records.stream().map(IotDevicePropertyEntity::getValue).toList());
+        result.put("qualityCodes",records.stream().map(IotDevicePropertyEntity::getQualityCode).toList());
+        result.put("propertyIds",records.stream().map(p->String.valueOf(p.getId())).toList());
+        result.put("complete",true); result.put("timeBasis","SERVER_COLLECT_TIME");return result;
+    }
+    @Override
+    public List<IotDevicePropertyEntity> details(Long deviceId,String deviceCode,Long productId,String productCode,
+            String identifier,String name,LocalDateTime startTime,LocalDateTime endTime) {
+        require(startTime==null||endTime==null||!startTime.isAfter(endTime),"开始时间不能晚于结束时间");
+        return baseMapper.selectList(scoped(deviceId,deviceCode).eq(productId!=null,IotDevicePropertyEntity::getProductId,productId)
+                .eq(StrUtil.isNotBlank(productCode),IotDevicePropertyEntity::getProductCode,productCode)
+                .eq(StrUtil.isNotBlank(identifier),IotDevicePropertyEntity::getIdentifier,identifier)
+                .eq(StrUtil.isNotBlank(name),IotDevicePropertyEntity::getName,name)
+                .ge(startTime!=null,IotDevicePropertyEntity::getCollectTime,startTime).le(endTime!=null,IotDevicePropertyEntity::getCollectTime,endTime)
+                .orderByDesc(IotDevicePropertyEntity::getCollectTime,IotDevicePropertyEntity::getId).last("LIMIT 100"));
     }
 
     /**
@@ -201,46 +129,66 @@ public class IotDevicePropertyServiceImpl extends ServiceImpl<IotDevicePropertyM
      * @return
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public boolean updateDeviceProperties(String deviceCode, Map<String, Object> properties) {
-        log.info("更新设备属性: deviceId={}, properties={}", deviceCode, properties);
+        return updateDeviceProperties(deviceCode, properties, Collections.emptyMap());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean updateDeviceProperties(String deviceCode, Map<String, Object> properties, Map<String, String> qualityCodes) {
+        log.debug("更新设备属性: deviceId={}", deviceCode);
 
         if (properties == null || properties.isEmpty()) {
             log.warn("属性数据为空，无需更新");
             return false;
         }
 
-        IotDeviceEntity deviceEntity = iotDeviceMapper.selectOne(Wrappers.<IotDeviceEntity>lambdaQuery().eq(IotDeviceEntity::getDeviceCode, deviceCode));
+        require(StrUtil.isNotBlank(deviceCode) && properties.size()<=500,"属性采集须指定设备且单次不超过500个属性");
+        require(com.kitex.common.data.tenant.TenantContextHolder.getTenantId()!=null
+                && !com.kitex.common.data.tenant.TenantContextHolder.getTenantSkip(),"设备采集须由可信网关绑定明确租户，不能全域查询或跳过租户");
+        String sourceFactory=com.kitex.common.data.orgFilter.FactoryContextHolder.getFactoryCode();
+        require(StrUtil.isNotBlank(sourceFactory),"设备采集须绑定可信网关工厂");
+        List<IotDeviceEntity> devices = iotDeviceMapper.selectList(Wrappers.<IotDeviceEntity>lambdaQuery().eq(IotDeviceEntity::getDeviceCode, deviceCode).last("FOR UPDATE"));
+        require(devices.size()==1,"当前租户设备编码不存在或不唯一，禁止猜测设备来源");
+        IotDeviceEntity deviceEntity = devices.get(0);
+        require(Objects.equals(sourceFactory,deviceEntity.getFactoryCode()) && deviceEntity.getStatus()!=null && deviceEntity.getStatus()!=4,
+                "设备工厂缺失或已禁用，禁止形成告警来源");
 
         IotProductEntity iotProductEntity = iotProductMapper.selectById(deviceEntity.getProductId());
+        require(iotProductEntity!=null,"设备所属产品不存在");
         List<IotProductModelEntity> iotProductModelEntities = iotProductModelMapper.selectByProductId(deviceEntity.getProductId());
 
         // 转成 k - v 的映射
         Map<String, IotProductModelEntity> modelMap = iotProductModelEntities.stream()
+                .filter(model -> "property".equals(model.getFuncType()))
                 .collect(Collectors.toMap(IotProductModelEntity::getIdentifier, Function.identity()));
 
 
         // 批量保存属性数据
         List<IotDevicePropertyEntity> propertyEntities = new ArrayList<>();
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
 
         for (Map.Entry<String, Object> entry : properties.entrySet()) {
             String identifier = entry.getKey();
             Object value = entry.getValue();
 
-            if (value == null) {
-                continue;
-            }
             IotProductModelEntity iotProductModelEntity = modelMap.get(identifier);
 
             // 创建新的属性记录
             IotDevicePropertyEntity propertyEntity = new IotDevicePropertyEntity();
             propertyEntity.setDeviceId(deviceEntity.getId());
+            propertyEntity.setTenantId(deviceEntity.getTenantId());
+            propertyEntity.setFactoryCode(deviceEntity.getFactoryCode());
+            propertyEntity.setScopeVerified(true);
             propertyEntity.setDeviceCode(deviceCode);
             propertyEntity.setProductId(iotProductEntity.getId());
             propertyEntity.setProductCode(iotProductEntity.getProductCode());
             propertyEntity.setIdentifier(identifier);
-            propertyEntity.setValue(value.toString());
+            propertyEntity.setValue(String.valueOf(value));
             propertyEntity.setCollectTime(now);
+            String quality=qualityCodes==null?null:qualityCodes.get(identifier);
+            propertyEntity.setQualityCode(StrUtil.isBlank(quality)?"UNSPECIFIED":quality.length()>100?"INVALID_QUALITY":quality.trim().toUpperCase(Locale.ROOT));
 
             if (iotProductModelEntity != null) {
                 propertyEntity.setName(iotProductModelEntity.getName());
@@ -259,6 +207,8 @@ public class IotDevicePropertyServiceImpl extends ServiceImpl<IotDevicePropertyM
         boolean saved = false;
         if (!propertyEntities.isEmpty()) {
             saved = saveBatch(propertyEntities);
+            require(saved,"原始设备属性保存失败");
+            alarmEvaluator.evaluate(deviceEntity,propertyEntities);
         }
 
         return saved;
@@ -266,31 +216,10 @@ public class IotDevicePropertyServiceImpl extends ServiceImpl<IotDevicePropertyM
 
     @Override
     public Map<String, Object> getDeviceProperties(String productId, String deviceId) {
-        log.info("获取设备属性: productId={}, deviceId={}", productId, deviceId);
-
-        // 查询设备的属性记录
-        List<IotDevicePropertyEntity> properties = baseMapper.selectList(
-                new LambdaQueryWrapper<IotDevicePropertyEntity>()
-                        .eq(IotDevicePropertyEntity::getProductCode, productId)
-                        .eq(IotDevicePropertyEntity::getDeviceCode, deviceId)
-                        .orderByDesc(IotDevicePropertyEntity::getCreateTime));
-
-        if (CollUtil.isEmpty(properties)) {
-            return Collections.emptyMap();
-        }
-
-        // 按标识符分组，只保留每个标识符的最新记录
-        Map<String, Object> result = new HashMap<>();
-        Set<String> processedIdentifiers = new HashSet<>();
-
-        for (IotDevicePropertyEntity property : properties) {
-            String identifier = property.getIdentifier();
-            if (!processedIdentifiers.contains(identifier)) {
-                result.put(identifier, property.getValue());
-                processedIdentifiers.add(identifier);
-            }
-        }
-
+        var device=dataAccess.device(null,deviceId,"read"); // 兼容旧契约：参数名称虽是ID，实际为编码。
+        require(Objects.equals(device.getProductCode(),productId),"设备与产品编码不匹配");
+        Map<String,Object> result=new LinkedHashMap<>();
+        for(var property:baseMapper.latestScoped(device.getId(),dataAccess.tenant(),device.getFactoryCode()))result.put(property.getIdentifier(),property.getValue());
         return result;
     }
 }

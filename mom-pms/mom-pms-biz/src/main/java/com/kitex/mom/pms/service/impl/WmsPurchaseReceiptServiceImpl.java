@@ -90,6 +90,9 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveDeep(WmsPurchaseReceiptEntity entity) {
+        if (StrUtil.isNotBlank(entity.getPmsOrderNo())) {
+            requireOpenOrder(entity.getPmsOrderNo(), entity.getFactoryCode(), entity.getSupplierCode());
+        }
         R<String> billNoR = remoteSeqConfigService.create("wms_purchase_receipt");
         if (!billNoR.isOk()) {
             throw new CheckedException("生成采购收料单号失败！" + billNoR.getMsg());
@@ -136,12 +139,46 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean updateDeep(WmsPurchaseReceiptEntity wmsPurchaseReceipt) {
+        if (wmsPurchaseReceipt == null || wmsPurchaseReceipt.getId() == null) {
+            throw new CheckedException("采购收料单编辑必须指定单据");
+        }
+        WmsPurchaseReceiptEntity current = baseMapper.selectOne(new LambdaQueryWrapper<WmsPurchaseReceiptEntity>()
+                .eq(WmsPurchaseReceiptEntity::getId, wmsPurchaseReceipt.getId()).last("FOR UPDATE"));
+        if (current == null || !PurchaseReceiptStateEnum.PENDING.getCode().equals(current.getState())) {
+            throw new CheckedException("只有待处理采购收料单允许编辑，已形成现场或质量事实的单据必须保留历史");
+        }
+        requireOpenOrder(current.getPmsOrderNo(), current.getFactoryCode(), current.getSupplierCode());
+        wmsPurchaseReceipt.setBillNo(current.getBillNo());
+        wmsPurchaseReceipt.setPmsOrderNo(current.getPmsOrderNo());
+        wmsPurchaseReceipt.setSupplierCode(current.getSupplierCode());
+        wmsPurchaseReceipt.setSupplierName(current.getSupplierName());
+        wmsPurchaseReceipt.setState(current.getState());
+        wmsPurchaseReceipt.setFactoryCode(current.getFactoryCode());
         baseMapper.updateById(wmsPurchaseReceipt);
-        for (WmsPurchaseReceiptDetailEntity wmsPurchaseReceiptDetail : wmsPurchaseReceipt.getDetails()) {
+        List<WmsPurchaseReceiptDetailEntity> submittedDetails = wmsPurchaseReceipt.getDetails() == null
+                ? Collections.emptyList() : wmsPurchaseReceipt.getDetails();
+        for (WmsPurchaseReceiptDetailEntity wmsPurchaseReceiptDetail : submittedDetails) {
             if (Objects.isNull(wmsPurchaseReceiptDetail.getId())) {
                 wmsPurchaseReceiptDetail.setBillId(wmsPurchaseReceipt.getId());
+                wmsPurchaseReceiptDetail.setActualNum(0D);
+                wmsPurchaseReceiptDetail.setInableNum(0D);
+                wmsPurchaseReceiptDetail.setInNum(0D);
+                wmsPurchaseReceiptDetail.setRejectNum(0D);
+                wmsPurchaseReceiptDetail.setWmsStatus(Boolean.FALSE);
                 wmsPurchaseReceiptDetailMapper.insert(wmsPurchaseReceiptDetail);
             } else {
+                WmsPurchaseReceiptDetailEntity currentDetail = wmsPurchaseReceiptDetailMapper.selectById(
+                        wmsPurchaseReceiptDetail.getId());
+                if (currentDetail == null || !Objects.equals(currentDetail.getBillId(), current.getId())) {
+                    throw new CheckedException("采购收料单明细不存在或不属于当前单据");
+                }
+                wmsPurchaseReceiptDetail.setBillId(current.getId());
+                wmsPurchaseReceiptDetail.setOrderDetailId(currentDetail.getOrderDetailId());
+                wmsPurchaseReceiptDetail.setActualNum(currentDetail.getActualNum());
+                wmsPurchaseReceiptDetail.setInableNum(currentDetail.getInableNum());
+                wmsPurchaseReceiptDetail.setInNum(currentDetail.getInNum());
+                wmsPurchaseReceiptDetail.setRejectNum(currentDetail.getRejectNum());
+                wmsPurchaseReceiptDetail.setWmsStatus(currentDetail.getWmsStatus());
                 wmsPurchaseReceiptDetailMapper.updateById(wmsPurchaseReceiptDetail);
             }
         }
@@ -151,6 +188,14 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean removeDeep(Long[] ids) {
+        if (ids == null || ids.length == 0) return Boolean.TRUE;
+        List<WmsPurchaseReceiptEntity> receipts = baseMapper.selectList(
+                new LambdaQueryWrapper<WmsPurchaseReceiptEntity>()
+                        .in(WmsPurchaseReceiptEntity::getId, Arrays.asList(ids)).last("FOR UPDATE"));
+        if (receipts.size() != Arrays.stream(ids).distinct().count()
+                || receipts.stream().anyMatch(value -> !PurchaseReceiptStateEnum.PENDING.getCode().equals(value.getState()))) {
+            throw new CheckedException("只能删除全部存在且待处理的采购收料单；现场、质量和入库事实不得物理删除");
+        }
         baseMapper.deleteBatchIds(CollUtil.toList(ids));
         wmsPurchaseReceiptDetailMapper.delete(Wrappers.<WmsPurchaseReceiptDetailEntity>lambdaQuery().in(WmsPurchaseReceiptDetailEntity::getBillId, ids));
         return Boolean.TRUE;
@@ -159,6 +204,20 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean removeChild(Long[] ids) {
+        if (ids == null || ids.length == 0) return Boolean.TRUE;
+        List<WmsPurchaseReceiptDetailEntity> details = wmsPurchaseReceiptDetailMapper.selectList(
+                new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
+                        .in(WmsPurchaseReceiptDetailEntity::getId, Arrays.asList(ids)).last("FOR UPDATE"));
+        if (details.size() != Arrays.stream(ids).distinct().count()) {
+            throw new CheckedException("采购收料单明细不存在或已被删除");
+        }
+        Set<Long> billIds = details.stream().map(WmsPurchaseReceiptDetailEntity::getBillId).collect(Collectors.toSet());
+        List<WmsPurchaseReceiptEntity> receipts = baseMapper.selectList(new LambdaQueryWrapper<WmsPurchaseReceiptEntity>()
+                .in(WmsPurchaseReceiptEntity::getId, billIds).last("FOR UPDATE"));
+        if (receipts.size() != billIds.size()
+                || receipts.stream().anyMatch(value -> !PurchaseReceiptStateEnum.PENDING.getCode().equals(value.getState()))) {
+            throw new CheckedException("只有待处理采购收料单允许删除明细；现场、质量和入库事实不得物理删除");
+        }
         wmsPurchaseReceiptDetailMapper.deleteBatchIds(CollUtil.toList(ids));
         return Boolean.TRUE;
     }
@@ -674,6 +733,8 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
     @Transactional(rollbackFor = Exception.class)
     public Boolean receive(PmsOrderPurchaseReceiptInspectionDTO pmsOrder) {
 
+        requireOpenOrder(pmsOrder.getPmsOrderNo(), pmsOrder.getFactoryCode(), pmsOrder.getSupplierCode());
+
         MdmSupplierEntity mdmSupplierEntity = new MdmSupplierEntity();
         mdmSupplierEntity.setSupplierCode(pmsOrder.getSupplierCode());
         MdmSupplierEntity mdmSupplier = remoteSupplierService.getDetails(mdmSupplierEntity).getData();
@@ -734,6 +795,24 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         // 修改采购订单状态
         return pmsOrderService.update(new LambdaUpdateWrapper<PmsOrderEntity>().set(PmsOrderEntity::getStatus, PmsOrderStatusEnum.RECEIVING.getCode())
                 .eq(PmsOrderEntity::getPmsOrderNo, pmsOrder.getPmsOrderNo()));
+    }
+
+    private PmsOrderEntity requireOpenOrder(String orderNo, String factoryCode, String supplierCode) {
+        if (StrUtil.isBlank(orderNo)) throw new CheckedException("采购收料必须指定采购订单号");
+        PmsOrderEntity order = pmsOrderService.getOne(new LambdaQueryWrapper<PmsOrderEntity>()
+                .eq(PmsOrderEntity::getPmsOrderNo, orderNo).last("FOR UPDATE"), false);
+        if (order == null || !Set.of(PmsOrderStatusEnum.CHECK_SUCCESS.getCode(),
+                PmsOrderStatusEnum.RECEIVING.getCode(), PmsOrderStatusEnum.PART_RECEIVE.getCode()).contains(order.getStatus())) {
+            throw new CheckedException("采购订单不存在、未审核通过、已完成或已取消，禁止新建收料事实");
+        }
+        if (StrUtil.isNotBlank(factoryCode) && !Objects.equals(factoryCode, order.getFactoryCode())) {
+            throw new CheckedException("采购收料工厂与采购订单不一致");
+        }
+        if (StrUtil.isNotBlank(supplierCode) && !Objects.equals(supplierCode, order.getSupplierCode())) {
+            throw new CheckedException("采购收料供应商与采购订单不一致");
+        }
+        pmsContractService.assertReceivableContract(orderNo);
+        return order;
     }
 
     /**
@@ -860,4 +939,3 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         return Boolean.TRUE;
     }
 }
-

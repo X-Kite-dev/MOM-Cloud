@@ -137,7 +137,7 @@ public class OmsOrderBaseController {
      * @param bindingResult            错误信息列表
      */
     @PostMapping("/import")
-    @PreAuthorize("@pms.hasPermission('oms_omsOrderBase_export')")
+    @PreAuthorize("@pms.hasPermission('oms_omsOrderBase_add')")
     public R importOrder(@RequestExcel(headRowNumber = 2) List<OmsOrderBaseImportVo> omsOrderBaseImportVoList, BindingResult bindingResult,
                          @RequestParam("factoryCode") String factoryCode) {
         return omsOrderBaseService.importOrder(omsOrderBaseImportVoList, bindingResult, factoryCode);

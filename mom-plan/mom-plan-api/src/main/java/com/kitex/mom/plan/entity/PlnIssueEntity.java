@@ -27,6 +27,10 @@ import java.util.List;
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "计划下达表")
 public class PlnIssueEntity extends BaseEntity<PlnIssueEntity> {
+    /** 仅本次引擎内传递，结果持久化时单独保存，不写来源计划或远端业务实体。 */
+    @com.baomidou.mybatisplus.annotation.TableField(exist=false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String sequenceEvidenceJson;
 
     /**
      * 生产计划下达号
@@ -100,6 +104,33 @@ public class PlnIssueEntity extends BaseEntity<PlnIssueEntity> {
     @Schema(description = "完成数量")
     private BigDecimal finishNum;
 
+    @Schema(description = "MES直接不合格上报累计数量")
+    private BigDecimal unqualifiedNum;
+
+    @Schema(description = "QMS已隔离累计数量")
+    private BigDecimal qualityIsolatedNum;
+
+    @Schema(description = "QMS放行或让步接收累计数量")
+    private BigDecimal qualityReleasedNum;
+
+    @Schema(description = "QMS质量判退累计数量")
+    private BigDecimal qualityRejectedNum;
+
+    @Schema(description = "已审批报废净累计数量")
+    private BigDecimal scrapNum;
+
+    @Schema(description = "质量处置发起返工累计数量")
+    private BigDecimal reworkNum;
+
+    @Schema(description = "返工完工累计数量")
+    private BigDecimal reworkCompletedNum;
+
+    @Schema(description = "返工复检放行累计数量")
+    private BigDecimal reworkQualifiedNum;
+
+    @Schema(description = "返工复检拒绝累计数量")
+    private BigDecimal reworkRejectedNum;
+
     /**
      * 完成时间
      */
@@ -165,6 +196,66 @@ public class PlnIssueEntity extends BaseEntity<PlnIssueEntity> {
     @Schema(description = "评分拆解(JSON)")
     @TableField(exist = false)
     private String scoreBreakdown;
+
+    @Schema(description = "排产物料约束状态")
+    @TableField(exist = false)
+    private String materialConstraintStatus;
+
+    @Schema(description = "物料预计齐套后的最早可开工日期")
+    @TableField(exist = false)
+    private LocalDate materialAvailableDate;
+
+    @Schema(description = "物料逐层汇合后的分钟级最早可开工时刻")
+    @TableField(exist = false)
+    private LocalDateTime materialAvailableTime;
+
+    @Schema(description = "物料约束是否硬阻断")
+    @TableField(exist = false)
+    private Boolean materialHardBlocked;
+
+    @Schema(description = "物料约束业务摘要")
+    @TableField(exist = false)
+    private String materialConstraintSummary;
+
+    @Schema(description = "物料约束明细JSON快照")
+    @TableField(exist = false)
+    private String materialConstraintSnapshot;
+
+    @Schema(description = "逐工序物料汇合约束JSON快照")
+    @TableField(exist = false)
+    private String operationMaterialConstraintSnapshot;
+
+    @Schema(description = "本次MRP BOM路径证据综合指纹")
+    @TableField(exist = false)
+    private String materialLineageFingerprint;
+
+    @Schema(description = "物料约束最近复核时间")
+    @TableField(exist = false)
+    private LocalDateTime materialConstraintCheckedTime;
+
+    @Schema(description = "工序级有限产能排程状态")
+    @TableField(exist = false)
+    private String operationScheduleStatus;
+
+    @Schema(description = "工序级排程是否硬阻断")
+    @TableField(exist = false)
+    private Boolean operationHardBlocked;
+
+    @Schema(description = "工序级排程摘要")
+    @TableField(exist = false)
+    private String operationScheduleSummary;
+
+    @Schema(description = "排产工序数量")
+    @TableField(exist = false)
+    private Integer operationCount;
+
+    @Schema(description = "首道工序计划开始时间")
+    @TableField(exist = false)
+    private LocalDateTime operationStartTime;
+
+    @Schema(description = "末道工序计划结束时间")
+    @TableField(exist = false)
+    private LocalDateTime operationEndTime;
 
     /**
      * 下达反馈列表

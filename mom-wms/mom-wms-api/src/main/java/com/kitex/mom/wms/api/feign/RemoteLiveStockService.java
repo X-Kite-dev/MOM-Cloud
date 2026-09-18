@@ -4,10 +4,15 @@ import com.kitex.common.core.util.R;
 import com.kitex.mom.wms.Constants;
 import com.kitex.mom.wms.dto.WmsLiveStockByProductCodeDto;
 import com.kitex.mom.wms.dto.WmsLiveStockQueryDTO;
+import com.kitex.mom.wms.dto.WmsQualityActionExecuteCommand;
+import com.kitex.mom.wms.dto.WmsQualityStatusCommand;
+import com.kitex.mom.wms.dto.WmsQualityStatusResult;
 import com.kitex.mom.wms.entity.WmsLiveStockEntity;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.cloud.openfeign.SpringQueryMap;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
 import java.util.List;
 
@@ -28,6 +33,12 @@ public interface RemoteLiveStockService {
      */
     @GetMapping("/material/wmsLiveStock/getLiveStockList")
     R<List<WmsLiveStockEntity>> getLiveStockList(@SpringQueryMap WmsLiveStockQueryDTO wmsLiveStock);
+
+    @PostMapping("/material/wmsLiveStock/quality/status")
+    R<WmsQualityStatusResult> applyQualityStatus(@RequestBody WmsQualityStatusCommand command);
+
+    @PostMapping("/material/wmsLiveStock/quality/execute")
+    R<WmsQualityStatusResult> executeQualityAction(@RequestBody WmsQualityActionExecuteCommand command);
 
 
 }

@@ -57,6 +57,18 @@ public class PmsOrderAddDTO {
     @Schema(description = "类型 false 采购计划生成 true 采购订单新增")
     private Boolean type;
 
+    private String sourceType;
+    private String agentPurchaseMode;
+    private String agentRequestId;
+    private String agentCommandHash;
+    private Long agentMrpId;
+    private String agentBusinessType;
+    private String agentBusinessNo;
+    private String agentEvidenceFingerprint;
+    private Long agentPriceId;
+    private Long agentAuthorizationId;
+    private String agentReason;
+
     /**
      * 工厂编码
      */

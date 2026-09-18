@@ -119,6 +119,14 @@ public class WmsDeliverGoodsBaseEntity extends BaseEntity<WmsDeliverGoodsBaseEnt
     @Schema(description = "来源")
     private String source;
 
+    /** 客户实收异常处置生成的补发单来源；普通发货为空。 */
+    @Schema(description = "客户交付异常处置单ID")
+    private Long exceptionResolutionCaseId;
+
+    /** 补发对应的原发货单ID。 */
+    @Schema(description = "原发货单ID")
+    private Long originalDeliveryId;
+
     /**
      * 创建人名称
      */
