@@ -12,7 +12,7 @@ public interface PlnSchedulingJobService {
     /**
      * MRP完成后触发排产任务
      *
-     * @param cycleType 计划周期 DAY/WEEK/MONTH
+     * @param cycleType    计划周期 DAY/WEEK/MONTH
      * @param scheduleDate 计划日期
      * @return 是否触发成功
      */

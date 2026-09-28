@@ -8,6 +8,10 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+
 /**
  * 采购退货
  *
@@ -59,6 +63,39 @@ public class PmsReturnDetailEntity extends BaseEntity<PmsReturnDetailEntity> {
      */
     @Schema(description = "退货数量")
     private Double returnNum;
+
+    @Schema(description = "WMS实时库存行ID")
+    private Long liveStockId;
+    @Schema(description = "原采购收料单ID快照")
+    private Long sourceReceiptId;
+    @Schema(description = "原采购收料批次明细ID快照")
+    private Long sourceReceiptDetailId;
+    @Schema(description = "仓库编码")
+    private String warehouseCode;
+    @Schema(description = "仓库名称")
+    private String warehouseName;
+    @Schema(description = "库位编码")
+    private String siteCode;
+    @Schema(description = "库位名称")
+    private String siteName;
+    @Schema(description = "容器编码")
+    private String containerCode;
+    @Schema(description = "物料批次")
+    private String matBatch;
+    @Schema(description = "质量状态快照")
+    private String qualityStatus;
+    @Schema(description = "质量结果快照")
+    private String qualityResult;
+    @Schema(description = "有效期快照")
+    private LocalDate validEndDate;
+    @Schema(description = "首次入库时间快照")
+    private LocalDateTime stockInTime;
+    @Schema(description = "申请时可退数量")
+    private BigDecimal returnableNumSnapshot;
+    @Schema(description = "WMS实际退供数量")
+    private BigDecimal actualReturnNum;
+    @Schema(description = "库存事实指纹")
+    private String stockFingerprint;
     /**
      * 工厂编码
      */

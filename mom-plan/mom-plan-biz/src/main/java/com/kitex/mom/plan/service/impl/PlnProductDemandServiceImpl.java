@@ -15,8 +15,6 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.excel.vo.ErrorMessage;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
-import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
-import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mdm.dto.MdmBomChildDTO;
 import com.kitex.mom.mdm.dto.MdmBomSubstituteOptionDTO;
 import com.kitex.mom.mdm.entity.MdmCustomerEntity;
@@ -24,45 +22,24 @@ import com.kitex.mom.mdm.entity.MdmMaterialAuthorizationEntity;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.entity.MdmWarehouseEntity;
 import com.kitex.mom.mdm.enums.MatAttributeEnum;
-import com.kitex.mom.mdm.feign.RemoteBomService;
-import com.kitex.mom.mdm.feign.RemoteCustomerService;
-import com.kitex.mom.mdm.feign.RemoteMaterialService;
-import com.kitex.mom.mdm.feign.RemoteMaterialAuthorizationService;
-import com.kitex.mom.mdm.feign.RemoteWarehouseService;
-import com.kitex.mom.plan.constant.PlanStatusEnum;
+import com.kitex.mom.mdm.feign.*;
+import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
+import com.kitex.mom.mes.entity.MesTaskEntity;
+import com.kitex.mom.oms.entity.OmsDeliveryIssueEntity;
+import com.kitex.mom.oms.entity.OmsDeliveryWithdrawalEntity;
+import com.kitex.mom.oms.entity.OmsOrderChangeVersionEntity;
 import com.kitex.mom.plan.constant.MrpReadinessStatusEnum;
 import com.kitex.mom.plan.constant.MrpSubstituteStatusEnum;
-import com.kitex.mom.plan.dto.MatMrpDTO;
-import com.kitex.mom.plan.dto.PlanBomRequirementPathDTO;
-import com.kitex.mom.plan.dto.PlanMatSubstituteAllocationDTO;
-import com.kitex.mom.plan.dto.PlanMatSubstituteCandidateDTO;
-import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
-import com.kitex.mom.plan.entity.PlanMatMrpEntity;
-import com.kitex.mom.plan.entity.PlanMrpInventoryPeggingEntity;
-import com.kitex.mom.plan.entity.PlnProductDemandEntity;
-import com.kitex.mom.plan.entity.PlnMpsLineEntity;
-import com.kitex.mom.plan.entity.PlnIssueEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingBatchAllocationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity;
-import com.kitex.mom.plan.entity.PlnProductDemandChangeEntity;
-import com.kitex.mom.plan.mapper.PlnProductDemandMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingBatchAllocationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingOperationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskDetailMapper;
-import com.kitex.mom.plan.mapper.PlnProductDemandChangeMapper;
-import com.kitex.mom.plan.mapper.OmsDeliveryWithdrawalMapper;
-import com.kitex.mom.oms.entity.OmsDeliveryWithdrawalEntity;
-import com.kitex.mom.oms.entity.OmsDeliveryIssueEntity;
-import com.kitex.mom.oms.entity.OmsOrderChangeVersionEntity;
-import com.kitex.mom.plan.mapper.OmsDeliveryIssueMapper;
-import com.kitex.mom.plan.mapper.OmsOrderChangeVersionMapper;
+import com.kitex.mom.plan.constant.PlanStatusEnum;
+import com.kitex.mom.plan.dto.*;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.PlanMatMrpService;
 import com.kitex.mom.plan.service.PlanMrpInventoryPeggingService;
+import com.kitex.mom.plan.service.PlnIssueService;
 import com.kitex.mom.plan.service.PlnProductDemandService;
 import com.kitex.mom.plan.vo.PlnProductDemandExcelVO;
 import com.kitex.mom.plan.vo.PlnTemporaryDemandDateVO;
-import com.kitex.mom.plan.service.PlnIssueService;
 import com.kitex.mom.wms.api.feign.RemoteLiveStockService;
 import com.kitex.mom.wms.dto.WmsLiveStockByProductCodeDto;
 import com.kitex.mom.wms.entity.WmsLiveStockEntity;
@@ -70,19 +47,19 @@ import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.BindingResult;
 
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -122,6 +99,8 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
     private final RemoteMesTaskService remoteMesTaskService;
 
     private final PlnSchedulingBatchAllocationMapper batchAllocationMapper;
+
+    private final PlnSchedulingBatchMapper schedulingBatchMapper;
 
     private final PlnSchedulingTaskDetailMapper schedulingTaskDetailMapper;
 
@@ -314,8 +293,8 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
     @Override
     @Transactional(rollbackFor = Exception.class, propagation = Propagation.MANDATORY)
     public PlnProductDemandEntity applyOmsReviewedChange(Long id, String orderCode, Long orderDetailId,
-            Long orderChangeVersionId,
-            BigDecimal beforeQuantity, LocalDate beforeDate, BigDecimal afterQuantity, LocalDate afterDate) {
+                                                         Long orderChangeVersionId,
+                                                         BigDecimal beforeQuantity, LocalDate beforeDate, BigDecimal afterQuantity, LocalDate afterDate) {
         if (beforeQuantity == null || beforeDate == null || afterQuantity == null || afterQuantity.signum() <= 0
                 || afterDate == null || afterDate.isBefore(LocalDate.now())) {
             throw new CheckedException("OMS受控变更须提供原数量/交期和有效目标数量/交期");
@@ -428,21 +407,45 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
 
     private void requireNoExecutionFacts(PlnProductDemandEntity demand) {
         String demandNo = demand.getDemandNo();
-        if (plnIssueService.count(new LambdaQueryWrapper<PlnIssueEntity>()
-                .eq(PlnIssueEntity::getIssueNo, demandNo)) != 0
-                || batchAllocationMapper.selectCount(new LambdaQueryWrapper<PlnSchedulingBatchAllocationEntity>()
-                .eq(PlnSchedulingBatchAllocationEntity::getIssueNo, demandNo)) != 0
-                || schedulingTaskDetailMapper.selectCount(new LambdaQueryWrapper<PlnSchedulingTaskDetailEntity>()
-                .eq(PlnSchedulingTaskDetailEntity::getIssueNo, demandNo)) != 0
-                || schedulingOperationMapper.selectCount(new LambdaQueryWrapper<PlnSchedulingOperationEntity>()
-                .eq(PlnSchedulingOperationEntity::getIssueNo, demandNo)) != 0) {
+        List<PlnIssueEntity> issues = plnIssueService.list(new LambdaQueryWrapper<PlnIssueEntity>()
+                .eq(PlnIssueEntity::getIssueNo, demandNo));
+        if (issues.stream().anyMatch(row -> !"4".equals(row.getStatus())
+                || optional(row.getFinishNum()).signum() != 0)) {
             throw new CheckedException("产品需求已关联生产计划或APS，不能直接修改或重算");
+        }
+        List<PlnSchedulingBatchAllocationEntity> allocations = batchAllocationMapper.selectList(
+                new LambdaQueryWrapper<PlnSchedulingBatchAllocationEntity>()
+                        .eq(PlnSchedulingBatchAllocationEntity::getIssueNo, demandNo));
+        for (PlnSchedulingBatchAllocationEntity allocation : allocations) {
+            PlnSchedulingBatchEntity batch = schedulingBatchMapper.selectById(allocation.getBatchId());
+            if (batch == null || !"WITHDRAWN".equals(batch.getBatchStatus()) || Boolean.TRUE.equals(batch.getLockStatus())) {
+                throw new CheckedException("产品需求仍有关联的活动APS批次，不能修改或重算");
+            }
+        }
+        List<PlnSchedulingTaskDetailEntity> taskDetails = schedulingTaskDetailMapper.selectList(
+                new LambdaQueryWrapper<PlnSchedulingTaskDetailEntity>()
+                        .eq(PlnSchedulingTaskDetailEntity::getIssueNo, demandNo));
+        if (taskDetails.stream().anyMatch(row -> !"WITHDRAWN".equals(row.getOperationScheduleStatus())
+                || Boolean.TRUE.equals(row.getLockStatus()))) {
+            throw new CheckedException("产品需求仍有关联的活动APS任务明细，不能修改或重算");
+        }
+        List<PlnSchedulingOperationEntity> operations = schedulingOperationMapper.selectList(
+                new LambdaQueryWrapper<PlnSchedulingOperationEntity>()
+                        .eq(PlnSchedulingOperationEntity::getIssueNo, demandNo));
+        if (operations.stream().anyMatch(row -> !"WITHDRAWN".equals(row.getScheduleStatus())
+                || Boolean.TRUE.equals(row.getLockStatus()))) {
+            throw new CheckedException("产品需求仍有关联的活动APS工序占用，不能修改或重算");
         }
         R<List<MesTaskEntity>> mes = remoteMesTaskService.omsLife(demandNo);
         if (mes == null || !mes.isOk() || mes.getData() == null) {
             throw new CheckedException("MES来源事实不可核验，禁止修改或重算产品需求");
         }
-        if (!mes.getData().isEmpty()) {
+        if (mes.getData().stream().anyMatch(row -> !"CLOSE".equals(row.getStatus())
+                || row.getStartTime() != null || row.getFinishTime() != null
+                || optional(row.getCompleteNum()).signum() != 0
+                || optional(row.getInStockNum()).signum() != 0
+                || optional(row.getUnInStockNum()).signum() != 0
+                || optional(row.getUnPassNum()).signum() != 0)) {
             throw new CheckedException("产品需求已关联MES工单，不能修改或重算");
         }
     }
@@ -455,7 +458,7 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
         Set<Long> ids = new HashSet<>();
         for (PlanMatMrpEntity row : rows) {
             ids.add(row.getId());
-            boolean safe = Boolean.FALSE.equals(row.getStatus())
+            boolean safeDraft = Boolean.FALSE.equals(row.getStatus())
                     && optional(row.getCompleteNum()).signum() == 0
                     && Objects.equals(row.getFactoryCode(), demand.getFactoryCode())
                     && Objects.equals(row.getDemandWarehouseCode(), demand.getDemandWarehouseCode())
@@ -475,7 +478,30 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
                     StrUtil.blankToDefault(row.getSubstituteStatus(), "NONE"))
                     && Set.of("NONE", "PLANNED").contains(
                     StrUtil.blankToDefault(row.getInventoryPeggingStatus(), "NONE"));
-            if (!safe) throw new CheckedException("MRP已有MPS版本、下达、替代、预留、采购或供应事实，须走级联撤回");
+            boolean hasSupplyIdentity = row.getSupplySourceId() != null
+                    || StrUtil.isNotBlank(row.getSupplySourceType()) || StrUtil.isNotBlank(row.getSupplySourceNo());
+            boolean supplyClosed = !hasSupplyIdentity
+                    || row.getSupplySourceId() != null && StrUtil.isNotBlank(row.getSupplySourceType())
+                    && StrUtil.isNotBlank(row.getSupplySourceNo()) && "WITHDRAWN".equals(row.getSupplySourceStatus())
+                    && StrUtil.isNotBlank(row.getSupplyWithdrawalRequestId()) && row.getSupplyWithdrawalTime() != null;
+            boolean reservationsClosed = (StrUtil.isBlank(row.getMainMaterialReservationNo())
+                    || "RELEASED".equals(row.getMainMaterialReservationStatus()))
+                    && (StrUtil.isBlank(row.getMaterialReservationNo())
+                    || "RELEASED".equals(row.getMaterialReservationStatus()));
+            boolean safeCascadeWithdrawal = Boolean.FALSE.equals(row.getStatus())
+                    && optional(row.getCompleteNum()).signum() == 0
+                    && Objects.equals(row.getFactoryCode(), demand.getFactoryCode())
+                    && Objects.equals(row.getDemandWarehouseCode(), demand.getDemandWarehouseCode())
+                    && row.getMpsVersionId() == null && row.getMpsLineId() == null
+                    && supplyClosed && reservationsClosed
+                    && row.getPurchaseOrderId() == null && row.getPurchaseOrderDetailId() == null
+                    && StrUtil.isAllBlank(row.getPurchaseRequestId(), row.getPurchaseOrderNo(), row.getPurchaseOrderStatus())
+                    && optional(row.getPurchaseOrderNum()).signum() == 0
+                    && Set.of("NONE", "RELEASED").contains(
+                    StrUtil.blankToDefault(row.getInventoryPeggingStatus(), "NONE"));
+            if (!safeDraft && !safeCascadeWithdrawal) {
+                throw new CheckedException("MRP已有未收口的MPS、下达、预留、采购或供应事实，须先完成级联撤回");
+            }
         }
         List<PlanMrpInventoryPeggingEntity> peggings = inventoryPeggingService.list(
                 new LambdaQueryWrapper<PlanMrpInventoryPeggingEntity>()
@@ -484,9 +510,11 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
         for (PlanMrpInventoryPeggingEntity row : peggings) {
             if (!ids.contains(row.getMrpId()) || !Objects.equals(row.getFactoryCode(), demand.getFactoryCode())
                     || !Objects.equals(row.getWarehouseCode(), demand.getDemandWarehouseCode())
-                    || StrUtil.isNotBlank(row.getReservationNo()) || row.getReservationTime() != null
+                    || StrUtil.isNotBlank(row.getReservationNo()) && !"RELEASED".equals(row.getStatus())
+                    || row.getReservationTime() != null && !"RELEASED".equals(row.getStatus())
                     || row.getSourceStockId() == null || optional(row.getPeggedNum()).signum() <= 0
-                    || StrUtil.isBlank(row.getEvidenceFingerprint()) || !"PLANNED".equals(row.getStatus())) {
+                    || StrUtil.isBlank(row.getEvidenceFingerprint())
+                    || !Set.of("PLANNED", "RELEASED").contains(row.getStatus())) {
                 throw new CheckedException("MRP库存Pegging已预留、消费、孤立或状态异常，须走级联撤回");
             }
         }
@@ -1321,9 +1349,9 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
                                             Map<String, List<WmsLiveStockEntity>> stockRowsByMaterial,
                                             Map<String, MdmMaterialEntity> materialMap) {
         List<PlanMatMrpEntity> ordered = mrpLines.stream().sorted(Comparator
-                .comparing(PlanMatMrpEntity::getDemandDate, Comparator.nullsLast(Comparator.naturalOrder()))
-                .thenComparing(PlanMatMrpEntity::getPlanDemandNo, Comparator.nullsLast(String::compareTo))
-                .thenComparing(PlanMatMrpEntity::getMatCode, Comparator.nullsLast(String::compareTo)))
+                        .comparing(PlanMatMrpEntity::getDemandDate, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(PlanMatMrpEntity::getPlanDemandNo, Comparator.nullsLast(String::compareTo))
+                        .thenComparing(PlanMatMrpEntity::getMatCode, Comparator.nullsLast(String::compareTo)))
                 .toList();
         for (PlanMatMrpEntity line : ordered) {
             BigDecimal netDemand = Optional.ofNullable(line.getNetDemandNum()).orElse(BigDecimal.ZERO);
@@ -1468,7 +1496,9 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
         }
     }
 
-    /** 以同币种、合规可执行候选的最低参考价为本次方案基准，形成可解释的替代方案价差。 */
+    /**
+     * 以同币种、合规可执行候选的最低参考价为本次方案基准，形成可解释的替代方案价差。
+     */
     private void enrichCostVariance(List<PlanMatSubstituteCandidateDTO> candidates) {
         for (PlanMatSubstituteCandidateDTO candidate : candidates) {
             if (candidate.getReferenceUnitPrice() == null) {
@@ -1491,11 +1521,11 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
     }
 
     private PlanMatSubstituteCandidateDTO createCandidate(MdmBomSubstituteOptionDTO option,
-                                                           PlanMatMrpEntity line,
-                                                           Map<String, MdmMaterialEntity> materialMap,
-                                                           Map<String, BigDecimal> usableStockMap,
-                                                           Map<String, BigDecimal> physicalStockMap,
-                                                           Map<String, List<WmsLiveStockEntity>> stockRowsByMaterial) {
+                                                          PlanMatMrpEntity line,
+                                                          Map<String, MdmMaterialEntity> materialMap,
+                                                          Map<String, BigDecimal> usableStockMap,
+                                                          Map<String, BigDecimal> physicalStockMap,
+                                                          Map<String, List<WmsLiveStockEntity>> stockRowsByMaterial) {
         MdmMaterialEntity material = materialMap.get(option.getSubstituteCode());
         LocalDate effectiveDate = Optional.ofNullable(line.getDemandDate()).orElse(LocalDate.now());
         String complianceMessage = complianceMessage(option, line.getCustomerCode(), effectiveDate);
@@ -1799,20 +1829,6 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
         return normalized;
     }
 
-    private static final class InventoryRowBalance {
-        private final WmsLiveStockEntity stock;
-        private BigDecimal available;
-
-        private InventoryRowBalance(WmsLiveStockEntity stock, BigDecimal available) {
-            this.stock = stock;
-            this.available = available;
-        }
-    }
-
-    private record StockAllocationResult(BigDecimal allocatedNum,
-                                         List<PlanMrpInventoryPeggingEntity> peggingLines) {
-    }
-
     private String stockPoolKey(String warehouseCode, String materialCode) {
         return StrUtil.nullToEmpty(warehouseCode) + "\u0001" + StrUtil.nullToEmpty(materialCode);
     }
@@ -1895,6 +1911,20 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
         demand.setDemandWarehouseCode(warehouse.getWarehouseCode());
         demand.setDemandWarehouseName(warehouse.getWarehouseName());
         return warehouse;
+    }
+
+    private static final class InventoryRowBalance {
+        private final WmsLiveStockEntity stock;
+        private BigDecimal available;
+
+        private InventoryRowBalance(WmsLiveStockEntity stock, BigDecimal available) {
+            this.stock = stock;
+            this.available = available;
+        }
+    }
+
+    private record StockAllocationResult(BigDecimal allocatedNum,
+                                         List<PlanMrpInventoryPeggingEntity> peggingLines) {
     }
 
 }

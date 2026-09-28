@@ -3,12 +3,8 @@ package com.kitex.mom.mes.service;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.MesChangePointHandleEntity;
-import com.kitex.mom.mes.dto.ChangePointAcceptCommand;
-import com.kitex.mom.mes.dto.ChangePointCancelCommand;
-import com.kitex.mom.mes.dto.ChangePointHandleCommand;
-import com.kitex.mom.mes.dto.ChangePointTriggerCommand;
-import com.kitex.mom.mes.dto.ChangePointVerifyCommand;
 import com.kitex.mom.mes.entity.MesChangePointOperationEntity;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
 

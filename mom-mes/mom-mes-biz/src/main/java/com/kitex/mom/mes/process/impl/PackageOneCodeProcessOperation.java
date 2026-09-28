@@ -1,16 +1,13 @@
 package com.kitex.mom.mes.process.impl;
 
-import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.util.StrUtil;
 import com.kitex.admin.api.feign.RemoteParamService;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.mom.mdm.entity.MdmCustomerPartEntity;
-import com.kitex.mom.mdm.feign.RemoteCustomerPartService;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
-import com.kitex.mom.mes.dto.MesTaskReportVO;
 import com.kitex.mom.mes.dto.MesTaskReportResult;
+import com.kitex.mom.mes.dto.MesTaskReportVO;
 import com.kitex.mom.mes.entity.MesTaskReportEntity;
 import com.kitex.mom.mes.entity.MesWrapEntity;
 import com.kitex.mom.mes.entity.MesWrapRecordEntity;
@@ -38,13 +35,11 @@ import java.util.Objects;
 @Component
 public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
 
-    private final RemoteCustomerPartService partService;
     private final MesWrapService mesWrapService;
     private final MesWrapRecordService wrapRecordService;
 
-    public PackageOneCodeProcessOperation(MesWarehouseLiveStockService liveStockService, RemoteParamService remoteParamService, RemoteMaterialService matService, MesWarehouseFeedService feedService, RemoteCustomerPartService partService, MesWrapService mesWrapService, MesWrapRecordService wrapRecordService) {
+    public PackageOneCodeProcessOperation(MesWarehouseLiveStockService liveStockService, RemoteParamService remoteParamService, RemoteMaterialService matService, MesWarehouseFeedService feedService, MesWrapService mesWrapService, MesWrapRecordService wrapRecordService) {
         super(liveStockService, remoteParamService, matService, feedService);
-        this.partService = partService;
         this.mesWrapService = mesWrapService;
         this.wrapRecordService = wrapRecordService;
     }
@@ -57,8 +52,7 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
         if (StrUtil.isEmpty(params.getTransferCode())) {
             throw new RuntimeException("报工条码不能为空");
         }
-        // 2. 一物一码校验
-        validateOneCode(params.getTransferCode(), params.getMatCode());
+        // 2. 条码规则、错料和重复过站已由统一过站防错门校验。
         // 3. 预生成报工主记录ID，包装明细和后续库存流水统一关联该报工。
         MesTaskReportEntity report = createReport(params, currentUser);
         params.setReportId(report.getId());
@@ -74,27 +68,6 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
             result.setWrapMessage(wrapMessage);
         }
         return result;
-    }
-
-    /**
-     * 验证一物一码
-     *
-     * @param transferCode 流转码
-     * @param matCode      物料编码
-     */
-    private void validateOneCode(String transferCode, String matCode) {
-        List<MdmCustomerPartEntity> partList = partService.getPartCodeByMatCode(matCode).getData();
-        if (CollUtil.isEmpty(partList)) {
-            throw new RuntimeException("未匹配到条码信息");
-        }
-
-        boolean matchRegular = partList.stream()
-                .anyMatch(part -> StrUtil.isNotEmpty(part.getRegular()) &&
-                        transferCode.matches(part.getRegular()));
-
-        if (!matchRegular) {
-            throw new RuntimeException("扫描报工条码/流转卡错误，请重新扫描");
-        }
     }
 
     /**
@@ -152,12 +125,12 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
      */
     private void bindSealedRecords(MesTaskReportVO params, String wrapCode) {
         List<MesWrapRecordEntity> records = wrapRecordService.list(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MesWrapRecordEntity>()
-                        .eq(MesWrapRecordEntity::getArrangeCode, params.getArrangeCode())
-                        .isNotNull(MesWrapRecordEntity::getReportId)
-                        .eq(MesWrapRecordEntity::getPackingStatus, MesWrapRecordStatusEnum.STAGED.name())
-                        .orderByDesc(MesWrapRecordEntity::getCreateTime)
-                        .orderByDesc(MesWrapRecordEntity::getId))
+                        new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MesWrapRecordEntity>()
+                                .eq(MesWrapRecordEntity::getArrangeCode, params.getArrangeCode())
+                                .isNotNull(MesWrapRecordEntity::getReportId)
+                                .eq(MesWrapRecordEntity::getPackingStatus, MesWrapRecordStatusEnum.STAGED.name())
+                                .orderByDesc(MesWrapRecordEntity::getCreateTime)
+                                .orderByDesc(MesWrapRecordEntity::getId))
                 .stream()
                 .limit(params.getCapacity())
                 .toList();

@@ -17,6 +17,13 @@ import lombok.experimental.Accessors;
 public class WmsOutBillDetailAppDTO {
 
     /**
+     * 业务冻结的精确实时库存主键。
+     * 采购退供等受控场景必须携带，避免同物料多批次或多库位时误选库存。
+     */
+    @Schema(description = "来源实时库存主键")
+    private Long sourceStockId;
+
+    /**
      * 通知单号
      */
     @NotNull(message = "通知单号不能为空")

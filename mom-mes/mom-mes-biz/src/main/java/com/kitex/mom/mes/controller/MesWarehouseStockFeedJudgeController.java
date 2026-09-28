@@ -1,13 +1,10 @@
 package com.kitex.mom.mes.controller;
 
-
-import cn.hutool.core.collection.CollUtil;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
 import com.kitex.common.log.annotation.SysLog;
-import com.kitex.common.query.utils.QueryGenerator;
+import com.kitex.mom.mes.dto.MesMaterialReturnWithdrawDTO;
 import com.kitex.mom.mes.dto.MesWarehouseFeedDTO;
 import com.kitex.mom.mes.dto.MesWarehouseFeedJudgeDTO;
 import com.kitex.mom.mes.entity.MesWarehouseStockFeedJudgeEntity;
@@ -20,136 +17,61 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-
 /**
- * 线边库余料退料审批
- *
- * @author kitex
- * @since 2025-04-08
+ * 线边余料申请、异岗审核、WMS通知和永久履历入口。
  */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/mesWarehouseStockFeedJudge")
-@Tag(description = "mesWarehouseStockFeedJudge", name = "箱码规则管理")
+@Tag(description = "mesWarehouseStockFeedJudge", name = "线边余料受控退库")
 @SecurityRequirement(name = HttpHeaders.AUTHORIZATION)
 public class MesWarehouseStockFeedJudgeController {
 
     private final MesWarehouseStockFeedJudgeService service;
 
-    /**
-     * 分页查询
-     *
-     * @param pageParam
-     * @param query
-     * @return
-     */
-
-    @Operation(summary = "分页查询", description = "分页查询")
+    @Operation(summary = "受控退料申请分页")
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('stockFeedJudge:show')")
-    public R<IPage<MesWarehouseStockFeedJudgeEntity>> page(Page<MesWarehouseStockFeedJudgeEntity> pageParam, MesWarehouseStockFeedJudgeEntity query) {
-        QueryWrapper<MesWarehouseStockFeedJudgeEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
-        autoQueryWrapper.lambda().orderByDesc(MesWarehouseStockFeedJudgeEntity::getCreateTime);
-        return R.ok(service.page(pageParam, autoQueryWrapper));
+    public R<IPage<MesWarehouseStockFeedJudgeEntity>> page(Page<MesWarehouseStockFeedJudgeEntity> page,
+                                                           MesWarehouseStockFeedJudgeEntity query) {
+        return R.ok(service.pageRequests(page, query));
     }
 
-    @Operation(summary = "列表查询", description = "列表查询")
-    @GetMapping("/list")
-    public R<List<MesWarehouseStockFeedJudgeEntity>> list(MesWarehouseStockFeedJudgeEntity query) {
-        QueryWrapper<MesWarehouseStockFeedJudgeEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
-        autoQueryWrapper.lambda().eq(MesWarehouseStockFeedJudgeEntity::getStatus, Boolean.TRUE)
-                .orderByDesc(MesWarehouseStockFeedJudgeEntity::getCreateTime);
-        return R.ok(service.list(autoQueryWrapper));
+    @Operation(summary = "预览精确线边库存的退料资格")
+    @PostMapping("/preview")
+    @PreAuthorize("@pms.hasPermission('stockFeedJudge:submit')")
+    public R<MesWarehouseFeedDTO.Evidence> preview(@RequestBody MesWarehouseFeedDTO source) {
+        return R.ok(service.preview(source));
     }
 
-
-    /**
-     * 通过id查询箱码规则管理
-     *
-     * @param id id
-     * @return R
-     */
-    @Operation(summary = "通过id查询", description = "通过id查询")
+    @Operation(summary = "查看退料申请、当前事实和不可变履历")
     @GetMapping("/{id}")
-    @PreAuthorize("@pms.hasPermission('mesWarehouseStockFeedJudge:show')")
-    public R<MesWarehouseStockFeedJudgeEntity> getById(@PathVariable("id") Long id) {
-        return R.ok(service.getById(id));
+    @PreAuthorize("@pms.hasPermission('stockFeedJudge:show')")
+    public R<MesWarehouseFeedDTO.Detail> detail(@PathVariable Long id) {
+        return R.ok(service.detail(id));
     }
 
-    /**
-     * 新增箱码规则管理
-     *
-     * @param mesWarehouseStockFeedJudge 箱码规则管理
-     * @return R
-     */
-    @Operation(summary = "新增箱码规则管理", description = "新增箱码规则管理")
-    @SysLog("新增箱码规则管理")
-    @PostMapping
-    @PreAuthorize("@pms.hasPermission('mesWarehouseStockFeedJudge:add')")
-    public R<Void> save(@RequestBody MesWarehouseStockFeedJudgeEntity mesWarehouseStockFeedJudge) {
-        service.save(mesWarehouseStockFeedJudge);
-        return R.ok();
-    }
-
-    /**
-     * 修改箱码规则管理
-     *
-     * @param mesWarehouseStockFeedJudge 箱码规则管理
-     * @return R
-     */
-    @Operation(summary = "修改箱码规则管理", description = "修改箱码规则管理")
-    @SysLog("修改箱码规则管理")
-    @PutMapping
-    @PreAuthorize("@pms.hasPermission('mesWarehouseStockFeedJudge:edit')")
-    public R<Void> updateById(@RequestBody MesWarehouseStockFeedJudgeEntity mesWarehouseStockFeedJudge) {
-        service.updateById(mesWarehouseStockFeedJudge);
-        return R.ok();
-    }
-
-    /**
-     * 通过id删除箱码规则管理
-     *
-     * @param ids id列表
-     * @return R
-     */
-    @Operation(summary = "通过id删除箱码规则管理", description = "通过id删除箱码规则管理")
-    @SysLog("通过id删除箱码规则管理")
-    @DeleteMapping
-    @PreAuthorize("@pms.hasPermission('mesWarehouseStockFeedJudge:delete')")
-    public R<Void> removeById(@RequestBody Long[] ids) {
-        service.removeBatchByIds(CollUtil.toList(ids));
-        return R.ok();
-    }
-
-    /**
-     * 提交退料审批
-     *
-     * @param submitDTO 退料审批提交参数
-     * @return R
-     */
-    @Operation(summary = "提交退料审批", description = "提交退料审批")
-    @SysLog("提交退料审批")
+    @Operation(summary = "提交线边余料退库申请")
+    @SysLog("提交线边余料退库申请")
     @PostMapping("/submit")
     @PreAuthorize("@pms.hasPermission('stockFeedJudge:submit')")
-    public R<Void> submitReturnMaterial(@RequestBody MesWarehouseFeedDTO submitDTO) {
-        service.submitReturnMaterial(submitDTO);
-        return R.ok();
+    public R<MesWarehouseStockFeedJudgeEntity> submit(@RequestBody MesWarehouseFeedDTO command) {
+        return R.ok(service.submitReturnMaterial(command));
     }
 
-    /**
-     * 审批
-     *
-     * @param submitDTO 审批参数
-     * @return R
-     */
-    @Operation(summary = "审批", description = "审批")
-    @SysLog("审批")
+    @Operation(summary = "异岗批准或驳回退料申请")
+    @SysLog("审核线边余料退库申请")
     @PostMapping("/judge")
     @PreAuthorize("@pms.hasPermission('stockFeedJudge:judge')")
-    public R<Void> judge(@RequestBody MesWarehouseFeedJudgeDTO submitDTO) {
-        service.judge(submitDTO);
-        return R.ok();
+    public R<MesWarehouseStockFeedJudgeEntity> judge(@RequestBody MesWarehouseFeedJudgeDTO command) {
+        return R.ok(service.judge(command));
     }
 
+    @Operation(summary = "原申请人撤回待审核退料申请")
+    @SysLog("撤回线边余料退库申请")
+    @PostMapping("/withdraw")
+    @PreAuthorize("@pms.hasPermission('stockFeedJudge:submit')")
+    public R<MesWarehouseStockFeedJudgeEntity> withdraw(@RequestBody MesMaterialReturnWithdrawDTO command) {
+        return R.ok(service.withdraw(command));
+    }
 }

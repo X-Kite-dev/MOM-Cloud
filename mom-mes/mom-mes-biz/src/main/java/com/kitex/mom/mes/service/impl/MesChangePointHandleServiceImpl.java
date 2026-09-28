@@ -9,34 +9,17 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.mom.mes.dto.ChangePointAcceptCommand;
-import com.kitex.mom.mes.dto.ChangePointCancelCommand;
-import com.kitex.mom.mes.dto.ChangePointHandleCommand;
-import com.kitex.mom.mes.dto.ChangePointNotifyResult;
-import com.kitex.mom.mes.dto.ChangePointTriggerCommand;
-import com.kitex.mom.mes.dto.ChangePointVerifyCommand;
-import com.kitex.mom.mes.dto.MesQualityGateDecision;
-import com.kitex.mom.mes.entity.MesChangePointConfigEntity;
-import com.kitex.mom.mes.entity.MesChangePointHandleEntity;
-import com.kitex.mom.mes.entity.MesChangePointLevelConfigEntity;
-import com.kitex.mom.mes.entity.MesChangePointOperationEntity;
-import com.kitex.mom.mes.entity.MesProduceTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
+import com.kitex.mom.mes.dto.*;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.mapper.MesChangePointHandleMapper;
 import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
-import com.kitex.mom.mes.service.MesChangePointConfigService;
-import com.kitex.mom.mes.service.MesChangePointHandleService;
-import com.kitex.mom.mes.service.MesChangePointLevelConfigService;
-import com.kitex.mom.mes.service.MesChangePointNotifyService;
-import com.kitex.mom.mes.service.MesChangePointOperationService;
-import com.kitex.mom.mes.service.MesProduceTaskService;
-import com.kitex.mom.mes.service.MesQualityGateService;
+import com.kitex.mom.mes.service.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
@@ -91,7 +74,7 @@ public class MesChangePointHandleServiceImpl extends ServiceImpl<MesChangePointH
         MesChangePointConfigEntity config = configService.getOne(
                 new LambdaQueryWrapper<MesChangePointConfigEntity>()
                         .eq(MesChangePointConfigEntity::getConfigCode, command.getConfigCode())
-                        .eq(MesChangePointConfigEntity::getEnabled, "1").last("LIMIT 1"), false);
+                        .eq(MesChangePointConfigEntity::getEnabled, Boolean.TRUE).last("LIMIT 1"), false);
         require(config != null, "变化点配置不存在或未启用");
         MesTaskArrangeEntity arrange = resolveArrange(command);
         TriggerContext context = buildContext(command, arrange);
@@ -99,7 +82,7 @@ public class MesChangePointHandleServiceImpl extends ServiceImpl<MesChangePointH
         MesChangePointLevelConfigEntity level = levelConfigService.getOne(
                 new LambdaQueryWrapper<MesChangePointLevelConfigEntity>()
                         .eq(MesChangePointLevelConfigEntity::getConfigCode, config.getConfigCode())
-                        .eq(MesChangePointLevelConfigEntity::getEnabled, "1").last("LIMIT 1"), false);
+                        .eq(MesChangePointLevelConfigEntity::getEnabled, Boolean.TRUE).last("LIMIT 1"), false);
         BigDecimal effectiveUpperLimit = level != null && level.getUpperLimit() != null
                 ? level.getUpperLimit() : config.getUpperLimit();
         BigDecimal effectiveLowerLimit = level != null && level.getLowerLimit() != null

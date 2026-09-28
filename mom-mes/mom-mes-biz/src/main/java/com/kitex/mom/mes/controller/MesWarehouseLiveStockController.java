@@ -142,8 +142,9 @@ public class MesWarehouseLiveStockController {
     @PostMapping
     @PreAuthorize("@pms.hasPermission('mes_mesWarehouseLiveStock_add')")
     public R save(@RequestBody MesWarehouseLiveStockEntity mesWarehouseLiveStock) {
-        if(mesWarehouseLiveStock.getQualityCaseId()!=null || mesWarehouseLiveStock.getQualityOriginCaseId()!=null || mesWarehouseLiveStock.getQualityDispositionReceiptId()!=null || mesWarehouseLiveStock.getQualityReleaseReceiptId()!=null) throw new com.kitex.common.core.exception.CheckedException("质量案件库存及处置谱系只能由专用命令生成");
-        if (mesWarehouseLiveStock.getPhysicalLocationCode()!=null || mesWarehouseLiveStock.getPhysicalLocationName()!=null || mesWarehouseLiveStock.getPhysicalConfirmedTime()!=null)
+        if (mesWarehouseLiveStock.getQualityCaseId() != null || mesWarehouseLiveStock.getQualityOriginCaseId() != null || mesWarehouseLiveStock.getQualityDispositionReceiptId() != null || mesWarehouseLiveStock.getQualityReleaseReceiptId() != null)
+            throw new com.kitex.common.core.exception.CheckedException("质量案件库存及处置谱系只能由专用命令生成");
+        if (mesWarehouseLiveStock.getPhysicalLocationCode() != null || mesWarehouseLiveStock.getPhysicalLocationName() != null || mesWarehouseLiveStock.getPhysicalConfirmedTime() != null)
             throw new com.kitex.common.core.exception.CheckedException("现场位置确认须由实际转运交接生成，不得手工伪造");
         if (mesWarehouseLiveStock.getMaterialReceiptId() != null || mesWarehouseLiveStock.getSourceReportId() != null)
             throw new com.kitex.common.core.exception.CheckedException("不得通过手工库存新增伪造报工或签收来源");
@@ -240,7 +241,7 @@ public class MesWarehouseLiveStockController {
 
     @Operation(summary = "分页查询-物料级", description = "分页查询-物料级")
     @GetMapping("/pageFeedback")
-    @PreAuthorize("@pms.hasPermission('mes_feedback:show')")
+    @PreAuthorize("@pms.hasPermission('mes_feedback:show') or @pms.hasPermission('stockFeedJudge:submit')")
     public R<IPage<MesWarehouseFeedDTO>> getPageFeedBack(Page<MesWarehouseFeedDTO> pageParam, MesWarehouseFeedDTO query) {
         return R.ok(mesWarehouseLiveStockService.getPageFeedBack(pageParam, query));
     }

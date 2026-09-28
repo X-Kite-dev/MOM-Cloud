@@ -10,5 +10,6 @@ public interface TpmRepairTaskService extends IService<TpmRepairTaskEntity> {
     Boolean saveTask(TpmRepairTaskEntity tpmRepairTask);
 
     Boolean handleTask(TpmRepairTaskEntity tpmRepairTask);
+
     Boolean completeVerifiedTask(Long verificationId);
 }

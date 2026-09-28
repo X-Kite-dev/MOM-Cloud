@@ -5,33 +5,31 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.lang.Snowflake;
 import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.util.IdUtil;
-import cn.hutool.core.util.ObjUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.kitex.common.core.util.R;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.core.util.R;
 import com.kitex.common.excel.vo.ErrorMessage;
 import com.kitex.mom.mdm.dto.MdmBomChildDTO;
 import com.kitex.mom.mdm.dto.MdmBomDTO;
 import com.kitex.mom.mdm.dto.MdmBomSubstituteOptionDTO;
 import com.kitex.mom.mdm.dto.MdmSubstituteAuthorizationSnapshotDTO;
-import com.kitex.mom.mdm.entity.MdmBomChildEntity;
-import com.kitex.mom.mdm.entity.MdmBomEntity;
-import com.kitex.mom.mdm.entity.MdmMaterialAuthorizationEntity;
-import com.kitex.mom.mdm.entity.MdmMaterialEntity;
+import com.kitex.mom.mdm.entity.*;
 import com.kitex.mom.mdm.enums.SubstituteStrategyEnum;
 import com.kitex.mom.mdm.mapper.MdmBomChildMapper;
+import com.kitex.mom.mdm.mapper.MdmBomEcnBindingMapper;
+import com.kitex.mom.mdm.mapper.MdmBomEcnMapper;
 import com.kitex.mom.mdm.mapper.MdmBomMapper;
 import com.kitex.mom.mdm.service.MdmBomService;
 import com.kitex.mom.mdm.service.MdmMaterialAuthorizationService;
 import com.kitex.mom.mdm.service.MdmMaterialService;
 import com.kitex.mom.mdm.utils.DynamicRefreshUtils;
 import com.kitex.mom.mdm.vo.MdmBomTreeVO;
+import com.kitex.mom.mdm.vo.MdmBomVersionVO;
 import com.kitex.mom.mdm.vo.excel.MdmBomExcelVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
@@ -60,6 +58,10 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
 
     private final MdmBomChildMapper mdmBomChildMapper;
 
+    private final MdmBomEcnBindingMapper mdmBomEcnBindingMapper;
+
+    private final MdmBomEcnMapper mdmBomEcnMapper;
+
     private final MdmMaterialService mdmMaterialService;
 
     private final MdmMaterialAuthorizationService materialAuthorizationService;
@@ -76,7 +78,7 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveDeep(MdmBomDTO mdmBomDTO) {
         MdmBomGovernance.require(mdmBomDTO != null && StrUtil.isNotBlank(mdmBomDTO.getProductCode())
-                && StrUtil.isNotBlank(mdmBomDTO.getVersion()) && mdmBomDTO.getMdmBomChildList() != null,
+                        && StrUtil.isNotBlank(mdmBomDTO.getVersion()) && mdmBomDTO.getMdmBomChildList() != null,
                 "BOM草案须提供产品、版本及明细集合");
         String factory = bomGovernance.factory(mdmBomDTO.getFactoryCode());
         bomGovernance.access(factory, "write", true);
@@ -126,8 +128,8 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
                 "修改BOM草案须提供版本ID及完整明细集合");
         MdmBomEntity old = bomGovernance.editable(mdmBomDTO.getId());
         MdmBomGovernance.require(Objects.equals(old.getProductCode(), mdmBomDTO.getProductCode())
-                && Objects.equals(old.getVersion(), mdmBomDTO.getVersion())
-                && Objects.equals(old.getFactoryCode(), bomGovernance.factory(mdmBomDTO.getFactoryCode())),
+                        && Objects.equals(old.getVersion(), mdmBomDTO.getVersion())
+                        && Objects.equals(old.getFactoryCode(), bomGovernance.factory(mdmBomDTO.getFactoryCode())),
                 "已有版本不可改产品、版本号或工厂，请新增草案");
         MdmBomGovernance.require(!Boolean.TRUE.equals(mdmBomDTO.getEnabled()) && !Boolean.TRUE.equals(mdmBomDTO.getIsDefault()),
                 "草案不能直接启用或设默认，请走工程变更审批");
@@ -262,9 +264,9 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
         Map<String, MdmMaterialEntity> materialMap = substituteCodes.isEmpty()
                 ? Collections.emptyMap()
                 : mdmMaterialService.list(
-                                Wrappers.<MdmMaterialEntity>lambdaQuery().eq(MdmMaterialEntity::getFactoryCode, factory)
-                                        .in(MdmMaterialEntity::getMaterialCode, substituteCodes))
-                        .stream().collect(Collectors.toMap(MdmMaterialEntity::getMaterialCode, Function.identity(), (left, right) -> left));
+                        Wrappers.<MdmMaterialEntity>lambdaQuery().eq(MdmMaterialEntity::getFactoryCode, factory)
+                                .in(MdmMaterialEntity::getMaterialCode, substituteCodes))
+                .stream().collect(Collectors.toMap(MdmMaterialEntity::getMaterialCode, Function.identity(), (left, right) -> left));
         for (Map.Entry<MdmBomChildEntity, List<MdmBomSubstituteOptionDTO>> entry : optionMap.entrySet()) {
             List<String> enabledCodes = new ArrayList<>();
             for (MdmBomSubstituteOptionDTO option : entry.getValue()) {
@@ -360,9 +362,9 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
         for (int i = 0; i < policies.size(); i++) {
             MdmBomChildEntity old = policies.get(i), live = checked.get(i);
             MdmBomGovernance.require(Objects.equals(old.getSubstitutePolicy(), live.getSubstitutePolicy())
-                    && Objects.equals(old.getReplaceCodes(), live.getReplaceCodes())
-                    && Objects.equals(old.getSubstituteMixAllowed(), live.getSubstituteMixAllowed())
-                    && Objects.equals(old.getSubstituteStrategy(), live.getSubstituteStrategy()),
+                            && Objects.equals(old.getReplaceCodes(), live.getReplaceCodes())
+                            && Objects.equals(old.getSubstituteMixAllowed(), live.getSubstituteMixAllowed())
+                            && Objects.equals(old.getSubstituteStrategy(), live.getSubstituteStrategy()),
                     "BOM[" + bom.getId() + "]物料[" + old.getMaterialCode() + "]替代策略或权威认证已变化，须在可编辑新版本重新保存核实，不覆盖冻结旧版");
         }
     }
@@ -394,7 +396,7 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
     }
 
     private MdmMaterialAuthorizationEntity coveringAuthorization(String type, String materialCode, String partnerCode,
-                                                                  LocalDate start, LocalDate coverageEnd) {
+                                                                 LocalDate start, LocalDate coverageEnd) {
         return materialAuthorizationService.active(type, materialCode, partnerCode, start).stream()
                 .filter(item -> !item.getValidEnd().isBefore(coverageEnd))
                 .findFirst().orElseThrow(() -> new CheckedException("替代料[" + materialCode + "]合作方[" + partnerCode
@@ -455,7 +457,8 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
         MdmBomGovernance.require(ids != null && ids.length > 0, "请选择BOM草案明细");
         List<MdmBomChildEntity> lines = mdmBomChildMapper.selectBatchIds(Arrays.asList(ids));
         MdmBomGovernance.require(lines.size() == Arrays.stream(ids).distinct().count(), "BOM明细已不存在");
-        for (Long id : lines.stream().map(MdmBomChildEntity::getBomId).distinct().sorted().toList()) bomGovernance.editable(id);
+        for (Long id : lines.stream().map(MdmBomChildEntity::getBomId).distinct().sorted().toList())
+            bomGovernance.editable(id);
         mdmBomChildMapper.deleteByIds(CollUtil.toList(ids));
         return Boolean.TRUE;
     }
@@ -506,6 +509,24 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
     }
 
     /**
+     * 读取BOM维护视图。与生产执行展开接口不同，此处允许查看未提交草案和审批冻结版本，
+     * 但仍强制校验当前租户及工厂访问边界。
+     */
+    @Override
+    public List<MdmBomChildDTO> getMaintenanceStructure(Long bomId) {
+        MdmBomGovernance.require(bomId != null && bomId > 0, "BOM维护预览须指定精确版本ID");
+        MdmBomEntity root = this.getById(bomId);
+        MdmBomGovernance.require(root != null, "BOM版本不存在");
+        bomGovernance.access(root.getFactoryCode(), "read", false);
+        MdmBomGovernance.require(Objects.equals(root.getFactoryCode(), bomGovernance.factory(null)), "BOM不属于当前工厂");
+        List<MdmBomChildEntity> allBomChild = mdmBomChildMapper.selectList(
+                Wrappers.<MdmBomChildEntity>lambdaQuery().eq(MdmBomChildEntity::getFactoryCode, root.getFactoryCode()));
+        List<MdmBomChildDTO> result = new ArrayList<>();
+        getMaintenanceStructure(allBomChild, result, root.getId(), root.getFactoryCode(), new HashSet<>());
+        return result;
+    }
+
+    /**
      * 根据产品编码列表获取该产品所有子物料bom信息包括自己
      *
      * @param productCodes 产品编码列表
@@ -531,7 +552,7 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
             bomChildDTO.setMaterialCode(productCode);
             if (Objects.isNull(bomEntity)) {
                 MdmBomGovernance.require(this.count(Wrappers.<MdmBomEntity>lambdaQuery()
-                        .eq(MdmBomEntity::getProductCode, productCode).eq(MdmBomEntity::getFactoryCode, bomGovernance.factory(null))) == 0,
+                                .eq(MdmBomEntity::getProductCode, productCode).eq(MdmBomEntity::getFactoryCode, bomGovernance.factory(null))) == 0,
                         "产品[" + productCode + "]已有BOM但没有当前可用发布版，不可把草案或过期版本当作无BOM继续运算");
                 bomChildDTO.setChildren(resultList);
                 result.put(productCode, bomChildDTO);
@@ -672,6 +693,8 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
         // 获取bom列表
         List<MdmBomEntity> list = this.list(queryWrapper);
 
+        Map<Long, MdmBomEcnEntity> frozenEcnByBomId = loadFrozenEcn(list);
+
         // 按照productCode分组
         Map<String, List<MdmBomEntity>> groupedByProduct = list.stream()
                 .collect(Collectors.groupingBy(
@@ -684,7 +707,8 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
             if (!boms.isEmpty()) {
                 MdmBomEntity firstRoute = boms.get(0);
                 MdmBomTreeVO parentNode = new MdmBomTreeVO();
-                parentNode.setId(firstRoute.getId());
+                // 产品节点不能复用首个版本ID，否则el-tree会产生重复node-key并误选父节点。
+                parentNode.setId("PRODUCT:" + firstRoute.getFactoryCode() + ":" + productCode);
                 parentNode.setTitle(String.format("%s(%s)", firstRoute.getProductName(), productCode));
                 parentNode.setProductCode(productCode);
                 parentNode.setProductName(firstRoute.getProductName());
@@ -697,11 +721,62 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
                         boms.stream().filter(route -> !Boolean.TRUE.equals(route.getIsDefault()))
                 ).collect(Collectors.toList());
 
-                parentNode.setChildren(children);
+                parentNode.setChildren(children.stream().map(bom -> toVersionNode(bom, frozenEcnByBomId.get(bom.getId())))
+                        .collect(Collectors.toList()));
                 treeList.add(parentNode);
             }
         });
         return treeList;
+    }
+
+    /**
+     * 批量读取会冻结BOM版本的工程变更，避免版本树逐行查询产生N+1问题。
+     */
+    private Map<Long, MdmBomEcnEntity> loadFrozenEcn(List<MdmBomEntity> boms) {
+        if (CollUtil.isEmpty(boms)) {
+            return Collections.emptyMap();
+        }
+        List<MdmBomEcnBindingEntity> bindings = mdmBomEcnBindingMapper.selectList(
+                Wrappers.<MdmBomEcnBindingEntity>lambdaQuery()
+                        .in(MdmBomEcnBindingEntity::getBomId, boms.stream().map(MdmBomEntity::getId).toList()));
+        if (CollUtil.isEmpty(bindings)) {
+            return Collections.emptyMap();
+        }
+        List<MdmBomEcnEntity> ecns = mdmBomEcnMapper.selectList(
+                Wrappers.<MdmBomEcnEntity>lambdaQuery()
+                        .select(MdmBomEcnEntity::getId, MdmBomEcnEntity::getStatus)
+                        .in(MdmBomEcnEntity::getId, bindings.stream().map(MdmBomEcnBindingEntity::getEcnId).distinct().toList())
+                        .in(MdmBomEcnEntity::getStatus, "PENDING", "PUBLISHED"));
+        Map<Long, MdmBomEcnEntity> ecnById = ecns.stream()
+                .collect(Collectors.toMap(MdmBomEcnEntity::getId, Function.identity(), (left, right) -> left));
+        Map<Long, MdmBomEcnEntity> result = new HashMap<>();
+        for (MdmBomEcnBindingEntity binding : bindings) {
+            MdmBomEcnEntity ecn = ecnById.get(binding.getEcnId());
+            if (ecn == null) {
+                continue;
+            }
+            result.merge(binding.getBomId(), ecn,
+                    (left, right) -> "PENDING".equals(right.getStatus()) ? right : left);
+        }
+        return result;
+    }
+
+    /**
+     * 生成带工程治理状态的版本节点。
+     */
+    private MdmBomVersionVO toVersionNode(MdmBomEntity bom, MdmBomEcnEntity frozenEcn) {
+        MdmBomVersionVO node = MdmBomVersionVO.from(bom);
+        boolean frozen = frozenEcn != null;
+        node.setFrozen(frozen);
+        node.setEditable(!Boolean.TRUE.equals(bom.getEnabled())
+                && !Boolean.TRUE.equals(bom.getIsDefault())
+                && !"RELEASED".equals(bom.getReleaseState())
+                && !frozen);
+        if (frozen) {
+            node.setEcnId(frozenEcn.getId());
+            node.setEcnStatus(frozenEcn.getStatus());
+        }
+        return node;
     }
 
     /**
@@ -862,7 +937,12 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
         }
         // 再插入bom数据
         if (insertList.size() > 0) {
-            insertList.forEach(b -> { b.setFactoryCode(factory); b.setEnabled(false); b.setIsDefault(false); b.setReleaseState("DRAFT"); });
+            insertList.forEach(b -> {
+                b.setFactoryCode(factory);
+                b.setEnabled(false);
+                b.setIsDefault(false);
+                b.setReleaseState("DRAFT");
+            });
             this.saveBatch(insertList);
         }
         for (MdmBomChildEntity mdmBomChild : insertChildList) {
@@ -938,6 +1018,33 @@ public class MdmBomServiceImpl extends ServiceImpl<MdmBomMapper, MdmBomEntity> i
             if (childEntity.getSubitemBomId() != null && childEntity.getSubitemBomId() != 0) {
                 childEntity.setChildren(new ArrayList<>());
                 getChildMaterials(allBomChild, childEntity.getChildren(), childEntity.getSubitemBomId(), path);
+            }
+        }
+        path.remove(bomId);
+    }
+
+    /**
+     * 递归组装维护态BOM。维护预览不要求版本已发布，但每一层都必须属于当前工厂，
+     * 且仍执行循环引用与最大层级保护。
+     */
+    private void getMaintenanceStructure(List<MdmBomChildEntity> allBomChild, List<MdmBomChildDTO> result,
+                                         Long bomId, String factoryCode, Set<Long> path) {
+        MdmBomGovernance.require(path.size() < 64 && path.add(bomId), "BOM循环引用或超过64层，不可预览");
+        MdmBomEntity bom = baseMapper.selectById(bomId);
+        MdmBomGovernance.require(bom != null && Objects.equals(factoryCode, bom.getFactoryCode()),
+                "BOM子装配版本不存在或不属于当前工厂");
+        List<MdmBomChildDTO> children = allBomChild.stream()
+                .filter(item -> Objects.equals(item.getBomId(), bomId))
+                .map(item -> {
+                    MdmBomChildDTO target = new MdmBomChildDTO();
+                    BeanUtil.copyProperties(item, target);
+                    return target;
+                }).toList();
+        result.addAll(children);
+        for (MdmBomChildDTO child : children) {
+            if (child.getSubitemBomId() != null && child.getSubitemBomId() != 0) {
+                child.setChildren(new ArrayList<>());
+                getMaintenanceStructure(allBomChild, child.getChildren(), child.getSubitemBomId(), factoryCode, path);
             }
         }
         path.remove(bomId);

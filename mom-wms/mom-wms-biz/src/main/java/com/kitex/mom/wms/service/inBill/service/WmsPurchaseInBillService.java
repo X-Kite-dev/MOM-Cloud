@@ -50,6 +50,7 @@ public class WmsPurchaseInBillService extends AbstractWmsInBillHandler {
                 String matBatch = billDetail.getMatBatch();
                 WmsPurchaseReceiptInNumDTO body = new WmsPurchaseReceiptInNumDTO();
                 body.setDocumentId(documentId);
+                body.setOrderDetailId(billDetail.getSourceOrderDetailId());
                 body.setMatCode(matCode);
                 body.setMatBatch(matBatch);
                 body.setMatNum(billDetail.getMatNum());

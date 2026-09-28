@@ -132,6 +132,15 @@ public class MesTaskReportRecordEntity extends BaseEntity<MesTaskReportRecordEnt
     @Schema(description = "业务发生时的质量门判定说明")
     private String qualityGateMessage;
 
+    @Schema(description = "业务发生时参与判定的QMS任务ID JSON数组")
+    private String qualityTaskIds;
+
+    @Schema(description = "业务发生时QMS判定证据SHA-256指纹")
+    private String qualityEvidenceFingerprint;
+
+    @Schema(description = "业务发生时QMS判定证据快照")
+    private String qualityEvidenceSnapshot;
+
     @Schema(description = "质量数量状态")
     private String qualityQuantityStatus;
 
@@ -176,6 +185,18 @@ public class MesTaskReportRecordEntity extends BaseEntity<MesTaskReportRecordEnt
      */
     @Schema(description = "流转码/条码/箱码")
     private String transferCode;
+
+    @Schema(description = "现场提交的原始生产标识")
+    private String submittedIdentifier;
+
+    @Schema(description = "命中的标识映射版本ID")
+    private Long identifierMappingId;
+
+    @Schema(description = "本次使用的生产标识类型")
+    private String identifierType;
+
+    @Schema(description = "生产标识解析不可变快照")
+    private String identifierResolutionSnapshot;
 
     /**
      * 所属组织

@@ -21,11 +21,7 @@ import com.kitex.mom.wms.dto.app.WmsOutBillDetailAppDTO;
 import com.kitex.mom.wms.entity.*;
 import com.kitex.mom.wms.enums.*;
 import com.kitex.mom.wms.mapper.*;
-import com.kitex.mom.wms.service.WmsDeliverGoodsBaseService;
-import com.kitex.mom.wms.service.WmsLiveStockService;
-import com.kitex.mom.wms.service.WmsMaterialReservationService;
-import com.kitex.mom.wms.service.WmsSalesStockReservationService;
-import com.kitex.mom.wms.service.WmsPickingAreaService;
+import com.kitex.mom.wms.service.*;
 import com.kitex.mom.wms.vo.WmsOutBillDetailExcelVO;
 import com.kitex.mom.wms.vo.WmsOutBillExcelVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -717,10 +713,15 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
         // 通过物料查询通知单明细
         List<WmsOutNoticeDetailEntity> noticeDetails = wmsOutNoticeDetailMapper.selectList(new LambdaQueryWrapper<WmsOutNoticeDetailEntity>()
                 .eq(WmsOutNoticeDetailEntity::getNoticeId, params.getNoticeId())
-                .eq(WmsOutNoticeDetailEntity::getMatCode, params.getMatCode()) // 出库通知单中 只有一个物料编码  所以只有这两个条件
+                .eq(WmsOutNoticeDetailEntity::getMatCode, params.getMatCode())
+                .eq(params.getSourceStockId() != null, WmsOutNoticeDetailEntity::getSourceStockId,
+                        params.getSourceStockId())
         );
         if (CollUtil.isEmpty(noticeDetails)) {
             throw new CheckedException("通知单明细查找失败！");
+        }
+        if (noticeDetails.size() > 1) {
+            throw new CheckedException("同物料存在多条待出库存，请扫描或选择精确库存行后再出库！");
         }
         WmsOutNoticeDetailEntity noticeDetail = noticeDetails.get(0);
 

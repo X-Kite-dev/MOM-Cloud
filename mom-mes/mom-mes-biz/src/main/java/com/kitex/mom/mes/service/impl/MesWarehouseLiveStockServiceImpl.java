@@ -10,7 +10,6 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.admin.api.entity.SysDictItemEntity;
 import com.kitex.admin.api.feign.RemoteDictService;
-import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.data.tenant.TenantContextHolder;
@@ -23,8 +22,8 @@ import com.kitex.mom.mes.entity.MesWarehouseInoutEntity;
 import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
 import com.kitex.mom.mes.enums.InOutEnum;
 import com.kitex.mom.mes.enums.MesWarehouseMatDetailTypeEnum;
-import com.kitex.mom.mes.enums.YesNoEnum;
 import com.kitex.mom.mes.enums.QualityQuantityStatusEnum;
+import com.kitex.mom.mes.enums.YesNoEnum;
 import com.kitex.mom.mes.mapper.MesWarehouseInoutMapper;
 import com.kitex.mom.mes.mapper.MesWarehouseLiveStockMapper;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
@@ -53,6 +52,7 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
     private final RemoteDictService remoteDictService;
     private final RemoteMaterialService remoteMaterialService;
     private final MesWarehouseInoutMapper mesWarehouseInoutMapper;
+    private final MesActualFactoryAccessService factoryAccess;
 
     @Override
     public List<MesWarehouseLiveStockDetailExcelVO> listDetailExcel(LambdaQueryWrapper<MesWarehouseLiveStockEntity> wrapper) {
@@ -103,7 +103,9 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
         MesWarehouseLiveStockEntity liveStockEntity = new MesWarehouseLiveStockEntity();
         BeanUtil.copyProperties(liveStock, liveStockEntity);
         liveStockEntity.setQualityCaseId(null);
-        liveStockEntity.setQualityDispositionReceiptId(null);liveStockEntity.setQualityOriginCaseId(null);liveStockEntity.setQualityReleaseReceiptId(null);
+        liveStockEntity.setQualityDispositionReceiptId(null);
+        liveStockEntity.setQualityOriginCaseId(null);
+        liveStockEntity.setQualityReleaseReceiptId(null);
         // 普通入库/反向恢复不证明已确认实物位置，须由独立转运交接确认。
         liveStockEntity.setPhysicalLocationCode(null);
         liveStockEntity.setPhysicalLocationName(null);
@@ -139,8 +141,10 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
         return Boolean.TRUE;
     }
 
-    /** 预检与真实扣减共用资格查询；不在预检中预留或改库存。 */
-    private QueryWrapper<MesWarehouseLiveStockEntity> stockCandidates(MesWarehouseLiveStockInoutDTO liveStock,String factory,java.time.LocalDate stockDate) {
+    /**
+     * 预检与真实扣减共用资格查询；不在预检中预留或改库存。
+     */
+    private QueryWrapper<MesWarehouseLiveStockEntity> stockCandidates(MesWarehouseLiveStockInoutDTO liveStock, String factory, java.time.LocalDate stockDate) {
         QueryWrapper<MesWarehouseLiveStockEntity> queryWrapper = new QueryWrapper<>();
         queryWrapper.lambda().eq(MesWarehouseLiveStockEntity::getMatCode, liveStock.getMatCode())
                 .isNull(MesWarehouseLiveStockEntity::getQualityCaseId)
@@ -151,7 +155,7 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
                         MesWarehouseLiveStockEntity::getRequirementMatCode, liveStock.getRequirementMatCode())
                 .eq(StrUtil.isNotBlank(liveStock.getMatBatch()), MesWarehouseLiveStockEntity::getMatBatch, liveStock.getMatBatch())
                 .and(Boolean.TRUE.equals(liveStock.getAllowUnassignedProduceTask())
-                                && StrUtil.isNotBlank(liveStock.getProduceTaskCode()), wrapper -> wrapper
+                        && StrUtil.isNotBlank(liveStock.getProduceTaskCode()), wrapper -> wrapper
                         .eq(MesWarehouseLiveStockEntity::getProduceTaskCode, liveStock.getProduceTaskCode())
                         .or().isNull(MesWarehouseLiveStockEntity::getProduceTaskCode)
                         .or().eq(MesWarehouseLiveStockEntity::getProduceTaskCode, ""))
@@ -186,24 +190,32 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
     }
 
     @Override
-    public List<MesWarehouseLiveStockEntity> previewOutCandidates(MesWarehouseLiveStockInoutDTO request){
-        beforeInCheck(request);String factory=requireStockScope(request);
-        if(Boolean.TRUE.equals(request.getAllowQualityBlocked()))throw new CheckedException("生产齐套预检不能包含质量阻断库存");
-        var response=remoteMaterialService.getDetails(request.getMatCode());var material=response==null?null:response.getData();
-        if(response==null || !response.isOk() || material==null || !Boolean.TRUE.equals(material.getStatus())
-                || !Objects.equals(material.getMaterialCode(),request.getMatCode()) || !Objects.equals(material.getTenantId(),TenantContextHolder.getTenantId()) || !Objects.equals(material.getFactoryCode(),factory))
+    public List<MesWarehouseLiveStockEntity> previewOutCandidates(MesWarehouseLiveStockInoutDTO request) {
+        beforeInCheck(request);
+        String factory = requireStockScope(request);
+        if (Boolean.TRUE.equals(request.getAllowQualityBlocked()))
+            throw new CheckedException("生产齐套预检不能包含质量阻断库存");
+        var response = remoteMaterialService.getDetails(request.getMatCode());
+        var material = response == null ? null : response.getData();
+        if (response == null || !response.isOk() || material == null || !Boolean.TRUE.equals(material.getStatus())
+                || !Objects.equals(material.getMaterialCode(), request.getMatCode()) || !Objects.equals(material.getTenantId(), TenantContextHolder.getTenantId()) || !Objects.equals(material.getFactoryCode(), factory))
             throw new CheckedException("预检物料未启用或当前工厂主数据不可核验");
-        var query=stockCandidates(request,factory,java.time.LocalDate.now());
-        var invalid=query.clone();invalid.lambda().and(w->w.isNull(MesWarehouseLiveStockEntity::getNum).or().lt(MesWarehouseLiveStockEntity::getNum,BigDecimal.ZERO));
-        if(count(invalid)>0)throw new CheckedException("匹配库存存在未知或负数量，不能将其忽略后认定齐套");
-        query.lambda().gt(MesWarehouseLiveStockEntity::getNum,BigDecimal.ZERO);query.orderByAsc("id").last("LIMIT 5001");var rows=list(query);
-        if(rows.size()>5000)throw new CheckedException("预检候选超过5000行，须收窄范围而非截断后认定齐套");
-        boolean fifo=Boolean.TRUE.equals(material.getFifo());String field=resolveFifoField(fifo,material.getFifoField());
-        if(rows.stream().anyMatch(r->!Objects.equals(r.getMatUnit(),material.getBasicUnit()) || StrUtil.isBlank(r.getMatUnit())))
+        var query = stockCandidates(request, factory, java.time.LocalDate.now());
+        var invalid = query.clone();
+        invalid.lambda().and(w -> w.isNull(MesWarehouseLiveStockEntity::getNum).or().lt(MesWarehouseLiveStockEntity::getNum, BigDecimal.ZERO));
+        if (count(invalid) > 0) throw new CheckedException("匹配库存存在未知或负数量，不能将其忽略后认定齐套");
+        query.lambda().gt(MesWarehouseLiveStockEntity::getNum, BigDecimal.ZERO);
+        query.orderByAsc("id").last("LIMIT 5001");
+        var rows = list(query);
+        if (rows.size() > 5000) throw new CheckedException("预检候选超过5000行，须收窄范围而非截断后认定齐套");
+        boolean fifo = Boolean.TRUE.equals(material.getFifo());
+        String field = resolveFifoField(fifo, material.getFifoField());
+        if (rows.stream().anyMatch(r -> !Objects.equals(r.getMatUnit(), material.getBasicUnit()) || StrUtil.isBlank(r.getMatUnit())))
             throw new CheckedException("候选库存单位与物料基本单位不一致，不能隐式换算");
-        if(fifo && rows.stream().anyMatch(r->fifoTime(r,field)==null))throw new CheckedException("FIFO候选缺少规定日期，不能预判为可扣减");
-        rows.sort(Comparator.comparing((MesWarehouseLiveStockEntity r)->fifoTime(r,field),Comparator.nullsLast(Comparator.naturalOrder()))
-                .thenComparing(MesWarehouseLiveStockEntity::getInTime,Comparator.nullsLast(Comparator.naturalOrder())).thenComparing(MesWarehouseLiveStockEntity::getId));
+        if (fifo && rows.stream().anyMatch(r -> fifoTime(r, field) == null))
+            throw new CheckedException("FIFO候选缺少规定日期，不能预判为可扣减");
+        rows.sort(Comparator.comparing((MesWarehouseLiveStockEntity r) -> fifoTime(r, field), Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(MesWarehouseLiveStockEntity::getInTime, Comparator.nullsLast(Comparator.naturalOrder())).thenComparing(MesWarehouseLiveStockEntity::getId));
         return rows;
     }
 
@@ -232,15 +244,17 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
                 "qualityBlockedAllowed", Boolean.TRUE.equals(liveStock.getAllowQualityBlocked()), "validOn", stockDate.toString(),
                 "fifoDeclared", Objects.toString(mdmMaterial.getFifo(), "UNDECLARED")));
         // 查找库存并扣除
-        QueryWrapper<MesWarehouseLiveStockEntity> queryWrapper = stockCandidates(liveStock,factory,stockDate);
+        QueryWrapper<MesWarehouseLiveStockEntity> queryWrapper = stockCandidates(liveStock, factory, stockDate);
         var invalidQuantity = queryWrapper.clone();
         invalidQuantity.lambda().and(w -> w.isNull(MesWarehouseLiveStockEntity::getNum).or().lt(MesWarehouseLiveStockEntity::getNum, BigDecimal.ZERO));
-        if (count(invalidQuantity) > 0) throw new CheckedException("匹配库存含空数量或负数量，须先治理库存账，不能忽略后继续扣减");
+        if (count(invalidQuantity) > 0)
+            throw new CheckedException("匹配库存含空数量或负数量，须先治理库存账，不能忽略后继续扣减");
         queryWrapper.lambda().gt(MesWarehouseLiveStockEntity::getNum, BigDecimal.ZERO);
         // 锁按主键排序，业务分配随后按白名单规则排序；主数据字符串永不拼入SQL排序表达式。
         queryWrapper.orderByAsc("id").last("LIMIT 5001 FOR UPDATE");
         List<MesWarehouseLiveStockEntity> list = list(queryWrapper);
-        if (list.size() > 5000) throw new CheckedException("候选库存超过5000行，请缩小物料批次/任务范围，不能截断后声称库存不足");
+        if (list.size() > 5000)
+            throw new CheckedException("候选库存超过5000行，请缩小物料批次/任务范围，不能截断后声称库存不足");
         if (list.size() == 0) {
             throw new CheckedException("库存中未查找到物料[" + liveStock.getMatCode() + "]");
         }
@@ -255,7 +269,7 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
         if (fifo && list.stream().anyMatch(stock -> fifoTime(stock, orderByField) == null))
             throw new CheckedException("FIFO候选缺少[" + orderByField + "]日期，须治理来源后再扣减，不能猜测先后");
         list.sort(Comparator.comparing((MesWarehouseLiveStockEntity stock) -> fifoTime(stock, orderByField),
-                Comparator.nullsLast(Comparator.naturalOrder()))
+                        Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(MesWarehouseLiveStockEntity::getInTime, Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(MesWarehouseLiveStockEntity::getId));
         for (MesWarehouseLiveStockEntity stock : list) {
@@ -329,8 +343,10 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
     private LocalDateTime fifoTime(MesWarehouseLiveStockEntity stock, String field) {
         return switch (field) {
             case "create_time" -> stock.getCreateTime();
-            case "mat_produce_date" -> stock.getMatProduceDate() == null ? null : stock.getMatProduceDate().atStartOfDay();
-            case "mat_valid_end_date" -> stock.getMatValidEndDate() == null ? null : stock.getMatValidEndDate().atStartOfDay();
+            case "mat_produce_date" ->
+                    stock.getMatProduceDate() == null ? null : stock.getMatProduceDate().atStartOfDay();
+            case "mat_valid_end_date" ->
+                    stock.getMatValidEndDate() == null ? null : stock.getMatValidEndDate().atStartOfDay();
             default -> stock.getInTime();
         };
     }
@@ -344,6 +360,7 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
      */
     @Override
     public IPage<MesWarehouseFeedDTO> getPageFeedBack(Page<MesWarehouseFeedDTO> pageParam, MesWarehouseFeedDTO query) {
+        query.setFactoryCode(factoryAccess.require("read"));
         return baseMapper.getPageFeedBack(pageParam, query);
     }
 
@@ -368,7 +385,7 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
         if (stock == null || stock.getId() == null) {
             throw new CheckedException("库存记录ID不能为空");
         }
-        if (stock.getQualityCaseId()!=null || stock.getQualityOriginCaseId()!=null || stock.getQualityDispositionReceiptId()!=null || stock.getQualityReleaseReceiptId()!=null || stock.getPhysicalLocationCode()!=null || stock.getPhysicalLocationName()!=null || stock.getPhysicalConfirmedTime()!=null)
+        if (stock.getQualityCaseId() != null || stock.getQualityOriginCaseId() != null || stock.getQualityDispositionReceiptId() != null || stock.getQualityReleaseReceiptId() != null || stock.getPhysicalLocationCode() != null || stock.getPhysicalLocationName() != null || stock.getPhysicalConfirmedTime() != null)
             throw new CheckedException("现场库位确认须由实际转运交接生成，不得手工修改");
         MesWarehouseLiveStockEntity persisted = this.getOne(new LambdaQueryWrapper<MesWarehouseLiveStockEntity>()
                 .eq(MesWarehouseLiveStockEntity::getId, stock.getId()).last("FOR UPDATE"));

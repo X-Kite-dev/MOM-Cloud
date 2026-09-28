@@ -9,6 +9,7 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.mom.mes.entity.MesTaskReportRecordEntity;
 import com.kitex.mom.mes.service.MesTaskReportRecordService;
+import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -31,11 +32,14 @@ import java.util.List;
 public class MesTaskReportRecordController {
 
     private final MesTaskReportRecordService service;
+    private final MesActualFactoryAccessService factoryAccess;
 
     @Operation(summary = "生产报工-操作明细", description = "生产报工-操作明细")
     @GetMapping("/queryRecord")
     public R<List<MesTaskReportRecordEntity>> queryRecord(String arrangeCode) {
-        return R.ok(service.list(new LambdaQueryWrapper<MesTaskReportRecordEntity>().eq(MesTaskReportRecordEntity::getArrangeCode, arrangeCode)));
+        return R.ok(service.list(new LambdaQueryWrapper<MesTaskReportRecordEntity>()
+                .eq(MesTaskReportRecordEntity::getFactoryCode, factoryAccess.require("read"))
+                .eq(MesTaskReportRecordEntity::getArrangeCode, arrangeCode)));
     }
 
 
@@ -43,7 +47,9 @@ public class MesTaskReportRecordController {
     @GetMapping("/page")
     public R<IPage<MesTaskReportRecordEntity>> page(Page<MesTaskReportRecordEntity> pageParam, MesTaskReportRecordEntity query) {
         QueryWrapper<MesTaskReportRecordEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
-        autoQueryWrapper.lambda().orderByDesc(MesTaskReportRecordEntity::getReportTime);
+        autoQueryWrapper.lambda()
+                .eq(MesTaskReportRecordEntity::getFactoryCode, factoryAccess.require("read"))
+                .orderByDesc(MesTaskReportRecordEntity::getReportTime);
         return R.ok(service.page(pageParam, autoQueryWrapper));
     }
 

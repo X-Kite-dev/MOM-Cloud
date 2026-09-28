@@ -46,6 +46,9 @@ public class MesTaskCurrentWorkVO {
     @Schema(description = "工序类型")
     private String routeType;
 
+    @Schema(description = "冻结的生产执行与报工契约")
+    private MesExecutionContractDTO executionContract;
+
     @Schema(description = "工位编码")
     private String worksiteCode;
 

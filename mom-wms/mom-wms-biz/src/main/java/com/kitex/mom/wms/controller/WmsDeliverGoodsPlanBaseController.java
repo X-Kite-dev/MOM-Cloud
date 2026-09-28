@@ -11,28 +11,12 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.common.security.annotation.Inner;
+import com.kitex.mom.wms.dto.*;
 import com.kitex.mom.wms.entity.WmsDeliverGoodsBaseEntity;
 import com.kitex.mom.wms.entity.WmsDeliverGoodsPlanBaseEntity;
-import com.kitex.mom.wms.dto.WmsOmsDeliveryWithdrawalCommand;
-import com.kitex.mom.wms.dto.WmsOmsDeliveryIssueCommand;
-import com.kitex.mom.wms.dto.WmsOmsDeliveryLedger;
-import com.kitex.mom.wms.dto.WmsOmsSalesReturnLedger;
-import com.kitex.mom.wms.dto.WmsOmsShipmentCorrectionLedger;
-import com.kitex.mom.wms.dto.WmsOmsCustomerReceiptLedger;
-import com.kitex.mom.wms.dto.WmsOmsCustomerExceptionResolutionLedger;
-import com.kitex.mom.wms.dto.WmsOmsDeliverabilitySnapshot;
-import com.kitex.mom.wms.dto.WmsSalesStockReservationCommand;
-import com.kitex.mom.wms.dto.WmsSalesStockReservationSnapshot;
 import com.kitex.mom.wms.service.WmsDeliverGoodsPlanBaseService;
 import com.kitex.mom.wms.service.WmsSalesStockReservationService;
-import com.kitex.mom.wms.service.impl.WmsOmsDeliveryWithdrawalService;
-import com.kitex.mom.wms.service.impl.WmsOmsDeliveryIssueService;
-import com.kitex.mom.wms.service.impl.WmsOmsDeliveryEventOutboxService;
-import com.kitex.mom.wms.service.impl.WmsOmsSalesReturnEventOutboxService;
-import com.kitex.mom.wms.service.impl.WmsOmsShipmentCorrectionOutboxService;
-import com.kitex.mom.wms.service.impl.WmsOmsCustomerReceiptOutboxService;
-import com.kitex.mom.wms.service.impl.WmsOmsCustomerExceptionResolutionOutboxService;
-import com.kitex.mom.wms.service.impl.WmsOmsDeliverabilityService;
+import com.kitex.mom.wms.service.impl.*;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -131,32 +115,32 @@ public class WmsDeliverGoodsPlanBaseController {
     @Inner
     @GetMapping("/omsDeliveryLedger")
     public R<WmsOmsDeliveryLedger> omsDeliveryLedger(@RequestParam("orderCode") String orderCode,
-                                                      @RequestParam("detailsId") Long detailsId,
-                                                      @RequestParam(value = "requestId", required = false) String requestId) {
+                                                     @RequestParam("detailsId") Long detailsId,
+                                                     @RequestParam(value = "requestId", required = false) String requestId) {
         return R.ok(omsDeliveryEventOutboxService.snapshot(orderCode, detailsId, requestId));
     }
 
     @Inner
     @GetMapping("/omsSalesReturnLedger")
     public R<WmsOmsSalesReturnLedger> omsSalesReturnLedger(@RequestParam("orderCode") String orderCode,
-                                                            @RequestParam("detailsId") Long detailsId,
-                                                            @RequestParam(value = "requestId", required = false) String requestId) {
+                                                           @RequestParam("detailsId") Long detailsId,
+                                                           @RequestParam(value = "requestId", required = false) String requestId) {
         return R.ok(omsSalesReturnEventOutboxService.snapshot(orderCode, detailsId, requestId));
     }
 
     @Inner
     @GetMapping("/omsShipmentCorrectionLedger")
     public R<WmsOmsShipmentCorrectionLedger> omsShipmentCorrectionLedger(@RequestParam("orderCode") String orderCode,
-                                                                          @RequestParam("detailsId") Long detailsId,
-                                                                          @RequestParam(value = "requestId", required = false) String requestId) {
+                                                                         @RequestParam("detailsId") Long detailsId,
+                                                                         @RequestParam(value = "requestId", required = false) String requestId) {
         return R.ok(omsShipmentCorrectionOutboxService.snapshot(orderCode, detailsId, requestId));
     }
 
     @Inner
     @GetMapping("/omsCustomerReceiptLedger")
     public R<WmsOmsCustomerReceiptLedger> omsCustomerReceiptLedger(@RequestParam("orderCode") String orderCode,
-                                                                    @RequestParam("detailsId") Long detailsId,
-                                                                    @RequestParam("requestId") String requestId) {
+                                                                   @RequestParam("detailsId") Long detailsId,
+                                                                   @RequestParam("requestId") String requestId) {
         return R.ok(omsCustomerReceiptOutboxService.snapshot(orderCode, detailsId, requestId));
     }
 
@@ -172,7 +156,7 @@ public class WmsDeliverGoodsPlanBaseController {
     @Inner
     @GetMapping("/omsDeliverability")
     public R<WmsOmsDeliverabilitySnapshot> omsDeliverability(@RequestParam("orderCode") String orderCode,
-                                                              @RequestParam("detailsId") Long detailsId) {
+                                                             @RequestParam("detailsId") Long detailsId) {
         return R.ok(omsDeliverabilityService.snapshot(orderCode, detailsId));
     }
 

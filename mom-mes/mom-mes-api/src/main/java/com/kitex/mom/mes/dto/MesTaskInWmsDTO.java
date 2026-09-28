@@ -15,8 +15,17 @@ import java.math.BigDecimal;
 @Schema(description = "生产工单入库DTO")
 public class MesTaskInWmsDTO {
 
-    @Schema(description = "本次入库永久幂等号；APS批次工单必填，失败重试必须复用")
+    @Schema(description = "本次入库永久幂等号；所有生产成品入库必填，失败重试必须复用")
     private String requestId;
+
+    /**
+     * 用户提交前核验的末工序报工来源指纹。
+     *
+     * <p>服务端在工单、派工、报工和历史来源明细加锁后重新计算，结果不一致时拒绝入库，
+     * 防止预览后新增报工、质量放行或并发入库导致实际来源发生漂移。</p>
+     */
+    @Schema(description = "入库来源预览证据指纹；新入库必填")
+    private String expectedSourceFingerprint;
 
     /**
      * 工单ID

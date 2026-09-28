@@ -22,14 +22,16 @@ import com.kitex.mom.wms.mapper.WmsOutBillMapper;
 import com.kitex.mom.wms.mapper.WmsOutNoticeDetailMapper;
 import com.kitex.mom.wms.mapper.WmsOutNoticeMapper;
 import com.kitex.mom.wms.service.WmsMaterialReservationService;
+import com.kitex.mom.wms.service.WmsSalesStockReservationService;
+import com.kitex.mom.wms.util.WmsStockAvailability;
 import com.kitex.mom.wms.vo.WmsOutNoticeDetailExcelVO;
 import com.kitex.mom.wms.vo.WmsOutNoticeExcelVO;
-import com.kitex.mom.wms.util.WmsStockAvailability;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -57,6 +59,9 @@ public abstract class AbstractWmsOutNoticeHandler implements WmsOutNoticeHandler
 
     @Autowired
     private WmsMaterialReservationService materialReservationService;
+
+    @Autowired
+    private WmsSalesStockReservationService salesStockReservationService;
 
     @Override
     public List<WmsOutNoticeEntity> getNoticeList(List<Long> ids) {
@@ -215,7 +220,20 @@ public abstract class AbstractWmsOutNoticeHandler implements WmsOutNoticeHandler
                     .map(fifo -> mdmMaterial.getFifoField())
                     .orElse("in_time");
             List<WmsLiveStockEntity> liveStocks;
-            if (cn.hutool.core.util.StrUtil.isNotBlank(detail.getReservationNo())) {
+            if (detail.getSourceStockId() != null) {
+                WmsLiveStockEntity exact = wmsLiveStockMapper.selectById(detail.getSourceStockId());
+                if (exact == null || !Objects.equals(exact.getWarehouseCode(), detail.getWarehouseCode())
+                        || !Objects.equals(exact.getMatCode(), detail.getMatCode())
+                        || !WmsStockAvailability.isUsable(exact)) {
+                    throw new CheckedException("物料[" + detail.getMatCode() + "]冻结库存行已不存在或不再可用");
+                }
+                BigDecimal available = BigDecimal.valueOf(Optional.ofNullable(exact.getMatNum()).orElse(0d))
+                        .subtract(materialReservationService.activeReservedNum(exact.getId()))
+                        .subtract(salesStockReservationService.activeReservedNums(Set.of(exact.getId()))
+                                .getOrDefault(exact.getId(), BigDecimal.ZERO)).max(BigDecimal.ZERO);
+                exact.setMatNum(available.doubleValue());
+                liveStocks = available.signum() > 0 ? List.of(exact) : List.of();
+            } else if (cn.hutool.core.util.StrUtil.isNotBlank(detail.getReservationNo())) {
                 liveStocks = materialReservationService.availableReservedStocks(
                         detail.getReservationNo(), detail.getMatCode(), detail.getWarehouseCode());
             } else {
@@ -238,10 +256,13 @@ public abstract class AbstractWmsOutNoticeHandler implements WmsOutNoticeHandler
                 WmsOutBillDetailEntity liveDetail = new WmsOutBillDetailEntity();
                 BeanUtil.copyProperties(detail, liveDetail, "id");
                 liveDetail.setSupplierCode(liveStock.getSupplierCode());
+                liveDetail.setSupplierName(liveStock.getSupplierName());
                 liveDetail.setMatBatch(liveStock.getMatBatch());
                 liveDetail.setMatSpec(liveStock.getMatSpec());
                 liveDetail.setContainerCode(liveStock.getContainerCode());
                 liveDetail.setSiteCode(liveStock.getSiteCode());
+                liveDetail.setSiteName(liveStock.getSiteName());
+                liveDetail.setSourceStockId(liveStock.getId());
                 // 当前库存数量
                 liveDetail.setMaxOutNum(liveStock.getMatNum());
                 liveDetail.setMatNum(outNum > liveStock.getMatNum() ? liveStock.getMatNum() : outNum);
@@ -278,6 +299,22 @@ public abstract class AbstractWmsOutNoticeHandler implements WmsOutNoticeHandler
         WmsOutBillEntity res = getLiveStockByNoticeId(id);
         List<WmsOutNoticeDetailEntity> details = wmsOutNoticeDetailMapper
                 .selectList(Wrappers.<WmsOutNoticeDetailEntity>lambdaQuery().eq(WmsOutNoticeDetailEntity::getNoticeId, id));
+        // 受控退供的通知明细指向唯一库存行，把实际批次/库位/容器返回PDA，禁止移动端仅按物料猜测。
+        Map<Long, WmsOutBillDetailEntity> exactByNoticeDetail = Optional.ofNullable(res.getDetails())
+                .orElseGet(List::of).stream().filter(row -> row.getSourceStockId() != null)
+                .collect(Collectors.toMap(WmsOutBillDetailEntity::getNoticeDetailId, Function.identity(),
+                        (left, right) -> left));
+        details.forEach(detail -> {
+            WmsOutBillDetailEntity exact = exactByNoticeDetail.get(detail.getId());
+            if (exact == null) return;
+            detail.setSourceStockId(exact.getSourceStockId());
+            detail.setMatBatch(exact.getMatBatch());
+            detail.setSupplierCode(exact.getSupplierCode());
+            detail.setSupplierName(exact.getSupplierName());
+            detail.setSiteCode(exact.getSiteCode());
+            detail.setSiteName(exact.getSiteName());
+            detail.setContainerCode(exact.getContainerCode());
+        });
         res.setNoticeDetails(details);
         // 根据通知单号查询出库单号（app操作时需要用到）
         List<WmsOutBillEntity> outBills = wmsOutBillMapper.selectList(new LambdaQueryWrapper<WmsOutBillEntity>()

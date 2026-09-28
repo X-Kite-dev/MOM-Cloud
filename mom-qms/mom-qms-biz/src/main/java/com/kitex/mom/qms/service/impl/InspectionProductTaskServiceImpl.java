@@ -16,6 +16,7 @@ import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
 import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
+import com.kitex.mom.mes.dto.MesTaskReceiveRequestSigner;
 import com.kitex.mom.qms.dto.ReportListRespDTO;
 import com.kitex.mom.qms.dto.inspection.*;
 import com.kitex.mom.qms.dto.req.InspectionProductTaskReq;
@@ -664,6 +665,7 @@ public class InspectionProductTaskServiceImpl extends ServiceImpl<QmsInspectionP
                                                      CommonQuery commonQuery) {
         QueryWrapper<QmsInspectionProductTaskEntity> autoQueryWrapper = new QueryWrapper<>();
         autoQueryWrapper.lambda()
+                .eq(param.getTaskId() != null, QmsInspectionProductTaskEntity::getId, param.getTaskId())
                 .like(StrUtil.isNotBlank(param.getBatchNo()), QmsInspectionProductTaskEntity::getBatchNo, param.getBatchNo())
                 .like(StrUtil.isNotBlank(param.getMatCode()), QmsInspectionProductTaskEntity::getMatCode, param.getMatCode())
                 .like(StrUtil.isNotBlank(param.getMatSpec()), QmsInspectionProductTaskEntity::getMatSpec, param.getMatSpec())
@@ -729,6 +731,7 @@ public class InspectionProductTaskServiceImpl extends ServiceImpl<QmsInspectionP
     public Map<String, Long> getStatusCount(InspectionProductTaskReq param) {
         QueryWrapper<QmsInspectionProductTaskEntity> autoQueryWrapper = new QueryWrapper<>();
         autoQueryWrapper.lambda()
+                .eq(param.getTaskId() != null, QmsInspectionProductTaskEntity::getId, param.getTaskId())
                 .like(StrUtil.isNotBlank(param.getBatchNo()), QmsInspectionProductTaskEntity::getBatchNo, param.getBatchNo())
                 .like(StrUtil.isNotBlank(param.getMatCode()), QmsInspectionProductTaskEntity::getMatCode, param.getMatCode())
                 .eq(StrUtil.isNotBlank(param.getResult()), QmsInspectionProductTaskEntity::getResult, param.getResult())
@@ -976,8 +979,14 @@ public class InspectionProductTaskServiceImpl extends ServiceImpl<QmsInspectionP
         dto.setResourceType(HandleResultEnum.REWORK.name());
         dto.setResourceId(task.getId());
         dto.setType("PRODUCT");
+        dto.setFactoryCode(task.getFactoryCode());
+        MesTaskReceiveRequestSigner.seal(dto, "QMS_PRODUCT_REWORK:" + record.getId());
         try {
-            remoteMesTaskService.add(dto);
+            var response = remoteMesTaskService.add(dto);
+            if (response == null || !response.isOk() || response.getData() == null
+                    || !Objects.equals(dto.getSourceRequestId(), response.getData().getRequestId())) {
+                throw new RuntimeException("MES未返回可核验的返工工单接收回执");
+            }
 
             record.setStatus(Boolean.TRUE);
             handleRecordService.updateById(record);

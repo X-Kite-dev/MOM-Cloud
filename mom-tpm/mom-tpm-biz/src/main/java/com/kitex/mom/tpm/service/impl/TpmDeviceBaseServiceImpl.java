@@ -17,7 +17,6 @@ import com.kitex.mom.common.barcode.dto.req.PrintReq;
 import com.kitex.mom.mdm.entity.MdmDeviceClassEntity;
 import com.kitex.mom.mdm.entity.MdmDeviceEntity;
 import com.kitex.mom.mdm.enums.DeviceStateEnum;
-import com.kitex.mom.mdm.enums.YesOrNoStateEnum;
 import com.kitex.mom.mdm.feign.RemoteDeviceClassService;
 import com.kitex.mom.mdm.feign.RemoteDeviceService;
 import com.kitex.mom.tpm.entity.TpmDeviceItemEntity;
@@ -252,7 +251,9 @@ public class TpmDeviceBaseServiceImpl implements TpmDeviceBaseService {
     @Transactional(rollbackFor = Exception.class)
     public Boolean devicePause(String deviceCode, String moldCode) {
         var c = new com.kitex.mom.tpm.dto.TpmDevicePauseCommand();
-        c.setRequestId(UUID.randomUUID().toString()); c.setDeviceCode(deviceCode); c.setMoldCode(moldCode);
+        c.setRequestId(UUID.randomUUID().toString());
+        c.setDeviceCode(deviceCode);
+        c.setMoldCode(moldCode);
         c.setReason("TPM生产暂停联动；只调整业务运行状态，不解除设备资格封锁，不代表硬件停机");
         devicePauseReceipt(c);
         return Boolean.TRUE;
@@ -268,27 +269,32 @@ public class TpmDeviceBaseServiceImpl implements TpmDeviceBaseService {
     public com.kitex.mom.tpm.dto.TpmDevicePauseReceipt deviceCloseReceipt(com.kitex.mom.tpm.dto.TpmDevicePauseCommand c) {
         var receipt = deviceStateReceipt(c, true);
         var rows = JSONUtil.parseArray(receipt.getEvidenceJson());
-        for (int i=0;i<rows.size();i++) {
-            var row=rows.getJSONObject(i);
+        for (int i = 0; i < rows.size(); i++) {
+            var row = rows.getJSONObject(i);
             if (!"TRANSITION".equals(row.getStr("mode"))) continue;
-            var after=row.getJSONObject("after");
-            String key="MDM-CLOSE:"+receipt.getId()+":"+after.getStr("id");
-            var query=new LambdaQueryWrapper<com.kitex.mom.tpm.entity.TpmEventRecordEntity>()
-                    .eq(com.kitex.mom.tpm.entity.TpmEventRecordEntity::getFactoryCode,receipt.getFactoryCode())
-                    .eq(com.kitex.mom.tpm.entity.TpmEventRecordEntity::getEventCode,key);
-            var existing=eventRecordService.list(query);
-            if(!existing.isEmpty()){
-                if(existing.size()!=1 || !Objects.equals(after.getStr("deviceCode"),existing.get(0).getDeviceCode())
+            var after = row.getJSONObject("after");
+            String key = "MDM-CLOSE:" + receipt.getId() + ":" + after.getStr("id");
+            var query = new LambdaQueryWrapper<com.kitex.mom.tpm.entity.TpmEventRecordEntity>()
+                    .eq(com.kitex.mom.tpm.entity.TpmEventRecordEntity::getFactoryCode, receipt.getFactoryCode())
+                    .eq(com.kitex.mom.tpm.entity.TpmEventRecordEntity::getEventCode, key);
+            var existing = eventRecordService.list(query);
+            if (!existing.isEmpty()) {
+                if (existing.size() != 1 || !Objects.equals(after.getStr("deviceCode"), existing.get(0).getDeviceCode())
                         || !DeviceLifeCycleEventEnum.CLOSE.getCode().equals(existing.get(0).getEventSource()))
                     throw new com.kitex.common.core.exception.CheckedException("设备结束运行履历与MDM回执冲突，须核对");
                 continue;
             }
-            var event=new com.kitex.mom.tpm.entity.TpmEventRecordEntity();
-            event.setEventCode(key);event.setFactoryCode(receipt.getFactoryCode());event.setDeviceCode(after.getStr("deviceCode"));
-            event.setDeviceName(after.getStr("deviceCode"));event.setEventSource(DeviceLifeCycleEventEnum.CLOSE.getCode());
-            event.setOperator(SecurityUtils.getUser().getUsername());event.setOccurredAt(receipt.getRecordedTime());
-            event.setDescription("设备业务状态转为空闲；MDM回执="+receipt.getId()+"；请求="+receipt.getRequestId()+"；不代表硬件已停机，原可用性与维修资格不变");
-            if(!eventRecordService.save(event))throw new com.kitex.common.core.exception.CheckedException("MDM已提交但TPM状态履历保存失败，请沿原请求重试");
+            var event = new com.kitex.mom.tpm.entity.TpmEventRecordEntity();
+            event.setEventCode(key);
+            event.setFactoryCode(receipt.getFactoryCode());
+            event.setDeviceCode(after.getStr("deviceCode"));
+            event.setDeviceName(after.getStr("deviceCode"));
+            event.setEventSource(DeviceLifeCycleEventEnum.CLOSE.getCode());
+            event.setOperator(SecurityUtils.getUser().getUsername());
+            event.setOccurredAt(receipt.getRecordedTime());
+            event.setDescription("设备业务状态转为空闲；MDM回执=" + receipt.getId() + "；请求=" + receipt.getRequestId() + "；不代表硬件已停机，原可用性与维修资格不变");
+            if (!eventRecordService.save(event))
+                throw new com.kitex.common.core.exception.CheckedException("MDM已提交但TPM状态履历保存失败，请沿原请求重试");
         }
         return receipt;
     }
@@ -298,7 +304,8 @@ public class TpmDeviceBaseServiceImpl implements TpmDeviceBaseService {
         String deviceCode = c.getDeviceCode(), moldCode = c.getMoldCode();
         var command = new com.kitex.mom.mdm.dto.MdmDevicePauseCommand();
         command.setRequestId(c.getRequestId());
-        command.setDeviceCode(deviceCode); command.setMoldCode(moldCode);
+        command.setDeviceCode(deviceCode);
+        command.setMoldCode(moldCode);
         command.setReason(c.getReason());
         var response = closing ? remoteDeviceService.controlledClose(command) : remoteDeviceService.controlledPause(command);
         if (response == null || !response.isOk() || response.getData() == null
@@ -310,15 +317,21 @@ public class TpmDeviceBaseServiceImpl implements TpmDeviceBaseService {
             throw new com.kitex.common.core.exception.CheckedException("设备暂停未取得匹配的MDM永久回执；结果可能不确定，请核对后重试");
         }
         var r = response.getData();
-        if (closing && r.getCreateTime() == null) throw new com.kitex.common.core.exception.CheckedException("结束运行回执缺少MDM记录时间，不能补造事件时间");
+        if (closing && r.getCreateTime() == null)
+            throw new com.kitex.common.core.exception.CheckedException("结束运行回执缺少MDM记录时间，不能补造事件时间");
         if (SecurityUtils.getUser() == null || !Objects.equals(SecurityUtils.getUser().getId(), r.getOperatorId())
-                || cn.hutool.core.util.StrUtil.isBlank(r.getEvidenceJson()) || !Objects.equals(closing?"CLOSE":"PAUSE",r.getAction())) {
+                || cn.hutool.core.util.StrUtil.isBlank(r.getEvidenceJson()) || !Objects.equals(closing ? "CLOSE" : "PAUSE", r.getAction())) {
             throw new com.kitex.common.core.exception.CheckedException("设备暂停回执人员或状态证据不匹配");
         }
         var result = new com.kitex.mom.tpm.dto.TpmDevicePauseReceipt();
-        result.setId(r.getId().toString()); result.setRequestId(r.getRequestId()); result.setTenantId(r.getTenantId());
-        result.setFactoryCode(r.getFactoryCode()); result.setDeviceCode(r.getDeviceCode()); result.setMoldCode(r.getMoldCode());
-        result.setOperatorId(r.getOperatorId()); result.setEvidenceJson(r.getEvidenceJson());
+        result.setId(r.getId().toString());
+        result.setRequestId(r.getRequestId());
+        result.setTenantId(r.getTenantId());
+        result.setFactoryCode(r.getFactoryCode());
+        result.setDeviceCode(r.getDeviceCode());
+        result.setMoldCode(r.getMoldCode());
+        result.setOperatorId(r.getOperatorId());
+        result.setEvidenceJson(r.getEvidenceJson());
         result.setAction(r.getAction());
         result.setRecordedTime(r.getCreateTime());
         return result;
@@ -328,8 +341,10 @@ public class TpmDeviceBaseServiceImpl implements TpmDeviceBaseService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean deviceClose(String deviceCode, String moldCode) {
-        var command=new com.kitex.mom.tpm.dto.TpmDevicePauseCommand();
-        command.setRequestId(UUID.randomUUID().toString());command.setDeviceCode(deviceCode);command.setMoldCode(moldCode);
+        var command = new com.kitex.mom.tpm.dto.TpmDevicePauseCommand();
+        command.setRequestId(UUID.randomUUID().toString());
+        command.setDeviceCode(deviceCode);
+        command.setMoldCode(moldCode);
         command.setReason("TPM结束设备业务运行；不解除维修/保养/质量封锁，不代表PLC已停机");
         deviceCloseReceipt(command);
         return Boolean.TRUE;

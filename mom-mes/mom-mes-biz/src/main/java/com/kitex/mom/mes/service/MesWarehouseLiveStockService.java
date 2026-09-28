@@ -30,7 +30,10 @@ public interface MesWarehouseLiveStockService extends IService<MesWarehouseLiveS
      * 线边库实时库存出库
      */
     Boolean outStock(MesWarehouseLiveStockInoutDTO mesWarehouseLiveStock);
-    /** 只读可扣减候选；与真实出库相同资格/FIFO校验，不创建预留。 */
+
+    /**
+     * 只读可扣减候选；与真实出库相同资格/FIFO校验，不创建预留。
+     */
     List<MesWarehouseLiveStockEntity> previewOutCandidates(MesWarehouseLiveStockInoutDTO request);
 
     /**
@@ -51,9 +54,13 @@ public interface MesWarehouseLiveStockService extends IService<MesWarehouseLiveS
      */
     Page<MesWarehouseLiveStockVO> getWmsLiveStockPageByMatType(Page page, MesLiveStockQueryDTO mesLiveStock);
 
-    /** 人工维护不得覆盖报工质量库存事实。 */
+    /**
+     * 人工维护不得覆盖报工质量库存事实。
+     */
     Boolean updateManual(MesWarehouseLiveStockEntity stock);
 
-    /** 人工删除不得删除报工质量库存事实。 */
+    /**
+     * 人工删除不得删除报工质量库存事实。
+     */
     Boolean removeManual(Long[] ids);
 }

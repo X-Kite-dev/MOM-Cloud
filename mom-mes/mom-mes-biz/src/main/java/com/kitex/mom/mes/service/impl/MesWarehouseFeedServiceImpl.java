@@ -17,19 +17,18 @@ import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mdm.feign.RemoteProcessRouteService;
 import com.kitex.mom.mes.dto.*;
-import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.entity.MesReportMaterialConsumeEntity;
+import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.entity.MesWarehouseFeedEntity;
 import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
 import com.kitex.mom.mes.enums.ReportStatusEnum;
-import com.kitex.mom.mes.enums.WarehouseInBizTypeEnum;
 import com.kitex.mom.mes.enums.WarehouseOutBizTypeEnum;
 import com.kitex.mom.mes.event.FeedRecordSaveEvent;
 import com.kitex.mom.mes.mapper.MesTaskMapper;
 import com.kitex.mom.mes.mapper.MesWarehouseFeedMapper;
+import com.kitex.mom.mes.service.MesReportMaterialConsumeService;
 import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
-import com.kitex.mom.mes.service.MesReportMaterialConsumeService;
 import com.kitex.mom.mes.util.MesMaterialSubstituteResolver;
 import com.kitex.mom.qms.api.feign.RemotePurchaseService;
 import com.kitex.mom.qms.entity.QmsInspectionPurchaseTaskEntity;
@@ -40,8 +39,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDateTime;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -65,6 +64,7 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
     private final RemotePurchaseService remotePurchaseService;
     private final RemoteParamService remoteParamService;
     private final MesReportMaterialConsumeService reportMaterialConsumeService;
+    private final MesActualFactoryAccessService factoryAccess;
 
 
     /**
@@ -90,7 +90,7 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
         feed.setSubstituteFlag(binding.substitute());
         feed.setSubstituteRatio(binding.ratio());
         feed.setSubstitutePolicySnapshot(JSONUtil.toJsonStr(binding));
-        if(mesTask.getReworkMaterialPlanId()!=null)assertReworkFeedBudget(mesTask,feed,binding);
+        if (mesTask.getReworkMaterialPlanId() != null) assertReworkFeedBudget(mesTask, feed, binding);
         bindLineStockLineage(feed);
         // 2.判断是否存在相同投料记录并保存
         feed.setFeedTime(LocalDateTime.now());
@@ -114,11 +114,11 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
         feed.setFactoryCode(mesTask.getFactoryCode());
         feed.setTenantId(mesTask.getTenantId());
         feed.setUsedNum(BigDecimal.ZERO);
-        if(!save(feed))throw new CheckedException("投料记录保存失败");
-        if(mesTask.getReworkMaterialPlanId()!=null){
-            var stored=getById(feed.getId());
-            if(stored==null || stored.getFeedNum()==null || stored.getFeedNum().compareTo(feed.getFeedNum())!=0
-                    || stored.getSubstituteRatio()==null || stored.getSubstituteRatio().compareTo(feed.getSubstituteRatio())!=0)
+        if (!save(feed)) throw new CheckedException("投料记录保存失败");
+        if (mesTask.getReworkMaterialPlanId() != null) {
+            var stored = getById(feed.getId());
+            if (stored == null || stored.getFeedNum() == null || stored.getFeedNum().compareTo(feed.getFeedNum()) != 0
+                    || stored.getSubstituteRatio() == null || stored.getSubstituteRatio().compareTo(feed.getSubstituteRatio()) != 0)
                 throw new CheckedException("返工投料保存发生数量舍入，已回滚，不扣减实物库存");
         }
         // 3.出库
@@ -141,22 +141,27 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
         return Boolean.TRUE;
     }
 
-    private void assertReworkFeedBudget(MesTaskEntity task,MesWarehouseFeedEntity feed,MesMaterialSubstituteResolver.Binding binding){
-        var arrange=reworkArranges.selectOne(new LambdaQueryWrapper<com.kitex.mom.mes.entity.MesTaskArrangeEntity>()
-                .eq(com.kitex.mom.mes.entity.MesTaskArrangeEntity::getCode,feed.getArrangeCode())
-                .eq(com.kitex.mom.mes.entity.MesTaskArrangeEntity::getTaskCode,task.getCode())
-                .eq(com.kitex.mom.mes.entity.MesTaskArrangeEntity::getTenantId,task.getTenantId())
-                .eq(com.kitex.mom.mes.entity.MesTaskArrangeEntity::getFactoryCode,task.getFactoryCode()));
-        if(arrange==null)throw new CheckedException("返工投料派工不属于当前工单");
-        var requirement=MesMaterialSubstituteResolver.flattenBom(task.getBomSnapshot()).stream().filter(x->binding.requirementMatCode().equals(x.getMaterialCode())).findFirst().orElseThrow(()->new CheckedException("物料不在批准返工补料清单"));
-        var prior=list(new LambdaQueryWrapper<MesWarehouseFeedEntity>().eq(MesWarehouseFeedEntity::getTaskCode,task.getCode())
-                .eq(MesWarehouseFeedEntity::getFactoryCode,task.getFactoryCode()).eq(MesWarehouseFeedEntity::getTenantId,task.getTenantId())
-                .eq(MesWarehouseFeedEntity::getRequirementMatCode,binding.requirementMatCode()).last("LIMIT 5001"));
-        if(prior.size()>5000 || feed.getFeedNum()==null || feed.getFeedNum().signum()<=0)throw new CheckedException("返工投料数量无效或历史超过核验容量");
-        BigDecimal used=feed.getFeedNum().divide(binding.ratio(),8,java.math.RoundingMode.UNNECESSARY);
-        for(var row:prior){if(row.getFeedNum()==null || row.getFeedNum().signum()<0 || row.getSubstituteRatio()==null || row.getSubstituteRatio().signum()<=0)
-            throw new CheckedException("返工历史投料量或替代比例不明，须先核对实物");used=used.add(row.getFeedNum().divide(row.getSubstituteRatio(),8,java.math.RoundingMode.UNNECESSARY));}
-        if(used.compareTo(requirement.getQuantity().multiply(task.getNoticeNum()))>0)throw new CheckedException("返工累计投料超过批准补料总量，不得以重复投料绕过额度");
+    private void assertReworkFeedBudget(MesTaskEntity task, MesWarehouseFeedEntity feed, MesMaterialSubstituteResolver.Binding binding) {
+        var arrange = reworkArranges.selectOne(new LambdaQueryWrapper<com.kitex.mom.mes.entity.MesTaskArrangeEntity>()
+                .eq(com.kitex.mom.mes.entity.MesTaskArrangeEntity::getCode, feed.getArrangeCode())
+                .eq(com.kitex.mom.mes.entity.MesTaskArrangeEntity::getTaskCode, task.getCode())
+                .eq(com.kitex.mom.mes.entity.MesTaskArrangeEntity::getTenantId, task.getTenantId())
+                .eq(com.kitex.mom.mes.entity.MesTaskArrangeEntity::getFactoryCode, task.getFactoryCode()));
+        if (arrange == null) throw new CheckedException("返工投料派工不属于当前工单");
+        var requirement = MesMaterialSubstituteResolver.flattenBom(task.getBomSnapshot()).stream().filter(x -> binding.requirementMatCode().equals(x.getMaterialCode())).findFirst().orElseThrow(() -> new CheckedException("物料不在批准返工补料清单"));
+        var prior = list(new LambdaQueryWrapper<MesWarehouseFeedEntity>().eq(MesWarehouseFeedEntity::getTaskCode, task.getCode())
+                .eq(MesWarehouseFeedEntity::getFactoryCode, task.getFactoryCode()).eq(MesWarehouseFeedEntity::getTenantId, task.getTenantId())
+                .eq(MesWarehouseFeedEntity::getRequirementMatCode, binding.requirementMatCode()).last("LIMIT 5001"));
+        if (prior.size() > 5000 || feed.getFeedNum() == null || feed.getFeedNum().signum() <= 0)
+            throw new CheckedException("返工投料数量无效或历史超过核验容量");
+        BigDecimal used = feed.getFeedNum().divide(binding.ratio(), 8, java.math.RoundingMode.UNNECESSARY);
+        for (var row : prior) {
+            if (row.getFeedNum() == null || row.getFeedNum().signum() < 0 || row.getSubstituteRatio() == null || row.getSubstituteRatio().signum() <= 0)
+                throw new CheckedException("返工历史投料量或替代比例不明，须先核对实物");
+            used = used.add(row.getFeedNum().divide(row.getSubstituteRatio(), 8, java.math.RoundingMode.UNNECESSARY));
+        }
+        if (used.compareTo(requirement.getQuantity().multiply(task.getNoticeNum())) > 0)
+            throw new CheckedException("返工累计投料超过批准补料总量，不得以重复投料绕过额度");
     }
 
     /**
@@ -211,13 +216,7 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void feedBack(MesWarehouseFeedEntity feed) {
-        MesWarehouseLiveStockInoutDTO inoutDTO = new MesWarehouseLiveStockInoutDTO();
-        BeanUtil.copyProperties(feed, inoutDTO);
-        inoutDTO.setBillNo(feed.getArrangeCode());
-        inoutDTO.setProduceTaskCode(feed.getProduceTaskCode());
-        inoutDTO.setNum(feed.getFeedNum().subtract(feed.getUsedNum()));
-        inoutDTO.setBizType(WarehouseInBizTypeEnum.SURPLUS.getCode());
-        liveStockService.inStock(inoutDTO);
+        throw new CheckedException("旧投料记录直接退料入口已关闭，请从线边库存发起受控退库并完成异岗审核");
     }
 
     /**
@@ -234,7 +233,7 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
         // 检验投料数量是否足够
 //        List<MdmProcessProcedureMatEntity> feedConfigList = remoteProcessRouteService.getMatByCode(useDTO.getProcessRouteCode(), useDTO.getRouteCode()).getData();
         // 查询快照中保存的投料配置
-        ProcessProcedureDTO route = com.kitex.mom.mes.util.MesTaskUtils.getCurrentProcess(useDTO.getSnapshot(),useDTO.getRouteCode());
+        ProcessProcedureDTO route = com.kitex.mom.mes.util.MesTaskUtils.getCurrentProcess(useDTO.getSnapshot(), useDTO.getRouteCode());
         List<ProcessProcedureDTO.ProcessProcedureMatDTO> feedConfigList = route.getMdmProcessProcedureMatList();
         // 若没有配置投料绑定，则不进行消耗
         if (CollUtil.isEmpty(feedConfigList)) {
@@ -243,7 +242,7 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
         List<MesWarehouseFeedEntity> feedList = this.list(new LambdaQueryWrapper<MesWarehouseFeedEntity>()
                 .eq(MesWarehouseFeedEntity::getArrangeCode, useDTO.getArrangeCode())
                 .ne(MesWarehouseFeedEntity::getIsLock, Boolean.TRUE) // 查询未锁定的
-                .and(w->w.isNull(MesWarehouseFeedEntity::getMatValidEndDate).or().ge(MesWarehouseFeedEntity::getMatValidEndDate,LocalDate.now()))
+                .and(w -> w.isNull(MesWarehouseFeedEntity::getMatValidEndDate).or().ge(MesWarehouseFeedEntity::getMatValidEndDate, LocalDate.now()))
                 .orderByAsc(MesWarehouseFeedEntity::getFeedTime).orderByAsc(MesWarehouseFeedEntity::getId)); // 同时刻按主键稳定排序
         List<MesReportMaterialConsumeEntity> consumeList = new ArrayList<>();
 
@@ -380,6 +379,7 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
      */
     @Override
     public List<MesWarehouseFeedLeftDTO> queryTaskFeedList(MesWarehouseFeedLeftDTO query) {
+        query.setFactoryCode(factoryAccess.require("read"));
         return baseMapper.queryTaskFeedList(query);
     }
 
@@ -392,6 +392,7 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
      */
     @Override
     public IPage<MesWarehouseFeedLeftDTO> queryLeftPage(Page<MesWarehouseFeedLeftDTO> pageParam, MesWarehouseFeedLeftDTO query) {
+        query.setFactoryCode(factoryAccess.require("read"));
         return baseMapper.queryLeftPage(pageParam, query);
     }
 

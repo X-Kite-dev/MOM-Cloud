@@ -16,7 +16,6 @@ import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.mdm.entity.MdmDeviceEntity;
 import com.kitex.mom.mdm.enums.DeviceStateEnum;
-import com.kitex.mom.mdm.enums.DeviceUsableEnum;
 import com.kitex.mom.mdm.service.MdmDeviceService;
 import com.kitex.mom.mdm.utils.DynamicRefreshUtils;
 import com.kitex.mom.mdm.vo.excel.MdmDeviceExcelVO;

@@ -26,6 +26,21 @@ public class MesTaskReportVO {
     @Schema(description = "流转码/条码")
     private String transferCode;
 
+    @Schema(hidden = true)
+    private String submittedIdentifier;
+
+    @Schema(hidden = true)
+    private Long identifierMappingId;
+
+    @Schema(hidden = true)
+    private String identifierType;
+
+    @Schema(hidden = true)
+    private String identifierResolutionSnapshot;
+
+    @Schema(hidden = true)
+    private String extensionEvidenceSnapshot;
+
     @Schema(description = "完成数量")
     private BigDecimal completeNum;
 
@@ -68,10 +83,10 @@ public class MesTaskReportVO {
     @Schema(hidden = true)
     private LocalDateTime sourceEventTime;
 
-    @Schema(hidden = true)
+    @Schema(description = "实际执行人员编码；仅系统集成和设备事件入口使用")
     private String operatorCode;
 
-    @Schema(hidden = true)
+    @Schema(description = "实际执行人员名称；仅系统集成和设备事件入口使用")
     private String operatorName;
 
     @Schema(hidden = true)
@@ -82,6 +97,15 @@ public class MesTaskReportVO {
 
     @Schema(hidden = true)
     private String qualityGateMessage;
+
+    @Schema(hidden = true)
+    private String qualityTaskIds;
+
+    @Schema(hidden = true)
+    private String qualityEvidenceFingerprint;
+
+    @Schema(hidden = true)
+    private String qualityEvidenceSnapshot;
 
     @Schema(hidden = true)
     private String qualityQuantityStatus;
@@ -144,5 +168,11 @@ public class MesTaskReportVO {
     private MesTaskEntity task;
 
     private String factoryCode;
+
+    @Schema(hidden = true)
+    private String stationPassFingerprint;
+
+    @Schema(hidden = true)
+    private String stationPassValidationSnapshot;
 
 }

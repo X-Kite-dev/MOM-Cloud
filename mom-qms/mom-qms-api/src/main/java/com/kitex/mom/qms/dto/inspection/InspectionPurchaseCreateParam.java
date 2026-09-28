@@ -18,6 +18,9 @@ import java.util.Date;
 @Schema(description = "创建来料质检任务参数")
 public class InspectionPurchaseCreateParam {
 
+    @Schema(description = "采购订单明细ID")
+    private Long orderDetailId;
+
     @Schema(description = "id")
     private Long id;
 

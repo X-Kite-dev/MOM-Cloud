@@ -3,11 +3,11 @@ package com.kitex.mom.pms.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.common.core.util.R;
 import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
-import com.kitex.mom.pms.entity.PmsOrderDetailEntity;
-import com.kitex.mom.pms.entity.PmsPlanEntity;
 import com.kitex.mom.pms.dto.PmsAgentSupplyEvidenceDTO;
 import com.kitex.mom.pms.dto.PmsAgentSupplyEvidenceQueryDTO;
 import com.kitex.mom.pms.dto.PmsPlanSupplyWithdrawalDTO;
+import com.kitex.mom.pms.entity.PmsOrderDetailEntity;
+import com.kitex.mom.pms.entity.PmsPlanEntity;
 import com.kitex.mom.pms.vo.PmsPlanExcelVO;
 import org.springframework.validation.BindingResult;
 
@@ -42,10 +42,14 @@ public interface PmsPlanService extends IService<PmsPlanEntity> {
      */
     Boolean savePlan(PmsPlanEntity pmsPlan);
 
-    /** 仅允许编辑尚未下单的人工计划；PLAN来源计划必须回到来源侧走受控变更。 */
+    /**
+     * 仅允许编辑尚未下单的人工计划；PLAN来源计划必须回到来源侧走受控变更。
+     */
     Boolean updatePlan(PmsPlanEntity pmsPlan);
 
-    /** 仅允许删除尚未下单且无下游事实的人工计划。 */
+    /**
+     * 仅允许删除尚未下单且无下游事实的人工计划。
+     */
     Boolean removePlans(List<Long> ids);
 
 
@@ -62,7 +66,9 @@ public interface PmsPlanService extends IService<PmsPlanEntity> {
      */
     void updatePlanOrderNum(List<PmsPlanEntity> pmsPlanEntityList);
 
-    /** 采购订单驳回时幂等回退计划占用，使计划可重新下单。 */
+    /**
+     * 采购订单驳回时幂等回退计划占用，使计划可重新下单。
+     */
     void rollbackPlanOrderNum(List<PmsPlanEntity> pmsPlanEntityList);
 
     /**
@@ -80,9 +86,13 @@ public interface PmsPlanService extends IService<PmsPlanEntity> {
 
     List<PmsAgentSupplyEvidenceDTO> agentSupplyEvidence(PmsAgentSupplyEvidenceQueryDTO query);
 
-    /** 以PLAN月计划ID永久幂等创建采购/外协计划并返回精确关联。 */
+    /**
+     * 以PLAN月计划ID永久幂等创建采购/外协计划并返回精确关联。
+     */
     PmsPlanEntity saveFromPlanSource(PmsPlanEntity plan);
 
-    /** 无订单、到货和供应承诺时撤回PMS供应计划；预览与执行共享冻结证据。 */
+    /**
+     * 无订单、到货和供应承诺时撤回PMS供应计划；预览与执行共享冻结证据。
+     */
     PmsPlanSupplyWithdrawalDTO.Receipt withdrawSupplyPlan(PmsPlanSupplyWithdrawalDTO.Command command);
 }

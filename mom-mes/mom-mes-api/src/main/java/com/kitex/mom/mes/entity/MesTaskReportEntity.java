@@ -134,6 +134,21 @@ public class MesTaskReportEntity extends BaseEntity<MesTaskReportEntity> {
     @Schema(description = "条码/流转码")
     private String transferCode;
 
+    @Schema(description = "现场原始扫描标识；未转换时与规范标识相同")
+    private String submittedIdentifier;
+
+    @Schema(description = "命中的标识映射ID；直接使用规范码时为空")
+    private Long identifierMappingId;
+
+    @Schema(description = "本次使用的标识类型")
+    private String identifierType;
+
+    @Schema(description = "标识解析不可变快照")
+    private String identifierResolutionSnapshot;
+
+    @Schema(description = "行业报工扩展校验证据快照")
+    private String extensionEvidenceSnapshot;
+
     /**
      * 类型 手动 自动
      */
@@ -158,6 +173,15 @@ public class MesTaskReportEntity extends BaseEntity<MesTaskReportEntity> {
 
     @Schema(description = "报工时质量门判定说明")
     private String qualityGateMessage;
+
+    @Schema(description = "报工或质量同步时实际参与判定的QMS任务ID JSON数组")
+    private String qualityTaskIds;
+
+    @Schema(description = "参与判定的QMS任务证据SHA-256指纹")
+    private String qualityEvidenceFingerprint;
+
+    @Schema(description = "参与判定的QMS任务不可变业务快照")
+    private String qualityEvidenceSnapshot;
 
     @Schema(description = "质量数量状态 NOT_REQUIRED/PENDING/PARTIAL/RELEASED/REJECTED")
     private String qualityQuantityStatus;

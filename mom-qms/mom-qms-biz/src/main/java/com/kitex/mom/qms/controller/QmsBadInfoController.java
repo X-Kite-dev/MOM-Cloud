@@ -30,16 +30,33 @@ import java.util.Map;
 public class QmsBadInfoController {
 
     private final QmsBadInfoService service;
-
-    @com.kitex.common.security.annotation.Inner @GetMapping("/internal/mes-decision/{id}")
-    public R<com.kitex.mom.qms.dto.QmsMesCaseDecision> mesDecision(@PathVariable Long id){return R.ok(service.mesDecision(id));}
-    @PostMapping("/mes-execute") @PreAuthorize("@pms.hasPermission('bad:mes:execute')")
-    public R<Void> executeMes(@RequestBody com.kitex.mom.qms.dto.req.QmsBadMesExecuteReq req){service.executeMes(req);return R.ok();}
-    @PostMapping("/detail/{id}/sync-mes") @PreAuthorize("@pms.hasPermission('bad:sync')")
-    public R<Void> syncMes(@PathVariable Long id){service.syncMes(id);return R.ok();}
-    @GetMapping("/detail/{id}/mes-context") @PreAuthorize("@pms.hasPermission('bad:mes:execute','bad:verify','bad:sync','bad:handle')")
-    public R<Map<String,Object>> mesContext(@PathVariable Long id){return R.ok(service.mesContext(id));}
     private final com.kitex.mom.mes.api.feign.RemoteMesInventoryQualityCaseService mesQualityCases;
+
+    @com.kitex.common.security.annotation.Inner
+    @GetMapping("/internal/mes-decision/{id}")
+    public R<com.kitex.mom.qms.dto.QmsMesCaseDecision> mesDecision(@PathVariable Long id) {
+        return R.ok(service.mesDecision(id));
+    }
+
+    @PostMapping("/mes-execute")
+    @PreAuthorize("@pms.hasPermission('bad:mes:execute')")
+    public R<Void> executeMes(@RequestBody com.kitex.mom.qms.dto.req.QmsBadMesExecuteReq req) {
+        service.executeMes(req);
+        return R.ok();
+    }
+
+    @PostMapping("/detail/{id}/sync-mes")
+    @PreAuthorize("@pms.hasPermission('bad:sync')")
+    public R<Void> syncMes(@PathVariable Long id) {
+        service.syncMes(id);
+        return R.ok();
+    }
+
+    @GetMapping("/detail/{id}/mes-context")
+    @PreAuthorize("@pms.hasPermission('bad:mes:execute','bad:verify','bad:sync','bad:handle')")
+    public R<Map<String, Object>> mesContext(@PathVariable Long id) {
+        return R.ok(service.mesContext(id));
+    }
 
     @GetMapping("/from-mes/{caseId}")
     @PreAuthorize("@pms.hasPermission('bad:add')")

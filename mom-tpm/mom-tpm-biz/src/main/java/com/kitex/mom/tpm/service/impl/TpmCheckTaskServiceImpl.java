@@ -5,8 +5,8 @@ import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.kitex.common.core.constant.enums.YesNoEnum;
 import com.kitex.common.core.constant.CommonConstants;
+import com.kitex.common.core.constant.enums.YesNoEnum;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.security.service.MomUser;
@@ -59,6 +59,10 @@ public class TpmCheckTaskServiceImpl extends ServiceImpl<TpmCheckTaskMapper, Tpm
     private final TpmRepairTaskMapper tpmRepairTaskMapper;
     private final TpmMaintenanceTaskMapper tpmMaintenanceTaskMapper;
 
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
     /**
      * 获取任务明细
      *
@@ -107,7 +111,9 @@ public class TpmCheckTaskServiceImpl extends ServiceImpl<TpmCheckTaskMapper, Tpm
         Map<Long, TpmCheckTaskDetailsEntity> inputById = submitted.stream()
                 .filter(item -> item.getId() != null)
                 .collect(Collectors.toMap(TpmCheckTaskDetailsEntity::getId, Function.identity(),
-                        (left, right) -> { throw new CheckedException("点检任务明细存在重复ID"); }));
+                        (left, right) -> {
+                            throw new CheckedException("点检任务明细存在重复ID");
+                        }));
         require(inputById.size() == storedDetails.size(), "点检任务明细ID不完整");
         for (TpmCheckTaskDetailsEntity detail : storedDetails) {
             TpmCheckTaskDetailsEntity input = inputById.get(detail.getId());
@@ -343,7 +349,6 @@ public class TpmCheckTaskServiceImpl extends ServiceImpl<TpmCheckTaskMapper, Tpm
         return this.updateBatchById(checkTaskEntities);
     }
 
-
     private MdmDeviceEntity getDevice(String deviceCode) {
         MdmDeviceEntity mdmDevice = new MdmDeviceEntity();
         mdmDevice.setDeviceCode(deviceCode);
@@ -473,8 +478,9 @@ public class TpmCheckTaskServiceImpl extends ServiceImpl<TpmCheckTaskMapper, Tpm
         });
     }
 
-
-    /** 现场开机/换模与后台任务共用同一套服务端判定，客户端只允许提交结果和备注。 */
+    /**
+     * 现场开机/换模与后台任务共用同一套服务端判定，客户端只允许提交结果和备注。
+     */
     private TpmCheckTaskEntity executeImmediateCheck(MdmDeviceEntity device,
                                                      List<TpmCheckTaskDetailsEntity> submitted,
                                                      MomUser user) {
@@ -489,7 +495,9 @@ public class TpmCheckTaskServiceImpl extends ServiceImpl<TpmCheckTaskMapper, Tpm
         Map<String, TpmCheckTaskDetailsEntity> inputByCode = submitted.stream()
                 .filter(item -> StrUtil.isNotBlank(item.getItemCode()))
                 .collect(Collectors.toMap(item -> item.getItemCode().trim(), Function.identity(),
-                        (left, right) -> { throw new CheckedException("现场点检结果存在重复项目编码"); }));
+                        (left, right) -> {
+                            throw new CheckedException("现场点检结果存在重复项目编码");
+                        }));
         require(items.size() == itemIds.size() && inputByCode.size() == items.size(),
                 "现场点检结果与设备当前绑定项目不一致，请刷新后重新点检");
         String taskCode = remoteSeqConfigService.create("device_check_task").getData();
@@ -587,10 +595,6 @@ public class TpmCheckTaskServiceImpl extends ServiceImpl<TpmCheckTaskMapper, Tpm
         R<Boolean> response = remoteDeviceService.updateById(device);
         require(response != null && Objects.equals(CommonConstants.SUCCESS, response.getCode())
                 && !Boolean.FALSE.equals(response.getData()), message);
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
     }
 
 

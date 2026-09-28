@@ -11,13 +11,14 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.kitex.common.query.enums.CommonQuery;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.query.enums.CommonQuery;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
 import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
+import com.kitex.mom.mes.dto.MesTaskReceiveRequestSigner;
 import com.kitex.mom.qms.dto.QmsProcedureSourceWithdrawalDTO;
 import com.kitex.mom.qms.dto.ReportListRespDTO;
 import com.kitex.mom.qms.dto.inspection.*;
@@ -949,6 +950,7 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
                                                        CommonQuery commonQuery) {
         QueryWrapper<QmsInspectionProcedureTaskEntity> autoQueryWrapper = new QueryWrapper<>();
         autoQueryWrapper.lambda()
+                .eq(param.getTaskId() != null, QmsInspectionProcedureTaskEntity::getId, param.getTaskId())
                 .like(StrUtil.isNotBlank(param.getMatCode()), QmsInspectionProcedureTaskEntity::getMatCode, param.getMatCode())
                 .like(StrUtil.isNotBlank(param.getMatName()), QmsInspectionProcedureTaskEntity::getMatName, param.getMatName())
                 .like(StrUtil.isNotBlank(param.getMatSpec()), QmsInspectionProcedureTaskEntity::getMatSpec, param.getMatSpec())
@@ -1013,6 +1015,7 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
     public Map<String, Long> getStatusCount(InspectionProcedureTaskReq param) {
         QueryWrapper<QmsInspectionProcedureTaskEntity> autoQueryWrapper = new QueryWrapper<>();
         autoQueryWrapper.lambda()
+                .eq(param.getTaskId() != null, QmsInspectionProcedureTaskEntity::getId, param.getTaskId())
                 .like(StrUtil.isNotBlank(param.getMatCode()), QmsInspectionProcedureTaskEntity::getMatCode, param.getMatCode())
                 .like(StrUtil.isNotBlank(param.getMatName()), QmsInspectionProcedureTaskEntity::getMatName, param.getMatName())
                 .eq(StrUtil.isNotBlank(param.getResult()), QmsInspectionProcedureTaskEntity::getResult, param.getResult())
@@ -1234,8 +1237,14 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         dto.setResourceType(HandleResultEnum.REWORK.name());
         dto.setResourceId(task.getId());
         dto.setType("PART");
+        dto.setFactoryCode(task.getFactoryCode());
+        MesTaskReceiveRequestSigner.seal(dto, "QMS_PROCEDURE_REWORK:" + record.getId());
         try {
-            remoteMesTaskService.add(dto);
+            var response = remoteMesTaskService.add(dto);
+            if (response == null || !response.isOk() || response.getData() == null
+                    || !Objects.equals(dto.getSourceRequestId(), response.getData().getRequestId())) {
+                throw new RuntimeException("MES未返回可核验的返工工单接收回执");
+            }
 
             record.setStatus(Boolean.TRUE);
             handleRecordService.updateById(record);

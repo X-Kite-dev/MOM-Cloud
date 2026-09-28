@@ -73,15 +73,20 @@ public class RuleMatcher {
                         int tier;
                         String tierLabel;
                         if (slackDays <= 0) {
-                            tier = 100; tierLabel = "超期";
+                            tier = 100;
+                            tierLabel = "超期";
                         } else if (slackDays <= 3) {
-                            tier = 80; tierLabel = "紧急（≤3天）";
+                            tier = 80;
+                            tierLabel = "紧急（≤3天）";
                         } else if (slackDays <= 7) {
-                            tier = 60; tierLabel = "较紧（≤7天）";
+                            tier = 60;
+                            tierLabel = "较紧（≤7天）";
                         } else if (slackDays <= 14) {
-                            tier = 40; tierLabel = "一般（≤14天）";
+                            tier = 40;
+                            tierLabel = "一般（≤14天）";
                         } else {
-                            tier = 20; tierLabel = "宽裕（>14天）";
+                            tier = 20;
+                            tierLabel = "宽裕（>14天）";
                         }
                         double score = tier * (double) weight;
                         softScore += score;
@@ -105,8 +110,8 @@ public class RuleMatcher {
                         String slackDesc = slackDays <= 0
                                 ? "已超期" + Math.abs(slackDays) + "天，紧急加分=" + String.format("%.1f", urgencyBonus)
                                 : (slackDays < urgencyDays
-                                        ? "距截止" + slackDays + "天（紧急阈值" + urgencyDays + "天），加分=" + String.format("%.1f", urgencyBonus)
-                                        : "距截止" + slackDays + "天（宽裕），加分=0");
+                                ? "距截止" + slackDays + "天（紧急阈值" + urgencyDays + "天），加分=" + String.format("%.1f", urgencyBonus)
+                                : "距截止" + slackDays + "天（宽裕），加分=0");
                         scoreDetail.put("SLACK_TIME", slackDesc + "，权重×" + weight + "，得分=" + String.format("%.2f", score));
                     }
 

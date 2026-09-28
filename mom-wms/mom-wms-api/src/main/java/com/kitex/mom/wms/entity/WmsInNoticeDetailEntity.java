@@ -26,12 +26,28 @@ import java.time.LocalDate;
 @Schema(description = "wms_in_notice_detail")
 public class WmsInNoticeDetailEntity extends BaseEntity<WmsInNoticeDetailEntity> {
 
+    @Schema(description = "来源采购订单号")
+    private String sourceOrderNo;
+
+    @Schema(description = "来源采购订单明细ID")
+    private Long sourceOrderDetailId;
+
+    @Schema(description = "来源采购收料单ID")
+    private Long sourceReceiptId;
+
+    @Schema(description = "来源采购收料批次明细ID")
+    private Long sourceReceiptDetailId;
+
     /**
      * 通知单id
      */
     @ExcelProperty("通知单号")
     @Schema(description = "通知单id")
     private Long noticeId;
+
+    @ExcelIgnore
+    @Schema(description = "成品实收累计已红冲数量；不覆盖该明细原始实收数量")
+    private java.math.BigDecimal finishedGoodsReversedNum;
 
     /**
      * 物料编码
@@ -200,6 +216,15 @@ public class WmsInNoticeDetailEntity extends BaseEntity<WmsInNoticeDetailEntity>
      */
     @Schema(description = "质检任务id")
     private Long qualityTaskId;
+
+    @Schema(description = "本次MES成品入库实际依赖的QMS任务ID JSON数组")
+    private String sourceQualityTaskIds;
+
+    @Schema(description = "MES冻结的QMS质量证据SHA-256指纹")
+    private String sourceQualityEvidenceFingerprint;
+
+    @Schema(description = "MES冻结的QMS质量证据快照")
+    private String sourceQualityEvidenceSnapshot;
 
     /**
      * 质检结果

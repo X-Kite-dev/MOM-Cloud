@@ -29,6 +29,21 @@ import java.time.LocalDateTime;
 @TableName("mes_warehouse_stock_feed_judge")
 public class MesWarehouseStockFeedJudgeEntity extends BaseEntity<MesWarehouseStockFeedJudgeEntity> {
 
+    @Schema(description = "工作流版本；V2为受控退库，LEGACY为升级前历史单")
+    private String workflowVersion;
+
+    @Schema(description = "提交永久幂等请求号")
+    private String requestId;
+
+    @Schema(description = "提交命令指纹")
+    private String requestFingerprint;
+
+    @Schema(description = "申请时来源库存事实指纹")
+    private String evidenceFingerprint;
+
+    @Schema(description = "申请时来源库存事实快照JSON")
+    private String evidenceSnapshot;
+
     /**
      * 申请编码
      */
@@ -38,7 +53,7 @@ public class MesWarehouseStockFeedJudgeEntity extends BaseEntity<MesWarehouseSto
     /**
      * 单据号
      */
-    @Schema(description = "单据号")
+    @Schema(description = "线边库存来源领料/签收单号")
     private String billNo;
 
     /**
@@ -137,8 +152,32 @@ public class MesWarehouseStockFeedJudgeEntity extends BaseEntity<MesWarehouseSto
     /**
      * 审批状态
      */
-    @Schema(description = "审批状态")
+    @Schema(description = "新流程为SUBMITTED/APPROVED/REJECTED/WITHDRAWN/STALE；历史流程保留0/1/2")
     private String status;
+
+    @Schema(description = "申请人主键")
+    private Long applicantId;
+
+    @Schema(description = "申请人工号")
+    private String applicantCode;
+
+    @Schema(description = "申请人姓名")
+    private String applicantName;
+
+    @Schema(description = "申请时间")
+    private LocalDateTime submittedTime;
+
+    @Schema(description = "审批永久幂等请求号")
+    private String reviewRequestId;
+
+    @Schema(description = "审批命令指纹")
+    private String reviewFingerprint;
+
+    @Schema(description = "审批结论")
+    private Boolean approved;
+
+    @Schema(description = "审批人主键")
+    private Long reviewerId;
 
     /**
      * 审批人
@@ -163,6 +202,45 @@ public class MesWarehouseStockFeedJudgeEntity extends BaseEntity<MesWarehouseSto
      */
     @Schema(description = "审批意见")
     private String opinion;
+
+    @Schema(description = "WMS生产退料通知永久幂等号")
+    private String wmsRequestId;
+
+    @Schema(description = "WMS生产退料入库通知主键")
+    private Long wmsNoticeId;
+
+    @Schema(description = "WMS实际收货状态：WAITING/RECEIVING/RECEIVED/VARIANCE_PENDING/CLOSED_WITH_VARIANCE")
+    private String wmsReceiptStatus;
+
+    @Schema(description = "WMS累计实际收货数量")
+    private BigDecimal wmsActualReceivedNum;
+
+    @Schema(description = "WMS受控确认的短收数量")
+    private BigDecimal wmsShortageNum;
+
+    @Schema(description = "WMS申报但未入账的溢收数量")
+    private BigDecimal wmsOverageNum;
+
+    @Schema(description = "WMS最后实收时间")
+    private LocalDateTime wmsReceiptTime;
+
+    @Schema(description = "退料后齐套反馈状态：WAITING/REPLENISHED/NO_RECEIPT")
+    private String readinessFeedbackStatus;
+
+    @Schema(description = "最后接收的WMS实收事件号")
+    private String lastReceiptEventId;
+
+    @Schema(description = "最后接收的WMS实收事件指纹")
+    private String lastReceiptFingerprint;
+
+    @Schema(description = "WMS通知状态：ACCEPTED/NOT_REQUIRED")
+    private String wmsStatus;
+
+    @Schema(description = "流程处理完成时间")
+    private LocalDateTime handledTime;
+
+    @Schema(description = "审批执行结果说明")
+    private String resultMessage;
 
     /**
      * 所属组织

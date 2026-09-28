@@ -29,6 +29,9 @@ import java.time.LocalDate;
 @TableName("qms_inspection_purchase_task")
 public class QmsInspectionPurchaseTaskEntity extends BaseEntity<QmsInspectionPurchaseTaskEntity> {
 
+    @Schema(description = "采购订单明细ID；用于来料质检结果回写和库存来源追溯")
+    private Long orderDetailId;
+
     @Schema(description = "任务编码")
     private String taskCode;
 

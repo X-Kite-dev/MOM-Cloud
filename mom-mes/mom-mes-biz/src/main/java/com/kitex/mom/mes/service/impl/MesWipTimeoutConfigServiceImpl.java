@@ -85,7 +85,7 @@ public class MesWipTimeoutConfigServiceImpl extends ServiceImpl<MesWipTimeoutCon
         config.setLevel2NotifyChannels(normalizeChannels(config.getLevel2NotifyChannels()));
         config.setLevel3NotifyChannels(normalizeChannels(config.getLevel3NotifyChannels()));
         config.setNotifyCooldownMin(config.getNotifyCooldownMin() == null ? 30 : config.getNotifyCooldownMin());
-        config.setEnabled(StrUtil.blankToDefault(config.getEnabled(), "1"));
+        config.setEnabled(!Boolean.FALSE.equals(config.getEnabled()));
 
         require(StrUtil.isNotBlank(config.getName()), "配置名称不能为空");
         require(config.getTimeoutSec() != null && config.getTimeoutSec() > 0, "L1阈值必须大于0秒");
@@ -103,17 +103,15 @@ public class MesWipTimeoutConfigServiceImpl extends ServiceImpl<MesWipTimeoutCon
                 "启用L3阈值时必须配置L3通知角色");
         require(config.getNotifyCooldownMin() >= 1 && config.getNotifyCooldownMin() <= 1440,
                 "通知冷却时间必须在1～1440分钟之间");
-        require("0".equals(config.getEnabled()) || "1".equals(config.getEnabled()), "启用状态无效");
-
         LambdaQueryWrapper<MesWipTimeoutConfigEntity> duplicateQuery =
                 new LambdaQueryWrapper<MesWipTimeoutConfigEntity>()
                         .ne(config.getId() != null, MesWipTimeoutConfigEntity::getId, config.getId())
-                        .eq(MesWipTimeoutConfigEntity::getEnabled, "1");
+                        .eq(MesWipTimeoutConfigEntity::getEnabled, Boolean.TRUE);
         equalOrNull(duplicateQuery, MesWipTimeoutConfigEntity::getLineCode, config.getLineCode());
         equalOrNull(duplicateQuery, MesWipTimeoutConfigEntity::getRouteCode, config.getRouteCode());
         equalOrNull(duplicateQuery, MesWipTimeoutConfigEntity::getProductCode, config.getProductCode());
         long duplicate = count(duplicateQuery);
-        require(!"1".equals(config.getEnabled()) || duplicate == 0,
+        require(!Boolean.TRUE.equals(config.getEnabled()) || duplicate == 0,
                 "同一产线/工作中心、工序、产品范围只能存在一条启用配置");
     }
 

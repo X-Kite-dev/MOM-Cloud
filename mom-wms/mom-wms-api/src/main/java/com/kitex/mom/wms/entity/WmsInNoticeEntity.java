@@ -36,6 +36,70 @@ public class WmsInNoticeEntity extends BaseEntity<WmsInNoticeEntity> {
     @Schema(description = "来源请求载荷指纹")
     private String sourceRequestFingerprint;
 
+    @ExcelIgnore
+    @Schema(description = "成品实收红冲状态：NONE/PARTIALLY_REVERSED/REVERSED")
+    private String finishedGoodsReversalStatus;
+
+    @ExcelIgnore
+    @Schema(description = "成品实收累计已红冲数量；不覆盖原始实收数量")
+    private java.math.BigDecimal finishedGoodsReversedNum;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料实收状态：WAITING/RECEIVING/RECEIVED/VARIANCE_PENDING/CLOSED_WITH_VARIANCE")
+    private String returnReceiptStatus;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料受控确认的短收数量")
+    private java.math.BigDecimal returnShortageNum;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料现场申报但未入账的溢收数量")
+    private java.math.BigDecimal returnOverageNum;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料收货差异原因")
+    private String returnVarianceReason;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料差异申报人编码")
+    private String returnReporterCode;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料差异申报人姓名")
+    private String returnReporterName;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料差异申报时间")
+    private LocalDateTime returnReportedTime;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料差异处置：ACCEPT_SHORTAGE/CONTINUE_RECEIPT/RETURN_OVERAGE")
+    private String returnDisposition;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料差异处置原因")
+    private String returnDispositionReason;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料差异处置人编码")
+    private String returnReviewerCode;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料差异处置人姓名")
+    private String returnReviewerName;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料差异处置时间")
+    private LocalDateTime returnReviewedTime;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料收货终结永久请求号")
+    private String returnFinalizeRequestId;
+
+    @ExcelIgnore
+    @Schema(description = "生产退料差异处置永久请求号")
+    private String returnDispositionRequestId;
+
     /**
      * 入库通知单状态;0待处理、1处理中、2已完成、3已作废
      */

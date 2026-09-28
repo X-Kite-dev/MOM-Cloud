@@ -432,6 +432,10 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
                 .set(WmsInBillDetailEntity::getInTime, now)
                 .in(BaseEntity::getId, billDetails.stream().map(BaseEntity::getId).collect(Collectors.toList()))
         );
+        bill.setState(InOutBillStateEnum.PASSED.getCode());
+        bill.setInTime(now);
+        bill.setReviewer(SecurityUtils.getUser().getUsername());
+        bill.setReviewTime(now);
 
         // 3. 更新通知单状态   判断通知单物料是否已全部完成入库
         passBillHandleNoticeState(bill);
@@ -592,10 +596,23 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
     @Transactional
     public void afterInStock(WmsInBillEntity inBill) {
         List<WmsInBillDetailEntity> details = inBill.getDetails();
+        WmsInNoticeEntity notice = inBill.getNoticeId() == null
+                ? null : wmsInNoticeMapper.selectById(inBill.getNoticeId());
+        String mesInboundRequestId = null;
+        if (notice != null && InBillTypeEnum.PRODUCT.getCode().equals(inBill.getBillType())
+                && StrUtil.startWith(notice.getSourceRequestId(), "MES_TASK_IN_WMS:")) {
+            mesInboundRequestId = StrUtil.removePrefix(notice.getSourceRequestId(), "MES_TASK_IN_WMS:");
+            if (StrUtil.isBlank(mesInboundRequestId)) {
+                throw new CheckedException("MES成品入库通知缺少有效永久请求号");
+            }
+        }
         for (WmsInBillDetailEntity detail : details) {
             // 实时库存
             WmsLiveStockEntity liveStock = new WmsLiveStockEntity();
             BeanUtil.copyProperties(detail, liveStock, "id");
+            liveStock.setSourceInBillId(inBill.getId());
+            liveStock.setSourceInBillDetailId(detail.getId());
+            liveStock.setSourceMesInboundRequestId(mesInboundRequestId);
             liveStock.setStatus(0);
             wmsLiveStockMapper.insert(liveStock);
             if (InBillTypeEnum.RETURN.getCode().equals(inBill.getBillType())
@@ -605,6 +622,15 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
             // 入库流水
             WmsInoutFlowEntity inoutFlow = new WmsInoutFlowEntity();
             BeanUtil.copyProperties(detail, inoutFlow, "id");
+            inoutFlow.setBillId(inBill.getId());
+            inoutFlow.setBillDetailId(detail.getId());
+            inoutFlow.setSourceStockId(liveStock.getId());
+            inoutFlow.setSourceInBillId(inBill.getId());
+            inoutFlow.setSourceInBillDetailId(detail.getId());
+            inoutFlow.setSourceMesInboundRequestId(mesInboundRequestId);
+            inoutFlow.setStockProofType(StrUtil.isBlank(mesInboundRequestId)
+                    ? "INBOUND" : "MES_FINISHED_GOODS_RECEIPT");
+            inoutFlow.setOperationRequestId("IN-STOCK:" + detail.getId());
             inoutFlow.setBillNo(inBill.getBillNo());
             inoutFlow.setBillType(inBill.getBillType());
             inoutFlow.setOperateType(InOutEnum.IN.getCode());
@@ -762,6 +788,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
                 .eq(StrUtil.isBlank(params.getBillNo()), WmsInBillEntity::getNoticeId, params.getNoticeId())
                 .eq(StrUtil.isNotBlank(params.getBillNo()), WmsInBillEntity::getBillNo, params.getBillNo())
                 .ne(WmsInBillEntity::getState, InOutBillStateEnum.PASSED.getCode())
+                .ne(WmsInBillEntity::getState, InOutBillStateEnum.FINISHED.getCode())
                 .eq(WmsInBillEntity::getSource, InOutBillSourceEnum.APP.getCode())
                 .orderByDesc(BaseCore::getCreateTime)
         );
@@ -836,8 +863,10 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
             // 通知单所有物料处理完了，入库单可以完成了
             wmsInBillMapper.update(new LambdaUpdateWrapper<WmsInBillEntity>()
                     .set(WmsInBillEntity::getState, InOutBillStateEnum.FINISHED.getCode())
+                    .set(WmsInBillEntity::getInTime, LocalDateTime.now())
                     .eq(BaseEntity::getId, inBill.getId())
             );
+            inBill.setState(InOutBillStateEnum.FINISHED.getCode());
             // 如果入库单都完成了，入库通知单也该完成了
             passBillHandleNoticeState(inBill);
             // 增加实时库存、生成入库流水记录
@@ -845,9 +874,13 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
                     .eq(WmsInBillDetailEntity::getBillId, inBill.getId())
             );
             LocalDateTime now = LocalDateTime.now();
+            inBill.setInTime(now);
             for (WmsInBillDetailEntity detail : billDetails) {
                 detail.setInTime(now);
             }
+            wmsInBillDetailMapper.update(Wrappers.<WmsInBillDetailEntity>lambdaUpdate()
+                    .set(WmsInBillDetailEntity::getInTime, now)
+                    .in(BaseEntity::getId, billDetails.stream().map(BaseEntity::getId).collect(Collectors.toList())));
             inBill.setDetails(billDetails);
             afterInStock(inBill);
         }

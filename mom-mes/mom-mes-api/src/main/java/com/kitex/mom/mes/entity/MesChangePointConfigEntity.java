@@ -76,8 +76,8 @@ public class MesChangePointConfigEntity extends BaseEntity<MesChangePointConfigE
     @Schema(description = "工序编码，* 表示全局默认")
     private String routeCode;
 
-    @Schema(description = "是否启用 1=是 0=否")
-    private String enabled;
+    @Schema(description = "是否启用")
+    private Boolean enabled;
 
     /**
      * 上限

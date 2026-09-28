@@ -15,6 +15,19 @@ import java.util.List;
 public class MesTaskReceiveDTO {
 
     /**
+     * PLAN普通生产计划下达的永久幂等请求号。
+     * APS批次下达仍以apsBatchNo作为业务幂等键，但也会携带本字段形成统一回执。
+     */
+    @Schema(description = "上游业务生成的MES工单接收永久幂等请求号")
+    private String sourceRequestId;
+
+    /**
+     * 下达载荷SHA-256指纹；同一请求号只能对应同一份生产计划快照。
+     */
+    @Schema(description = "MES工单接收完整载荷SHA-256指纹")
+    private String sourceRequestFingerprint;
+
+    /**
      * 生产订单号
      */
     private String productionOrder;

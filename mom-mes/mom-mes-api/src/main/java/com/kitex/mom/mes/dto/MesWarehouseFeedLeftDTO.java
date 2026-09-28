@@ -1,17 +1,22 @@
 package com.kitex.mom.mes.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.math.BigDecimal;
 import java.util.Date;
 
 @Data
+@Schema(description = "当前派工投料与可退线边库存定位信息")
 public class MesWarehouseFeedLeftDTO {
 
+    @Schema(description = "生产工单编码")
     private String taskCode;
 
+    @Schema(description = "派工单编码")
     private String arrangeCode;
 
+    @Schema(description = "工序任务编码")
     private String produceTaskCode;
 
     private String productCode;
@@ -54,8 +59,19 @@ public class MesWarehouseFeedLeftDTO {
 
     private BigDecimal backNum;
 
+    @Schema(description = "线边库位编码")
     private String siteCode;
 
+    @Schema(description = "线边库位名称")
+    private String siteName;
+
+    @Schema(description = "线边仓库编码")
+    private String warehouseCode;
+
+    @Schema(description = "线边仓库名称")
+    private String warehouseName;
+
+    @Schema(description = "数据所属工厂编码；仅由服务端填充")
     private String factoryCode;
 
 }

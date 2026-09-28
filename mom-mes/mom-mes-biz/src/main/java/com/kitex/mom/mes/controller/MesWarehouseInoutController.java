@@ -6,15 +6,15 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.BaseCore;
 import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
-import com.kitex.common.excel.annotation.ResponseExcel;
-import com.kitex.mom.mes.entity.MesWarehouseInoutEntity;
-import com.kitex.mom.mes.entity.MesQualityStockProofEntity;
-import com.kitex.mom.mes.mapper.MesQualityStockProofMapper;
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.data.tenant.TenantContextHolder;
+import com.kitex.common.excel.annotation.ResponseExcel;
+import com.kitex.mom.mes.entity.MesQualityStockProofEntity;
+import com.kitex.mom.mes.entity.MesWarehouseInoutEntity;
+import com.kitex.mom.mes.mapper.MesQualityStockProofMapper;
 import com.kitex.mom.mes.service.MesWarehouseInoutService;
 import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import com.kitex.mom.mes.vo.MesWarehouseInoutExcelVO;
@@ -54,7 +54,7 @@ public class MesWarehouseInoutController {
     @Operation(summary = "质量库存状态转换和拆分证据；不是物流出入库")
     @PreAuthorize("@pms.hasPermission('mes_mesWarehouseInout_view')")
     public R getQualityStockProofPage(@ParameterObject SearchPage page,
-                                     @ParameterObject MesQualityStockProofEntity query) {
+                                      @ParameterObject MesQualityStockProofEntity query) {
         String factory = factoryAccess.require("read");
         LambdaQueryWrapper<MesQualityStockProofEntity> wrapper = new LambdaQueryWrapper<MesQualityStockProofEntity>()
                 .eq(MesQualityStockProofEntity::getTenantId, TenantContextHolder.getTenantId())
@@ -170,8 +170,8 @@ public class MesWarehouseInoutController {
     public List<MesWarehouseInoutExcelVO> export(MesWarehouseInoutEntity mesWarehouseInout) {
         LambdaQueryWrapper<MesWarehouseInoutEntity> wrapper = Wrappers.lambdaQuery();
         wrapper.eq(MesWarehouseInoutEntity::getFactoryCode, factoryAccess.require("read"))
-                .eq(mesWarehouseInout.getSourceStockId()!=null,MesWarehouseInoutEntity::getSourceStockId,mesWarehouseInout.getSourceStockId())
-                .eq(mesWarehouseInout.getSourceReportId()!=null,MesWarehouseInoutEntity::getSourceReportId,mesWarehouseInout.getSourceReportId());
+                .eq(mesWarehouseInout.getSourceStockId() != null, MesWarehouseInoutEntity::getSourceStockId, mesWarehouseInout.getSourceStockId())
+                .eq(mesWarehouseInout.getSourceReportId() != null, MesWarehouseInoutEntity::getSourceReportId, mesWarehouseInout.getSourceReportId());
         wrapper.eq(StrUtil.isNotBlank(mesWarehouseInout.getBillNo()), MesWarehouseInoutEntity::getBillNo, mesWarehouseInout.getBillNo());
         wrapper.eq(StrUtil.isNotBlank(mesWarehouseInout.getMatCode()), MesWarehouseInoutEntity::getMatCode, mesWarehouseInout.getMatCode());
         wrapper.eq(StrUtil.isNotBlank(mesWarehouseInout.getMatName()), MesWarehouseInoutEntity::getMatName, mesWarehouseInout.getMatName());

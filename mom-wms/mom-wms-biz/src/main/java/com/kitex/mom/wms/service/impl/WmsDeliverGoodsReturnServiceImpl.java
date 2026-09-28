@@ -400,7 +400,8 @@ public class WmsDeliverGoodsReturnServiceImpl extends ServiceImpl<WmsDeliverGood
                 throw new CheckedException("销售退货实收累计超过原发货计划已发数量");
             }
             plan.setReturnNum(current.add(entry.getValue()));
-            if (wmsDeliverGoodsPlanBaseMapper.updateById(plan) != 1) throw new CheckedException("原发货计划退货累计保存失败");
+            if (wmsDeliverGoodsPlanBaseMapper.updateById(plan) != 1)
+                throw new CheckedException("原发货计划退货累计保存失败");
         }
         for (Map.Entry<Long, BigDecimal> entry : detailIncrement.entrySet()) {
             WmsDeliverGoodsDetailsEntity detail = deliverGoodsDetailsMap.get(entry.getKey());
@@ -409,7 +410,8 @@ public class WmsDeliverGoodsReturnServiceImpl extends ServiceImpl<WmsDeliverGood
                 throw new CheckedException("销售退货实收累计超过原发货单明细已发数量");
             }
             detail.setReturnNum(current.add(entry.getValue()));
-            if (wmsDeliverGoodsDetailsMapper.updateById(detail) != 1) throw new CheckedException("原发货明细退货累计保存失败");
+            if (wmsDeliverGoodsDetailsMapper.updateById(detail) != 1)
+                throw new CheckedException("原发货明细退货累计保存失败");
         }
         for (WmsInBillDetailEntity billDetail : billDetailList) {
             WmsDeliverGoodsReturnDetailsEntity returnDetail = returnDetailMap.get(

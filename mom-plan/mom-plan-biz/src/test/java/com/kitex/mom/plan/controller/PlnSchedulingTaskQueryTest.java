@@ -3,8 +3,12 @@ package com.kitex.mom.plan.controller;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.mom.plan.entity.PlnSchedulingTaskEntity;
 import com.kitex.mom.plan.service.PlnDemandMonthService;
+import com.kitex.mom.plan.service.PlnOperationSchedulingService;
+import com.kitex.mom.plan.service.PlnResourceLoadService;
+import com.kitex.mom.plan.service.PlnSchedulingBatchService;
 import com.kitex.mom.plan.service.PlnSchedulingEngineService;
 import com.kitex.mom.plan.service.PlnSchedulingRuleService;
+import com.kitex.mom.plan.service.impl.PlnSchedulingExecutionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,11 +37,26 @@ class PlnSchedulingTaskQueryTest {
     @Mock
     private PlnDemandMonthService plnDemandMonthService;
 
+    @Mock
+    private PlnSchedulingExecutionService plnSchedulingExecutionService;
+
+    @Mock
+    private PlnOperationSchedulingService plnOperationSchedulingService;
+
+    @Mock
+    private PlnResourceLoadService plnResourceLoadService;
+
+    @Mock
+    private PlnSchedulingBatchService plnSchedulingBatchService;
+
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        PlnSchedulingRuleController controller = new PlnSchedulingRuleController(plnSchedulingRuleService, plnSchedulingEngineService, plnDemandMonthService);
+        PlnSchedulingRuleController controller = new PlnSchedulingRuleController(
+                plnSchedulingRuleService, plnSchedulingEngineService, plnSchedulingExecutionService,
+                plnDemandMonthService, plnOperationSchedulingService, plnResourceLoadService,
+                plnSchedulingBatchService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
@@ -49,7 +68,7 @@ class PlnSchedulingTaskQueryTest {
 
         Page<PlnSchedulingTaskEntity> page = new Page<>(1, 10);
         page.setRecords(Collections.singletonList(task));
-        when(plnSchedulingRuleService.pageTask(any(), any())).thenReturn(page);
+        when(plnSchedulingRuleService.pageTask(any(), any(), any(), any())).thenReturn(page);
 
         mockMvc.perform(get("/plnScheduling/tasks/page")
                         .param("current", "1")

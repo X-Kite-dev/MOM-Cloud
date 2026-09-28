@@ -18,46 +18,24 @@ import com.kitex.mom.mdm.feign.RemoteCalendarService;
 import com.kitex.mom.mdm.feign.RemoteClassesService;
 import com.kitex.mom.mdm.feign.RemoteProcessRouteService;
 import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
-import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
 import com.kitex.mom.mes.dto.MesApsBatchAllocationDTO;
+import com.kitex.mom.mes.dto.MesTaskIssueReceiptDTO;
+import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
+import com.kitex.mom.mes.dto.MesTaskReceiveRequestSigner;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.plan.constant.IssueStatusEnum;
 import com.kitex.mom.plan.constant.ModuleEnum;
 import com.kitex.mom.plan.constant.UpdateTypeEnum;
-import com.kitex.mom.plan.dto.PlnIssueModuleDTO;
-import com.kitex.mom.plan.dto.PlnMaterialConstraintEvaluationDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingBatchConfigureDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingBatchLedgerDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingCandidateProfileDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingReplanDTO;
-import com.kitex.mom.plan.dto.PlnResourceLoadQueryDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingRunDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingRunInput;
-import com.kitex.mom.plan.dto.PlnSchedulingScenarioDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingScenarioRunDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingScenarioInput;
-import com.kitex.mom.plan.dto.PlnSchedulingScenarioSelectDTO;
+import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.*;
-import com.kitex.mom.plan.mapper.PlnIssueMapper;
-import com.kitex.mom.plan.mapper.PlnProductDemandMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingConflictMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingBatchAllocationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingBatchMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingScenarioMapper;
-import com.kitex.mom.plan.service.PlanMatMrpService;
-import com.kitex.mom.plan.service.PlnMaterialConstraintService;
-import com.kitex.mom.plan.service.PlnOperationSchedulingService;
-import com.kitex.mom.plan.service.PlnResourceLoadService;
-import com.kitex.mom.plan.service.PlnSchedulingEngineService;
-import com.kitex.mom.plan.service.PlnUpdateLogService;
-import com.kitex.mom.plan.service.SchedulingContext;
+import com.kitex.mom.plan.mapper.*;
+import com.kitex.mom.plan.service.*;
 import com.kitex.mom.plan.service.conflict.ConflictEngine;
 import com.kitex.mom.plan.service.matcher.RuleMatchResult;
 import com.kitex.mom.plan.service.matcher.RuleMatcher;
 import com.kitex.mom.plan.service.selector.RuleSetSelector;
-import com.kitex.mom.wms.dto.WmsMaterialReservationLinkDTO;
 import com.kitex.mom.plan.vo.PlnResourceLoadVO;
+import com.kitex.mom.wms.dto.WmsMaterialReservationLinkDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -122,26 +100,37 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
 
     @Override
     public PlnSchedulingRunInput captureRun(PlnSchedulingRunDTO original) {
-        if(original==null)throw new CheckedException("运行参数不能为空");
-        var dto=new PlnSchedulingRunDTO();org.springframework.beans.BeanUtils.copyProperties(original,dto);
-        dto.setMode(StrUtil.blankToDefault(dto.getMode(),"simulate").toLowerCase(java.util.Locale.ROOT));
-        dto.setCycleType(StrUtil.blankToDefault(dto.getCycleType(),"DAY").toUpperCase(java.util.Locale.ROOT));
-        if("T+N".equals(dto.getCycleType()))dto.setCycleType("TN");
-        if(!Set.of("simulate","official").contains(dto.getMode()) || !Set.of("DAY","WEEK","MONTH","TN").contains(dto.getCycleType()))
+        if (original == null) throw new CheckedException("运行参数不能为空");
+        var dto = new PlnSchedulingRunDTO();
+        org.springframework.beans.BeanUtils.copyProperties(original, dto);
+        dto.setMode(StrUtil.blankToDefault(dto.getMode(), "simulate").toLowerCase(java.util.Locale.ROOT));
+        dto.setCycleType(StrUtil.blankToDefault(dto.getCycleType(), "DAY").toUpperCase(java.util.Locale.ROOT));
+        if ("T+N".equals(dto.getCycleType())) dto.setCycleType("TN");
+        if (!Set.of("simulate", "official").contains(dto.getMode()) || !Set.of("DAY", "WEEK", "MONTH", "TN").contains(dto.getCycleType()))
             throw new CheckedException("运行模式或周期不合法");
-        dto.setTriggerType("MANUAL");dto.setScheduleDate(resolveScheduleDate(dto));
-        dto.setPlanNum("TN".equals(dto.getCycleType())?(dto.getPlanNum()==null?defaultPlanNum():dto.getPlanNum()):null);
-        if(dto.getPlanNum()!=null && (dto.getPlanNum()<1 || dto.getPlanNum()>366))throw new CheckedException("排产范围须为1至366天");
+        dto.setTriggerType("MANUAL");
+        dto.setScheduleDate(resolveScheduleDate(dto));
+        dto.setPlanNum("TN".equals(dto.getCycleType()) ? (dto.getPlanNum() == null ? defaultPlanNum() : dto.getPlanNum()) : null);
+        if (dto.getPlanNum() != null && (dto.getPlanNum() < 1 || dto.getPlanNum() > 366))
+            throw new CheckedException("排产范围须为1至366天");
         dto.setTargetIds(normalizeRunTargetIds(dto.getTargetIds()));
-        var rows=listUnissuedPlansInRange(getCycleStartDate(dto.getCycleType(),dto.getScheduleDate()),
-                getCycleEndDate(dto.getCycleType(),dto.getScheduleDate(),dto.getPlanNum()),dto.getTargetIds(),true);
-        if(rows.isEmpty() || rows.size()>1000)throw new CheckedException("当前受控运行须包含1至1000个计划；请明确分组，不截断来源");
-        if(dto.getTargetIds()!=null && rows.size()!=dto.getTargetIds().size())throw new CheckedException("指定来源存在已锁定、已下达、越期或无权限计划，禁止丢失目标后继续求解");
+        var rows = listUnissuedPlansInRange(getCycleStartDate(dto.getCycleType(), dto.getScheduleDate()),
+                getCycleEndDate(dto.getCycleType(), dto.getScheduleDate(), dto.getPlanNum()), dto.getTargetIds(), true);
+        if (rows.isEmpty() || rows.size() > 1000)
+            throw new CheckedException("当前受控运行须包含1至1000个计划；请明确分组，不截断来源");
+        if (dto.getTargetIds() != null && rows.size() != dto.getTargetIds().size())
+            throw new CheckedException("指定来源存在已锁定、已下达、越期或无权限计划，禁止丢失目标后继续求解");
         dto.setTargetIds(rows.stream().map(PlnIssueEntity::getId).sorted().toList());
         dto.setSequenceSolverCode(sequenceSolvers.normalize(dto.getSequenceSolverCode()));
-        if(rows.size()>sequenceSolvers.specification(dto.getSequenceSolverCode()).maxPlans())throw new CheckedException("来源范围超过所选排序求解器上限，请显式选择策略或缩小来源");
-        var input=new PlnSchedulingRunInput();input.setRun(dto);input.setCapturedDate(LocalDate.now());input.setSources(rows);input.setRule(requiredActiveRule());
-        input.setSequenceSolverSpec(sequenceSolvers.specificationJson(dto.getSequenceSolverCode()));return input;
+        if (rows.size() > sequenceSolvers.specification(dto.getSequenceSolverCode()).maxPlans())
+            throw new CheckedException("来源范围超过所选排序求解器上限，请显式选择策略或缩小来源");
+        var input = new PlnSchedulingRunInput();
+        input.setRun(dto);
+        input.setCapturedDate(LocalDate.now());
+        input.setSources(rows);
+        input.setRule(requiredActiveRule());
+        input.setSequenceSolverSpec(sequenceSolvers.specificationJson(dto.getSequenceSolverCode()));
+        return input;
     }
 
     @Override
@@ -176,7 +165,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         if (command.getPlanNum() != null && (command.getPlanNum() < 1 || command.getPlanNum() > 366))
             throw new CheckedException("排产范围须为1至366天");
         command.setTriggerType(StrUtil.blankToDefault(command.getTriggerType(), "MANUAL").trim().toUpperCase(Locale.ROOT));
-        command.setCandidateProfiles(command.getObjectiveTemplateId()==null
+        command.setCandidateProfiles(command.getObjectiveTemplateId() == null
                 ? normalizeCandidateProfiles(command.getCandidateProfiles())
                 : objectiveTemplates.normalize(command.getCandidateProfiles()));
         // 浏览器JSON会去掉小数尾零；只在新快照规范化数值，不修改历史请求的永久指纹算法。
@@ -193,7 +182,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         List<Long> requested = normalizeRunTargetIds(command.getTargetIds());
         var sources = listUnissuedPlansInRange(getCycleStartDate(cycle, command.getScheduleDate()),
                 getCycleEndDate(cycle, command.getScheduleDate(), command.getPlanNum()), requested, true);
-        if (sources.isEmpty() || sources.size() > 1000) throw new CheckedException("情景来源须为1至1000个可排计划，请明确分组，不截断");
+        if (sources.isEmpty() || sources.size() > 1000)
+            throw new CheckedException("情景来源须为1至1000个可排计划，请明确分组，不截断");
         if (requested != null && sources.size() != requested.size())
             throw new CheckedException("指定来源含已锁定、已下达、越期或无权限计划，整组拒绝，不漏选后继续");
         String factory = com.kitex.common.data.orgFilter.FactoryContextHolder.getFactoryCode();
@@ -207,7 +197,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         Map<String, String> specs = new TreeMap<>();
         for (var profile : command.getCandidateProfiles()) {
             var spec = sequenceSolvers.specification(profile.getSequenceSolverCode());
-            if (sources.size() > spec.maxPlans()) throw new CheckedException("候选【" + profile.getCandidateName() + "】来源超过排序器上限" + spec.maxPlans());
+            if (sources.size() > spec.maxPlans())
+                throw new CheckedException("候选【" + profile.getCandidateName() + "】来源超过排序器上限" + spec.maxPlans());
             specs.put(profile.getCandidateCode(), sequenceSolvers.specificationJson(profile.getSequenceSolverCode()));
         }
         var input = new PlnSchedulingScenarioInput();
@@ -217,7 +208,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         input.setRule(requiredActiveRule());
         input.setSolverSpecs(specs);
         if (command.getObjectiveTemplateId() != null) {
-            var template=objectiveTemplates.resolve(command.getObjectiveTemplateId(),command.getCandidateProfiles());
+            var template = objectiveTemplates.resolve(command.getObjectiveTemplateId(), command.getCandidateProfiles(),
+                    command.getExpectedObjectiveTemplateFingerprint());
             input.setObjectiveTemplateSnapshot(com.kitex.mom.plan.service.solver.SequenceSolverRegistry.json(template));
         }
         scenarioInputJson(input); // 超限在预览时即拒绝，不到提交时才截断。
@@ -251,7 +243,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                 new LambdaQueryWrapper<PlnSchedulingScenarioEntity>()
                         .eq(PlnSchedulingScenarioEntity::getRequestId, requestId));
         if (existing != null) {
-            if(!Objects.equals(existing.getFactoryCode(),com.kitex.common.data.orgFilter.FactoryContextHolder.getFactoryCode()))
+            if (!Objects.equals(existing.getFactoryCode(), com.kitex.common.data.orgFilter.FactoryContextHolder.getFactoryCode()))
                 throw new CheckedException("原情景请求不属于当前实际工厂");
             if (!Objects.equals(existing.getRequestFingerprint(), requestFingerprint)) {
                 throw new CheckedException("多候选排产请求号已使用且载荷不一致");
@@ -271,19 +263,20 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         LocalDate endDate = getCycleEndDate(command.getCycleType(), baseDate, command.getPlanNum());
         List<PlnIssueEntity> sourcePlans = input.getSources();
         if (sourcePlans.isEmpty()) throw new CheckedException("当前范围没有可生成多候选方案的未锁定计划");
-        Map<String,String> solverSpecs=new LinkedHashMap<>();
-        for(var profile:profiles) {
-            var spec=sequenceSolvers.specification(profile.getSequenceSolverCode());
-            if(sourcePlans.size()>spec.maxPlans())throw new CheckedException("候选【"+profile.getCandidateName()+"】来源数量超过排序求解器上限"+spec.maxPlans()+"，整组不截断或降级");
-            solverSpecs.put(profile.getCandidateCode(),sequenceSolvers.specificationJson(profile.getSequenceSolverCode()));
+        Map<String, String> solverSpecs = new LinkedHashMap<>();
+        for (var profile : profiles) {
+            var spec = sequenceSolvers.specification(profile.getSequenceSolverCode());
+            if (sourcePlans.size() > spec.maxPlans())
+                throw new CheckedException("候选【" + profile.getCandidateName() + "】来源数量超过排序求解器上限" + spec.maxPlans() + "，整组不截断或降级");
+            solverSpecs.put(profile.getCandidateCode(), sequenceSolvers.specificationJson(profile.getSequenceSolverCode()));
         }
         Set<String> factoryCodes = sourcePlans.stream().map(PlnIssueEntity::getFactoryCode)
                 .filter(StrUtil::isNotBlank).map(String::trim).collect(Collectors.toSet());
         if (factoryCodes.size() != 1 || sourcePlans.stream().anyMatch(item -> StrUtil.isBlank(item.getFactoryCode()))) {
             throw new CheckedException("多候选排产必须且只能包含一个工厂，请补齐或按工厂拆分来源计划");
         }
-        if(!factoryCodes.contains(com.kitex.common.data.orgFilter.FactoryContextHolder.getFactoryCode())
-                || sourcePlans.stream().anyMatch(p->!Objects.equals(p.getTenantId(),com.kitex.common.data.tenant.TenantContextHolder.getTenantId())))
+        if (!factoryCodes.contains(com.kitex.common.data.orgFilter.FactoryContextHolder.getFactoryCode())
+                || sourcePlans.stream().anyMatch(p -> !Objects.equals(p.getTenantId(), com.kitex.common.data.tenant.TenantContextHolder.getTenantId())))
             throw new CheckedException("多候选来源必须属于当前实际工厂及租户");
         if (StrUtil.isNotBlank(command.getFactoryCode())
                 && !factoryCodes.contains(command.getFactoryCode().trim())) {
@@ -339,11 +332,12 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                 throw new CheckedException("候选实际读取的完整来源与冻结事实不一致，整组回滚");
             if (!inputFingerprint.equals(sha256(scenarioInputJson(captureScenario(command)))))
                 throw new CheckedException("候选间完整来源或规则快照变化，整组回滚，请重新预览");
-            if(!solverSpecs.get(profile.getCandidateCode()).equals(sequenceSolvers.specificationJson(profile.getSequenceSolverCode())))
+            if (!solverSpecs.get(profile.getCandidateCode()).equals(sequenceSolvers.specificationJson(profile.getSequenceSolverCode())))
                 throw new CheckedException("多候选求解器实现版本变化，不能在同组混用版本");
             List<PlnIssueEntity> scheduled = filterAndSortByRule(candidateSource, activeRule, scheduleStart, endDate,
                     profile.getSequenceStrategy(), profile.getCrossPriorityWindowDays(), profile.getSequenceSolverCode());
-            if (scheduled.isEmpty()) throw new CheckedException("候选【" + profile.getCandidateName() + "】规则过滤后无计划");
+            if (scheduled.isEmpty())
+                throw new CheckedException("候选【" + profile.getCandidateName() + "】规则过滤后无计划");
             PlnSchedulingTaskEntity task = buildTask(run, "EVALUATING", activeRule, scheduled.size(), scheduleStart);
             task.setScenarioId(scenario.getId());
             task.setCandidateCode(profile.getCandidateCode());
@@ -374,15 +368,16 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                 .eq(PlnSchedulingRuleSetEntity::getId, activeRule.getId()).last("FOR SHARE"));
         if (lockedSources.size() != sourceIds.size() || lockedRule == null
                 || !com.kitex.mom.plan.service.solver.SequenceSolverRegistry.json(input.getSources()).equals(
-                        com.kitex.mom.plan.service.solver.SequenceSolverRegistry.json(lockedSources))
+                com.kitex.mom.plan.service.solver.SequenceSolverRegistry.json(lockedSources))
                 || !com.kitex.mom.plan.service.solver.SequenceSolverRegistry.json(activeRule).equals(
-                        com.kitex.mom.plan.service.solver.SequenceSolverRegistry.json(lockedRule))
+                com.kitex.mom.plan.service.solver.SequenceSolverRegistry.json(lockedRule))
                 || !inputFingerprint.equals(sha256(scenarioInputJson(captureScenario(command)))))
             throw new CheckedException("提交前来源或规则变化，整组已回滚，请重新预览");
-        if(!sourceFingerprint.equals(sourceFingerprint(listUnissuedPlansInRange(startDate,endDate,sourceIds))))
+        if (!sourceFingerprint.equals(sourceFingerprint(listUnissuedPlansInRange(startDate, endDate, sourceIds))))
             throw new CheckedException("最后候选完成前来源事实变化，不能比较不同基线，整组已回滚");
-        for(var profile:profiles)if(!solverSpecs.get(profile.getCandidateCode()).equals(sequenceSolvers.specificationJson(profile.getSequenceSolverCode())))
-            throw new CheckedException("多候选结束时排序算法版本变化，整组已回滚");
+        for (var profile : profiles)
+            if (!solverSpecs.get(profile.getCandidateCode()).equals(sequenceSolvers.specificationJson(profile.getSequenceSolverCode())))
+                throw new CheckedException("多候选结束时排序算法版本变化，整组已回滚");
         rankCandidates(evaluations);
         scenario.setScenarioStatus("EVALUATED");
         plnSchedulingScenarioMapper.updateById(scenario);
@@ -409,7 +404,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
 
     @Override
     public PlnSchedulingScenarioDTO selectScenarioCandidate(String scenarioNo,
-                                                              PlnSchedulingScenarioSelectDTO command) {
+                                                            PlnSchedulingScenarioSelectDTO command) {
         if (StrUtil.isBlank(scenarioNo) || command == null || StrUtil.isBlank(command.getRequestId())
                 || command.getCandidateTaskId() == null || StrUtil.isBlank(command.getExpectedSourceFingerprint())
                 || StrUtil.isBlank(command.getReason())) {
@@ -608,14 +603,14 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         if (inserted > 0) {
             List<PlnIssueEntity> scheduledPlans = filterAndSortByRule(plans, activeRule, scheduleStart, endDate,
                     "BALANCED_GLOBAL", 2, runDTO.getSequenceSolverCode());
-            if(scheduledPlans.isEmpty())throw new CheckedException("规则过滤后无可模拟计划，不生成已完成结果");
+            if (scheduledPlans.isEmpty()) throw new CheckedException("规则过滤后无可模拟计划，不生成已完成结果");
             task.setPlanCount(scheduledPlans.size());
             plnSchedulingTaskMapper.updateById(task);
             operationSchedulingService.scheduleTask(task.getId(), scheduledPlans);
             snapshotTaskDetails(task.getId(), scheduledPlans);
             schedulingBatchService.initializeSingleBatches(task.getId(), scheduledPlans);
             task.setTaskStatus("SIMULATED");
-            if(plnSchedulingTaskMapper.updateById(task)!=1)throw new CheckedException("模拟排产结果状态保存失败");
+            if (plnSchedulingTaskMapper.updateById(task) != 1) throw new CheckedException("模拟排产结果状态保存失败");
         }
         return inserted > 0;
     }
@@ -663,14 +658,15 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
             throw new CheckedException("任务不存在");
         }
         // 与整组取消保持相同顺序：先情景、再任务，禁止取消与正式锁定各自基于旧状态成功。
-        if(initialTask.getScenarioId()!=null) {
-            var parent=plnSchedulingScenarioMapper.selectOne(new LambdaQueryWrapper<PlnSchedulingScenarioEntity>()
-                    .eq(PlnSchedulingScenarioEntity::getId,initialTask.getScenarioId()).last("FOR UPDATE"));
-            if(parent==null)throw new CheckedException("排产情景不存在");
+        if (initialTask.getScenarioId() != null) {
+            var parent = plnSchedulingScenarioMapper.selectOne(new LambdaQueryWrapper<PlnSchedulingScenarioEntity>()
+                    .eq(PlnSchedulingScenarioEntity::getId, initialTask.getScenarioId()).last("FOR UPDATE"));
+            if (parent == null) throw new CheckedException("排产情景不存在");
         }
-        if(plnSchedulingTaskMapper.acquireTransactionLock(taskId)==null)throw new CheckedException("排产任务不存在");
-        PlnSchedulingTaskEntity task=plnSchedulingTaskMapper.selectById(taskId);
-        if(Boolean.TRUE.equals(task.getResultArchived()))throw new CheckedException("已归档结果不能确认锁定");
+        if (plnSchedulingTaskMapper.acquireTransactionLock(taskId) == null)
+            throw new CheckedException("排产任务不存在");
+        PlnSchedulingTaskEntity task = plnSchedulingTaskMapper.selectById(taskId);
+        if (Boolean.TRUE.equals(task.getResultArchived())) throw new CheckedException("已归档结果不能确认锁定");
         if (task.getScenarioId() != null && !Boolean.TRUE.equals(task.getSelectedCandidate())) {
             throw new CheckedException("多候选情景必须先选择且只能锁定被选中的候选方案");
         }
@@ -706,10 +702,10 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         Set<Long> blockedIssueIds = new HashSet<>();
         // 幂等去重：预加载当前任务已存在的冲突记录，防止重入时重复插入
         Set<String> existingConflictKeys = plnSchedulingConflictMapper.selectList(
-                new LambdaQueryWrapper<PlnSchedulingConflictEntity>()
-                        .eq(PlnSchedulingConflictEntity::getTaskId, taskId)
-                        .select(PlnSchedulingConflictEntity::getIssueId,
-                                PlnSchedulingConflictEntity::getConflictType))
+                        new LambdaQueryWrapper<PlnSchedulingConflictEntity>()
+                                .eq(PlnSchedulingConflictEntity::getTaskId, taskId)
+                                .select(PlnSchedulingConflictEntity::getIssueId,
+                                        PlnSchedulingConflictEntity::getConflictType))
                 .stream()
                 .map(c -> taskId + "#" + c.getIssueId() + "#" + c.getConflictType())
                 .collect(Collectors.toCollection(HashSet::new));
@@ -1114,8 +1110,13 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         List<PlanMatMrpEntity> primaryMrps = mrpsByIssueNo.getOrDefault(primary.getIssueNo(), List.of());
         receive.setType(primaryMrps.stream().anyMatch(item -> Objects.equals(item.getMatCode(), primary.getProductCode())
                 && !ObjUtil.equal(item.getSubitemBomId(), 0L)) ? "PART" : "PRODUCT");
-        R<Boolean> response = remoteTaskService.add(receive);
-        if (response == null || !ObjUtil.equals(CommonConstants.SUCCESS, response.getCode())) {
+        sealMesIssueRequest(receive, "PLAN_APS_BATCH:" + batch.getId());
+        R<MesTaskIssueReceiptDTO> response = remoteTaskService.add(receive);
+        if (response == null || !ObjUtil.equals(CommonConstants.SUCCESS, response.getCode())
+                || response.getData() == null
+                || !Objects.equals(receive.getSourceRequestId(), response.getData().getRequestId())
+                || !Objects.equals(receive.getSourceRequestFingerprint(), response.getData().getRequestFingerprint())
+                || response.getData().getTaskId() == null || StrUtil.isBlank(response.getData().getTaskCode())) {
             throw new CheckedException("APS批次[" + batch.getBatchNo() + "]推送MES失败");
         }
     }
@@ -1158,11 +1159,21 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                 throw new CheckedException("计划[" + mrp.getPlanDemandNo() + "]物料预留快照损坏，禁止下达MES");
             }
         }
-        return reservationLinks;
+        return reservationLinks.stream().sorted(Comparator
+                        .comparing(WmsMaterialReservationLinkDTO::getReservationNo,
+                                Comparator.nullsFirst(String::compareTo))
+                        .thenComparing(WmsMaterialReservationLinkDTO::getWarehouseCode,
+                                Comparator.nullsFirst(String::compareTo))
+                        .thenComparing(WmsMaterialReservationLinkDTO::getRequirementMatCode,
+                                Comparator.nullsFirst(String::compareTo))
+                        .thenComparing(WmsMaterialReservationLinkDTO::getActualMatCode,
+                                Comparator.nullsFirst(String::compareTo))
+                        .thenComparing(item -> Objects.toString(item.getReservedActualNum(), "")))
+                .toList();
     }
 
     private WmsMaterialReservationLinkDTO copyReservationLink(WmsMaterialReservationLinkDTO source,
-                                                               BigDecimal quantity) {
+                                                              BigDecimal quantity) {
         return new WmsMaterialReservationLinkDTO().setReservationNo(source.getReservationNo())
                 .setWarehouseCode(source.getWarehouseCode()).setRequirementMatCode(source.getRequirementMatCode())
                 .setActualMatCode(source.getActualMatCode()).setSubstituteRatio(source.getSubstituteRatio())
@@ -1219,10 +1230,33 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         String processRouteCode = queryDefaultRouteCode(plnIssueEntity.getProductCode());
         receive.setProcessRouteCode(processRouteCode);
 
-        R<Boolean> response = remoteTaskService.add(receive);
-        if (response == null || !ObjUtil.equals(CommonConstants.SUCCESS, response.getCode())) {
+        sealMesIssueRequest(receive, "PLAN_ISSUE:" + plnIssueEntity.getId());
+        R<MesTaskIssueReceiptDTO> response = remoteTaskService.add(receive);
+        MesTaskIssueReceiptDTO receipt = response == null ? null : response.getData();
+        if (response == null || !ObjUtil.equals(CommonConstants.SUCCESS, response.getCode()) || receipt == null
+                || !Objects.equals(receive.getSourceRequestId(), receipt.getRequestId())
+                || !Objects.equals(receive.getSourceRequestFingerprint(), receipt.getRequestFingerprint())
+                || !Objects.equals(receive.getPlanNo(), receipt.getPlanNo())
+                || receipt.getTaskId() == null || StrUtil.isBlank(receipt.getTaskCode())
+                || receipt.getAcceptedTime() == null) {
             throw new CheckedException("生产模块推送失败");
         }
+        plnIssueEntity.setMesIssueRequestId(receipt.getRequestId());
+        plnIssueEntity.setMesIssueFingerprint(receipt.getRequestFingerprint());
+        plnIssueEntity.setMesTaskId(receipt.getTaskId());
+        plnIssueEntity.setMesTaskCode(receipt.getTaskCode());
+        plnIssueEntity.setMesIssueTime(receipt.getAcceptedTime());
+        if (plnIssueMapper.updateById(plnIssueEntity) != 1) {
+            throw new CheckedException("MES接收成功，但生产计划回执保存失败；请使用原计划重新下达以幂等取回回执");
+        }
+    }
+
+    /**
+     * 在发送前冻结完整载荷指纹。请求号由业务主键生成，事务重试时保持不变；
+     * 任一计划、资源、物料预留或工序快照变化都会形成不同指纹并被MES拒绝复用旧请求。
+     */
+    private void sealMesIssueRequest(MesTaskReceiveDTO receive, String requestId) {
+        MesTaskReceiveRequestSigner.seal(receive, requestId);
     }
 
     /**
@@ -1469,7 +1503,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
             boolean isWork = workDayMap.containsKey(candidate)
                     ? workDayMap.get(candidate)
                     : (candidate.getDayOfWeek() != DayOfWeek.SATURDAY
-                       && candidate.getDayOfWeek() != DayOfWeek.SUNDAY);
+                    && candidate.getDayOfWeek() != DayOfWeek.SUNDAY);
             if (isWork) return candidate;
         }
         return date; // 极端兜底
@@ -1613,10 +1647,10 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
     }
 
     private List<PlnIssueEntity> listUnissuedPlansInRange(LocalDate startDate, LocalDate endDate, List<Long> targetIds) {
-        return listUnissuedPlansInRange(startDate,endDate,targetIds,false);
+        return listUnissuedPlansInRange(startDate, endDate, targetIds, false);
     }
 
-    private List<PlnIssueEntity> listUnissuedPlansInRange(LocalDate startDate, LocalDate endDate, List<Long> targetIds,boolean bounded) {
+    private List<PlnIssueEntity> listUnissuedPlansInRange(LocalDate startDate, LocalDate endDate, List<Long> targetIds, boolean bounded) {
         LambdaQueryWrapper<PlnIssueEntity> queryWrapper = new LambdaQueryWrapper<PlnIssueEntity>()
                 .eq(PlnIssueEntity::getStatus, IssueStatusEnum.UNISSUED.getCode())
                 .and(wrapper -> wrapper.isNull(PlnIssueEntity::getLockStatus).or().eq(PlnIssueEntity::getLockStatus, false))
@@ -1627,7 +1661,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         if (targetIds != null && !targetIds.isEmpty()) {
             queryWrapper.in(PlnIssueEntity::getId, targetIds);
         }
-        if(bounded)queryWrapper.last("LIMIT 1001");
+        if (bounded) queryWrapper.last("LIMIT 1001");
         return plnIssueMapper.selectList(queryWrapper
                 .orderByAsc(PlnIssueEntity::getDemandTime)
                 .orderByAsc(PlnIssueEntity::getIssueTime)
@@ -1657,8 +1691,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
     }
 
     private PlnSchedulingRuleSetEntity requiredActiveRule() {
-        var frozen=com.kitex.mom.plan.service.SchedulingExecutionContext.rule();
-        if(frozen!=null)return frozen;
+        var frozen = com.kitex.mom.plan.service.SchedulingExecutionContext.rule();
+        if (frozen != null) return frozen;
         PlnSchedulingRuleSetEntity activeRule = ruleSetSelector.selectActiveRule();
         if (activeRule == null) {
             throw new CheckedException("未配置可用排产规则");
@@ -1675,7 +1709,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                                                      LocalDate startDate,
                                                      LocalDate endDate,
                                                      String sequenceStrategy,
-                                                     Integer crossPriorityWindowDays,String solverCode) {
+                                                     Integer crossPriorityWindowDays, String solverCode) {
         if (plans == null || plans.isEmpty()) {
             return Collections.emptyList();
         }
@@ -1723,11 +1757,13 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                 String warnMsg = warnCode == 1 ? "未配置工艺路线，工时按默认1小时计算" : "工艺路线产率未配置，工时按默认1小时计算";
                 try {
                     java.util.Map<String, Object> breakdown = issue.getScoreBreakdown() != null
-                            ? new java.util.LinkedHashMap<>(OBJECT_MAPPER.readValue(issue.getScoreBreakdown(), new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {}))
+                            ? new java.util.LinkedHashMap<>(OBJECT_MAPPER.readValue(issue.getScoreBreakdown(), new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {
+                    }))
                             : new java.util.LinkedHashMap<>();
                     breakdown.put("_warning", warnMsg);
                     issue.setScoreBreakdown(toJson(breakdown));
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
             }
             // 新版逐工序物料约束由工序求解器按实际投料点推进；仅旧版快照沿用整单齐料日下界。
             int materialAlignedIndex = alignToMaterialAvailableDate(workDays, workDayIndex,
@@ -1783,33 +1819,39 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
             if (endDate2 != null && demandTime != null && endDate2.isAfter(demandTime)) {
                 try {
                     java.util.Map<String, Object> breakdown = issue.getScoreBreakdown() != null
-                            ? new java.util.LinkedHashMap<>(OBJECT_MAPPER.readValue(issue.getScoreBreakdown(), new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {}))
+                            ? new java.util.LinkedHashMap<>(OBJECT_MAPPER.readValue(issue.getScoreBreakdown(), new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {
+                    }))
                             : new java.util.LinkedHashMap<>();
                     long overDays = java.time.temporal.ChronoUnit.DAYS.between(demandTime, endDate2);
                     breakdown.put("_endDateWarning", "预计完工" + endDate2 + "，超出需求日期" + overDays + "天");
                     issue.setScoreBreakdown(toJson(breakdown));
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
             }
         }
         return sorted;
-    }
-
-    private record MatchCandidate(PlnIssueEntity issue, double score, int sequence) {
     }
 
     private void snapshotTaskDetails(Long taskId, List<PlnIssueEntity> plans) {
         if (taskId == null || plans == null || plans.isEmpty()) {
             return;
         }
-        var evidence=plans.stream().map(PlnIssueEntity::getSequenceEvidenceJson).distinct().toList();
-        if(evidence.size()!=1 || StrUtil.isBlank(evidence.get(0)))throw new CheckedException("新排产结果缺少唯一完整排序求解证据");
-        var owner=plnSchedulingTaskMapper.selectById(taskId);
-        if(owner==null || StrUtil.isBlank(owner.getFactoryCode()) || plans.stream().anyMatch(p->!Objects.equals(p.getTenantId(),owner.getTenantId()) || !Objects.equals(p.getFactoryCode(),owner.getFactoryCode())))
+        var evidence = plans.stream().map(PlnIssueEntity::getSequenceEvidenceJson).distinct().toList();
+        if (evidence.size() != 1 || StrUtil.isBlank(evidence.get(0)))
+            throw new CheckedException("新排产结果缺少唯一完整排序求解证据");
+        var owner = plnSchedulingTaskMapper.selectById(taskId);
+        if (owner == null || StrUtil.isBlank(owner.getFactoryCode()) || plans.stream().anyMatch(p -> !Objects.equals(p.getTenantId(), owner.getTenantId()) || !Objects.equals(p.getFactoryCode(), owner.getFactoryCode())))
             throw new CheckedException("排序结果与来源计划/任务工厂不一致");
-        var proof=new PlnSchedulingSequenceProof();proof.setTenantId(owner.getTenantId());proof.setFactoryCode(owner.getFactoryCode());proof.setTaskId(taskId);
-        var solver=JSONUtil.parseObj(evidence.get(0)).getJSONObject("solver");proof.setSolverCode(solver.getStr("code"));proof.setSolverVersion(solver.getStr("version"));
-        proof.setEvidenceJson(evidence.get(0));proof.setFingerprint(com.kitex.mom.plan.service.solver.SequenceSolverRegistry.hash(evidence.get(0)));
-        if(sequenceProofs.insert(proof)!=1)throw new CheckedException("排序证据保存失败，不能只保存任务结果");
+        var proof = new PlnSchedulingSequenceProof();
+        proof.setTenantId(owner.getTenantId());
+        proof.setFactoryCode(owner.getFactoryCode());
+        proof.setTaskId(taskId);
+        var solver = JSONUtil.parseObj(evidence.get(0)).getJSONObject("solver");
+        proof.setSolverCode(solver.getStr("code"));
+        proof.setSolverVersion(solver.getStr("version"));
+        proof.setEvidenceJson(evidence.get(0));
+        proof.setFingerprint(com.kitex.mom.plan.service.solver.SequenceSolverRegistry.hash(evidence.get(0)));
+        if (sequenceProofs.insert(proof) != 1) throw new CheckedException("排序证据保存失败，不能只保存任务结果");
         for (PlnIssueEntity issue : plans) {
             com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity detail = new com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity();
             detail.setTaskId(taskId);
@@ -1932,9 +1974,9 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
             profile.setCandidateCode(source.getCandidateCode().trim().toUpperCase());
             profile.setCandidateName(source.getCandidateName().trim());
             // 省略新字段时仍省略序列化，保留既有永久请求指纹；新显式选择进入原请求内容校验。
-            if(source.getSequenceSolverCode()!=null) {
-                String solver=sequenceSolvers.normalize(source.getSequenceSolverCode());
-                if(!solver.matches("[A-Z0-9_]{2,100}"))throw new CheckedException("排序求解器编码无效");
+            if (source.getSequenceSolverCode() != null) {
+                String solver = sequenceSolvers.normalize(source.getSequenceSolverCode());
+                if (!solver.matches("[A-Z0-9_]{2,100}")) throw new CheckedException("排序求解器编码无效");
                 profile.setSequenceSolverCode(solver);
             }
             profile.setSequenceStrategy(StrUtil.blankToDefault(source.getSequenceStrategy(), "BALANCED_GLOBAL")
@@ -1988,8 +2030,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
     }
 
     private PlnSchedulingCandidateProfileDTO profile(String code, String name, String strategy, int window,
-                                                       int delivery, int changeover, int cycle, int waiting,
-                                                       int loadBalance, int wip, int overtime, int disturbance) {
+                                                     int delivery, int changeover, int cycle, int waiting,
+                                                     int loadBalance, int wip, int overtime, int disturbance) {
         PlnSchedulingCandidateProfileDTO result = new PlnSchedulingCandidateProfileDTO();
         result.setCandidateCode(code);
         result.setCandidateName(name);
@@ -2052,7 +2094,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
     private List<Long> parseLongList(String json) {
         try {
             return OBJECT_MAPPER.readValue(json,
-                    new com.fasterxml.jackson.core.type.TypeReference<List<Long>>() {});
+                    new com.fasterxml.jackson.core.type.TypeReference<List<Long>>() {
+                    });
         } catch (Exception exception) {
             throw new CheckedException("排产情景来源计划快照损坏");
         }
@@ -2151,7 +2194,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                 wipExposure, peakWip, load.imbalanceBasisPoints, load.peakUtilizationRate,
                 load.averageUtilizationRate, load.requiredOvertimeMinutes, load.overloadedResourceDays,
                 load.capacityUnverifiedResourceDays, load.resourceDayCount, load.coverageTruncated,
-                disturbance, disturbanceCompared, firstStart, lastEnd);
+                load.hotspots, disturbance, disturbanceCompared, firstStart, lastEnd);
     }
 
     private LoadMetrics loadMetrics(Long taskId, LocalDateTime firstStart, LocalDateTime lastEnd) {
@@ -2166,7 +2209,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         query.setEndDate(truncated ? supportedEnd : actualEnd);
         List<PlnResourceLoadVO> loads = resourceLoadService.queryDailyLoads(query);
         if (loads.isEmpty()) return new LoadMetrics(0L, BigDecimal.ZERO, BigDecimal.ZERO,
-                0L, 0L, 0L, 0L, truncated);
+                0L, 0L, 0L, 0L, truncated, List.of());
         List<BigDecimal> rates = loads.stream().map(PlnResourceLoadVO::getUtilizationRate)
                 .filter(Objects::nonNull).toList();
         BigDecimal average = rates.isEmpty() ? BigDecimal.ZERO : rates.stream().reduce(BigDecimal.ZERO, BigDecimal::add)
@@ -2180,7 +2223,23 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                 .filter(Objects::nonNull).mapToLong(Long::longValue).sum();
         long overloaded = loads.stream().filter(item -> Optional.ofNullable(item.getOverloadMinutes()).orElse(0L) > 0).count();
         long unverified = loads.stream().filter(item -> !Boolean.TRUE.equals(item.getCapacityVerified())).count();
-        return new LoadMetrics(imbalance, peak, average, overtime, overloaded, unverified, loads.size(), truncated);
+        List<ResourceHotspotSnapshot> hotspots = loads.stream()
+                .sorted(Comparator
+                        .comparingLong((PlnResourceLoadVO item) -> Optional.ofNullable(item.getOverloadMinutes())
+                                .orElse(0L)).reversed()
+                        .thenComparing(item -> Boolean.TRUE.equals(item.getCapacityVerified()))
+                        .thenComparing(PlnResourceLoadVO::getUtilizationRate,
+                                Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(PlnResourceLoadVO::getPlannedMinutes,
+                                Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(PlnResourceLoadVO::getLoadDate)
+                        .thenComparing(PlnResourceLoadVO::getResourceCode,
+                                Comparator.nullsLast(String::compareTo)))
+                .limit(12)
+                .map(ResourceHotspotSnapshot::from)
+                .toList();
+        return new LoadMetrics(imbalance, peak, average, overtime, overloaded, unverified,
+                loads.size(), truncated, hotspots);
     }
 
     private void rankCandidates(List<CandidateEvaluation> evaluations) {
@@ -2271,70 +2330,6 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         }
     }
 
-    private record CandidateEvaluation(PlnSchedulingTaskEntity task, CandidateMetrics metrics,
-                                       PlnSchedulingCandidateProfileDTO profile) {
-    }
-
-    private record BaselinePlan(LocalDate scheduledDate) {
-    }
-
-    private record WipBoundary(LocalDateTime time, int delta) {
-    }
-
-    private record LoadMetrics(long imbalanceBasisPoints, BigDecimal peakUtilizationRate,
-                               BigDecimal averageUtilizationRate, long requiredOvertimeMinutes,
-                               long overloadedResourceDays, long capacityUnverifiedResourceDays,
-                               long resourceDayCount, boolean coverageTruncated) {
-        private static LoadMetrics empty() {
-            return new LoadMetrics(0L, BigDecimal.ZERO, BigDecimal.ZERO, 0L, 0L, 0L, 0L, false);
-        }
-    }
-
-    private record CandidateMetrics(long planCount, long hardBlockedCount, long onTimeCount, long lateCount,
-                                    long totalLateDays, long maxLateDays, long makespanMinutes,
-                                    long activeMinutes, long waitingMinutes, long changeoverMinutes,
-                                    long changeoverCount, long fallbackResourceCount,
-                                    long wipExposureMinutes, int peakWipCount,
-                                    long loadImbalanceBasisPoints, BigDecimal peakUtilizationRate,
-                                    BigDecimal averageUtilizationRate, long requiredOvertimeMinutes,
-                                    long overloadedResourceDays, long capacityUnverifiedResourceDays,
-                                    long resourceDayCount, boolean loadCoverageTruncated,
-                                    long disturbanceMinutes, long disturbanceComparedPlanCount,
-                                    LocalDateTime scheduledStartTime, LocalDateTime scheduledEndTime) {
-        private Map<String, Object> toMap() {
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("planCount", planCount);
-            result.put("hardBlockedCount", hardBlockedCount);
-            result.put("onTimeCount", onTimeCount);
-            result.put("lateCount", lateCount);
-            result.put("totalLateDays", totalLateDays);
-            result.put("maxLateDays", maxLateDays);
-            result.put("makespanMinutes", makespanMinutes);
-            result.put("activeMinutes", activeMinutes);
-            result.put("waitingMinutes", waitingMinutes);
-            result.put("changeoverMinutes", changeoverMinutes);
-            result.put("changeoverCount", changeoverCount);
-            result.put("fallbackResourceCount", fallbackResourceCount);
-            result.put("wipExposureMinutes", wipExposureMinutes);
-            result.put("peakWipCount", peakWipCount);
-            result.put("loadImbalanceBasisPoints", loadImbalanceBasisPoints);
-            result.put("loadImbalanceRate", BigDecimal.valueOf(loadImbalanceBasisPoints)
-                    .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP));
-            result.put("peakUtilizationRate", peakUtilizationRate);
-            result.put("averageUtilizationRate", averageUtilizationRate);
-            result.put("requiredOvertimeMinutes", requiredOvertimeMinutes);
-            result.put("overloadedResourceDays", overloadedResourceDays);
-            result.put("capacityUnverifiedResourceDays", capacityUnverifiedResourceDays);
-            result.put("resourceDayCount", resourceDayCount);
-            result.put("loadCoverageTruncated", loadCoverageTruncated);
-            result.put("disturbanceMinutes", disturbanceMinutes);
-            result.put("disturbanceComparedPlanCount", disturbanceComparedPlanCount);
-            result.put("scheduledStartTime", scheduledStartTime == null ? null : scheduledStartTime.toString());
-            result.put("scheduledEndTime", scheduledEndTime == null ? null : scheduledEndTime.toString());
-            return result;
-        }
-    }
-
     /**
      * 物料日期是生产开工的下界。若齐料日在当前产能游标之后，直接把游标推进到对应工作日。
      */
@@ -2380,7 +2375,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
             if (dailyCapacityMinutes <= 0) return startDate;
             // 从 startDate 开始，按工作日顺延，直到消耗完所需工时
             long remainMinutes = neededHours * 60;
-            List<LocalDate> workDays = buildWorkDaySequence(startDate, startDate.plusDays(Math.max(30, (int)(remainMinutes / dailyCapacityMinutes) + 5)), (int)(remainMinutes / dailyCapacityMinutes) + 2);
+            List<LocalDate> workDays = buildWorkDaySequence(startDate, startDate.plusDays(Math.max(30, (int) (remainMinutes / dailyCapacityMinutes) + 5)), (int) (remainMinutes / dailyCapacityMinutes) + 2);
             int idx = 0;
             long remain = remainMinutes;
             while (remain > 0 && idx < workDays.size()) {
@@ -2407,5 +2402,109 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         }
         // 批量更新
         return plnProductDemandMapper.updatePlanDateBatch(PlnSchedulingTaskDetailEntity) > 0;
+    }
+
+    private record MatchCandidate(PlnIssueEntity issue, double score, int sequence) {
+    }
+
+    private record CandidateEvaluation(PlnSchedulingTaskEntity task, CandidateMetrics metrics,
+                                       PlnSchedulingCandidateProfileDTO profile) {
+    }
+
+    private record BaselinePlan(LocalDate scheduledDate) {
+    }
+
+    private record WipBoundary(LocalDateTime time, int delta) {
+    }
+
+    private record LoadMetrics(long imbalanceBasisPoints, BigDecimal peakUtilizationRate,
+                               BigDecimal averageUtilizationRate, long requiredOvertimeMinutes,
+                               long overloadedResourceDays, long capacityUnverifiedResourceDays,
+                               long resourceDayCount, boolean coverageTruncated,
+                               List<ResourceHotspotSnapshot> hotspots) {
+        private static LoadMetrics empty() {
+            return new LoadMetrics(0L, BigDecimal.ZERO, BigDecimal.ZERO,
+                    0L, 0L, 0L, 0L, false, List.of());
+        }
+    }
+
+    private record ResourceHotspotSnapshot(String resourceType, String resourceCode, String resourceName,
+                                           LocalDate loadDate, BigDecimal utilizationRate,
+                                           Long plannedMinutes, Long availableMinutes, Long overloadMinutes,
+                                           String loadStatus, Boolean capacityVerified, String capacityExplanation,
+                                           Integer operationCount, Integer issueCount) {
+        private static ResourceHotspotSnapshot from(PlnResourceLoadVO source) {
+            return new ResourceHotspotSnapshot(source.getResourceType(), source.getResourceCode(),
+                    source.getResourceName(), source.getLoadDate(), source.getUtilizationRate(),
+                    source.getPlannedMinutes(), source.getAvailableMinutes(), source.getOverloadMinutes(),
+                    source.getLoadStatus(), source.getCapacityVerified(), source.getCapacityExplanation(),
+                    source.getOperationCount(), source.getIssueCount());
+        }
+
+        private Map<String, Object> toMap() {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("resourceType", resourceType);
+            result.put("resourceCode", resourceCode);
+            result.put("resourceName", resourceName);
+            result.put("loadDate", loadDate == null ? null : loadDate.toString());
+            result.put("utilizationRate", utilizationRate);
+            result.put("plannedMinutes", plannedMinutes);
+            result.put("availableMinutes", availableMinutes);
+            result.put("overloadMinutes", overloadMinutes);
+            result.put("loadStatus", loadStatus);
+            result.put("capacityVerified", capacityVerified);
+            result.put("capacityExplanation", capacityExplanation);
+            result.put("operationCount", operationCount);
+            result.put("issueCount", issueCount);
+            return result;
+        }
+    }
+
+    private record CandidateMetrics(long planCount, long hardBlockedCount, long onTimeCount, long lateCount,
+                                    long totalLateDays, long maxLateDays, long makespanMinutes,
+                                    long activeMinutes, long waitingMinutes, long changeoverMinutes,
+                                    long changeoverCount, long fallbackResourceCount,
+                                    long wipExposureMinutes, int peakWipCount,
+                                    long loadImbalanceBasisPoints, BigDecimal peakUtilizationRate,
+                                    BigDecimal averageUtilizationRate, long requiredOvertimeMinutes,
+                                    long overloadedResourceDays, long capacityUnverifiedResourceDays,
+                                    long resourceDayCount, boolean loadCoverageTruncated,
+                                    List<ResourceHotspotSnapshot> resourceHotspots,
+                                    long disturbanceMinutes, long disturbanceComparedPlanCount,
+                                    LocalDateTime scheduledStartTime, LocalDateTime scheduledEndTime) {
+        private Map<String, Object> toMap() {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("planCount", planCount);
+            result.put("hardBlockedCount", hardBlockedCount);
+            result.put("onTimeCount", onTimeCount);
+            result.put("lateCount", lateCount);
+            result.put("totalLateDays", totalLateDays);
+            result.put("maxLateDays", maxLateDays);
+            result.put("makespanMinutes", makespanMinutes);
+            result.put("activeMinutes", activeMinutes);
+            result.put("waitingMinutes", waitingMinutes);
+            result.put("changeoverMinutes", changeoverMinutes);
+            result.put("changeoverCount", changeoverCount);
+            result.put("fallbackResourceCount", fallbackResourceCount);
+            result.put("wipExposureMinutes", wipExposureMinutes);
+            result.put("peakWipCount", peakWipCount);
+            result.put("loadImbalanceBasisPoints", loadImbalanceBasisPoints);
+            result.put("loadImbalanceRate", BigDecimal.valueOf(loadImbalanceBasisPoints)
+                    .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP));
+            result.put("peakUtilizationRate", peakUtilizationRate);
+            result.put("averageUtilizationRate", averageUtilizationRate);
+            result.put("requiredOvertimeMinutes", requiredOvertimeMinutes);
+            result.put("overloadedResourceDays", overloadedResourceDays);
+            result.put("capacityUnverifiedResourceDays", capacityUnverifiedResourceDays);
+            result.put("resourceDayCount", resourceDayCount);
+            result.put("loadCoverageTruncated", loadCoverageTruncated);
+            result.put("resourceHotspots", resourceHotspots.stream()
+                    .map(ResourceHotspotSnapshot::toMap).toList());
+            result.put("disturbanceMinutes", disturbanceMinutes);
+            result.put("disturbanceComparedPlanCount", disturbanceComparedPlanCount);
+            result.put("scheduledStartTime", scheduledStartTime == null ? null : scheduledStartTime.toString());
+            result.put("scheduledEndTime", scheduledEndTime == null ? null : scheduledEndTime.toString());
+            return result;
+        }
     }
 }

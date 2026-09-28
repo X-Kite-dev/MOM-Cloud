@@ -7,8 +7,8 @@ import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.vo.MesTaskReportOmsVO;
 
-import java.util.List;
 import java.math.BigDecimal;
+import java.util.List;
 
 
 /**
@@ -33,7 +33,7 @@ public interface MesTaskService extends IService<MesTaskEntity> {
      *
      * @param receive
      */
-    void add(MesTaskReceiveDTO receive);
+    MesTaskIssueReceiptDTO add(MesTaskReceiveDTO receive);
 
     String addRework(MesTaskReceiveDTO receive);
 
@@ -45,13 +45,20 @@ public interface MesTaskService extends IService<MesTaskEntity> {
 
     void recordQualityDisposition(MesQualityDispositionDTO command);
 
-    /** 解析工单或工序任务背后的APS拆合批来源计划；供QMS等权威事件源取证。 */
+    /**
+     * 解析工单或工序任务背后的APS拆合批来源计划；供QMS等权威事件源取证。
+     */
     MesPlanSourceMappingDTO planSourceMapping(String taskCode, String produceTaskCode, String factoryCode);
 
-    /** 仅在MES尚未下达工序任务且APS来源账完整、单一时关闭关联工单，永久幂等。 */
+    /**
+     * 在APS来源账完整且单一、MES尚未形成任何现场执行事实时关闭关联工单。
+     * 支持未派工、待接收及已接收未开工场景；已接收资源随撤回释放，调用永久幂等。
+     */
     MesPlanWithdrawalDTO.Receipt withdrawPlan(MesPlanWithdrawalDTO.Command command);
 
-    /** 按一次MES来源数量请求返回实际形成的逐计划增量，禁止用整单分配量代替事件数量。 */
+    /**
+     * 按一次MES来源数量请求返回实际形成的逐计划增量，禁止用整单分配量代替事件数量。
+     */
     MesSourceQuantityMappingDTO sourceQuantityMapping(String requestId, String factoryCode);
 
     /**
@@ -107,7 +114,14 @@ public interface MesTaskService extends IService<MesTaskEntity> {
      */
     Boolean inWms(MesTaskInWmsDTO mesTaskInWmsDTO);
 
-    /** 将MES整批完工状态按APS批次来源账回传给全部原计划。 */
+    /**
+     * 入库前预览本次数量将占用的末工序报工来源。
+     */
+    MesTaskInWmsSourceDTO previewInWmsSource(MesTaskInWmsDTO mesTaskInWmsDTO);
+
+    /**
+     * 将MES整批完工状态按APS批次来源账回传给全部原计划。
+     */
     void feedbackPlanCompletion(MesTaskEntity task, BigDecimal completeNum);
 
     /**

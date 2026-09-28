@@ -50,6 +50,12 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
     @Schema(description = "生产计划单号")
     private String planNo;
 
+    @Schema(description = "上游业务生成的MES工单接收永久幂等请求号")
+    private String sourceRequestId;
+
+    @Schema(description = "MES工单接收完整载荷SHA-256指纹")
+    private String sourceRequestFingerprint;
+
     /**
      * 生产订单号
      */
@@ -191,6 +197,18 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
      */
     @Schema(description = "工艺路线版本")
     private String processRouteCode;
+
+    @Schema(description = "工单下达时冻结的工艺参数标准编码")
+    private String processParameterStandardNo;
+
+    @Schema(description = "工单下达时冻结的工艺参数标准版本")
+    private Integer processParameterStandardVersion;
+
+    @Schema(description = "工单下达时冻结的完整工艺参数标准JSON；无已发布标准时也冻结明确的空目录")
+    private String processParameterStandardSnapshot;
+
+    @Schema(description = "工艺参数标准冻结JSON的SHA-256指纹")
+    private String processParameterSnapshotFingerprint;
 
     /**
      * 来源类型

@@ -64,8 +64,8 @@ public class MesWipTimeoutConfigEntity extends BaseEntity<MesWipTimeoutConfigEnt
     @Schema(description = "同级重复通知冷却分钟数（为空走系统默认30）")
     private Integer notifyCooldownMin;
 
-    @Schema(description = "是否启用 1=是 0=否")
-    private String enabled;
+    @Schema(description = "是否启用")
+    private Boolean enabled;
 
     @Schema(description = "设置人账号")
     private String setPersonCode;

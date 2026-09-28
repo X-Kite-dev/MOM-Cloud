@@ -1,17 +1,16 @@
 package com.kitex.mom.mes.controller;
 
-
-import cn.hutool.core.collection.CollUtil;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
-import com.kitex.common.log.annotation.SysLog;
-import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.mom.mes.dto.MesWarehouseFeedJudgeDTO;
 import com.kitex.mom.mes.dto.MesWarehouseFeedLeftDTO;
 import com.kitex.mom.mes.entity.MesWarehouseFeedJudgeEntity;
 import com.kitex.mom.mes.service.MesWarehouseFeedJudgeService;
+import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -23,133 +22,101 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * 线边库余料退料审批
+ * 升级前投料余料审批历史查询入口。
  *
- * @author kitex
- * @since 2025-04-08
+ * <p>旧模型缺少精确实物组和WMS幂等证据，仅保留同租户、同工厂历史查询；
+ * 所有写操作均故障关闭，新的生产退料使用{@code /mesWarehouseStockFeedJudge}。</p>
  */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/mesWarehouseFeedJudge")
-@Tag(description = "mesWarehouseFeedJudge", name = "箱码规则管理")
+@Tag(description = "mesWarehouseFeedJudge", name = "历史投料余料审批（只读）")
 @SecurityRequirement(name = HttpHeaders.AUTHORIZATION)
 public class MesWarehouseFeedJudgeController {
 
+    private static final String LEGACY_READ_ONLY_MESSAGE =
+            "旧投料余料审批已停用，请使用线边库存受控退库功能";
+
     private final MesWarehouseFeedJudgeService service;
+    private final MesActualFactoryAccessService factoryAccess;
 
-    /**
-     * 分页查询
-     *
-     * @param pageParam
-     * @param query
-     * @return
-     */
-
-    @Operation(summary = "分页查询", description = "分页查询")
+    @Operation(summary = "分页查询历史退料审批")
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('mesWarehouseFeedJudge:show')")
-    public R<IPage<MesWarehouseFeedJudgeEntity>> page(Page<MesWarehouseFeedJudgeEntity> pageParam, MesWarehouseFeedJudgeEntity query) {
-        QueryWrapper<MesWarehouseFeedJudgeEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
-        autoQueryWrapper.lambda().orderByDesc(MesWarehouseFeedJudgeEntity::getCreateTime);
-        return R.ok(service.page(pageParam, autoQueryWrapper));
+    public R<IPage<MesWarehouseFeedJudgeEntity>> page(Page<MesWarehouseFeedJudgeEntity> page,
+                                                      MesWarehouseFeedJudgeEntity query) {
+        return R.ok(service.page(page, historyQuery(query)));
     }
 
-    @Operation(summary = "列表查询", description = "列表查询")
+    @Operation(summary = "列表查询历史退料审批")
     @GetMapping("/list")
+    @PreAuthorize("@pms.hasPermission('mesWarehouseFeedJudge:show')")
     public R<List<MesWarehouseFeedJudgeEntity>> list(MesWarehouseFeedJudgeEntity query) {
-        QueryWrapper<MesWarehouseFeedJudgeEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
-        autoQueryWrapper.lambda().eq(MesWarehouseFeedJudgeEntity::getStatus, Boolean.TRUE)
-                .orderByDesc(MesWarehouseFeedJudgeEntity::getCreateTime);
-        return R.ok(service.list(autoQueryWrapper));
+        return R.ok(service.list(historyQuery(query)));
     }
 
-
-    /**
-     * 通过id查询箱码规则管理
-     *
-     * @param id id
-     * @return R
-     */
-    @Operation(summary = "通过id查询", description = "通过id查询")
+    @Operation(summary = "按主键查询历史退料审批")
     @GetMapping("/{id}")
     @PreAuthorize("@pms.hasPermission('mesWarehouseFeedJudge:show')")
-    public R<MesWarehouseFeedJudgeEntity> getById(@PathVariable("id") Long id) {
-        return R.ok(service.getById(id));
+    public R<MesWarehouseFeedJudgeEntity> getById(@PathVariable Long id) {
+        MesWarehouseFeedJudgeEntity record = service.getOne(historyQuery(new MesWarehouseFeedJudgeEntity())
+                .eq(MesWarehouseFeedJudgeEntity::getId, id), false);
+        if (record == null) {
+            throw new CheckedException("当前租户和工厂下不存在该历史退料审批");
+        }
+        return R.ok(record);
     }
 
-    /**
-     * 新增箱码规则管理
-     *
-     * @param mesWarehouseFeedJudge 箱码规则管理
-     * @return R
-     */
-    @Operation(summary = "新增箱码规则管理", description = "新增箱码规则管理")
-    @SysLog("新增箱码规则管理")
+    @Operation(summary = "旧新增入口已停用")
     @PostMapping
     @PreAuthorize("@pms.hasPermission('mesWarehouseFeedJudge:add')")
-    public R<Void> save(@RequestBody MesWarehouseFeedJudgeEntity mesWarehouseFeedJudge) {
-        service.save(mesWarehouseFeedJudge);
-        return R.ok();
+    public R<Void> save(@RequestBody MesWarehouseFeedJudgeEntity ignored) {
+        throw legacyReadOnly();
     }
 
-    /**
-     * 修改箱码规则管理
-     *
-     * @param mesWarehouseFeedJudge 箱码规则管理
-     * @return R
-     */
-    @Operation(summary = "修改箱码规则管理", description = "修改箱码规则管理")
-    @SysLog("修改箱码规则管理")
+    @Operation(summary = "旧修改入口已停用")
     @PutMapping
     @PreAuthorize("@pms.hasPermission('mesWarehouseFeedJudge:edit')")
-    public R<Void> updateById(@RequestBody MesWarehouseFeedJudgeEntity mesWarehouseFeedJudge) {
-        service.updateById(mesWarehouseFeedJudge);
-        return R.ok();
+    public R<Void> update(@RequestBody MesWarehouseFeedJudgeEntity ignored) {
+        throw legacyReadOnly();
     }
 
-    /**
-     * 通过id删除箱码规则管理
-     *
-     * @param ids id列表
-     * @return R
-     */
-    @Operation(summary = "通过id删除箱码规则管理", description = "通过id删除箱码规则管理")
-    @SysLog("通过id删除箱码规则管理")
+    @Operation(summary = "旧删除入口已停用")
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('mesWarehouseFeedJudge:delete')")
-    public R<Void> removeById(@RequestBody Long[] ids) {
-        service.removeBatchByIds(CollUtil.toList(ids));
-        return R.ok();
+    public R<Void> remove(@RequestBody Long[] ignored) {
+        throw legacyReadOnly();
     }
 
-    /**
-     * 提交退料审批
-     *
-     * @param submitDTO 退料审批提交参数
-     * @return R
-     */
-    @Operation(summary = "提交退料审批", description = "提交退料审批")
-    @SysLog("提交退料审批")
+    @Operation(summary = "旧提交入口已停用")
     @PostMapping("/submit")
     @PreAuthorize("@pms.hasPermission('mesWarehouseFeedJudge:submit')")
-    public R<Void> submitReturnMaterial(@RequestBody MesWarehouseFeedLeftDTO submitDTO) {
-        service.submitReturnMaterial(submitDTO);
-        return R.ok();
+    public R<Void> submit(@RequestBody MesWarehouseFeedLeftDTO ignored) {
+        throw legacyReadOnly();
     }
 
-    /**
-     * 审批
-     *
-     * @param submitDTO 审批参数
-     * @return R
-     */
-    @Operation(summary = "审批", description = "审批")
-    @SysLog("审批")
+    @Operation(summary = "旧审批入口已停用")
     @PostMapping("/judge")
     @PreAuthorize("@pms.hasPermission('mesWarehouseFeedJudge:judge')")
-    public R<Void> judge(@RequestBody MesWarehouseFeedJudgeDTO submitDTO) {
-        service.judge(submitDTO);
-        return R.ok();
+    public R<Void> judge(@RequestBody MesWarehouseFeedJudgeDTO ignored) {
+        throw legacyReadOnly();
     }
 
+    private LambdaQueryWrapper<MesWarehouseFeedJudgeEntity> historyQuery(MesWarehouseFeedJudgeEntity query) {
+        String factory = factoryAccess.require("read");
+        return new LambdaQueryWrapper<MesWarehouseFeedJudgeEntity>()
+                .eq(MesWarehouseFeedJudgeEntity::getFactoryCode, factory)
+                .eq(StrUtil.isNotBlank(query.getStatus()), MesWarehouseFeedJudgeEntity::getStatus, query.getStatus())
+                .like(StrUtil.isNotBlank(query.getCode()), MesWarehouseFeedJudgeEntity::getCode, query.getCode())
+                .like(StrUtil.isNotBlank(query.getTaskCode()), MesWarehouseFeedJudgeEntity::getTaskCode,
+                        query.getTaskCode())
+                .like(StrUtil.isNotBlank(query.getMatCode()), MesWarehouseFeedJudgeEntity::getMatCode,
+                        query.getMatCode())
+                .orderByDesc(MesWarehouseFeedJudgeEntity::getCreateTime)
+                .orderByDesc(MesWarehouseFeedJudgeEntity::getId);
+    }
+
+    private CheckedException legacyReadOnly() {
+        return new CheckedException(LEGACY_READ_ONLY_MESSAGE);
+    }
 }

@@ -132,7 +132,8 @@ public class WmsPurchaseReceiptController {
     @SysLog("入库时更新实际入库数")
     @PutMapping("/addMatNum")
     public R<Boolean> addMatNum(@RequestBody WmsPurchaseReceiptInNumDTO wmsPurchaseReceiptInNumDTO) {
-        return R.ok(wmsPurchaseReceiptService.addMatNum(wmsPurchaseReceiptInNumDTO.getDocumentId(), wmsPurchaseReceiptInNumDTO.getMatCode(),
+        return R.ok(wmsPurchaseReceiptService.addMatNum(wmsPurchaseReceiptInNumDTO.getDocumentId(),
+                wmsPurchaseReceiptInNumDTO.getOrderDetailId(), wmsPurchaseReceiptInNumDTO.getMatCode(),
                 wmsPurchaseReceiptInNumDTO.getMatBatch(), wmsPurchaseReceiptInNumDTO.getMatNum()));
     }
 

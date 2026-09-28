@@ -1,13 +1,6 @@
 package com.kitex.mom.plan.service;
 
-import com.kitex.mom.plan.dto.PlnIssueModuleDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingBatchConfigureDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingBatchLedgerDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingReplanDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingRunDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingScenarioDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingScenarioRunDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingScenarioSelectDTO;
+import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity;
 
 import java.math.BigDecimal;
@@ -26,9 +19,11 @@ public interface PlnSchedulingEngineService {
      * @return 是否成功
      */
     Boolean run(PlnSchedulingRunDTO runDTO);
+
     com.kitex.mom.plan.dto.PlnSchedulingRunInput captureRun(PlnSchedulingRunDTO runDTO);
 
     PlnSchedulingScenarioDTO runScenario(PlnSchedulingScenarioRunDTO runDTO);
+
     com.kitex.mom.plan.dto.PlnSchedulingScenarioInput captureScenario(PlnSchedulingScenarioRunDTO runDTO);
 
     PlnSchedulingScenarioDTO getScenario(String scenarioNo);
@@ -76,6 +71,7 @@ public interface PlnSchedulingEngineService {
 
     /**
      * 更新排产日期
+     *
      * @param list 产品编码
      * @return
      */

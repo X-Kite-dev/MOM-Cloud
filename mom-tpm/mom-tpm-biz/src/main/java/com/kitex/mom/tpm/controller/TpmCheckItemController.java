@@ -148,7 +148,8 @@ public class TpmCheckItemController {
 
     private void normalizeAndValidate(TpmCheckItemEntity item) {
         if (StrUtil.isBlank(item.getFailureAction())) item.setFailureAction(CheckFailureActionEnum.WARN.getCode());
-        if (!CheckFailureActionEnum.supports(item.getFailureAction())) throw new IllegalArgumentException("不合格处置仅支持WARN、BLOCK或REPAIR");
+        if (!CheckFailureActionEnum.supports(item.getFailureAction()))
+            throw new IllegalArgumentException("不合格处置仅支持WARN、BLOCK或REPAIR");
         if (item.getDefaultRecoveryMinutes() != null && item.getDefaultRecoveryMinutes() <= 0) {
             throw new IllegalArgumentException("默认预计恢复分钟数必须大于0");
         }

@@ -20,6 +20,12 @@ import java.util.List;
 public class WmsLiveStockQueryDTO {
 
     /**
+     * 精确库存行主键，供受控业务对象下钻使用。
+     */
+    @Schema(description = "精确库存行主键")
+    private Long stockId;
+
+    /**
      * 出库通知单号
      */
     @Schema(description = "出库通知单号")

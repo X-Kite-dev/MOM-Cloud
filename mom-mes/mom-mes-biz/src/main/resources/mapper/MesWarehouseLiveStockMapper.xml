@@ -5,59 +5,80 @@
 
     <select id="getPageFeedBack" resultType="com.kitex.mom.mes.dto.MesWarehouseFeedDTO">
         SELECT
-        bill_no,
-        mat_code,
-        reservation_no,
-        requirement_mat_code,
-        MAX(requirement_mat_name) AS requirement_mat_name,
-        MAX(substitute_flag) AS substitute_flag,
-        MAX(substitute_ratio) AS substitute_ratio,
-        MAX(mat_name) AS mat_name,
-        MAX(mat_spec) AS mat_spec,
-        MAX(mat_unit) AS mat_unit,
-        mat_batch,
-        MAX(supplier_code) AS supplier_code,
-        MAX(supplier_name) AS supplier_name,
-        warehouse_code,
-        MAX(warehouse_name) AS warehouse_name,
-        site_code,
-        MAX(site_name) AS site_name,
-        SUM(num) AS num,
-        MAX(judge_status) AS judge_status,
-        MAX(factory_code) AS factory_code
+        stock.bill_no,
+        (SELECT MAX(picking.task_code)
+           FROM mes_warehouse_picking_bill picking
+          WHERE picking.bill_no = stock.bill_no
+            AND picking.factory_code = stock.factory_code
+            AND picking.tenant_id IS NOT DISTINCT FROM stock.tenant_id
+            AND picking.del_flag = '0') AS task_code,
+        stock.mat_code,
+        stock.reservation_no,
+        stock.requirement_mat_code,
+        MAX(stock.requirement_mat_name) AS requirement_mat_name,
+        MAX(stock.substitute_flag) AS substitute_flag,
+        MAX(stock.substitute_ratio) AS substitute_ratio,
+        MAX(stock.mat_name) AS mat_name,
+        MAX(stock.mat_spec) AS mat_spec,
+        MAX(stock.mat_unit) AS mat_unit,
+        stock.mat_batch,
+        MAX(stock.supplier_code) AS supplier_code,
+        MAX(stock.supplier_name) AS supplier_name,
+        stock.warehouse_code,
+        MAX(stock.warehouse_name) AS warehouse_name,
+        stock.site_code,
+        MAX(stock.site_name) AS site_name,
+        SUM(stock.num) AS num,
+        MAX(stock.judge_status) AS judge_status,
+        MAX(stock.factory_code) AS factory_code
         FROM
-        mes_warehouse_live_stock
+        mes_warehouse_live_stock stock
         <where>
-            mat_detail_type = 'RAW'
+            stock.mat_detail_type = 'RAW'
+            AND stock.del_flag = '0'
+            AND stock.factory_code = #{query.factoryCode}
             <if test="query.billNo != '' and query.billNo != null ">
-                AND bill_no LIKE CONCAT('%', #{query.billNo}, '%')
+                AND stock.bill_no LIKE CONCAT('%', #{query.billNo}, '%')
+            </if>
+            <if test="query.taskCode != '' and query.taskCode != null ">
+                AND EXISTS (
+                    SELECT 1
+                    FROM mes_warehouse_picking_bill picking
+                    WHERE picking.bill_no = stock.bill_no
+                      AND picking.factory_code = stock.factory_code
+                      AND picking.tenant_id IS NOT DISTINCT FROM stock.tenant_id
+                      AND picking.task_code = #{query.taskCode}
+                      AND picking.del_flag = '0'
+                )
             </if>
             <if test="query.matName != '' and query.matName != null ">
-                AND mat_name LIKE CONCAT('%', #{query.matName}, '%')
+                AND stock.mat_name LIKE CONCAT('%', #{query.matName}, '%')
             </if>
             <if test="query.matCode != '' and query.matCode != null ">
-                AND mat_code LIKE CONCAT('%', #{query.matCode}, '%')
+                AND stock.mat_code LIKE CONCAT('%', #{query.matCode}, '%')
             </if>
             <if test="query.matSpec != '' and query.matSpec != null ">
-                AND mat_spec LIKE CONCAT('%', #{query.matSpec}, '%')
-            </if>
-            <if test="query.matName != '' and query.matName != null ">
-                AND mat_name LIKE CONCAT('%', #{query.matName}, '%')
+                AND stock.mat_spec LIKE CONCAT('%', #{query.matSpec}, '%')
             </if>
             <if test="query.matBatch != '' and query.matBatch != null ">
-                AND mat_batch LIKE CONCAT('%', #{query.matBatch}, '%')
+                AND stock.mat_batch LIKE CONCAT('%', #{query.matBatch}, '%')
+            </if>
+            <if test="query.siteCode != '' and query.siteCode != null ">
+                AND stock.site_code = #{query.siteCode}
             </if>
         </where>
         GROUP BY
-        bill_no,
-        mat_code,
-        reservation_no,
-        requirement_mat_code,
-        warehouse_code,
-        site_code,
-        mat_batch
+        stock.bill_no,
+        stock.factory_code,
+        stock.tenant_id,
+        stock.mat_code,
+        stock.reservation_no,
+        stock.requirement_mat_code,
+        stock.warehouse_code,
+        stock.site_code,
+        stock.mat_batch
         HAVING
-        SUM(num) > 0
+        SUM(stock.num) > 0
     </select>
     <select id="getWmsLiveStockPageByMatRaw"
             resultType="com.kitex.mom.mes.vo.MesWarehouseLiveStockVO">

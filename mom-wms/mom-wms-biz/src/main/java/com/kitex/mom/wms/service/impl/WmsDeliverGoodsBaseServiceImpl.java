@@ -10,7 +10,6 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.entity.BaseCore;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.exception.CheckedException;
-import com.kitex.common.core.util.R;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.oms.enums.YesOrNoStateEnum;
@@ -20,11 +19,7 @@ import com.kitex.mom.wms.mapper.WmsDeliverGoodsBaseMapper;
 import com.kitex.mom.wms.mapper.WmsOutBillDetailMapper;
 import com.kitex.mom.wms.mapper.WmsOutBillMapper;
 import com.kitex.mom.wms.mapper.WmsOutNoticeDetailMapper;
-import com.kitex.mom.wms.service.WmsDeliverGoodsBaseService;
-import com.kitex.mom.wms.service.WmsDeliverGoodsDetailsService;
-import com.kitex.mom.wms.service.WmsDeliverGoodsPlanBaseService;
-import com.kitex.mom.wms.service.WmsDeliverGoodsRecordService;
-import com.kitex.mom.wms.service.WmsSalesStockReservationService;
+import com.kitex.mom.wms.service.*;
 import com.kitex.mom.wms.service.outBill.WmsOutBillFactory;
 import com.kitex.mom.wms.service.outBill.WmsOutBillHandler;
 import com.kitex.mom.wms.service.outNotice.WmsOutNoticeFactory;
@@ -500,8 +495,8 @@ public class WmsDeliverGoodsBaseServiceImpl extends ServiceImpl<WmsDeliverGoodsB
                 .filter(StrUtil::isNotBlank).collect(Collectors.toSet());
         Map<String, WmsDeliverGoodsPlanBaseEntity> plansByCode = planCodes.isEmpty() ? Map.of()
                 : wmsDeliverGoodsPlanBaseService.list(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
-                .in(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, planCodes)
-                .orderByAsc(WmsDeliverGoodsPlanBaseEntity::getId).last("FOR UPDATE")).stream()
+                        .in(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, planCodes)
+                        .orderByAsc(WmsDeliverGoodsPlanBaseEntity::getId).last("FOR UPDATE")).stream()
                 .collect(Collectors.toMap(WmsDeliverGoodsPlanBaseEntity::getDeliverPlanCode, Function.identity(), (a, b) -> {
                     throw new CheckedException("发货计划号重复，不能绑定销售库存预留");
                 }));

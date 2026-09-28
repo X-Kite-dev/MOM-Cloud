@@ -3,9 +3,9 @@ package com.kitex.mom.mes.task;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.util.StrUtil;
-import com.kitex.admin.api.feign.RemoteParamService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.admin.api.entity.SysUserEntity;
+import com.kitex.admin.api.feign.RemoteParamService;
 import com.kitex.admin.api.feign.RemoteUserService;
 import com.kitex.common.core.util.R;
 import com.kitex.mom.common.message.api.feign.RemoteMessagePushService;
@@ -29,8 +29,8 @@ import com.kitex.mom.qms.api.feign.RemoteProcedureService;
 import com.kitex.mom.qms.api.feign.RemoteQualityStandardService;
 import com.kitex.mom.qms.dto.inspection.InspectionProcedureCreateParam;
 import com.kitex.mom.qms.entity.QmsQualityStandardEntity;
-import com.kitex.mom.qms.enums.InspectionTaskTypeEnum;
 import com.kitex.mom.qms.enums.InspectionMethodEnum;
+import com.kitex.mom.qms.enums.InspectionTaskTypeEnum;
 import com.kitex.mom.qms.enums.ProcedureLabelTypeEnum;
 import com.xxl.job.core.handler.annotation.XxlJob;
 import lombok.RequiredArgsConstructor;
@@ -38,7 +38,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**

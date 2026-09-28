@@ -25,6 +25,8 @@ public interface PmsContractService extends MPJDeepService<PmsContractEntity> {
      */
     Boolean statusUpdate(String pmsOrderNo, String status);
 
-    /** 合同已受控终止后，原采购订单不得再新增收料事实。 */
+    /**
+     * 合同已受控终止后，原采购订单不得再新增收料事实。
+     */
     void assertReceivableContract(String pmsOrderNo);
 }

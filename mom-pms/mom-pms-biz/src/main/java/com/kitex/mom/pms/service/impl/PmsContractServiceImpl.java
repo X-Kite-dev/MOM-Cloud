@@ -2,28 +2,30 @@ package com.kitex.mom.pms.service.impl;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
-import com.kitex.common.core.exception.CheckedException;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.pms.entity.PmsContractDetailEntity;
 import com.kitex.mom.pms.entity.PmsContractEntity;
+import com.kitex.mom.pms.entity.PmsOrderDetailEntity;
 import com.kitex.mom.pms.entity.PmsOrderEntity;
 import com.kitex.mom.pms.enums.PmsContractStatusEnum;
 import com.kitex.mom.pms.enums.PmsOrderStatusEnum;
 import com.kitex.mom.pms.mapper.PmsContractDetailMapper;
 import com.kitex.mom.pms.mapper.PmsContractMapper;
+import com.kitex.mom.pms.mapper.PmsOrderDetailMapper;
 import com.kitex.mom.pms.mapper.PmsOrderMapper;
 import com.kitex.mom.pms.service.PmsContractService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Objects;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Set;
+import java.math.BigDecimal;
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 合同管理
@@ -38,6 +40,8 @@ public class PmsContractServiceImpl extends ServiceImpl<PmsContractMapper, PmsCo
     private final PmsContractDetailMapper pmsContractDetailMapper;
 
     private final PmsOrderMapper pmsOrderMapper;
+
+    private final PmsOrderDetailMapper pmsOrderDetailMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -56,8 +60,10 @@ public class PmsContractServiceImpl extends ServiceImpl<PmsContractMapper, PmsCo
         baseMapper.insert(pmsContract);
         List<PmsContractDetailEntity> contractDetails = pmsContract.getPmsContractDetailList() == null
                 ? java.util.Collections.emptyList() : pmsContract.getPmsContractDetailList();
+        normalizeNewContractDetails(pmsContract, contractDetails);
         for (PmsContractDetailEntity pmsContractDetail : contractDetails) {
             pmsContractDetail.setContractId(pmsContract.getId());
+            pmsContractDetail.setId(null);
             pmsContractDetailMapper.insert(pmsContractDetail);
         }
         // 修改采购订单的状态为签订合同
@@ -100,11 +106,11 @@ public class PmsContractServiceImpl extends ServiceImpl<PmsContractMapper, PmsCo
         }
         if ((pmsContract.getCurrentVersion() != null && !Objects.equals(pmsContract.getCurrentVersion(), current.getCurrentVersion()))
                 || (pmsContract.getCurrentContentFingerprint() != null
-                    && !Objects.equals(pmsContract.getCurrentContentFingerprint(), current.getCurrentContentFingerprint()))
+                && !Objects.equals(pmsContract.getCurrentContentFingerprint(), current.getCurrentContentFingerprint()))
                 || (pmsContract.getLastRevisionRequestId() != null
-                    && !Objects.equals(pmsContract.getLastRevisionRequestId(), current.getLastRevisionRequestId()))
+                && !Objects.equals(pmsContract.getLastRevisionRequestId(), current.getLastRevisionRequestId()))
                 || (pmsContract.getLastRevisedTime() != null
-                    && !Objects.equals(pmsContract.getLastRevisedTime(), current.getLastRevisedTime()))) {
+                && !Objects.equals(pmsContract.getLastRevisedTime(), current.getLastRevisedTime()))) {
             throw new CheckedException("合同版本号、内容指纹和生效结果只能由正文版本变更流程写入");
         }
         boolean contentEditable = PmsContractStatusEnum.ADD.getCode().equals(current.getStatus());
@@ -127,9 +133,20 @@ public class PmsContractServiceImpl extends ServiceImpl<PmsContractMapper, PmsCo
         if (CollUtil.isNotEmpty(pmsContract.getPmsContractDetailList())) {
             for (PmsContractDetailEntity pmsContractDetail : pmsContract.getPmsContractDetailList()) {
                 if (Objects.isNull(pmsContractDetail.getId())) {
+                    normalizeNewContractDetails(pmsContract, List.of(pmsContractDetail));
                     pmsContractDetail.setContractId(pmsContract.getId());
                     pmsContractDetailMapper.insert(pmsContractDetail);
                 } else {
+                    PmsContractDetailEntity currentDetail = pmsContractDetailMapper.selectById(pmsContractDetail.getId());
+                    if (currentDetail == null || !Objects.equals(currentDetail.getContractId(), current.getId())) {
+                        throw new CheckedException("合同条款不存在或不属于当前合同");
+                    }
+                    pmsContractDetail.setContractId(currentDetail.getContractId());
+                    pmsContractDetail.setOrderDetailId(currentDetail.getOrderDetailId());
+                    pmsContractDetail.setPmsPlanNo(currentDetail.getPmsPlanNo());
+                    pmsContractDetail.setCancelledNum(currentDetail.getCancelledNum());
+                    pmsContractDetail.setCancellationRequestId(currentDetail.getCancellationRequestId());
+                    pmsContractDetail.setChangeVersion(currentDetail.getChangeVersion());
                     pmsContractDetailMapper.updateById(pmsContractDetail);
                 }
             }
@@ -215,6 +232,48 @@ public class PmsContractServiceImpl extends ServiceImpl<PmsContractMapper, PmsCo
         return submitted != null && !Objects.equals(submitted, current);
     }
 
+    /**
+     * 将合同明细与采购订单行建立永久、显式的追溯关系。旧页面创建合同时会把订单行ID暂放在
+     * 合同明细ID中，这里只把它当作来源线索，合同明细自身仍重新生成主键。
+     */
+    private void normalizeNewContractDetails(PmsContractEntity contract, List<PmsContractDetailEntity> details) {
+        if (details == null || details.isEmpty()) return;
+        PmsOrderEntity order = pmsOrderMapper.selectOne(new LambdaQueryWrapper<PmsOrderEntity>()
+                .eq(PmsOrderEntity::getPmsOrderNo, contract.getPmsOrderNo()));
+        if (order == null) throw new CheckedException("合同关联采购订单不存在");
+        List<PmsOrderDetailEntity> orderDetails = pmsOrderDetailMapper.selectList(
+                new LambdaQueryWrapper<PmsOrderDetailEntity>()
+                        .eq(PmsOrderDetailEntity::getPmsOrderId, order.getId())
+                        .orderByAsc(PmsOrderDetailEntity::getId));
+        Map<Long, PmsOrderDetailEntity> byId = orderDetails.stream()
+                .collect(Collectors.toMap(PmsOrderDetailEntity::getId, Function.identity()));
+        Set<Long> used = new java.util.HashSet<>();
+        for (PmsContractDetailEntity detail : details) {
+            Long sourceId = detail.getOrderDetailId() != null ? detail.getOrderDetailId() : detail.getId();
+            PmsOrderDetailEntity source = byId.get(sourceId);
+            if (source == null) {
+                List<PmsOrderDetailEntity> candidates = orderDetails.stream()
+                        .filter(value -> Objects.equals(value.getMatCode(), detail.getMatCode()))
+                        .filter(value -> !used.contains(value.getId())).toList();
+                if (candidates.size() != 1) {
+                    throw new CheckedException("合同物料" + detail.getMatCode()
+                            + "无法唯一关联采购订单行，请重新从采购订单创建合同");
+                }
+                source = candidates.get(0);
+            }
+            if (!used.add(source.getId())) throw new CheckedException("同一采购订单行不能重复形成合同条款");
+            if (!Objects.equals(source.getMatCode(), detail.getMatCode())) {
+                throw new CheckedException("合同条款物料与采购订单行不一致");
+            }
+            detail.setId(null);
+            detail.setOrderDetailId(source.getId());
+            detail.setPmsPlanNo(source.getPmsPlanNo());
+            detail.setCancelledNum(BigDecimal.ZERO);
+            detail.setCancellationRequestId(null);
+            detail.setChangeVersion(0);
+        }
+    }
+
     private void requireContractableOrder(String pmsOrderNo) {
         if (StrUtil.isBlank(pmsOrderNo)) {
             throw new CheckedException("采购合同必须绑定采购订单");
@@ -261,7 +320,8 @@ public class PmsContractServiceImpl extends ServiceImpl<PmsContractMapper, PmsCo
         if (ids == null || ids.length == 0) return Boolean.TRUE;
         List<PmsContractDetailEntity> details = pmsContractDetailMapper.selectList(
                 new LambdaQueryWrapper<PmsContractDetailEntity>().in(PmsContractDetailEntity::getId, Arrays.asList(ids)).last("FOR UPDATE"));
-        if (details.size() != Arrays.stream(ids).distinct().count()) throw new CheckedException("合同明细不存在或已删除");
+        if (details.size() != Arrays.stream(ids).distinct().count())
+            throw new CheckedException("合同明细不存在或已删除");
         Set<Long> contractIds = details.stream().map(PmsContractDetailEntity::getContractId).collect(java.util.stream.Collectors.toSet());
         List<PmsContractEntity> contracts = baseMapper.selectList(new LambdaQueryWrapper<PmsContractEntity>()
                 .in(PmsContractEntity::getId, contractIds).last("FOR UPDATE"));

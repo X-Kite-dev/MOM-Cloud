@@ -7,6 +7,8 @@ import java.util.Collection;
 
 public interface MesWipTimeoutConfigService extends IService<MesWipTimeoutConfigEntity> {
     MesWipTimeoutConfigEntity saveData(MesWipTimeoutConfigEntity config);
+
     void updateData(MesWipTimeoutConfigEntity config);
+
     void removeUnused(Collection<Long> ids);
 }

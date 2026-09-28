@@ -1,6 +1,5 @@
 package com.kitex.mom.mdm.vo;
 
-import com.kitex.mom.mdm.entity.MdmBomEntity;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
@@ -20,7 +19,7 @@ public class MdmBomTreeVO {
      * 树key
      */
     @Schema(description = "树key")
-    private Long id;
+    private String id;
 
     /**
      * 名称
@@ -56,6 +55,6 @@ public class MdmBomTreeVO {
      * 子级
      */
     @Schema(description = "子级")
-    private List<MdmBomEntity> children;
+    private List<MdmBomVersionVO> children;
 
 }

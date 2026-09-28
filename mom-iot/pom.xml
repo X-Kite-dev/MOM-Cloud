@@ -13,6 +13,7 @@
     <packaging>pom</packaging>
 
     <modules>
+        <module>mom-iot-api</module>
         <module>mom-iot-system</module>
         <module>mom-iot-network</module>
         <module>mom-iot-gateway</module>

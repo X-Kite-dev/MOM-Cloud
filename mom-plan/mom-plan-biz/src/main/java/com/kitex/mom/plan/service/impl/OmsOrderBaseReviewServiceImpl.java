@@ -2,19 +2,18 @@ package com.kitex.mom.plan.service.impl;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.ArrayUtil;
-import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
-import com.kitex.common.core.exception.CheckedException;
-import com.kitex.common.core.util.R;
-import com.kitex.common.data.orgFilter.FactoryContextHolder;
-import com.kitex.common.security.service.MomUser;
-import com.kitex.common.security.util.SecurityUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.admin.api.entity.SysDictItemEntity;
 import com.kitex.admin.api.feign.RemoteDictService;
+import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.security.service.MomUser;
+import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
 import com.kitex.mom.oms.dto.HistoryDeliverOrderDto;
 import com.kitex.mom.oms.dto.OmsOrderBaseReviewPageDto;
@@ -24,16 +23,12 @@ import com.kitex.mom.oms.entity.*;
 import com.kitex.mom.oms.enums.OrderStateEnum;
 import com.kitex.mom.oms.enums.YesOrNoStateEnum;
 import com.kitex.mom.oms.vo.OmsOrderBaseReviewExportVo;
+import com.kitex.mom.plan.entity.PlnProductDemandEntity;
 import com.kitex.mom.plan.mapper.OmsOrderBaseMapper;
 import com.kitex.mom.plan.mapper.OmsOrderBaseReviewMapper;
-import com.kitex.mom.plan.entity.PlnProductDemandEntity;
-import com.kitex.mom.plan.service.OmsOrderBaseReviewService;
-import com.kitex.mom.plan.service.OmsOrderBaseTrackService;
-import com.kitex.mom.plan.service.OmsOrderDetailsReviewService;
-import com.kitex.mom.plan.service.OmsOrderDetailsService;
-import com.kitex.mom.plan.service.PlnProductDemandService;
-import com.kitex.mom.wms.api.feign.RemoteLiveStockService;
+import com.kitex.mom.plan.service.*;
 import com.kitex.mom.wms.api.feign.RemoteDeliverService;
+import com.kitex.mom.wms.api.feign.RemoteLiveStockService;
 import com.kitex.mom.wms.entity.WmsDeliverGoodsPlanBaseEntity;
 import lombok.AllArgsConstructor;
 import org.springframework.beans.BeanUtils;
@@ -491,9 +486,9 @@ public class OmsOrderBaseReviewServiceImpl extends ServiceImpl<OmsOrderBaseRevie
     }
 
     private void synchronizeReviewedPlanDemand(OmsOrderChangeVersionEntity version,
-                                             OmsOrderBaseReviewEntity review,
-                                             OmsOrderDetailsEntity source,
-                                             OmsOrderDetailsReviewEntity candidate) {
+                                               OmsOrderBaseReviewEntity review,
+                                               OmsOrderDetailsEntity source,
+                                               OmsOrderDetailsReviewEntity candidate) {
         if (!Objects.equals(source.getProductCode(), candidate.getProductCode())
                 || !Objects.equals(source.getProductName(), candidate.getProductName())
                 || !Objects.equals(source.getProductSpec(), candidate.getProductSpec())

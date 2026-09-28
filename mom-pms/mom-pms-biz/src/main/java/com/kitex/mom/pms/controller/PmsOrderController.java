@@ -66,6 +66,7 @@ public class PmsOrderController {
     public R<Page<PmsOrderEntity>> getPmsOrderPage(@ParameterObject SearchPage page, @ParameterObject PmsOrderEntity pmsOrder) {
         QueryWrapper<PmsOrderEntity> wrapper = Wrappers.query();
         wrapper.lambda()
+                .eq(pmsOrder.getId() != null, PmsOrderEntity::getId, pmsOrder.getId())
                 .like(StrUtil.isNotBlank(pmsOrder.getPmsOrderNo()), PmsOrderEntity::getPmsOrderNo, pmsOrder.getPmsOrderNo())
                 .like(StrUtil.isNotBlank(pmsOrder.getSupplierCode()), PmsOrderEntity::getSupplierCode, pmsOrder.getSupplierCode())
                 .like(StrUtil.isNotBlank(pmsOrder.getSupplierName()), PmsOrderEntity::getSupplierName, pmsOrder.getSupplierName())
@@ -119,6 +120,7 @@ public class PmsOrderController {
     public R<Map<String, Long>> getCount(@ParameterObject PmsOrderEntity pmsOrder) {
         QueryWrapper<PmsOrderEntity> wrapper = Wrappers.query();
         wrapper.lambda().select(PmsOrderEntity::getStatus)
+                .eq(pmsOrder.getId() != null, PmsOrderEntity::getId, pmsOrder.getId())
                 .like(StrUtil.isNotBlank(pmsOrder.getPmsOrderNo()), PmsOrderEntity::getPmsOrderNo, pmsOrder.getPmsOrderNo())
                 .like(StrUtil.isNotBlank(pmsOrder.getSupplierCode()), PmsOrderEntity::getSupplierCode, pmsOrder.getSupplierCode())
                 .like(StrUtil.isNotBlank(pmsOrder.getSupplierName()), PmsOrderEntity::getSupplierName, pmsOrder.getSupplierName());

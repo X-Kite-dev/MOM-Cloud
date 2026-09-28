@@ -358,7 +358,7 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
     }
 
     private List<WmsDeliverGoodsPlanBaseEntity> orderedOmsPlans(List<WmsDeliverGoodsPlanBaseEntity> plans,
-                                                                 boolean requireId) {
+                                                                boolean requireId) {
         if (CollUtil.isEmpty(plans) || plans.size() > 50 || plans.stream().anyMatch(Objects::isNull)) {
             throw new CheckedException("OMS发货计划批量命令必须包含1到50条非空记录");
         }

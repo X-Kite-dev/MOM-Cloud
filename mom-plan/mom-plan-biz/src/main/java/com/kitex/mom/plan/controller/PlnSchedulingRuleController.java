@@ -5,15 +5,9 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
-import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.*;
-import com.kitex.mom.plan.service.PlnDemandMonthService;
-import com.kitex.mom.plan.service.PlnSchedulingEngineService;
-import com.kitex.mom.plan.service.PlnOperationSchedulingService;
-import com.kitex.mom.plan.service.PlnResourceLoadService;
-import com.kitex.mom.plan.service.PlnSchedulingRuleService;
-import com.kitex.mom.plan.service.SchedulingContext;
+import com.kitex.mom.plan.service.*;
 import com.kitex.mom.plan.vo.PlnDemandMonthReadinessVO;
 import com.kitex.mom.plan.vo.PlnResourceLoadOperationVO;
 import com.kitex.mom.plan.vo.PlnResourceLoadVO;
@@ -79,12 +73,14 @@ public class PlnSchedulingRuleController {
                                                      @RequestParam(required = false) String mode,
                                                      @RequestParam(required = false) String taskNo,
                                                      @RequestParam(required = false) Boolean resultArchived) {
-        return R.ok(plnSchedulingRuleService.pageTask(page, mode, taskNo,resultArchived));
+        return R.ok(plnSchedulingRuleService.pageTask(page, mode, taskNo, resultArchived));
     }
 
-    /** Java调用兼容；HTTP入口仍只有上方带可选归档过滤的映射。 */
-    public R<Page<PlnSchedulingTaskEntity>> pageTask(SearchPage page,String mode,String taskNo) {
-        return pageTask(page,mode,taskNo,null);
+    /**
+     * Java调用兼容；HTTP入口仍只有上方带可选归档过滤的映射。
+     */
+    public R<Page<PlnSchedulingTaskEntity>> pageTask(SearchPage page, String mode, String taskNo) {
+        return pageTask(page, mode, taskNo, null);
     }
 
     /**
@@ -208,7 +204,7 @@ public class PlnSchedulingRuleController {
                                                            @RequestParam(required = false) String productName,
                                                            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate startDate,
                                                            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate endDate) {
-        return R.ok(plnSchedulingRuleService.queryLockedGantt(page, productCode,productName, startDate, endDate));
+        return R.ok(plnSchedulingRuleService.queryLockedGantt(page, productCode, productName, startDate, endDate));
     }
 
     @Operation(summary = "分页查询排产甘特明细", description = "分页查询排产甘特明细")
@@ -251,7 +247,7 @@ public class PlnSchedulingRuleController {
     @Operation(summary = "配置APS拆批合批", description = "仅允许待确认正式任务；按数量指纹防并发覆盖，调整后立即重新执行有限产能排程")
     @PutMapping("/tasks/{taskId}/batches")
     public R<PlnSchedulingBatchLedgerDTO> configureBatches(@PathVariable Long taskId,
-                                                            @RequestBody PlnSchedulingBatchConfigureDTO dto) {
+                                                           @RequestBody PlnSchedulingBatchConfigureDTO dto) {
         if (dto == null) {
             throw new CheckedException("排产批次调整参数不能为空");
         }
@@ -362,6 +358,7 @@ public class PlnSchedulingRuleController {
 
     /**
      * 批量重新调整排产日期
+     *
      * @param list
      * @return R
      */

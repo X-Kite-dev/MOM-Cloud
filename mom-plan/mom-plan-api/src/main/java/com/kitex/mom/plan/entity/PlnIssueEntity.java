@@ -155,6 +155,21 @@ public class PlnIssueEntity extends BaseEntity<PlnIssueEntity> {
     @Schema(description = "状态, 0:未下发, 1:已下发, 2: 生产中, 3: 已完成, 4:已关闭")
     private String status;
 
+    @Schema(description = "最近一次普通计划下达MES的永久请求号")
+    private String mesIssueRequestId;
+
+    @Schema(description = "最近一次普通计划下达MES的载荷SHA-256指纹")
+    private String mesIssueFingerprint;
+
+    @Schema(description = "MES接收回执中的生产工单ID")
+    private Long mesTaskId;
+
+    @Schema(description = "MES接收回执中的生产工单编码")
+    private String mesTaskCode;
+
+    @Schema(description = "MES首次接收生产计划时间")
+    private LocalDateTime mesIssueTime;
+
     /**
      * 排产分配日期
      */

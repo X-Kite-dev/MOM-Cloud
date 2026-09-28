@@ -104,11 +104,13 @@ public class TpmDeviceBoardServiceImpl implements TpmDeviceBoardService {
 
         EquipmentUsageDto equipmentUsageDto = new EquipmentUsageDto();
         //空闲
-        equipmentUsageDto.setIdle(data.stream().filter(item -> item.getDeviceState().equals(DeviceStateEnum.IDLE.getCode())).toList().size());
+        equipmentUsageDto.setIdle(data.stream()
+                .filter(item -> DeviceStateEnum.IDLE.getCode().equals(item.getDeviceState())).toList().size());
         equipmentUsageDto.setIdleRate(data.size() > 0 ?
                 BigDecimal.valueOf(equipmentUsageDto.getIdle()).divide(BigDecimal.valueOf(data.size()), new MathContext(2, RoundingMode.HALF_UP)).multiply(BigDecimal.valueOf(100)) : BigDecimal.ZERO);
         //运行中
-        equipmentUsageDto.setRunning(data.stream().filter(item -> item.getDeviceUsable().equals(DeviceStateEnum.RUNNING.getCode())).toList().size());
+        equipmentUsageDto.setRunning(data.stream()
+                .filter(item -> DeviceStateEnum.RUNNING.getCode().equals(item.getDeviceState())).toList().size());
         equipmentUsageDto.setRunningRate(data.size() > 0 ?
                 BigDecimal.valueOf(equipmentUsageDto.getRunning()).divide(BigDecimal.valueOf(data.size()), new MathContext(2, RoundingMode.HALF_UP)).multiply(BigDecimal.valueOf(100)) : BigDecimal.ZERO);
         //停机
@@ -253,7 +255,8 @@ public class TpmDeviceBoardServiceImpl implements TpmDeviceBoardService {
         MaintenanceStatusDto maintenanceStatusDto = new MaintenanceStatusDto();
         maintenanceStatusDto.setTotalTasks(list.size());
         maintenanceStatusDto.setCompletedTasks((int) list.stream()
-                .filter(item -> item.getState().equals(MaintenanceTaskStateEnum.HANDLE.getCode()) && item.getState().equals(MaintenanceTaskStateEnum.TIMEOUT_HANDLE.getCode())).count());
+                .filter(item -> MaintenanceTaskStateEnum.HANDLE.getCode().equals(item.getState())
+                        || MaintenanceTaskStateEnum.TIMEOUT_HANDLE.getCode().equals(item.getState())).count());
         maintenanceStatusDto.setTimelyTasks((int) list.stream()
                 .filter(item -> item.getState().equals(MaintenanceTaskStateEnum.HANDLE.getCode())).count());
         maintenanceStatusDto.setCompletionRate(list.size() > 0 ? BigDecimal.valueOf(maintenanceStatusDto.getCompletedTasks())

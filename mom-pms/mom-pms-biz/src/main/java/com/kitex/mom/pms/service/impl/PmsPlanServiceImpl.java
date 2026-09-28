@@ -19,24 +19,14 @@ import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
 import com.kitex.mom.plan.entity.PlnIssueMonthEntity;
 import com.kitex.mom.plan.feign.RemotePlnIssueMonthService;
-import com.kitex.mom.pms.entity.PmsOrderDetailEntity;
-import com.kitex.mom.pms.entity.PmsPlanEntity;
 import com.kitex.mom.pms.dto.PmsAgentSupplyEvidenceDTO;
 import com.kitex.mom.pms.dto.PmsAgentSupplyEvidenceQueryDTO;
-import com.kitex.mom.pms.dto.PmsSupplyCommitmentEvidenceDTO;
 import com.kitex.mom.pms.dto.PmsPlanSupplyWithdrawalDTO;
-import com.kitex.mom.pms.entity.PmsDeliveryCommitmentEntity;
-import com.kitex.mom.pms.entity.PmsDeliveryCommitmentItemEntity;
-import com.kitex.mom.pms.entity.PmsPlanCommitmentEventOutboxEntity;
-import com.kitex.mom.pms.entity.PmsPlanSupplyWithdrawalReceiptEntity;
-import com.kitex.mom.pms.enums.PmsPlanStatusEnum;
-import com.kitex.mom.pms.mapper.PmsPlanMapper;
-import com.kitex.mom.pms.mapper.PmsOrderDetailMapper;
-import com.kitex.mom.pms.mapper.PmsOrderMapper;
-import com.kitex.mom.pms.mapper.PmsPlanCommitmentEventOutboxMapper;
-import com.kitex.mom.pms.mapper.PmsPlanSupplyWithdrawalReceiptMapper;
-import com.kitex.mom.pms.entity.PmsOrderEntity;
+import com.kitex.mom.pms.dto.PmsSupplyCommitmentEvidenceDTO;
+import com.kitex.mom.pms.entity.*;
 import com.kitex.mom.pms.enums.PmsOrderStatusEnum;
+import com.kitex.mom.pms.enums.PmsPlanStatusEnum;
+import com.kitex.mom.pms.mapper.*;
 import com.kitex.mom.pms.service.PmsDeliveryCommitmentService;
 import com.kitex.mom.pms.service.PmsPlanService;
 import com.kitex.mom.pms.vo.PmsPlanExcelVO;
@@ -207,17 +197,27 @@ public class PmsPlanServiceImpl extends ServiceImpl<PmsPlanMapper, PmsPlanEntity
                 .setMessage(receipt.getMessage()).setHandledTime(receipt.getHandledTime());
     }
 
-    private BigDecimal decimal(Double value) { return value == null ? BigDecimal.ZERO : BigDecimal.valueOf(value); }
+    private BigDecimal decimal(Double value) {
+        return value == null ? BigDecimal.ZERO : BigDecimal.valueOf(value);
+    }
+
     private String text(String value, int max, String label) {
         String result = value == null ? null : value.trim();
         require(StrUtil.isNotBlank(result) && result.length() <= max, label + "不能为空且不能超过" + max + "字");
         return result;
     }
+
     private String sha256(String value) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
-        catch (Exception ex) { throw new CheckedException("PMS供应计划撤回指纹生成失败"); }
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new CheckedException("PMS供应计划撤回指纹生成失败");
+        }
     }
-    private void require(boolean condition, String message) { if (!condition) throw new CheckedException(message); }
+
+    private void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
 
     /**
      * 导入excel 表格
@@ -558,7 +558,9 @@ public class PmsPlanServiceImpl extends ServiceImpl<PmsPlanMapper, PmsPlanEntity
         }).toList();
     }
 
-    /** 最新承诺变化事实天然覆盖旧预测；只允许有审计操作者、未来时刻且仍在有效生命周期的预测进入齐套证据。 */
+    /**
+     * 最新承诺变化事实天然覆盖旧预测；只允许有审计操作者、未来时刻且仍在有效生命周期的预测进入齐套证据。
+     */
     private boolean validManualForecast(PmsPlanCommitmentEventOutboxEntity event, PmsPlanEntity plan) {
         return event != null && event.getManualRequestId() != null && event.getManualOperationTime() != null
                 && event.getExpectedSupplyTime() != null && event.getExpectedSupplyTime().isAfter(LocalDateTime.now())
@@ -572,7 +574,9 @@ public class PmsPlanServiceImpl extends ServiceImpl<PmsPlanMapper, PmsPlanEntity
         return Objects.toString(pmsPlanNo, "") + '\u0000' + Objects.toString(materialCode, "");
     }
 
-    private BigDecimal value(BigDecimal value) { return value == null ? BigDecimal.ZERO : value; }
+    private BigDecimal value(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
 
     private boolean approvedOrder(PmsOrderEntity order) {
         return order != null && Set.of(PmsOrderStatusEnum.CHECK_SUCCESS.getCode(), PmsOrderStatusEnum.RECEIVING.getCode(),
@@ -590,7 +594,7 @@ public class PmsPlanServiceImpl extends ServiceImpl<PmsPlanMapper, PmsPlanEntity
     }
 
     private List<PmsSupplyCommitmentEvidenceDTO> openCommitmentEvidence(PmsDeliveryCommitmentEntity commitment,
-                                                                         PmsOrderDetailEntity detail) {
+                                                                        PmsOrderDetailEntity detail) {
         BigDecimal receivedAfterConfirmation = detail == null ? BigDecimal.ZERO
                 : decimal(detail.getArrivalNum()).subtract(commitment.getArrivalNumBaseline()).max(BigDecimal.ZERO);
         List<PmsSupplyCommitmentEvidenceDTO> result = new ArrayList<>();
@@ -700,7 +704,7 @@ public class PmsPlanServiceImpl extends ServiceImpl<PmsPlanMapper, PmsPlanEntity
         require(decimal(plan.getPlanOrderNum()).signum() == 0 && decimal(plan.getPlanArrivalNum()).signum() == 0,
                 "采购计划已有下单或到货事实，不能直接" + operation);
         require(pmsOrderDetailMapper.selectCount(new LambdaQueryWrapper<PmsOrderDetailEntity>()
-                .eq(PmsOrderDetailEntity::getPmsPlanNo, plan.getPmsPlanNo())) == 0,
+                        .eq(PmsOrderDetailEntity::getPmsPlanNo, plan.getPmsPlanNo())) == 0,
                 "采购计划已有订单行，不能直接" + operation);
         require(deliveryCommitmentService.listActiveByPlanNos(plan.getFactoryCode(), List.of(plan.getPmsPlanNo())).isEmpty(),
                 "采购计划已有活动供应承诺，不能直接" + operation);

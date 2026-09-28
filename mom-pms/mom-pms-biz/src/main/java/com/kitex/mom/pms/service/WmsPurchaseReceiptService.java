@@ -64,7 +64,7 @@ public interface WmsPurchaseReceiptService extends MPJDeepService<WmsPurchaseRec
      * @param matBatch 物料批次
      * @param matNum   入库数量
      */
-    Boolean addMatNum(Long billId, String matCode, String matBatch, Double matNum);
+    Boolean addMatNum(Long billId, Long orderDetailId, String matCode, String matBatch, Double matNum);
 
     /**
      * 采购入库通知单作废后回调

@@ -12,92 +12,35 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
-import com.kitex.mom.mes.dto.MesPlanWithdrawalDTO;
-import com.kitex.mom.mdm.enums.MatAttributeEnum;
+import com.kitex.mom.mdm.dto.MdmRouteMaterialAssignmentQueryDTO;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.entity.MdmProcessProcedureMatEntity;
+import com.kitex.mom.mdm.enums.MatAttributeEnum;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mdm.feign.RemoteProcessRouteService;
-import com.kitex.mom.mdm.dto.MdmRouteMaterialAssignmentQueryDTO;
+import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
+import com.kitex.mom.mes.dto.MesPlanWithdrawalDTO;
 import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
-import com.kitex.mom.pms.api.feign.RemotePmsPlanService;
-import com.kitex.mom.pms.api.feign.RemotePmsAgentPurchaseService;
-import com.kitex.mom.pms.dto.PmsAgentPurchaseCandidateDTO;
-import com.kitex.mom.pms.dto.PmsAgentPurchaseCandidateQueryDTO;
-import com.kitex.mom.pms.dto.PmsAgentPurchaseCommandDTO;
-import com.kitex.mom.pms.dto.PmsAgentPurchaseOptionsDTO;
-import com.kitex.mom.pms.dto.PmsAgentPurchaseReceiptDTO;
-import com.kitex.mom.pms.dto.PmsPlanSupplyWithdrawalDTO;
-import com.kitex.mom.pms.dto.PmsAgentSupplyEvidenceDTO;
-import com.kitex.mom.pms.dto.PmsSupplyCommitmentEvidenceDTO;
-import com.kitex.mom.pms.dto.PmsAgentSupplyEvidenceQueryDTO;
+import com.kitex.mom.plan.constant.IssueStatusEnum;
 import com.kitex.mom.plan.constant.MrpReadinessStatusEnum;
 import com.kitex.mom.plan.constant.MrpSubstituteStatusEnum;
-import com.kitex.mom.plan.constant.IssueStatusEnum;
-import com.kitex.mom.plan.dto.PlanMatSubstituteAllocationDTO;
-import com.kitex.mom.plan.dto.PlanMatSubstituteCandidateDTO;
-import com.kitex.mom.plan.dto.PlanMatSubstituteDecisionDTO;
-import com.kitex.mom.plan.dto.PlanMatMrpReconcileEvidenceDTO;
-import com.kitex.mom.plan.dto.PlanMatReservationReallocateDTO;
-import com.kitex.mom.plan.dto.PlanMrpShortageAnalysisDTO;
-import com.kitex.mom.plan.dto.PlanMrpImpactedOperationDTO;
-import com.kitex.mom.plan.dto.PlanMrpShortageLineDTO;
-import com.kitex.mom.plan.dto.PlanMrpShortageQueryDTO;
-import com.kitex.mom.plan.dto.PlanAgentSubstituteDecisionDTO;
-import com.kitex.mom.plan.dto.PlanAgentTransferDecisionDTO;
-import com.kitex.mom.plan.dto.PlanAgentTransferReceiptDTO;
-import com.kitex.mom.plan.dto.PlanBomRequirementPathDTO;
-import com.kitex.mom.plan.dto.PlanMrpTransferSuggestionDTO;
-import com.kitex.mom.plan.dto.PlanMrpPurchaseCandidateDTO;
-import com.kitex.mom.plan.dto.PlanAgentPurchaseOrderDTO;
-import com.kitex.mom.plan.dto.PlanAgentPurchaseReceiptDTO;
-import com.kitex.mom.plan.dto.PlanAgentPurchaseRejectionDTO;
-import com.kitex.mom.plan.dto.PlanMrpSupplyWithdrawalDTO;
-import com.kitex.mom.plan.entity.PlanMatMrpEntity;
-import com.kitex.mom.plan.entity.PlanMrpPurchaseStatusReceiptEntity;
-import com.kitex.mom.plan.entity.PlanMrpInventoryPeggingEntity;
-import com.kitex.mom.plan.entity.PlnIssueEntity;
-import com.kitex.mom.plan.entity.PlnIssueMonthEntity;
-import com.kitex.mom.plan.entity.PlnProductDemandEntity;
-import com.kitex.mom.plan.entity.PlnProductDemandChangeEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingBatchAllocationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingBatchEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingTaskEntity;
-import com.kitex.mom.plan.mapper.PlanMatMrpMapper;
-import com.kitex.mom.plan.mapper.PlanMrpPurchaseStatusReceiptMapper;
-import com.kitex.mom.plan.mapper.PlnIssueMapper;
-import com.kitex.mom.plan.mapper.PlnIssueMonthMapper;
-import com.kitex.mom.plan.mapper.PlnProductDemandMapper;
-import com.kitex.mom.plan.mapper.PlnProductDemandChangeMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingOperationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingBatchAllocationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingBatchMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskDetailMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskMapper;
+import com.kitex.mom.plan.dto.*;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.PlanMatMrpService;
 import com.kitex.mom.plan.service.PlanMrpInventoryPeggingService;
-import com.kitex.mom.wms.api.feign.RemoteLiveStockService;
+import com.kitex.mom.pms.api.feign.RemotePmsAgentPurchaseService;
+import com.kitex.mom.pms.api.feign.RemotePmsPlanService;
+import com.kitex.mom.pms.dto.*;
 import com.kitex.mom.wms.api.feign.RemoteAllocationBillService;
+import com.kitex.mom.wms.api.feign.RemoteLiveStockService;
 import com.kitex.mom.wms.api.feign.RemoteMaterialReservationService;
-import com.kitex.mom.wms.dto.WmsMaterialReservationAllocationDTO;
-import com.kitex.mom.wms.dto.WmsMaterialReservationCreateDTO;
-import com.kitex.mom.wms.dto.WmsMaterialReservationReleaseDTO;
-import com.kitex.mom.wms.dto.WmsMaterialReservationReallocateDTO;
-import com.kitex.mom.wms.dto.WmsMaterialReservationResultDTO;
-import com.kitex.mom.wms.dto.WmsMaterialReservationStatusQueryDTO;
-import com.kitex.mom.wms.dto.WmsMaterialReservationStockAllocationDTO;
-import com.kitex.mom.wms.dto.WmsMaterialReservationLedgerDTO;
-import com.kitex.mom.wms.dto.WmsMaterialReservationLedgerQueryDTO;
-import com.kitex.mom.wms.dto.WmsLiveStockByProductCodeDto;
-import com.kitex.mom.wms.dto.WmsCrossWarehouseTransferDTO;
+import com.kitex.mom.wms.dto.*;
 import com.kitex.mom.wms.entity.WmsLiveStockEntity;
 import lombok.AllArgsConstructor;
+import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.beans.BeanUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -217,7 +160,8 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
             throw new CheckedException("该MRP下层供应已由其他请求撤回：" + mrp.getSupplyWithdrawalRequestId());
         }
         PlanMrpSupplyWithdrawalDTO.Evidence evidence = captureGeneratedSupplyEvidence(mrp, true, false, expectedDownstream);
-        if ("NOT_APPLICABLE".equals(evidence.getStatus())) return receipt(evidence, "NOT_APPLICABLE", evidence.getMessage());
+        if ("NOT_APPLICABLE".equals(evidence.getStatus()))
+            return receipt(evidence, "NOT_APPLICABLE", evidence.getMessage());
         if (!Objects.equals(evidence.getEvidenceFingerprint(), command.getExpectedEvidenceFingerprint().trim())) {
             throw new CheckedException("下层供应事实已变化，请重新申请撤回");
         }
@@ -323,8 +267,8 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                 requireSupply(Objects.equals(allocation.getIssueNo(), source.getIssueNo())
                                 && Objects.equals(allocation.getFactoryCode(), source.getFactoryCode())
                                 && schedulingBatchAllocationMapper.selectCount(
-                                        new LambdaQueryWrapper<PlnSchedulingBatchAllocationEntity>()
-                                                .eq(PlnSchedulingBatchAllocationEntity::getBatchId, allocation.getBatchId())) == 1,
+                                new LambdaQueryWrapper<PlnSchedulingBatchAllocationEntity>()
+                                        .eq(PlnSchedulingBatchAllocationEntity::getBatchId, allocation.getBatchId())) == 1,
                         "下层自制APS批次来源不是本计划独占，须先拆批或重排");
                 PlnSchedulingBatchEntity batch = schedulingBatchMapper.selectById(allocation.getBatchId());
                 requireSupply(batch != null && Objects.equals(batch.getTaskId(), allocation.getTaskId())
@@ -339,8 +283,8 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                                 && allocations.stream().allMatch(row -> Objects.equals(row.getTaskId(), source.getLockTaskId()))
                                 && batches.stream().allMatch(batch -> Boolean.TRUE.equals(batch.getLockStatus()))
                                 && allocations.stream().map(PlnSchedulingBatchAllocationEntity::getAllocatedQuantity)
-                                        .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add)
-                                        .compareTo(quantity) == 0,
+                                .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add)
+                                .compareTo(quantity) == 0,
                         "下层自制APS锁定批次数量账缺失或不守恒");
             }
             List<PlnSchedulingOperationEntity> operations = schedulingOperationMapper.selectList(
@@ -349,8 +293,8 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                             .orderByAsc(PlnSchedulingOperationEntity::getId));
             if (Boolean.TRUE.equals(source.getLockStatus())) {
                 requireSupply(!operations.isEmpty() && operations.stream().allMatch(
-                        operation -> Boolean.TRUE.equals(operation.getLockStatus())
-                                && Objects.equals(operation.getTaskId(), source.getLockTaskId())),
+                                operation -> Boolean.TRUE.equals(operation.getLockStatus())
+                                        && Objects.equals(operation.getTaskId(), source.getLockTaskId())),
                         "下层自制APS工序锁定来源不完整");
             } else {
                 requireSupply(operations.stream().noneMatch(operation -> Boolean.TRUE.equals(operation.getLockStatus()))
@@ -466,8 +410,8 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                         .eq(PlnSchedulingBatchAllocationEntity::getIssueId, source.getId()));
         for (PlnSchedulingBatchAllocationEntity allocation : allocations) {
             requireSupply(schedulingBatchAllocationMapper.selectCount(
-                    new LambdaQueryWrapper<PlnSchedulingBatchAllocationEntity>()
-                            .eq(PlnSchedulingBatchAllocationEntity::getBatchId, allocation.getBatchId())) == 1,
+                            new LambdaQueryWrapper<PlnSchedulingBatchAllocationEntity>()
+                                    .eq(PlnSchedulingBatchAllocationEntity::getBatchId, allocation.getBatchId())) == 1,
                     "下层自制APS批次撤回时不再独占，禁止释放其他计划资源");
             schedulingBatchMapper.update(null, new LambdaUpdateWrapper<PlnSchedulingBatchEntity>()
                     .eq(PlnSchedulingBatchEntity::getId, allocation.getBatchId())
@@ -509,12 +453,18 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
 
     private String requireText(String value, int max, String label) {
         String result = value == null ? null : value.trim();
-        if (StrUtil.isBlank(result) || result.length() > max) throw new CheckedException(label + "不能为空且不能超过" + max + "字");
+        if (StrUtil.isBlank(result) || result.length() > max)
+            throw new CheckedException(label + "不能为空且不能超过" + max + "字");
         return result;
     }
 
-    private String limitText(String value, int max) { return value == null || value.length() <= max ? value : value.substring(0, max); }
-    private void requireSupply(boolean condition, String message) { if (!condition) throw new CheckedException(message); }
+    private String limitText(String value, int max) {
+        return value == null || value.length() <= max ? value : value.substring(0, max);
+    }
+
+    private void requireSupply(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
 
     private String sha256(String value) {
         try {
@@ -552,7 +502,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
     }
 
     private void releaseWithdrawalReservation(PlanMatMrpEntity mrp, String sourceType,
-                                               String requestId, String reason) {
+                                              String requestId, String reason) {
         boolean exists = "PLAN_MRP_MAIN".equals(sourceType)
                 ? StrUtil.isNotBlank(mrp.getMainMaterialReservationNo())
                 : StrUtil.isNotBlank(mrp.getMaterialReservationNo());
@@ -573,6 +523,10 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
     public PlanMrpShortageAnalysisDTO shortageAnalysis(PlanMrpShortageQueryDTO query) {
         if (query == null || StrUtil.isBlank(query.getFactoryCode())) {
             throw new CheckedException("Agent缺料分析必须指定工厂");
+        }
+        String actualFactory = FactoryContextHolder.getFactoryCode();
+        if (StrUtil.isBlank(actualFactory) || !Objects.equals(actualFactory, query.getFactoryCode())) {
+            throw new CheckedException("Agent缺料分析工厂与当前实际工厂不一致");
         }
         if (StrUtil.isAllBlank(query.getPlanDemandNo(), query.getSaleOrderCode())) {
             throw new CheckedException("Agent缺料分析必须指定计划需求号或销售订单号");
@@ -703,11 +657,11 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                 .orElse(BigDecimal.ZERO).compareTo(BigDecimal.ZERO) > 0).count() : 0);
         result.setPurchaseReadyCount(purchaseEvidenceRequired
                 ? (int) lines.stream().filter(line -> Optional.ofNullable(line.getRecommendedPurchaseNum())
-                .orElse(BigDecimal.ZERO).compareTo(BigDecimal.ZERO) > 0)
+                        .orElse(BigDecimal.ZERO).compareTo(BigDecimal.ZERO) > 0)
                 .filter(line -> Boolean.TRUE.equals(line.getPurchaseEvidenceComplete())).count() : 0);
         result.setPurchaseEvidenceGapCount(purchaseEvidenceRequired
                 ? (int) lines.stream().filter(line -> Optional.ofNullable(line.getPurchaseUncoveredNum())
-                .orElse(BigDecimal.ZERO).compareTo(BigDecimal.ZERO) > 0)
+                        .orElse(BigDecimal.ZERO).compareTo(BigDecimal.ZERO) > 0)
                 .filter(line -> Boolean.FALSE.equals(line.getPurchaseEvidenceComplete())).count() : 0);
         boolean shortageExists = lines.stream().anyMatch(line -> line.getShortageNum().compareTo(BigDecimal.ZERO) > 0);
         boolean unavailable = lines.stream().filter(line -> line.getShortageNum().compareTo(BigDecimal.ZERO) > 0)
@@ -724,7 +678,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
     }
 
     private void enrichCrossWarehouseTransfers(String factoryCode, List<PlanMrpShortageLineDTO> lines,
-                                                boolean routePolicyRequired) {
+                                               boolean routePolicyRequired) {
         lines.stream().filter(line -> line.getShortageNum().compareTo(BigDecimal.ZERO) <= 0).forEach(line -> {
             line.setCrossWarehouseTransferStatus("NOT_REQUIRED");
             line.setCrossWarehouseTransferEvidenceComplete(Boolean.TRUE);
@@ -900,7 +854,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
     }
 
     private OperationImpactEvidence loadOperationImpactEvidence(String factoryCode, Set<String> demandNos,
-                                                                  Set<String> materialCodes) {
+                                                                Set<String> materialCodes) {
         if (demandNos.isEmpty() || materialCodes.isEmpty()) {
             return new OperationImpactEvidence(Map.of(), Set.of(), Set.of(), true);
         }
@@ -1028,13 +982,9 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                 + "\u0000" + StrUtil.nullToEmpty(materialCode);
     }
 
-    private record OperationImpactEvidence(Map<String, List<PlnSchedulingOperationEntity>> operationsByIssue,
-                                           Set<String> issuesWithAnySchedule,
-                                           Set<String> assignmentKeys,
-                                           boolean materialAssignmentsVerified) {
-    }
-
-    /** 只采当前生产计划正式锁定任务的末工序时刻，候选试算不得冒充自制供应。 */
+    /**
+     * 只采当前生产计划正式锁定任务的末工序时刻，候选试算不得冒充自制供应。
+     */
     private Map<Long, LocalDateTime> loadProductionCompletionTimes(
             Map<String, List<PlnIssueEntity>> productionSupply) {
         List<PlnIssueEntity> issues = productionSupply.values().stream().flatMap(Collection::stream)
@@ -1122,17 +1072,24 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         else if (!released) line.setSupplyPlanStatus("PRODUCTION_NOT_RELEASED");
         else if (open.compareTo(shortage) < 0) line.setSupplyPlanStatus("PRODUCTION_PARTIAL_COVERAGE");
         else if (completion == null) line.setSupplyPlanStatus("PRODUCTION_TIME_MISSING");
-        else { line.setSupplyPlanStatus("PRODUCTION_COVERED");
+        else {
+            line.setSupplyPlanStatus("PRODUCTION_COVERED");
             line.setExpectedSupplyDate(completion.time().toLocalDate()).setExpectedSupplyTime(completion.time())
                     .setSupplyTimePrecision(completion.precision())
                     .setSupplyDateBasis("MINUTE".equals(completion.precision())
-                            ? "APS_SCHEDULED_END_TIME" : "APS_SCHEDULED_END_DATE_END"); }
+                            ? "APS_SCHEDULED_END_TIME" : "APS_SCHEDULED_END_DATE_END");
+        }
         if ("NONE".equals(line.getRecommendedActionCode())) {
-            if (production.isEmpty() || !released) line.setRecommendedActionCode("RELEASE_PRODUCTION_ORDER").setRecommendedAction("下达自制供应工单并完成有限产能排程");
-            else if (open.compareTo(shortage) < 0) line.setRecommendedActionCode("SUPPLEMENT_PRODUCTION_ORDER").setRecommendedAction("补充自制供应数量并评估受影响工序");
-            else if (completion == null) line.setRecommendedActionCode("SCHEDULE_PRODUCTION_ORDER").setRecommendedAction("为自制供应工单补齐有限产能排程完工时刻");
-            else if (row.getDemandDate() != null && completion.time().toLocalDate().isAfter(row.getDemandDate())) line.setRecommendedActionCode("EXPEDITE_PRODUCTION").setRecommendedAction("自制预计完工晚于需求日，评估加急或局部重排");
-            else line.setRecommendedActionCode("MONITOR_PRODUCTION").setRecommendedAction("跟踪自制供应工单按期完工并入库");
+            if (production.isEmpty() || !released)
+                line.setRecommendedActionCode("RELEASE_PRODUCTION_ORDER").setRecommendedAction("下达自制供应工单并完成有限产能排程");
+            else if (open.compareTo(shortage) < 0)
+                line.setRecommendedActionCode("SUPPLEMENT_PRODUCTION_ORDER").setRecommendedAction("补充自制供应数量并评估受影响工序");
+            else if (completion == null)
+                line.setRecommendedActionCode("SCHEDULE_PRODUCTION_ORDER").setRecommendedAction("为自制供应工单补齐有限产能排程完工时刻");
+            else if (row.getDemandDate() != null && completion.time().toLocalDate().isAfter(row.getDemandDate()))
+                line.setRecommendedActionCode("EXPEDITE_PRODUCTION").setRecommendedAction("自制预计完工晚于需求日，评估加急或局部重排");
+            else
+                line.setRecommendedActionCode("MONITOR_PRODUCTION").setRecommendedAction("跟踪自制供应工单按期完工并入库");
         }
     }
 
@@ -1182,23 +1139,35 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
             line.setSupplyPlanStatus("PURCHASE_APPROVAL_PENDING");
         else if (!released) line.setSupplyPlanStatus("SUPPLY_NOT_RELEASED");
         else if (open.compareTo(shortage) < 0) line.setSupplyPlanStatus("ORDERED_PARTIAL_COVERAGE");
-        else if (formalCommitmentRequired && confirmed.compareTo(BigDecimal.ZERO) == 0) line.setSupplyPlanStatus("SUPPLIER_COMMITMENT_MISSING");
-        else if (formalCommitmentRequired && confirmed.compareTo(shortage) < 0) line.setSupplyPlanStatus("SUPPLIER_COMMITMENT_PARTIAL");
-        else if (coverage == null) line.setSupplyPlanStatus(formalCommitmentRequired ? "SUPPLIER_COMMITMENT_TIME_MISSING" : "SUPPLY_TIME_MISSING");
-        else { line.setSupplyPlanStatus(formalCommitmentRequired ? "SUPPLIER_COMMITTED_COVERED" : "ORDERED_COVERED");
+        else if (formalCommitmentRequired && confirmed.compareTo(BigDecimal.ZERO) == 0)
+            line.setSupplyPlanStatus("SUPPLIER_COMMITMENT_MISSING");
+        else if (formalCommitmentRequired && confirmed.compareTo(shortage) < 0)
+            line.setSupplyPlanStatus("SUPPLIER_COMMITMENT_PARTIAL");
+        else if (coverage == null)
+            line.setSupplyPlanStatus(formalCommitmentRequired ? "SUPPLIER_COMMITMENT_TIME_MISSING" : "SUPPLY_TIME_MISSING");
+        else {
+            line.setSupplyPlanStatus(formalCommitmentRequired ? "SUPPLIER_COMMITTED_COVERED" : "ORDERED_COVERED");
             line.setExpectedSupplyDate(coverage.time().toLocalDate()).setExpectedSupplyTime(coverage.time())
                     .setSupplyTimePrecision(coverage.precision())
-                    .setSupplyDateBasis(formalCommitmentRequired ? "SUPPLIER_CONFIRMED_TIME" : "PMS_PLAN_REQUIRED_DATE_END"); }
+                    .setSupplyDateBasis(formalCommitmentRequired ? "SUPPLIER_CONFIRMED_TIME" : "PMS_PLAN_REQUIRED_DATE_END");
+        }
         if ("NONE".equals(line.getRecommendedActionCode())) {
-            if (open.add(pendingApproval).compareTo(shortage) >= 0) line.setRecommendedActionCode("MONITOR_PURCHASE_APPROVAL")
-                    .setRecommendedAction("采购订单草稿或审批中，等待PMS正式审批结果后重新采集齐套事实");
-            else if (external.isEmpty() || !released) line.setRecommendedActionCode("RELEASE_SUPPLY_PLAN").setRecommendedAction("下达采购/外协计划并形成经审批订单");
-            else if (open.compareTo(shortage) < 0) line.setRecommendedActionCode("SUPPLEMENT_PURCHASE").setRecommendedAction("补充未覆盖缺口的采购/外协数量");
-            else if (formalCommitmentRequired && overdueCommitted.compareTo(BigDecimal.ZERO) > 0) line.setRecommendedActionCode("ESCALATE_SUPPLIER_DELAY").setRecommendedAction("供应商承诺批次已逾期未到，立即催交、记录回复并评估替代/调拨或计划调整");
-            else if ((formalCommitmentRequired && confirmed.compareTo(shortage) < 0) || coverage == null) line.setRecommendedActionCode("CONFIRM_SUPPLY_TIME")
-                    .setRecommendedAction(formalCommitmentRequired ? "取得供应商对未覆盖数量的正式分批到货时刻和证据后再评估齐料" : "补录供应计划日期后再评估齐料");
-            else if (row.getDemandDate() != null && coverage.time().toLocalDate().isAfter(row.getDemandDate())) line.setRecommendedActionCode("EXPEDITE_SUPPLY").setRecommendedAction("供应计划晚于需求日，催交并评估改期开工");
-            else line.setRecommendedActionCode("MONITOR_ARRIVAL").setRecommendedAction("跟踪采购/外协按期到货、质检与入库");
+            if (open.add(pendingApproval).compareTo(shortage) >= 0)
+                line.setRecommendedActionCode("MONITOR_PURCHASE_APPROVAL")
+                        .setRecommendedAction("采购订单草稿或审批中，等待PMS正式审批结果后重新采集齐套事实");
+            else if (external.isEmpty() || !released)
+                line.setRecommendedActionCode("RELEASE_SUPPLY_PLAN").setRecommendedAction("下达采购/外协计划并形成经审批订单");
+            else if (open.compareTo(shortage) < 0)
+                line.setRecommendedActionCode("SUPPLEMENT_PURCHASE").setRecommendedAction("补充未覆盖缺口的采购/外协数量");
+            else if (formalCommitmentRequired && overdueCommitted.compareTo(BigDecimal.ZERO) > 0)
+                line.setRecommendedActionCode("ESCALATE_SUPPLIER_DELAY").setRecommendedAction("供应商承诺批次已逾期未到，立即催交、记录回复并评估替代/调拨或计划调整");
+            else if ((formalCommitmentRequired && confirmed.compareTo(shortage) < 0) || coverage == null)
+                line.setRecommendedActionCode("CONFIRM_SUPPLY_TIME")
+                        .setRecommendedAction(formalCommitmentRequired ? "取得供应商对未覆盖数量的正式分批到货时刻和证据后再评估齐料" : "补录供应计划日期后再评估齐料");
+            else if (row.getDemandDate() != null && coverage.time().toLocalDate().isAfter(row.getDemandDate()))
+                line.setRecommendedActionCode("EXPEDITE_SUPPLY").setRecommendedAction("供应计划晚于需求日，催交并评估改期开工");
+            else
+                line.setRecommendedActionCode("MONITOR_ARRIVAL").setRecommendedAction("跟踪采购/外协按期到货、质检与入库");
         }
     }
 
@@ -1242,7 +1211,9 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                 : item.getPlannedDeliveryDate().atTime(LocalTime.of(23, 59));
     }
 
-    /** 按各正式自制工单未完数量累计，取第一次覆盖当前缺口的完工时刻。 */
+    /**
+     * 按各正式自制工单未完数量累计，取第一次覆盖当前缺口的完工时刻。
+     */
     private SupplyMoment productionCoverageTime(List<PlnIssueEntity> production,
                                                 Map<Long, LocalDateTime> completionTimes,
                                                 BigDecimal shortage) {
@@ -1269,14 +1240,9 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
     private String commitmentStatus(List<PmsAgentSupplyEvidenceDTO> evidence) {
         if (evidence.stream().anyMatch(item -> "PARTIAL".equals(item.getCommitmentCoverageStatus()))) return "PARTIAL";
         if (evidence.stream().anyMatch(item -> "FULL".equals(item.getCommitmentCoverageStatus()))) return "FULL";
-        if (evidence.stream().allMatch(item -> "RECEIVED".equals(item.getCommitmentCoverageStatus()))) return "RECEIVED";
+        if (evidence.stream().allMatch(item -> "RECEIVED".equals(item.getCommitmentCoverageStatus())))
+            return "RECEIVED";
         return "NONE";
-    }
-
-    private record SupplyMoment(LocalDateTime time, String precision) {
-    }
-
-    private record ProductionLot(BigDecimal openQuantity, SupplyMoment moment) {
     }
 
     private boolean factAfterMrp(LocalDateTime mrpCreatedTime, LocalDateTime factUpdatedTime) {
@@ -1720,7 +1686,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
     }
 
     private void validateInventoryPeggingEvidence(PlanMatMrpEntity mrp,
-                                                   List<PlanMrpInventoryPeggingEntity> lines) {
+                                                  List<PlanMrpInventoryPeggingEntity> lines) {
         for (PlanMrpInventoryPeggingEntity line : lines) {
             if (!Objects.equals(line.getEvidenceFingerprint(), inventoryPeggingLineFingerprint(
                     line, mrp.getInventoryAllocationSequence()))) {
@@ -2169,8 +2135,8 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
     }
 
     private WmsMaterialReservationResultDTO createReservation(PlanMatMrpEntity mrp,
-                                                               PlanMatSubstituteDecisionDTO command,
-                                                               List<PlanMatSubstituteAllocationDTO> allocations) {
+                                                              PlanMatSubstituteDecisionDTO command,
+                                                              List<PlanMatSubstituteAllocationDTO> allocations) {
         WmsMaterialReservationCreateDTO reserve = new WmsMaterialReservationCreateDTO();
         reserve.setRequestId(command.getRequestId());
         reserve.setSourceType("PLAN_MRP_SUBSTITUTE");
@@ -2237,7 +2203,9 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         return adjusted.divide(lot, 0, RoundingMode.UP).multiply(lot);
     }
 
-    /** 批准前预校验WMS实时库存；最终并发一致性由随后创建的WMS库存行正式预留保证。 */
+    /**
+     * 批准前预校验WMS实时库存；最终并发一致性由随后创建的WMS库存行正式预留保证。
+     */
     private void validateCurrentAvailable(PlanMatMrpEntity mrp, List<PlanMatSubstituteAllocationDTO> allocations) {
         if (CollUtil.isEmpty(allocations)) {
             return;
@@ -2324,7 +2292,9 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         }
     }
 
-    /** 到货/完工尚未回写到MRP时，禁止继续批准替代造成重复供给。 */
+    /**
+     * 到货/完工尚未回写到MRP时，禁止继续批准替代造成重复供给。
+     */
     private void validateSupplyEvidenceBeforeSubstitute(PlanMatMrpEntity mrp) {
         PlanMrpShortageQueryDTO query = new PlanMrpShortageQueryDTO();
         query.setFactoryCode(mrp.getFactoryCode());
@@ -2340,7 +2310,9 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         }
     }
 
-    /** 主料在MRP后新增可用库存时，旧缺口和替代数量都已失真，必须先重算MRP。 */
+    /**
+     * 主料在MRP后新增可用库存时，旧缺口和替代数量都已失真，必须先重算MRP。
+     */
     private void validateMainMaterialShortageStillCurrent(PlanMatMrpEntity mrp) {
         WmsLiveStockByProductCodeDto stockQuery = new WmsLiveStockByProductCodeDto();
         stockQuery.setProductCodeSet(Set.of(mrp.getMatCode()));
@@ -2488,8 +2460,8 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                         + "]缺少需求仓库，请重新运算MRP后再下达");
             }
             if (Set.of(MrpSubstituteStatusEnum.PENDING.getCode(),
-                    MrpSubstituteStatusEnum.MULTILEVEL_RECALC_REQUIRED.getCode(),
-                    MrpSubstituteStatusEnum.POLICY_CONFLICT.getCode())
+                            MrpSubstituteStatusEnum.MULTILEVEL_RECALC_REQUIRED.getCode(),
+                            MrpSubstituteStatusEnum.POLICY_CONFLICT.getCode())
                     .contains(planMatMrpEntity.getSubstituteStatus())) {
                 throw new CheckedException("物料[" + planMatMrpEntity.getMatCode()
                         + "]存在待处理替代建议，拒绝原建议或完成受控重算后才能下达");
@@ -2745,7 +2717,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
     }
 
     private Map<String, WmsMaterialReservationLedgerDTO> fetchReservationLedgers(Set<String> reservationNos,
-                                                                                  boolean failClosed) {
+                                                                                 boolean failClosed) {
         if (CollUtil.isEmpty(reservationNos)) {
             return Map.of();
         }
@@ -2931,5 +2903,17 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         mrp.setSupplySourceQuantity(source.getNum());
         mrp.setSupplySourceStatus("CREATED");
         if (!updateById(mrp)) throw new CheckedException("MRP采购/外协供应来源回写失败");
+    }
+
+    private record OperationImpactEvidence(Map<String, List<PlnSchedulingOperationEntity>> operationsByIssue,
+                                           Set<String> issuesWithAnySchedule,
+                                           Set<String> assignmentKeys,
+                                           boolean materialAssignmentsVerified) {
+    }
+
+    private record SupplyMoment(LocalDateTime time, String precision) {
+    }
+
+    private record ProductionLot(BigDecimal openQuantity, SupplyMoment moment) {
     }
 }

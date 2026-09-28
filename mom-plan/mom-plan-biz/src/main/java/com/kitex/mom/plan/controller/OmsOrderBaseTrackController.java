@@ -8,44 +8,15 @@ import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
-import com.kitex.mom.oms.dto.OmsOrderBaseTrackPageDto;
-import com.kitex.mom.oms.dto.OmsOrderOverviewDto;
-import com.kitex.mom.oms.dto.OmsUpdateOrderDeliverDto;
-import com.kitex.mom.oms.dto.OmsDeliveryWithdrawalCommand;
-import com.kitex.mom.oms.dto.OmsDeliveryIssueCommand;
-import com.kitex.mom.oms.dto.OmsDeliveryEventCommand;
-import com.kitex.mom.oms.dto.OmsSalesReturnEventCommand;
-import com.kitex.mom.oms.dto.OmsShipmentCorrectionEventCommand;
-import com.kitex.mom.oms.dto.OmsCustomerReceiptEventCommand;
-import com.kitex.mom.oms.dto.OmsCustomerExceptionResolutionCommand;
-import com.kitex.mom.oms.dto.OmsFulfillmentRiskCommand;
-import com.kitex.mom.oms.dto.OmsFulfillmentRiskQuery;
-import com.kitex.mom.oms.dto.OmsFulfillmentRiskAutomationCommand;
-import com.kitex.mom.oms.dto.OmsFulfillmentSnapshotCommand;
 import com.kitex.common.security.annotation.Inner;
-import com.kitex.mom.oms.entity.OmsOrderBaseTrackEntity;
+import com.kitex.mom.oms.dto.*;
+import com.kitex.mom.oms.entity.*;
+import com.kitex.mom.oms.vo.OmsFulfillmentRiskWorkbenchVO;
 import com.kitex.mom.oms.vo.OmsLifeVO;
 import com.kitex.mom.oms.vo.OmsOrderDetailsVO;
-import com.kitex.mom.plan.service.OmsOrderBaseTrackService;
-import com.kitex.mom.plan.service.impl.OmsOrderChangeLedgerService;
-import com.kitex.mom.plan.service.impl.OmsDeliveryWithdrawalService;
-import com.kitex.mom.plan.service.impl.OmsDeliveryIssueService;
-import com.kitex.mom.plan.service.impl.OmsDeliveryEventService;
-import com.kitex.mom.plan.service.impl.OmsSalesReturnEventService;
-import com.kitex.mom.plan.service.impl.OmsShipmentCorrectionEventService;
-import com.kitex.mom.plan.service.impl.OmsCustomerReceiptEventService;
-import com.kitex.mom.plan.service.impl.OmsCustomerExceptionResolutionEventService;
-import com.kitex.mom.oms.entity.OmsOrderChangeVersionEntity;
-import com.kitex.mom.oms.entity.OmsOrderChangeOperationEntity;
-import com.kitex.mom.oms.entity.OmsOrderPlanRevisionEntity;
-import com.kitex.mom.oms.entity.OmsFulfillmentRiskCaseEntity;
-import com.kitex.mom.oms.entity.OmsFulfillmentRiskOperationEntity;
-import com.kitex.mom.oms.entity.OmsFulfillmentRiskNoticeEntity;
-import com.kitex.mom.oms.entity.OmsFulfillmentSnapshotEntity;
-import com.kitex.mom.oms.vo.OmsFulfillmentRiskWorkbenchVO;
 import com.kitex.mom.plan.service.OmsFulfillmentSnapshotService;
-import com.kitex.mom.plan.service.impl.OmsFulfillmentRiskService;
-import com.kitex.mom.plan.service.impl.OmsFulfillmentRiskAutomationService;
+import com.kitex.mom.plan.service.OmsOrderBaseTrackService;
+import com.kitex.mom.plan.service.impl.*;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -205,7 +176,7 @@ public class OmsOrderBaseTrackController {
     @GetMapping("/changeVersions")
     @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_view')")
     public R<List<OmsOrderChangeVersionEntity>> changeVersions(@RequestParam String orderCode,
-                                                                @RequestParam String factoryCode) {
+                                                               @RequestParam String factoryCode) {
         return R.ok(changeLedger.versions(orderCode, factoryCode));
     }
 
@@ -282,7 +253,7 @@ public class OmsOrderBaseTrackController {
     @PostMapping("/withdraw/{id}")
     @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_send_withdraw')")
     public R<OmsDeliveryWithdrawalCommand.Receipt> withdraw(@PathVariable("id") Long id,
-                                                             @RequestBody OmsDeliveryWithdrawalCommand.Submit command) {
+                                                            @RequestBody OmsDeliveryWithdrawalCommand.Submit command) {
         return R.ok(deliveryWithdrawalService.submit(id, command));
     }
 
@@ -387,7 +358,7 @@ public class OmsOrderBaseTrackController {
     @PostMapping("/fulfillmentSnapshots/{orderDetailId}")
     @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_snapshot_capture')")
     public R<OmsFulfillmentSnapshotEntity> captureFulfillmentSnapshot(@PathVariable Long orderDetailId,
-            @RequestBody OmsFulfillmentSnapshotCommand.Capture command) {
+                                                                      @RequestBody OmsFulfillmentSnapshotCommand.Capture command) {
         return R.ok(fulfillmentSnapshotService.capture(orderDetailId, command));
     }
 
@@ -409,7 +380,7 @@ public class OmsOrderBaseTrackController {
     @GetMapping("/fulfillmentRisks/page")
     @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_view')")
     public R<OmsFulfillmentRiskWorkbenchVO> fulfillmentRiskWorkbench(@ParameterObject SearchPage page,
-            @ParameterObject OmsFulfillmentRiskQuery query) {
+                                                                     @ParameterObject OmsFulfillmentRiskQuery query) {
         return R.ok(fulfillmentRiskService.workbench(page.toMpPage(), query));
     }
 
@@ -424,7 +395,7 @@ public class OmsOrderBaseTrackController {
     @GetMapping("/fulfillmentRisks/automation/notices/page")
     @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_view')")
     public R<Page<OmsFulfillmentRiskNoticeEntity>> fulfillmentRiskNoticePage(@ParameterObject SearchPage page,
-            @RequestParam(required = false) String status, @RequestParam(required = false) String orderCode) {
+                                                                             @RequestParam(required = false) String status, @RequestParam(required = false) String orderCode) {
         return R.ok(fulfillmentRiskAutomationService.noticePage(page, status, orderCode));
     }
 
@@ -447,7 +418,7 @@ public class OmsOrderBaseTrackController {
     @PostMapping("/fulfillmentRisks/{orderDetailId}/sync")
     @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_risk_sync')")
     public R<List<OmsFulfillmentRiskCaseEntity>> syncFulfillmentRisks(@PathVariable Long orderDetailId,
-            @RequestBody OmsFulfillmentRiskCommand.Sync command) {
+                                                                      @RequestBody OmsFulfillmentRiskCommand.Sync command) {
         return R.ok(fulfillmentRiskService.sync(orderDetailId, command));
     }
 
@@ -455,7 +426,7 @@ public class OmsOrderBaseTrackController {
     @PostMapping("/fulfillmentRisks/cases/{caseId}/assign")
     @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_risk_manage')")
     public R<OmsFulfillmentRiskCaseEntity> assignFulfillmentRisk(@PathVariable Long caseId,
-            @RequestBody OmsFulfillmentRiskCommand.Assign command) {
+                                                                 @RequestBody OmsFulfillmentRiskCommand.Assign command) {
         return R.ok(fulfillmentRiskService.assign(caseId, command));
     }
 
@@ -463,7 +434,7 @@ public class OmsOrderBaseTrackController {
     @PostMapping("/fulfillmentRisks/cases/{caseId}/progress")
     @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_risk_handle')")
     public R<OmsFulfillmentRiskCaseEntity> progressFulfillmentRisk(@PathVariable Long caseId,
-            @RequestBody OmsFulfillmentRiskCommand.Progress command) {
+                                                                   @RequestBody OmsFulfillmentRiskCommand.Progress command) {
         return R.ok(fulfillmentRiskService.progress(caseId, command));
     }
 
@@ -471,7 +442,7 @@ public class OmsOrderBaseTrackController {
     @PostMapping("/fulfillmentRisks/cases/{caseId}/close")
     @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_risk_close')")
     public R<OmsFulfillmentRiskCaseEntity> closeFulfillmentRisk(@PathVariable Long caseId,
-            @RequestBody OmsFulfillmentRiskCommand.Close command) {
+                                                                @RequestBody OmsFulfillmentRiskCommand.Close command) {
         return R.ok(fulfillmentRiskService.close(caseId, command));
     }
 

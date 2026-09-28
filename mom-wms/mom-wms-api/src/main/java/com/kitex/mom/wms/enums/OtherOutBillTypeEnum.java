@@ -31,7 +31,7 @@ public enum OtherOutBillTypeEnum {
     /**
      * 采购退货出库
      */
-    OTHER_PMS("other_pms", "采购出库"),
+    OTHER_PMS("other_pms", "采购退供出库"),
     ;
 
     /**

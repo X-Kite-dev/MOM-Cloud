@@ -21,7 +21,19 @@ public interface MesTaskReportService extends IService<MesTaskReportEntity> {
      */
     void report(MesTaskReportVO params);
 
-    /** 仅供受控设备事件处理器调用，不能由普通前端伪造AUTO类型。 */
+    /**
+     * 移动端扫码过站报工；服务端按移动端入口校验执行模板。
+     */
+    void reportMobile(MesTaskReportVO params);
+
+    /**
+     * 受控系统集成报工；调用方必须具备独立接口权限。
+     */
+    void reportIntegration(MesTaskReportVO params);
+
+    /**
+     * 仅供受控设备事件处理器调用，不能由普通前端伪造AUTO类型。
+     */
     void reportAuto(MesTaskReportVO params);
 
     /**

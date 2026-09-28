@@ -58,7 +58,7 @@ public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMappe
     @Transactional(rollbackFor = Exception.class)
     public boolean createMaterialListByTask(Long taskId) {
         try {
-            MesTaskEntity task = mesTaskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>().eq(MesTaskEntity::getId,taskId).last("FOR UPDATE"));
+            MesTaskEntity task = mesTaskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>().eq(MesTaskEntity::getId, taskId).last("FOR UPDATE"));
             if (task == null) {
                 log.error("工单不存在，taskId: {}", taskId);
                 return false;
@@ -133,7 +133,7 @@ public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMappe
                 return false;
             }
 
-            MesTaskEntity task = mesTaskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>().eq(MesTaskEntity::getId,materialList.getTaskId()).last("FOR UPDATE"));
+            MesTaskEntity task = mesTaskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>().eq(MesTaskEntity::getId, materialList.getTaskId()).last("FOR UPDATE"));
             if (task == null) {
                 log.error("关联工单不存在，taskId: {}", materialList.getTaskId());
                 return false;

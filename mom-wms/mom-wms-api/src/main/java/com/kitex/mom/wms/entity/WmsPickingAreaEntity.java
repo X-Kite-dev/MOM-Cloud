@@ -25,6 +25,18 @@ import java.time.LocalDateTime;
 @Schema(description = "拣货区")
 public class WmsPickingAreaEntity extends BaseEntity<WmsPickingAreaEntity> {
 
+    @Schema(description = "来源采购订单号")
+    private String sourceOrderNo;
+
+    @Schema(description = "来源采购订单明细ID")
+    private Long sourceOrderDetailId;
+
+    @Schema(description = "来源采购收料单ID")
+    private Long sourceReceiptId;
+
+    @Schema(description = "来源采购收料批次明细ID")
+    private Long sourceReceiptDetailId;
+
     /**
      * 出库单号
      */

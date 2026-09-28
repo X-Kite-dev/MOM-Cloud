@@ -17,11 +17,7 @@ import com.kitex.mom.mes.entity.MesWipTimeoutConfigEntity;
 import com.kitex.mom.mes.entity.MesWipTimeoutHandleEntity;
 import com.kitex.mom.mes.entity.MesWipTimeoutOperationEntity;
 import com.kitex.mom.mes.mapper.MesWipTimeoutHandleMapper;
-import com.kitex.mom.mes.service.MesWipTimeoutHandleScanService;
-import com.kitex.mom.mes.service.MesWipTimeoutHandleService;
-import com.kitex.mom.mes.service.MesWipTimeoutConfigService;
-import com.kitex.mom.mes.service.MesWipTimeoutNotifyService;
-import com.kitex.mom.mes.service.MesWipTimeoutOperationService;
+import com.kitex.mom.mes.service.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -54,7 +50,7 @@ public class MesWipTimeoutHandleServiceImpl extends ServiceImpl<MesWipTimeoutHan
 
     @Override
     public IPage<MesWipTimeoutHandleEntity> queryPage(Page<MesWipTimeoutHandleEntity> page,
-                                                       MesWipTimeoutHandleEntity query) {
+                                                      MesWipTimeoutHandleEntity query) {
         query.setFactoryCode(factoryAccess.require("read"));
         return baseMapper.queryPage(page, query);
     }
@@ -189,8 +185,8 @@ public class MesWipTimeoutHandleServiceImpl extends ServiceImpl<MesWipTimeoutHan
     public List<MesWipTimeoutOperationEntity> operations(Long id) {
         require(id != null, "超时事件不能为空");
         String factory = factoryAccess.require("read");
-        require(getOne(new LambdaQueryWrapper<MesWipTimeoutHandleEntity>().eq(MesWipTimeoutHandleEntity::getId,id)
-                .eq(MesWipTimeoutHandleEntity::getFactoryCode,factory)) != null,"当前工厂超时事件不存在");
+        require(getOne(new LambdaQueryWrapper<MesWipTimeoutHandleEntity>().eq(MesWipTimeoutHandleEntity::getId, id)
+                .eq(MesWipTimeoutHandleEntity::getFactoryCode, factory)) != null, "当前工厂超时事件不存在");
         return operationService.list(new LambdaQueryWrapper<MesWipTimeoutOperationEntity>()
                 .eq(MesWipTimeoutOperationEntity::getHandleId, id)
                 .eq(MesWipTimeoutOperationEntity::getFactoryCode, factory)

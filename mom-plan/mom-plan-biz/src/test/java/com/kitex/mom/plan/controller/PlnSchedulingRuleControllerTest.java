@@ -6,8 +6,12 @@ import com.kitex.mom.plan.dto.PlnSchedulingRuleSetCreateDTO;
 import com.kitex.mom.plan.entity.PlnIssueEntity;
 import com.kitex.mom.plan.entity.PlnSchedulingRuleSetEntity;
 import com.kitex.mom.plan.service.PlnDemandMonthService;
+import com.kitex.mom.plan.service.PlnOperationSchedulingService;
+import com.kitex.mom.plan.service.PlnResourceLoadService;
+import com.kitex.mom.plan.service.PlnSchedulingBatchService;
 import com.kitex.mom.plan.service.PlnSchedulingEngineService;
 import com.kitex.mom.plan.service.PlnSchedulingRuleService;
+import com.kitex.mom.plan.service.impl.PlnSchedulingExecutionService;
 import com.kitex.mom.plan.vo.PlnDemandMonthReadinessVO;
 import com.kitex.mom.plan.vo.PlnSchedulingGanttDetailVO;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,13 +45,28 @@ class PlnSchedulingRuleControllerTest {
     @Mock
     private PlnDemandMonthService plnDemandMonthService;
 
+    @Mock
+    private PlnSchedulingExecutionService plnSchedulingExecutionService;
+
+    @Mock
+    private PlnOperationSchedulingService plnOperationSchedulingService;
+
+    @Mock
+    private PlnResourceLoadService plnResourceLoadService;
+
+    @Mock
+    private PlnSchedulingBatchService plnSchedulingBatchService;
+
     private MockMvc mockMvc;
     private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
-        PlnSchedulingRuleController controller = new PlnSchedulingRuleController(plnSchedulingRuleService, plnSchedulingEngineService, plnDemandMonthService);
+        PlnSchedulingRuleController controller = new PlnSchedulingRuleController(
+                plnSchedulingRuleService, plnSchedulingEngineService, plnSchedulingExecutionService,
+                plnDemandMonthService, plnOperationSchedulingService, plnResourceLoadService,
+                plnSchedulingBatchService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
                 .build();

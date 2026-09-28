@@ -32,12 +32,7 @@ import com.kitex.mom.plan.entity.PlanMatMrpEntity;
 import com.kitex.mom.plan.entity.PlnIssueEntity;
 import com.kitex.mom.plan.entity.PlnIssueMonthEntity;
 import com.kitex.mom.plan.entity.PlnProductDemandEntity;
-import com.kitex.mom.plan.mapper.OmsOrderBaseMapper;
-import com.kitex.mom.plan.mapper.OmsOrderBaseReviewMapper;
-import com.kitex.mom.plan.mapper.OmsOrderBaseTrackMapper;
-import com.kitex.mom.plan.mapper.OmsOrderDetailsMapper;
-import com.kitex.mom.plan.mapper.OmsDeliveryWithdrawalMapper;
-import com.kitex.mom.plan.mapper.OmsDeliveryIssueMapper;
+import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.*;
 import com.kitex.mom.plan.vo.OmsLifePlanVO;
 import com.kitex.mom.pms.api.feign.RemotePmsPlanService;
@@ -616,7 +611,9 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
         return Boolean.TRUE;
     }
 
-    /** 交付行变更入口先按订单行ID核验来源；已下发计划仅允许尚未接收的PLAN草案随OMS评审同步。 */
+    /**
+     * 交付行变更入口先按订单行ID核验来源；已下发计划仅允许尚未接收的PLAN草案随OMS评审同步。
+     */
     private void validateOrderChangeLines(OmsOrderBaseTrackEntity order, List<OmsOrderDetailsEntity> current,
                                           List<OmsOrderDetailsEntity> proposed) {
         Map<Long, OmsOrderDetailsEntity> byId = current.stream()
@@ -963,7 +960,7 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
     }
 
     private void synchronizeOmsDemandFields(PlnProductDemandEntity demand, OmsOrderBaseTrackEntity order,
-                                             OmsOrderDetailsEntity detail) {
+                                            OmsOrderDetailsEntity detail) {
         demand.setCustomerCode(order.getCustomerCode());
         demand.setCustomerName(order.getCustomerName());
         demand.setProductCode(detail.getProductCode());
@@ -1177,24 +1174,41 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
                 planDataStatus = "INCONSISTENT";
                 risks.add("OMS交付行与PLAN来源需求的工厂、产品、数量或交期不一致");
             }
-            try { this.lifePlan(demandNo, result); }
-            catch (RuntimeException ex) {
+            try {
+                this.lifePlan(demandNo, result);
+            } catch (RuntimeException ex) {
                 if (!"INCONSISTENT".equals(planDataStatus)) planDataStatus = "UNAVAILABLE";
                 risks.add("PLAN生命周期读取失败：" + safeMessage(ex));
             }
         }
         String wmsDataStatus;
         WmsOmsDeliverabilitySnapshot deliverability = null;
-        try { this.lifeDeliver(orderDetails.getId(), orderDetails.getOrderCode(), result); wmsDataStatus = "AVAILABLE"; }
-        catch (RuntimeException ex) { wmsDataStatus = "UNAVAILABLE"; risks.add("WMS发货事实读取失败：" + safeMessage(ex)); }
-        try { deliverability = this.lifeDeliverability(orderDetails.getId(), orderDetails.getOrderCode()); }
-        catch (RuntimeException ex) { risks.add("WMS质量净可交事实读取失败：" + safeMessage(ex)); }
+        try {
+            this.lifeDeliver(orderDetails.getId(), orderDetails.getOrderCode(), result);
+            wmsDataStatus = "AVAILABLE";
+        } catch (RuntimeException ex) {
+            wmsDataStatus = "UNAVAILABLE";
+            risks.add("WMS发货事实读取失败：" + safeMessage(ex));
+        }
+        try {
+            deliverability = this.lifeDeliverability(orderDetails.getId(), orderDetails.getOrderCode());
+        } catch (RuntimeException ex) {
+            risks.add("WMS质量净可交事实读取失败：" + safeMessage(ex));
+        }
         String mesDataStatus = productDemand == null ? "NOT_APPLICABLE" : "AVAILABLE";
-        if (productDemand != null) try { this.lifeMes(demandNo, result); }
-        catch (RuntimeException ex) { mesDataStatus = "UNAVAILABLE"; risks.add("MES生产事实读取失败：" + safeMessage(ex)); }
+        if (productDemand != null) try {
+            this.lifeMes(demandNo, result);
+        } catch (RuntimeException ex) {
+            mesDataStatus = "UNAVAILABLE";
+            risks.add("MES生产事实读取失败：" + safeMessage(ex));
+        }
         String pmsDataStatus = productDemand == null ? "NOT_APPLICABLE" : "AVAILABLE";
-        if (productDemand != null) try { this.lifePms(demandNo, result); }
-        catch (RuntimeException ex) { pmsDataStatus = "UNAVAILABLE"; risks.add("PMS供应事实读取失败：" + safeMessage(ex)); }
+        if (productDemand != null) try {
+            this.lifePms(demandNo, result);
+        } catch (RuntimeException ex) {
+            pmsDataStatus = "UNAVAILABLE";
+            risks.add("PMS供应事实读取失败：" + safeMessage(ex));
+        }
         buildFulfillment(orderDetails, productDemand, result, planDataStatus, mesDataStatus,
                 pmsDataStatus, wmsDataStatus, deliverability, risks);
         return result;
@@ -1241,7 +1255,7 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
                 : inconsistent ? "BLOCKED"
                 : wmsAvailable && delivered.signum() > 0 ? "DELIVERING"
                 : "AVAILABLE".equals(qualityStatus) && deliverability.getNetDeliverableQuantity() != null
-                    && deliverability.getNetDeliverableQuantity().signum() > 0 ? "READY_TO_DELIVER"
+                && deliverability.getNetDeliverableQuantity().signum() > 0 ? "READY_TO_DELIVER"
                 : mesAvailable && (produced.signum() > 0 || !rootTasks.isEmpty()) ? "PRODUCING"
                 : pmsAvailable && result.getPmsList() != null && !result.getPmsList().isEmpty() ? "SUPPLYING"
                 : result.getPlanList() != null && !result.getPlanList().isEmpty() ? "PLANNING"
@@ -1253,11 +1267,17 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
                 : (int) planMatMrpService.count(new LambdaQueryWrapper<PlanMatMrpEntity>()
                 .eq(PlanMatMrpEntity::getPlanDemandNo, demand.getDemandNo()));
         OmsFulfillmentSummaryVO summary = new OmsFulfillmentSummaryVO();
-        summary.setOrderDetailId(detail.getId()); summary.setOrderCode(detail.getOrderCode());
-        summary.setFactoryCode(detail.getFactoryCode()); summary.setProductCode(detail.getProductCode());
-        summary.setDemandNo(demand == null ? null : demand.getDemandNo()); summary.setPromisedDate(detail.getDeliverTime());
-        summary.setOrderedQuantity(ordered); summary.setProducedQuantity(produced); summary.setStockedQuantity(stocked);
-        summary.setDeliveredQuantity(delivered); summary.setRemainingQuantity(remaining);
+        summary.setOrderDetailId(detail.getId());
+        summary.setOrderCode(detail.getOrderCode());
+        summary.setFactoryCode(detail.getFactoryCode());
+        summary.setProductCode(detail.getProductCode());
+        summary.setDemandNo(demand == null ? null : demand.getDemandNo());
+        summary.setPromisedDate(detail.getDeliverTime());
+        summary.setOrderedQuantity(ordered);
+        summary.setProducedQuantity(produced);
+        summary.setStockedQuantity(stocked);
+        summary.setDeliveredQuantity(delivered);
+        summary.setRemainingQuantity(remaining);
         if (deliverability != null) {
             summary.setPhysicalStockQuantity(deliverability.getPhysicalQuantity());
             summary.setQualifiedStockQuantity(deliverability.getQualifiedAvailableQuantity());
@@ -1284,18 +1304,22 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
         summary.setMesTaskCount(mesAvailable ? size(result.getMesList()) : null);
         summary.setPurchasePlanCount(pmsAvailable ? size(result.getPmsList()) : null);
         summary.setDeliverPlanCount(wmsAvailable ? size(result.getDeliverList()) : null);
-        summary.setOverallStatus(overall); summary.setRiskLevel(risk);
-        summary.setPlanDataStatus(planDataStatus); summary.setMesDataStatus(mesDataStatus);
-        summary.setPmsDataStatus(pmsDataStatus); summary.setWmsDataStatus(wmsDataStatus);
+        summary.setOverallStatus(overall);
+        summary.setRiskLevel(risk);
+        summary.setPlanDataStatus(planDataStatus);
+        summary.setMesDataStatus(mesDataStatus);
+        summary.setPmsDataStatus(pmsDataStatus);
+        summary.setWmsDataStatus(wmsDataStatus);
         summary.setQualityDeliverabilityStatus(qualityStatus);
-        summary.setRiskMessages(List.copyOf(risks)); summary.setCalculatedTime(LocalDateTime.now());
+        summary.setRiskMessages(List.copyOf(risks));
+        summary.setCalculatedTime(LocalDateTime.now());
         result.setFulfillmentSummary(summary);
         result.setFulfillmentMilestones(buildMilestones(detail, demand, result, summary, rootTasks));
     }
 
     private List<OmsFulfillmentMilestoneVO> buildMilestones(OmsOrderDetailsEntity detail,
-            PlnProductDemandEntity demand, OmsLifeVO result, OmsFulfillmentSummaryVO summary,
-            List<OmsLifeMesTaskVO> rootTasks) {
+                                                            PlnProductDemandEntity demand, OmsLifeVO result, OmsFulfillmentSummaryVO summary,
+                                                            List<OmsLifeMesTaskVO> rootTasks) {
         List<OmsFulfillmentMilestoneVO> rows = new ArrayList<>();
         rows.add(milestone(1, "ORDER_CONFIRMED", "订单交付行确认", "COMPLETED", "OMS",
                 detail.getOrderCode(), summary.getOrderedQuantity(), summary.getOrderedQuantity(), "交付行已形成"));
@@ -1313,14 +1337,14 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
         List<OmsLifePlanVO> productionPlans = Optional.ofNullable(result.getPlanList()).orElse(List.of()).stream()
                 .filter(row -> "生产计划".equals(row.getType())).toList();
         rows.add(milestone(4, "APS_PLAN", "有限产能排程", "UNAVAILABLE".equals(summary.getPlanDataStatus()) ? "UNKNOWN"
-                : productionPlans.isEmpty() ? "NOT_STARTED" : productionPlans.stream().allMatch(row -> "3".equals(row.getStatus()))
-                ? "COMPLETED" : "IN_PROGRESS", "PLAN", joinNos(productionPlans), summary.getOrderedQuantity(),
+                        : productionPlans.isEmpty() ? "NOT_STARTED" : productionPlans.stream().allMatch(row -> "3".equals(row.getStatus()))
+                        ? "COMPLETED" : "IN_PROGRESS", "PLAN", joinNos(productionPlans), summary.getOrderedQuantity(),
                 "UNAVAILABLE".equals(summary.getPlanDataStatus()) ? null
                         : productionPlans.stream().map(row -> optional(row.getFinishNum())).reduce(BigDecimal.ZERO, BigDecimal::add),
                 productionPlans.size() + "张生产计划"));
         rows.add(milestone(5, "SUPPLY", "采购与外协供应", "UNAVAILABLE".equals(summary.getPmsDataStatus()) ? "UNKNOWN"
-                : result.getPmsList().isEmpty() ? "NOT_STARTED" : result.getPmsList().stream().allMatch(row -> "3".equals(row.getStatus()))
-                ? "COMPLETED" : "IN_PROGRESS", "PMS", null, null, null,
+                        : result.getPmsList().isEmpty() ? "NOT_STARTED" : result.getPmsList().stream().allMatch(row -> "3".equals(row.getStatus()))
+                        ? "COMPLETED" : "IN_PROGRESS", "PMS", null, null, null,
                 result.getPmsList().size() + "条采购/外协计划"));
         String productionStatus = "UNAVAILABLE".equals(summary.getMesDataStatus()) ? "UNKNOWN" : rootTasks.isEmpty()
                 ? "NOT_STARTED" : summary.getProducedQuantity().compareTo(summary.getOrderedQuantity()) >= 0
@@ -1354,11 +1378,17 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
     }
 
     private OmsFulfillmentMilestoneVO milestone(int sequence, String code, String name, String status,
-            String source, String sourceNo, BigDecimal target, BigDecimal actual, String message) {
+                                                String source, String sourceNo, BigDecimal target, BigDecimal actual, String message) {
         OmsFulfillmentMilestoneVO row = new OmsFulfillmentMilestoneVO();
-        row.setSequence(sequence); row.setMilestoneCode(code); row.setMilestoneName(name); row.setStatus(status);
-        row.setSourceSystem(source); row.setSourceNo(StrUtil.sub(sourceNo, 0, 500));
-        row.setTargetQuantity(target); row.setActualQuantity(actual); row.setMessage(message);
+        row.setSequence(sequence);
+        row.setMilestoneCode(code);
+        row.setMilestoneName(name);
+        row.setStatus(status);
+        row.setSourceSystem(source);
+        row.setSourceNo(StrUtil.sub(sourceNo, 0, 500));
+        row.setTargetQuantity(target);
+        row.setActualQuantity(actual);
+        row.setMessage(message);
         return row;
     }
 
@@ -1367,8 +1397,14 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
                 .collect(Collectors.joining(","));
     }
 
-    private int size(Collection<?> rows) { return rows == null ? 0 : rows.size(); }
-    private BigDecimal optional(BigDecimal value) { return value == null ? BigDecimal.ZERO : value; }
+    private int size(Collection<?> rows) {
+        return rows == null ? 0 : rows.size();
+    }
+
+    private BigDecimal optional(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
     private String safeMessage(Throwable error) {
         return StrUtil.sub(StrUtil.blankToDefault(error == null ? null : error.getMessage(), "数据源无有效响应"), 0, 200);
     }

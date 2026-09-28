@@ -28,6 +28,27 @@ import java.math.BigDecimal;
 @Schema(description = "实时库存")
 public class WmsLiveStockEntity extends BaseEntity<WmsLiveStockEntity> {
 
+    @Schema(description = "首次形成该库存的WMS入库单ID；库存移动、拆分和受控恢复后保持不变")
+    private Long sourceInBillId;
+
+    @Schema(description = "首次形成该库存的WMS入库单明细ID；用于成品实物红冲精确追溯")
+    private Long sourceInBillDetailId;
+
+    @Schema(description = "MES成品入库永久请求号；仅MES成品入库来源库存填写")
+    private String sourceMesInboundRequestId;
+
+    @Schema(description = "来源采购订单号；采购入库库存必填")
+    private String sourceOrderNo;
+
+    @Schema(description = "来源采购订单明细ID；采购入库库存必填")
+    private Long sourceOrderDetailId;
+
+    @Schema(description = "来源采购收料单ID；采购入库库存必填")
+    private Long sourceReceiptId;
+
+    @Schema(description = "来源采购收料批次明细ID；采购入库库存必填")
+    private Long sourceReceiptDetailId;
+
     /**
      * 物料编码
      */
@@ -39,6 +60,10 @@ public class WmsLiveStockEntity extends BaseEntity<WmsLiveStockEntity> {
      */
     @Schema(description = "物料名称")
     private String matName;
+
+    /** 物料条码或产品序列号；有值时代表不可拆分的单件身份。 */
+    @Schema(description = "物料条码或产品序列号")
+    private String matBarcode;
 
     /**
      * 物料分组
@@ -175,6 +200,15 @@ public class WmsLiveStockEntity extends BaseEntity<WmsLiveStockEntity> {
 
     @Schema(description = "质检任务id")
     private Long qualityTaskId;
+
+    @Schema(description = "首次成品入库实际依赖的QMS任务ID JSON数组")
+    private String sourceQualityTaskIds;
+
+    @Schema(description = "首次成品入库QMS质量证据SHA-256指纹")
+    private String sourceQualityEvidenceFingerprint;
+
+    @Schema(description = "首次成品入库QMS质量证据快照")
+    private String sourceQualityEvidenceSnapshot;
 
     /**
      * 状态 是否被锁定;0否 1是

@@ -10,7 +10,6 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.admin.api.entity.SysDictItemEntity;
 import com.kitex.admin.api.feign.RemoteDictService;
-import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;

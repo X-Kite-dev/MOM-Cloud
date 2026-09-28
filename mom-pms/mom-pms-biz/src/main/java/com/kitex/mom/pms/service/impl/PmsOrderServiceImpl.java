@@ -16,8 +16,6 @@ import com.alibaba.excel.util.MapUtils;
 import com.alibaba.excel.write.metadata.WriteSheet;
 import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -260,7 +258,7 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
         List<PmsOrderNoticeVO> resultList = new ArrayList<>();
         PmsOrderEntity pmsOrderEntity = this.getById(id);
         if (pmsOrderEntity == null || !Set.of(PmsOrderStatusEnum.CHECK_SUCCESS.getCode(),
-                PmsOrderStatusEnum.RECEIVING.getCode(), PmsOrderStatusEnum.PART_RECEIVE.getCode())
+                        PmsOrderStatusEnum.RECEIVING.getCode(), PmsOrderStatusEnum.PART_RECEIVE.getCode())
                 .contains(pmsOrderEntity.getStatus())) {
             throw new CheckedException("采购订单不存在、未审核通过、已完成或已取消，不能生成收料单");
         }

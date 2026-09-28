@@ -28,6 +28,18 @@ import java.math.BigDecimal;
 @Schema(description = "入库单明细")
 public class WmsInBillDetailEntity extends BaseEntity<WmsInBillDetailEntity> {
 
+    @Schema(description = "来源采购订单号")
+    private String sourceOrderNo;
+
+    @Schema(description = "来源采购订单明细ID")
+    private Long sourceOrderDetailId;
+
+    @Schema(description = "来源采购收料单ID")
+    private Long sourceReceiptId;
+
+    @Schema(description = "来源采购收料批次明细ID")
+    private Long sourceReceiptDetailId;
+
     /**
      * 单据id
      */
@@ -174,6 +186,15 @@ public class WmsInBillDetailEntity extends BaseEntity<WmsInBillDetailEntity> {
      */
     @Schema(description = "质检任务id")
     private Long qualityTaskId;
+
+    @Schema(description = "首次成品入库实际依赖的QMS任务ID JSON数组")
+    private String sourceQualityTaskIds;
+
+    @Schema(description = "首次成品入库QMS质量证据SHA-256指纹")
+    private String sourceQualityEvidenceFingerprint;
+
+    @Schema(description = "首次成品入库QMS质量证据快照")
+    private String sourceQualityEvidenceSnapshot;
 
     /**
      * 质检结果

@@ -1,7 +1,7 @@
 package com.kitex.mom.mes.process;
 
-import com.kitex.mom.mes.dto.MesTaskReportVO;
 import com.kitex.mom.mes.dto.MesTaskReportResult;
+import com.kitex.mom.mes.dto.MesTaskReportVO;
 import com.kitex.mom.mes.enums.ReportModeEnum;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;

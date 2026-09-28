@@ -87,7 +87,7 @@ public class MesChangePointConfigServiceImpl extends ServiceImpl<MesChangePointC
         config.setResponseSlaMin(config.getResponseSlaMin() == null ? 30 : config.getResponseSlaMin());
         config.setHandleSlaMin(config.getHandleSlaMin() == null ? 240 : config.getHandleSlaMin());
         config.setNotifyChannels(normalizeChannels(config.getNotifyChannels()));
-        config.setEnabled(StrUtil.blankToDefault(config.getEnabled(), "1"));
+        config.setEnabled(!Boolean.FALSE.equals(config.getEnabled()));
         if (!"NOTICE".equals(config.getControlMode()) || Boolean.TRUE.equals(config.getInspectionRequired())) {
             config.setIsVerify(true);
         }
@@ -113,18 +113,16 @@ public class MesChangePointConfigServiceImpl extends ServiceImpl<MesChangePointC
                             && config.getUpperLimit().compareTo(config.getLowerLimit()) > 0,
                     "数值型变化点上限必须大于下限");
         }
-        require("0".equals(config.getEnabled()) || "1".equals(config.getEnabled()), "启用状态无效");
-
         LambdaQueryWrapper<MesChangePointConfigEntity> duplicate = new LambdaQueryWrapper<MesChangePointConfigEntity>()
                 .ne(config.getId() != null, MesChangePointConfigEntity::getId, config.getId())
-                .eq(MesChangePointConfigEntity::getEnabled, "1")
+                .eq(MesChangePointConfigEntity::getEnabled, Boolean.TRUE)
                 .eq(MesChangePointConfigEntity::getCategory, config.getCategory())
                 .eq(MesChangePointConfigEntity::getCode, config.getCode());
         equalOrNull(duplicate, MesChangePointConfigEntity::getLineCode, config.getLineCode());
         equalOrNull(duplicate, MesChangePointConfigEntity::getRouteCode, config.getRouteCode());
         equalOrNull(duplicate, MesChangePointConfigEntity::getProductCode, config.getProductCode());
         equalOrNull(duplicate, MesChangePointConfigEntity::getMonitorField, config.getMonitorField());
-        require(!"1".equals(config.getEnabled()) || count(duplicate) == 0,
+        require(!Boolean.TRUE.equals(config.getEnabled()) || count(duplicate) == 0,
                 "同一4M1E类型、产线、工序、产品和监控字段范围只能有一条启用配置");
     }
 
@@ -163,7 +161,8 @@ public class MesChangePointConfigServiceImpl extends ServiceImpl<MesChangePointC
     private void equalOrNull(LambdaQueryWrapper<MesChangePointConfigEntity> query,
                              com.baomidou.mybatisplus.core.toolkit.support.SFunction<MesChangePointConfigEntity, ?> column,
                              String value) {
-        if (value == null) query.isNull(column); else query.eq(column, value);
+        if (value == null) query.isNull(column);
+        else query.eq(column, value);
     }
 
     private void require(boolean condition, String message) {

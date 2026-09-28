@@ -19,6 +19,7 @@ import com.kitex.mom.wms.enums.OutBillTypeEnum;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.math.BigDecimal;
 import java.util.*;
 
@@ -28,7 +29,9 @@ public class MesWarehouseMaterialInBillServiceImpl extends ServiceImpl<MesWareho
     private final RemoteProductionPickingOutBillService remoteProductionPickingOutBillService;
     private final MesMaterialReceiptService receiptService;
 
-    /** 导入只生成待签收通知，不再因参数跳过实物交接直接增加线边库存。 */
+    /**
+     * 导入只生成待签收通知，不再因参数跳过实物交接直接增加线边库存。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveByWmsOutBill(List<Long> ids) {

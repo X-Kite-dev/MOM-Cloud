@@ -2,7 +2,6 @@ package com.kitex.mom.plan.service.impl;
 
 import com.kitex.mom.plan.dto.PlnSchedulingRunDTO;
 import com.kitex.mom.plan.entity.PlnSchedulingTaskEntity;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskMapper;
 import com.kitex.mom.plan.service.PlnSchedulingEngineService;
 import com.kitex.mom.plan.service.PlnSchedulingJobService;
 import lombok.RequiredArgsConstructor;
@@ -31,7 +30,9 @@ public class PlnSchedulingJobServiceImpl implements PlnSchedulingJobService {
         return plnSchedulingEngineService.run(runDTO);
     }
 
-    /** 旧补偿丢失targetIds/规则版本且会改写原失败状态；没有冻结请求证据时禁止自动扩围重排。 */
+    /**
+     * 旧补偿丢失targetIds/规则版本且会改写原失败状态；没有冻结请求证据时禁止自动扩围重排。
+     */
     @Override
     public Boolean retryFailedTasks() {
         log.warn("旧排产失败补偿已停用：缺少精确来源与运行快照；请从工作台核对来源后新建排产版本，原失败结果保留");

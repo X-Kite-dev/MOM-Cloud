@@ -23,21 +23,11 @@ import com.kitex.mom.mes.dto.AndonNoticeResp;
 import com.kitex.mom.mes.dto.AndonRecordCancelVO;
 import com.kitex.mom.mes.dto.AndonRecordHandleVO;
 import com.kitex.mom.mes.dto.AndonRecordVerifyVO;
-import com.kitex.mom.mes.entity.MesAndonHandleConfigEntity;
-import com.kitex.mom.mes.entity.MesAndonHandleConfigStaffEntity;
-import com.kitex.mom.mes.entity.MesAndonNoticeEntity;
-import com.kitex.mom.mes.entity.MesAndonOperationEntity;
-import com.kitex.mom.mes.entity.MesAndonRecordEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.AndonNoticeTypeEnum;
 import com.kitex.mom.mes.enums.AndonStateEnum;
 import com.kitex.mom.mes.mapper.MesAndonRecordMapper;
-import com.kitex.mom.mes.service.MesAndonHandleConfigService;
-import com.kitex.mom.mes.service.MesAndonHandleConfigStaffService;
-import com.kitex.mom.mes.service.MesAndonNoticeService;
-import com.kitex.mom.mes.service.MesAndonOperationService;
-import com.kitex.mom.mes.service.MesAndonRecordService;
-import com.kitex.mom.mes.service.MesTaskArrangeService;
+import com.kitex.mom.mes.service.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -45,11 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -177,7 +163,10 @@ public class MesAndonRecordServiceImpl extends ServiceImpl<MesAndonRecordMapper,
             this.updateById(result);
             org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
                     new org.springframework.transaction.support.TransactionSynchronization() {
-                        @Override public void afterCommit() { pauseCoordinator.attempt(result.getId()); }
+                        @Override
+                        public void afterCommit() {
+                            pauseCoordinator.attempt(result.getId());
+                        }
                     });
         }
 

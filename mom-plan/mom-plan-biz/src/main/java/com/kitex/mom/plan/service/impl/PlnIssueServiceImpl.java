@@ -20,28 +20,9 @@ import com.kitex.mom.plan.constant.UpdateTypeEnum;
 import com.kitex.mom.plan.dto.MonthPlanQueryDTO;
 import com.kitex.mom.plan.dto.PlnIssueModuleDTO;
 import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
-import com.kitex.mom.plan.entity.PlnIssueEntity;
-import com.kitex.mom.plan.entity.PlnIssueCallbackReceiptEntity;
-import com.kitex.mom.plan.entity.PlnIssueFeedbackEntity;
-import com.kitex.mom.plan.entity.PlnUpdateLogEntity;
-import com.kitex.mom.plan.entity.PlanMatMrpEntity;
-import com.kitex.mom.plan.entity.PlnProductDemandEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingBatchAllocationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
-import com.kitex.mom.plan.mapper.PlnIssueFeedbackMapper;
-import com.kitex.mom.plan.mapper.PlnIssueCallbackReceiptMapper;
-import com.kitex.mom.plan.mapper.PlnIssueMapper;
-import com.kitex.mom.plan.mapper.PlanMatMrpMapper;
-import com.kitex.mom.plan.mapper.PlnProductDemandMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingBatchAllocationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskDetailMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingOperationMapper;
-import com.kitex.mom.plan.service.PlanMatMrpService;
-import com.kitex.mom.plan.service.PlnIssueService;
-import com.kitex.mom.plan.service.PlnAutomationEventService;
-import com.kitex.mom.plan.service.PlnSchedulingEngineService;
-import com.kitex.mom.plan.service.PlnUpdateLogService;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.mapper.*;
+import com.kitex.mom.plan.service.*;
 import com.kitex.mom.plan.vo.PlnIssueMonthVO;
 import com.kitex.mom.plan.vo.PlnIssueVO;
 import lombok.AllArgsConstructor;
@@ -513,7 +494,9 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
         return this.updateById(plnIssueEntity);
     }
 
-    /** 旧接口只处理无需求/MRP/APS/MES来源的独立草案，严禁跳过跨模块撤回。 */
+    /**
+     * 旧接口只处理无需求/MRP/APS/MES来源的独立草案，严禁跳过跨模块撤回。
+     */
     private PlnIssueEntity requireStandaloneEditableIssue(Long issueId) {
         PlnIssueEntity issue = this.getOne(new LambdaQueryWrapper<PlnIssueEntity>()
                 .eq(PlnIssueEntity::getId, issueId).last("FOR UPDATE"));

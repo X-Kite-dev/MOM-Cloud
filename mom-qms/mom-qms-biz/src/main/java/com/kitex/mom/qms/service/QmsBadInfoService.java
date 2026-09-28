@@ -77,12 +77,18 @@ public interface QmsBadInfoService extends IService<QmsBadInfoEntity> {
     void handle(QmsBadHandleReq req);
 
     void verify(QmsBadVerifyReq req);
+
     void executeMes(com.kitex.mom.qms.dto.req.QmsBadMesExecuteReq req);
+
     void syncMes(Long detailId);
+
     void discoverMesReconcile(Long detailId);
-    Map<String,Object> syncMesInBackground(com.kitex.mom.qms.entity.QmsMesReceiptReconcileEntity job);
+
+    Map<String, Object> syncMesInBackground(com.kitex.mom.qms.entity.QmsMesReceiptReconcileEntity job);
+
     com.kitex.mom.qms.dto.QmsMesCaseDecision mesDecision(Long detailId);
-    Map<String,Object> mesContext(Long detailId);
+
+    Map<String, Object> mesContext(Long detailId);
 
     void retryHold(Long id);
 

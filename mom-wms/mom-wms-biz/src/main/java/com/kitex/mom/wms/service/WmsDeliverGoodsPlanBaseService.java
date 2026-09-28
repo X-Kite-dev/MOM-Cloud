@@ -45,7 +45,9 @@ public interface WmsDeliverGoodsPlanBaseService extends IService<WmsDeliverGoods
      */
     Boolean removePlanById(ArrayList<Long> idList);
 
-    /** OMS来源发货计划只能经内部来源命令建立、同步和撤回。 */
+    /**
+     * OMS来源发货计划只能经内部来源命令建立、同步和撤回。
+     */
     Boolean saveFromOms(List<WmsDeliverGoodsPlanBaseEntity> plans);
 
     Boolean updateFromOms(List<WmsDeliverGoodsPlanBaseEntity> plans);

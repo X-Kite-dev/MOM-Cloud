@@ -8,7 +8,8 @@ public final class SchedulingContext {
 
     private static final ThreadLocal<String> WARNING = new ThreadLocal<>();
 
-    private SchedulingContext() {}
+    private SchedulingContext() {
+    }
 
     public static void setWarning(String message) {
         WARNING.set(message);

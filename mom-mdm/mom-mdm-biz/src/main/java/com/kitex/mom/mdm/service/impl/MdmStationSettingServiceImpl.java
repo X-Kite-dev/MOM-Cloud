@@ -247,7 +247,9 @@ public class MdmStationSettingServiceImpl extends ServiceImpl<MdmStationSettingM
         bind.setResourceGroupCapacity(groupCapacity);
     }
 
-    /** 同一租户内相同资源组编码必须保持名称和共享容量一致，避免跨工厂排程时得到相互矛盾的能力。 */
+    /**
+     * 同一租户内相同资源组编码必须保持名称和共享容量一致，避免跨工厂排程时得到相互矛盾的能力。
+     */
     private void validateResourceGroupConsistency(List<MdmStationSettingEntity> bindings,
                                                   String replacingProcedureCode, Long excludeId) {
         Map<String, MdmStationSettingEntity> definitions = new LinkedHashMap<>();

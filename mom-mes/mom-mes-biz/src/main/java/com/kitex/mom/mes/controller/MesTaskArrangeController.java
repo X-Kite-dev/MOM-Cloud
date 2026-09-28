@@ -140,6 +140,7 @@ public class MesTaskArrangeController {
 
     @Operation(summary = "任务接收", description = "任务接收")
     @PostMapping("/receive")
+    @PreAuthorize("@pms.hasPermission('mesProduceTask:receive')")
     public R<Void> receive(Long id, String worksiteCode) {
         service.receive(id, worksiteCode);
         return R.ok();
@@ -174,6 +175,7 @@ public class MesTaskArrangeController {
 
     @Operation(summary = "暂停", description = "暂停")
     @PostMapping("/pause")
+    @PreAuthorize("@pms.hasPermission('mesProduceTask:pause')")
     public R<Void> pause(Long id) {
         service.pause(id);
         return R.ok();
@@ -181,6 +183,7 @@ public class MesTaskArrangeController {
 
     @Operation(summary = "关闭", description = "暂停")
     @PostMapping("/close")
+    @PreAuthorize("@pms.hasPermission('mesProduceTask:close')")
     public R<Void> close(Long id) {
         service.close(id);
         return R.ok();

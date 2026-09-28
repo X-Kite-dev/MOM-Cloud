@@ -5,14 +5,13 @@ import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.common.data.tenant.TenantContextHolder;
-import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
 import com.kitex.mom.mdm.entity.MdmDeviceEntity;
 import com.kitex.mom.mdm.enums.DeviceStateEnum;
-import com.kitex.mom.mdm.enums.DeviceUsableEnum;
 import com.kitex.mom.mdm.feign.RemoteDeviceService;
 import com.kitex.mom.tpm.entity.*;
 import com.kitex.mom.tpm.enums.*;
@@ -75,11 +74,12 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveTask(TpmRepairTaskEntity tpmRepairTask) {
-        var user=SecurityUtils.getUser();String factory=FactoryContextHolder.getFactoryCode();
-        if(tpmRepairTask==null || user==null || user.getId()==null || TenantContextHolder.getTenantId()==null || TenantContextHolder.getTenantSkip()
-            || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) || StrUtil.isBlank(factory)
-            || tpmRepairTask.getId()!=null || StrUtil.isBlank(tpmRepairTask.getTaskCode()) || StrUtil.isBlank(tpmRepairTask.getDeviceCode())
-            || StrUtil.isNotBlank(tpmRepairTask.getState()) || tpmRepairTask.getRepairTime()!=null)
+        var user = SecurityUtils.getUser();
+        String factory = FactoryContextHolder.getFactoryCode();
+        if (tpmRepairTask == null || user == null || user.getId() == null || TenantContextHolder.getTenantId() == null || TenantContextHolder.getTenantSkip()
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) || StrUtil.isBlank(factory)
+                || tpmRepairTask.getId() != null || StrUtil.isBlank(tpmRepairTask.getTaskCode()) || StrUtil.isBlank(tpmRepairTask.getDeviceCode())
+                || StrUtil.isNotBlank(tpmRepairTask.getState()) || tpmRepairTask.getRepairTime() != null)
             throw new com.kitex.common.core.exception.CheckedException("报修须实名选择实际工厂、完整设备与新任务编码，不能携带已存在任务或完成状态");
         LocalDateTime now = LocalDateTime.now();
         if (tpmRepairTask.getExpectedRecoveryTime() != null && !tpmRepairTask.getExpectedRecoveryTime().isAfter(now)) {
@@ -89,21 +89,31 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
             throw new RuntimeException("填写设备预计恢复时间时必须同时提供预测依据");
         }
         // 两种报修通知模式共享同一权威设备及数据库原子故障阻断；提醒开关只决定是否通知。
-        var query=new MdmDeviceEntity();query.setDeviceCode(tpmRepairTask.getDeviceCode());
-        var deviceResponse=remoteDeviceService.getDetails(query);
-        var device=deviceResponse==null?null:deviceResponse.getData();
-        if(deviceResponse==null || !deviceResponse.isOk() || device==null || !Objects.equals(device.getTenantId(),TenantContextHolder.getTenantId())
-            || !factory.equals(device.getFactoryCode()) || !Boolean.TRUE.equals(device.getStatus())
-            || !Set.of(DeviceStateEnum.IDLE.getCode(),DeviceStateEnum.RUNNING.getCode(),DeviceStateEnum.PAUSE.getCode(),
-                DeviceStateEnum.MAINTENANCE.getCode(),DeviceStateEnum.REPAIR.getCode()).contains(Objects.toString(device.getDeviceState(),"")))
+        var query = new MdmDeviceEntity();
+        query.setDeviceCode(tpmRepairTask.getDeviceCode());
+        var deviceResponse = remoteDeviceService.getDetails(query);
+        var device = deviceResponse == null ? null : deviceResponse.getData();
+        if (deviceResponse == null || !deviceResponse.isOk() || device == null || !Objects.equals(device.getTenantId(), TenantContextHolder.getTenantId())
+                || !factory.equals(device.getFactoryCode()) || !Boolean.TRUE.equals(device.getStatus())
+                || !Set.of(DeviceStateEnum.IDLE.getCode(), DeviceStateEnum.RUNNING.getCode(), DeviceStateEnum.PAUSE.getCode(),
+                DeviceStateEnum.MAINTENANCE.getCode(), DeviceStateEnum.REPAIR.getCode()).contains(Objects.toString(device.getDeviceState(), "")))
             throw new com.kitex.common.core.exception.CheckedException("设备不存在、跨工厂、已停用/报废或处于未知状态；须先核对MDM实际设备状态");
-        tpmRepairTask.setFactoryCode(factory);tpmRepairTask.setTenantId(TenantContextHolder.getTenantId());
-        tpmRepairTask.setDeviceName(device.getDeviceName());tpmRepairTask.setType(RepairTaskTypeEnum.INTERNAL.getCode());
-        tpmRepairTask.setSubmitBy(user.getUsername());tpmRepairTask.setSubmitByName(user.getName());tpmRepairTask.setSubmitTime(now);
-        tpmRepairTask.setState(RepairStateEnum.CREATE.getCode());tpmRepairTask.setRepairMethod(null);tpmRepairTask.setRepairResult(null);
-        if(tpmRepairTask.getExpectedRecoveryTime()!=null){tpmRepairTask.setForecastUpdatedTime(now);tpmRepairTask.setForecastUpdatedBy(user.getUsername());}
+        tpmRepairTask.setFactoryCode(factory);
+        tpmRepairTask.setTenantId(TenantContextHolder.getTenantId());
+        tpmRepairTask.setDeviceName(device.getDeviceName());
+        tpmRepairTask.setType(RepairTaskTypeEnum.INTERNAL.getCode());
+        tpmRepairTask.setSubmitBy(user.getUsername());
+        tpmRepairTask.setSubmitByName(user.getName());
+        tpmRepairTask.setSubmitTime(now);
+        tpmRepairTask.setState(RepairStateEnum.CREATE.getCode());
+        tpmRepairTask.setRepairMethod(null);
+        tpmRepairTask.setRepairResult(null);
+        if (tpmRepairTask.getExpectedRecoveryTime() != null) {
+            tpmRepairTask.setForecastUpdatedTime(now);
+            tpmRepairTask.setForecastUpdatedBy(user.getUsername());
+        }
         tpmRepairTask.setRemindSign(Boolean.TRUE.equals(tpmRepairTask.getRemindSign()));
-        List<TpmRepairNoticeService.Draft> noticeDrafts=List.of();
+        List<TpmRepairNoticeService.Draft> noticeDrafts = List.of();
         if (Boolean.TRUE.equals(tpmRepairTask.getRemindSign())) {
             //根据班次、设备、故障类型查询维修配置
             List<TpmRepairRemindEntity> targetRemindList = tpmRepairRemindMapper.getTarget(tpmRepairTask.getFaultClassId(), tpmRepairTask.getDeviceCode(), tpmRepairTask.getShiftCode());
@@ -114,18 +124,24 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
             List<String> remindCodes = targetRemindList.stream().map(TpmRepairRemindEntity::getRemindCode).distinct().toList();
             List<TpmRepairRemindDetailsEntity> tpmRepairRemindDetailsList = tpmRepairRemindDetailsMapper.selectList(new LambdaQueryWrapper<TpmRepairRemindDetailsEntity>()
                     .in(TpmRepairRemindDetailsEntity::getRemindCode, remindCodes));
-            noticeDrafts=noticeService.prepare(tpmRepairTask,tpmRepairRemindDetailsList);
-        }else if(StrUtil.isBlank(tpmRepairTask.getRepairBy()) || StrUtil.isBlank(tpmRepairTask.getRepairByName()))
+            noticeDrafts = noticeService.prepare(tpmRepairTask, tpmRepairRemindDetailsList);
+        } else if (StrUtil.isBlank(tpmRepairTask.getRepairBy()) || StrUtil.isBlank(tpmRepairTask.getRepairByName()))
             throw new com.kitex.common.core.exception.CheckedException("关闭自动提醒时须指定实际维修处理人");
-        if(!this.save(tpmRepairTask))throw new com.kitex.common.core.exception.CheckedException("维修任务保存失败");
+        if (!this.save(tpmRepairTask)) throw new com.kitex.common.core.exception.CheckedException("维修任务保存失败");
         // 第131节数据库触发器在本地事务中同步将真实MDM行置维修中/不可用并记录前后状态；不再在事务内调用远程MDM写接口。
         tpmPlanEventOutboxService.enqueueRepairUnavailable(tpmRepairTask);
-        if(!noticeDrafts.isEmpty()){
-            var staged=noticeService.enqueue(tpmRepairTask,noticeDrafts);
-            var immediate=staged.stream().filter(n->"IMMEDIATE".equals(n.getNoticeKey())).findFirst().orElseThrow();
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){
-                @Override public void afterCommit(){try{noticeService.dispatchOne(immediate.getId(),immediate.getTenantId(),immediate.getFactoryCode());}
-                    catch(RuntimeException ex){log.error("报修已提交，即时提醒暂留持久投递账，noticeId={}",immediate.getId(),ex);}}
+        if (!noticeDrafts.isEmpty()) {
+            var staged = noticeService.enqueue(tpmRepairTask, noticeDrafts);
+            var immediate = staged.stream().filter(n -> "IMMEDIATE".equals(n.getNoticeKey())).findFirst().orElseThrow();
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    try {
+                        noticeService.dispatchOne(immediate.getId(), immediate.getTenantId(), immediate.getFactoryCode());
+                    } catch (RuntimeException ex) {
+                        log.error("报修已提交，即时提醒暂留持久投递账，noticeId={}", immediate.getId(), ex);
+                    }
+                }
             });
         }
         return Boolean.TRUE;
@@ -142,20 +158,23 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
     }
 
     @Override
-    @Transactional(rollbackFor=Exception.class)
+    @Transactional(rollbackFor = Exception.class)
     public Boolean completeVerifiedTask(Long verificationId) {
-        var proof=verificationMapper.selectById(verificationId);
-        if(proof==null || !"VERIFIED".equals(proof.getStatus()) || !Objects.equals(proof.getVerifierId(),SecurityUtils.getUser().getId()))
+        var proof = verificationMapper.selectById(verificationId);
+        if (proof == null || !"VERIFIED".equals(proof.getStatus()) || !Objects.equals(proof.getVerifierId(), SecurityUtils.getUser().getId()))
             throw new com.kitex.common.core.exception.CheckedException("缺少同事务独立维修验证依据");
         TpmRepairTaskEntity tpmRepairTask;
-        try { tpmRepairTask = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules().readValue(proof.getWorkJson(), TpmRepairTaskEntity.class); }
-        catch(Exception ex) { throw new com.kitex.common.core.exception.CheckedException("冻结维修结果无法读取"); }
-        var current=this.getById(proof.getTaskId());
-        if(current==null || !"0".equals(current.getState()) || !Objects.equals(proof.getTaskId(),tpmRepairTask.getId())
-            || !Objects.equals(proof.getTenantId(),current.getTenantId()) || !Objects.equals(proof.getTenantId(),tpmRepairTask.getTenantId())
-            || !Objects.equals(proof.getFactoryCode(),current.getFactoryCode()) || !Objects.equals(proof.getFactoryCode(),tpmRepairTask.getFactoryCode())
-            || !Objects.equals(proof.getTaskCode(),current.getTaskCode()) || !Objects.equals(proof.getTaskCode(),tpmRepairTask.getTaskCode())
-            || !Objects.equals(proof.getDeviceCode(),current.getDeviceCode()) || !Objects.equals(proof.getDeviceCode(),tpmRepairTask.getDeviceCode()))
+        try {
+            tpmRepairTask = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules().readValue(proof.getWorkJson(), TpmRepairTaskEntity.class);
+        } catch (Exception ex) {
+            throw new com.kitex.common.core.exception.CheckedException("冻结维修结果无法读取");
+        }
+        var current = this.getById(proof.getTaskId());
+        if (current == null || !"0".equals(current.getState()) || !Objects.equals(proof.getTaskId(), tpmRepairTask.getId())
+                || !Objects.equals(proof.getTenantId(), current.getTenantId()) || !Objects.equals(proof.getTenantId(), tpmRepairTask.getTenantId())
+                || !Objects.equals(proof.getFactoryCode(), current.getFactoryCode()) || !Objects.equals(proof.getFactoryCode(), tpmRepairTask.getFactoryCode())
+                || !Objects.equals(proof.getTaskCode(), current.getTaskCode()) || !Objects.equals(proof.getTaskCode(), tpmRepairTask.getTaskCode())
+                || !Objects.equals(proof.getDeviceCode(), current.getDeviceCode()) || !Objects.equals(proof.getDeviceCode(), tpmRepairTask.getDeviceCode()))
             throw new com.kitex.common.core.exception.CheckedException("冻结维修结果与当前任务身份或状态不一致");
         //保存主表
         LocalDateTime now = LocalDateTime.now();
@@ -164,7 +183,8 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
         tpmRepairTask.setRepairByName(proof.getApplicantName());
         tpmRepairTask.setRepairTime(now);
         tpmRepairTask.setState(RepairStateEnum.COMPLETE.getCode());
-        if(!this.updateById(tpmRepairTask))throw new com.kitex.common.core.exception.CheckedException("维修任务完成保存失败");
+        if (!this.updateById(tpmRepairTask))
+            throw new com.kitex.common.core.exception.CheckedException("维修任务完成保存失败");
         //保存明细
         List<TpmRepairTaskDetailsEntity> detailsList = tpmRepairTask.getDetailsList();
         {
@@ -221,7 +241,7 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
                 application.setApprovalStatus(SparePartsApplicationStateEnum.WAIT.getCode());
                 application.setDetailsList(returnList);
                 //保存备件退回申请
-                if(!tpmSparePartsApplicationService.addApply(application))
+                if (!tpmSparePartsApplicationService.addApply(application))
                     throw new com.kitex.common.core.exception.CheckedException("未用备件退回申请保存失败");
 
             }
@@ -230,7 +250,7 @@ public class TpmRepairTaskServiceImpl extends ServiceImpl<TpmRepairTaskMapper, T
         //生成维修记录
         TpmRepairRecordEntity repairRecord = new TpmRepairRecordEntity();
         BeanUtils.copyProperties(tpmRepairTask, repairRecord, "id");
-        if(tpmRepairRecordMapper.insert(repairRecord)!=1)
+        if (tpmRepairRecordMapper.insert(repairRecord) != 1)
             throw new com.kitex.common.core.exception.CheckedException("维修记录保存失败");
         //保存备件信息
 

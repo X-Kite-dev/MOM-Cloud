@@ -6,6 +6,8 @@
     <select id="queryTaskFeedList" resultType="com.kitex.mom.mes.dto.MesWarehouseFeedLeftDTO">
         SELECT
         feed.task_code,
+        feed.arrange_code,
+        feed.produce_task_code,
         MAX(task.mat_code) as productCode,
         MAX(task.mat_name) as productName,
         produceTask.route_code,
@@ -18,6 +20,10 @@
         MAX(feed.mat_name) as mat_name,
         MAX(feed.mat_spec) as mat_spec,
         feed.mat_batch as batchNo,
+        feed.warehouse_code,
+        MAX(feed.warehouse_name) as warehouse_name,
+        feed.site_code,
+        MAX(feed.site_name) as site_name,
         MAX(feed.mat_unit) as mat_unit,
         MAX(feed.status) as status,
         (SUM(COALESCE(feed.feed_num, 0)) - SUM(COALESCE(feed.used_num, 0))) as leftNum,
@@ -28,10 +34,16 @@
         mes_warehouse_feed feed
         LEFT JOIN
         mes_task task on feed.task_code = task.code
+            AND feed.factory_code = task.factory_code
+            AND task.del_flag = '0'
         LEFT JOIN
         mes_produce_task produceTask on feed.produce_task_code = produceTask.code
+            AND feed.factory_code = produceTask.factory_code
+            AND produceTask.del_flag = '0'
         <where>
             1 = 1
+            AND feed.del_flag = '0'
+            AND feed.factory_code = #{query.factoryCode}
             <if test="query.taskCode != '' and query.taskCode != null ">
                 AND feed.task_code LIKE CONCAT('%', #{query.taskCode}, '%')
             </if>
@@ -61,8 +73,9 @@
             </if>
         </where>
         GROUP BY
-        feed.task_code, produceTask.route_code, feed.mat_code, feed.mat_batch,
-        feed.reservation_no, feed.requirement_mat_code
+        feed.task_code, feed.arrange_code, feed.produce_task_code, produceTask.route_code,
+        feed.mat_code, feed.mat_batch, feed.reservation_no, feed.requirement_mat_code,
+        feed.warehouse_code, feed.site_code
         ORDER BY
         lastUsedTime DESC
     </select>
@@ -70,6 +83,8 @@
     <select id="queryLeftPage" resultType="com.kitex.mom.mes.dto.MesWarehouseFeedLeftDTO">
         SELECT
         feed.task_code,
+        feed.arrange_code,
+        feed.produce_task_code,
         MAX(task.mat_code) as productCode,
         MAX(task.mat_name) as productName,
         produceTask.route_code,
@@ -82,6 +97,10 @@
         MAX(feed.mat_name) as mat_name,
         MAX(feed.mat_spec) as mat_spec,
         feed.mat_batch as batchNo,
+        feed.warehouse_code,
+        MAX(feed.warehouse_name) as warehouse_name,
+        feed.site_code,
+        MAX(feed.site_name) as site_name,
         MAX(feed.mat_unit) as mat_unit,
         MAX(feed.status) as status,
         (SUM(COALESCE(feed.feed_num, 0)) - SUM(COALESCE(feed.used_num, 0))) as leftNum,
@@ -92,12 +111,24 @@
         mes_warehouse_feed feed
         LEFT JOIN
         mes_task task on feed.task_code = task.code
+            AND feed.factory_code = task.factory_code
+            AND task.del_flag = '0'
         LEFT JOIN
         mes_produce_task produceTask on feed.produce_task_code = produceTask.code
+            AND feed.factory_code = produceTask.factory_code
+            AND produceTask.del_flag = '0'
         <where>
             1 = 1
+            AND feed.del_flag = '0'
+            AND feed.factory_code = #{query.factoryCode}
             <if test="query.taskCode != '' and query.taskCode != null ">
                 AND feed.task_code LIKE CONCAT('%', #{query.taskCode}, '%')
+            </if>
+            <if test="query.arrangeCode != '' and query.arrangeCode != null ">
+                AND feed.arrange_code LIKE CONCAT('%', #{query.arrangeCode}, '%')
+            </if>
+            <if test="query.produceTaskCode != '' and query.produceTaskCode != null ">
+                AND feed.produce_task_code LIKE CONCAT('%', #{query.produceTaskCode}, '%')
             </if>
             <if test="query.productName != '' and query.productName != null ">
                 AND task.mat_name LIKE CONCAT('%', #{query.productName}, '%')
@@ -119,8 +150,9 @@
             </if>
         </where>
         GROUP BY
-        feed.task_code, produceTask.route_code, feed.mat_code, feed.mat_batch,
-        feed.reservation_no, feed.requirement_mat_code
+        feed.task_code, feed.arrange_code, feed.produce_task_code, produceTask.route_code,
+        feed.mat_code, feed.mat_batch, feed.reservation_no, feed.requirement_mat_code,
+        feed.warehouse_code, feed.site_code
         HAVING
         (SUM(COALESCE(feed.feed_num, 0)) - SUM(COALESCE(feed.used_num, 0))) > 0
         ORDER BY

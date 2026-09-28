@@ -29,6 +29,14 @@ public class WmsPurchaseReceiptBatchDetailEntity extends BaseEntity<WmsPurchaseR
     private Long billId;
 
     /**
+     * 采购订单明细ID。
+     *
+     * <p>该字段贯穿质检、入库和库存来源追溯，禁止仅依靠物料编码反推采购订单行。</p>
+     */
+    @Schema(description = "采购订单明细ID")
+    private Long orderDetailId;
+
+    /**
      * 物料编码
      */
     @Schema(description = "物料编码")

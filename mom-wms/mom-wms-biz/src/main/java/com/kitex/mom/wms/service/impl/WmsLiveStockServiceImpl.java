@@ -35,19 +35,19 @@ import com.kitex.mom.wms.mapper.*;
 import com.kitex.mom.wms.service.WmsLiveStockService;
 import com.kitex.mom.wms.service.WmsMaterialReservationService;
 import com.kitex.mom.wms.service.WmsSalesStockReservationService;
+import com.kitex.mom.wms.util.WmsStockAvailability;
 import com.kitex.mom.wms.vo.WmsLiveStockByMaterialExcelVO;
 import com.kitex.mom.wms.vo.WmsLiveStockBySupplierExcelVO;
 import com.kitex.mom.wms.vo.WmsLiveStockDetailExcelVO;
 import com.kitex.mom.wms.vo.WmsLiveStockImportExcelVO;
-import com.kitex.mom.wms.util.WmsStockAvailability;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.BindingResult;
 
-import java.time.LocalDateTime;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -95,10 +95,12 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
             this.updateById(wmsLiveStock);
         }
 
-        // 保存新的库存
+        // 从被移动的库存行拆分新行，不从请求DTO重建库存证据。
+        // 这样可保留原采购订单行、收料批次、质量和生产日期等全部来源属性。
         WmsLiveStockEntity saveEntity = new WmsLiveStockEntity();
-        BeanUtils.copyProperties(detail, saveEntity);
-        saveEntity.setInTime(LocalDateTime.now());
+        BeanUtils.copyProperties(wmsLiveStock, saveEntity);
+        saveEntity.setId(null);
+        saveEntity.setMatNum(detail.getMatNum());
         saveEntity.setWarehouseCode(detail.getNewWarehouseCode());
         saveEntity.setWarehouseName(detail.getNewWarehouseName());
         saveEntity.setSiteCode(detail.getNewSiteCode());
@@ -209,7 +211,8 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
                 wrapper.le(WmsLiveStockEntity::getMatValidEndDate, wmsLiveStock.getMatValidEndDate().get(1));
             }
         }
-        wrapper.eq(StrUtil.isNotBlank(wmsLiveStock.getWarehouseCode()), WmsLiveStockEntity::getWarehouseCode, wmsLiveStock.getWarehouseCode())
+        wrapper.eq(wmsLiveStock.getStockId() != null, WmsLiveStockEntity::getId, wmsLiveStock.getStockId())
+                .eq(StrUtil.isNotBlank(wmsLiveStock.getWarehouseCode()), WmsLiveStockEntity::getWarehouseCode, wmsLiveStock.getWarehouseCode())
                 .in(CollUtil.isNotEmpty(wmsLiveStock.getSiteCode()), WmsLiveStockEntity::getSiteCode, wmsLiveStock.getSiteCode())
                 .like(StrUtil.isNotBlank(wmsLiveStock.getMatCode()), WmsLiveStockEntity::getMatCode, wmsLiveStock.getMatCode())
                 .like(StrUtil.isNotBlank(wmsLiveStock.getMatName()), WmsLiveStockEntity::getMatName, wmsLiveStock.getMatName())
@@ -232,6 +235,9 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
     @Override
     @Transactional(rollbackFor = Exception.class)
     public List<WmsLiveStockEntity> reduceStockWhenOut(WmsOutBillDetailEntity detail) {
+        if (detail.getSourceStockId() != null) {
+            return reduceSpecificStock(detail);
+        }
         if (StrUtil.startWith(detail.getReservationNo(), WmsSalesStockReservationServiceImpl.PREFIX)) {
             List<WmsLiveStockEntity> reduced = wmsSalesStockReservationService.consume(detail);
             reduced.stream().filter(stock -> baseMapper.selectById(stock.getId()) == null)
@@ -282,6 +288,50 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
             }
         }
         return reduceList;
+    }
+
+    /**
+     * 按审批时冻结的库存行出库。
+     *
+     * <p>受控退供不能在执行时被 FIFO 悄悄换成另一批、另一库位或另一供应商库存；
+     * 因此先锁定主键，再核对完整物流属性和扣除两类活动预留后的可退量。</p>
+     */
+    private List<WmsLiveStockEntity> reduceSpecificStock(WmsOutBillDetailEntity detail) {
+        WmsLiveStockEntity stock = Optional.ofNullable(baseMapper.selectOne(
+                        new LambdaQueryWrapper<WmsLiveStockEntity>()
+                                .eq(WmsLiveStockEntity::getId, detail.getSourceStockId()).last("FOR UPDATE"), false))
+                .orElseThrow(() -> new CheckedException("冻结库存行[" + detail.getSourceStockId() + "]已不存在"));
+        if (!Objects.equals(stock.getMatCode(), detail.getMatCode())
+                || !Objects.equals(stock.getWarehouseCode(), detail.getWarehouseCode())
+                || !Objects.equals(stock.getSiteCode(), detail.getSiteCode())
+                || !Objects.equals(StrUtil.nullToEmpty(stock.getContainerCode()),
+                StrUtil.nullToEmpty(detail.getContainerCode()))
+                || !Objects.equals(StrUtil.nullToEmpty(stock.getMatBatch()),
+                StrUtil.nullToEmpty(detail.getMatBatch()))
+                || !Objects.equals(StrUtil.nullToEmpty(stock.getSupplierCode()),
+                StrUtil.nullToEmpty(detail.getSupplierCode()))) {
+            throw new CheckedException("冻结库存行的物料、供应商、批次、仓库、库位或容器已经变化");
+        }
+        if (!WmsStockAvailability.isUsable(stock)) {
+            throw new CheckedException("冻结库存行已被锁定、过期、待检或质量隔离，禁止出库");
+        }
+        double requested = Optional.ofNullable(detail.getMatNum()).orElse(0d);
+        if (requested <= 0 || unreservedNum(stock) < requested) {
+            throw new CheckedException("冻结库存行扣除生产和销售预留后的可用数量不足");
+        }
+        WmsLiveStockEntity proof = new WmsLiveStockEntity();
+        BeanUtils.copyProperties(stock, proof);
+        proof.setMatNum(requested);
+        double balance = BigDecimal.valueOf(stock.getMatNum()).subtract(BigDecimal.valueOf(requested)).doubleValue();
+        if (BigDecimal.valueOf(balance).compareTo(BigDecimal.ZERO) == 0) {
+            baseMapper.deleteById(stock.getId());
+            unUsedContainer(stock);
+        } else {
+            baseMapper.update(new LambdaUpdateWrapper<WmsLiveStockEntity>()
+                    .set(WmsLiveStockEntity::getMatNum, balance)
+                    .eq(WmsLiveStockEntity::getId, stock.getId()));
+        }
+        return List.of(proof);
     }
 
     private Double unreservedNum(WmsLiveStockEntity stock) {
@@ -337,8 +387,10 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
             throw new CheckedException("调拨入库缺少有效发起流水");
         }
         WmsLiveStockEntity stock = new WmsLiveStockEntity();
+        copySourceLineage(sourceFlow, stock);
         stock.setMatCode(sourceFlow.getMatCode());
         stock.setMatName(sourceFlow.getMatName());
+        stock.setMatBarcode(sourceFlow.getMatBarcode());
         stock.setMatGroup(sourceFlow.getMatGroup());
         stock.setMatGroupName(sourceFlow.getMatGroupName());
         stock.setMatSpec(sourceFlow.getMatSpec());
@@ -385,21 +437,39 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
             throw new CheckedException("销售发运库存证据不完整，禁止自动恢复");
         }
         WmsLiveStockEntity stock = new WmsLiveStockEntity();
-        stock.setMatCode(sourceFlow.getMatCode()); stock.setMatName(sourceFlow.getMatName());
-        stock.setMatGroup(sourceFlow.getMatGroup()); stock.setMatGroupName(sourceFlow.getMatGroupName());
-        stock.setMatSpec(sourceFlow.getMatSpec()); stock.setMatBatch(sourceFlow.getMatBatch());
-        stock.setMatPackSpec(sourceFlow.getMatPackSpec()); stock.setSupplierCode(sourceFlow.getSupplierCode());
-        stock.setSupplierName(sourceFlow.getSupplierName()); stock.setWarehouseCode(sourceFlow.getWarehouseCode());
-        stock.setWarehouseName(sourceFlow.getWarehouseName()); stock.setSiteCode(sourceFlow.getSiteCode());
-        stock.setSiteName(sourceFlow.getSiteName()); stock.setContainerCode(sourceFlow.getContainerCode());
-        stock.setInTime(sourceFlow.getStockInTime()); stock.setMatNum(sourceFlow.getMatNum());
-        stock.setMatUnit(sourceFlow.getMatUnit()); stock.setMatProduceDate(sourceFlow.getMatProduceDate());
-        stock.setMatValidPeriod(sourceFlow.getMatValidPeriod()); stock.setMatValidEndDate(sourceFlow.getMatValidEndDate());
-        stock.setQualityResult(sourceFlow.getQualityResult()); stock.setQualityStatus(sourceFlow.getQualityStatus());
-        stock.setQualityHoldNo(sourceFlow.getQualityHoldNo()); stock.setQualitySourceType(sourceFlow.getQualitySourceType());
-        stock.setQualitySourceId(sourceFlow.getQualitySourceId()); stock.setIsQualityTest(sourceFlow.getIsQualityTest());
-        stock.setQualityTaskId(sourceFlow.getQualityTaskId()); stock.setStatus(0); stock.setExpansion(sourceFlow.getExpansion());
-        stock.setExpirationStatus(sourceFlow.getExpirationStatus()); stock.setSlowMaterialStatus(sourceFlow.getSlowMaterialStatus());
+        copySourceLineage(sourceFlow, stock);
+        stock.setMatCode(sourceFlow.getMatCode());
+        stock.setMatName(sourceFlow.getMatName());
+        stock.setMatBarcode(sourceFlow.getMatBarcode());
+        stock.setMatGroup(sourceFlow.getMatGroup());
+        stock.setMatGroupName(sourceFlow.getMatGroupName());
+        stock.setMatSpec(sourceFlow.getMatSpec());
+        stock.setMatBatch(sourceFlow.getMatBatch());
+        stock.setMatPackSpec(sourceFlow.getMatPackSpec());
+        stock.setSupplierCode(sourceFlow.getSupplierCode());
+        stock.setSupplierName(sourceFlow.getSupplierName());
+        stock.setWarehouseCode(sourceFlow.getWarehouseCode());
+        stock.setWarehouseName(sourceFlow.getWarehouseName());
+        stock.setSiteCode(sourceFlow.getSiteCode());
+        stock.setSiteName(sourceFlow.getSiteName());
+        stock.setContainerCode(sourceFlow.getContainerCode());
+        stock.setInTime(sourceFlow.getStockInTime());
+        stock.setMatNum(sourceFlow.getMatNum());
+        stock.setMatUnit(sourceFlow.getMatUnit());
+        stock.setMatProduceDate(sourceFlow.getMatProduceDate());
+        stock.setMatValidPeriod(sourceFlow.getMatValidPeriod());
+        stock.setMatValidEndDate(sourceFlow.getMatValidEndDate());
+        stock.setQualityResult(sourceFlow.getQualityResult());
+        stock.setQualityStatus(sourceFlow.getQualityStatus());
+        stock.setQualityHoldNo(sourceFlow.getQualityHoldNo());
+        stock.setQualitySourceType(sourceFlow.getQualitySourceType());
+        stock.setQualitySourceId(sourceFlow.getQualitySourceId());
+        stock.setIsQualityTest(sourceFlow.getIsQualityTest());
+        stock.setQualityTaskId(sourceFlow.getQualityTaskId());
+        stock.setStatus(0);
+        stock.setExpansion(sourceFlow.getExpansion());
+        stock.setExpirationStatus(sourceFlow.getExpirationStatus());
+        stock.setSlowMaterialStatus(sourceFlow.getSlowMaterialStatus());
         stock.setFactoryCode(sourceFlow.getFactoryCode());
         if (stock.getInTime() == null || StrUtil.isBlank(stock.getWarehouseCode())
                 || StrUtil.isBlank(stock.getSiteCode()) || StrUtil.isBlank(stock.getMatCode())
@@ -409,6 +479,23 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
         if (!save(stock)) throw new CheckedException("销售发运红冲恢复库存失败");
         occupyContainer(stock);
         return stock;
+    }
+
+    /**
+     * 保留调拨、发运纠错前的首次入库来源。
+     * 采购来源决定退供资格，MES成品来源决定实收入库能否安全红冲，两类证据都不能因库存移动而丢失。
+     */
+    private void copySourceLineage(WmsInoutFlowEntity source, WmsLiveStockEntity target) {
+        target.setSourceOrderNo(source.getSourceOrderNo());
+        target.setSourceOrderDetailId(source.getSourceOrderDetailId());
+        target.setSourceReceiptId(source.getSourceReceiptId());
+        target.setSourceReceiptDetailId(source.getSourceReceiptDetailId());
+        target.setSourceInBillId(source.getSourceInBillId());
+        target.setSourceInBillDetailId(source.getSourceInBillDetailId());
+        target.setSourceMesInboundRequestId(source.getSourceMesInboundRequestId());
+        target.setSourceQualityTaskIds(source.getSourceQualityTaskIds());
+        target.setSourceQualityEvidenceFingerprint(source.getSourceQualityEvidenceFingerprint());
+        target.setSourceQualityEvidenceSnapshot(source.getSourceQualityEvidenceSnapshot());
     }
 
     @Override

@@ -257,6 +257,21 @@ public class MdmBomController {
     }
 
     /**
+     * 获取指定BOM版本的维护态结构。
+     *
+     * <p>用于BOM管理页面预览草案、审批中和已发布版本，不作为生产执行选版接口。</p>
+     *
+     * @param bomId BOM版本ID
+     * @return BOM完整层级结构
+     */
+    @Operation(summary = "获取BOM维护态结构", description = "按精确版本读取BOM维护结构，允许预览未发布草案")
+    @GetMapping("/structure/{bomId}")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmBom_view')")
+    public R<List<MdmBomChildDTO>> getMaintenanceStructure(@PathVariable Long bomId) {
+        return R.ok(mdmBomService.getMaintenanceStructure(bomId));
+    }
+
+    /**
      * 根据产品编码列表获取该产品所有子物料bom信息包括自己
      *
      * @param productCodes 产品编码列表

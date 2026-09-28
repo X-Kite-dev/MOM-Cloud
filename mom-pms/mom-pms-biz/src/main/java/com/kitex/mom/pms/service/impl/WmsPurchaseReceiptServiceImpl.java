@@ -25,10 +25,7 @@ import com.kitex.mom.pms.dto.app.WmsPurchaseReceiptParamsDTO;
 import com.kitex.mom.pms.entity.*;
 import com.kitex.mom.pms.enums.PmsContractStatusEnum;
 import com.kitex.mom.pms.enums.PmsOrderStatusEnum;
-import com.kitex.mom.pms.mapper.PmsSupplierMatMapper;
-import com.kitex.mom.pms.mapper.WmsPurchaseReceiptBatchDetailMapper;
-import com.kitex.mom.pms.mapper.WmsPurchaseReceiptDetailMapper;
-import com.kitex.mom.pms.mapper.WmsPurchaseReceiptMapper;
+import com.kitex.mom.pms.mapper.*;
 import com.kitex.mom.pms.service.PmsContractService;
 import com.kitex.mom.pms.service.PmsOrderService;
 import com.kitex.mom.pms.service.WmsPurchaseReceiptService;
@@ -51,6 +48,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -85,13 +83,16 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
 
     private final PmsSupplierMatMapper pmsSupplierMatMapper;
 
+    private final PmsOrderDetailMapper pmsOrderDetailMapper;
+
     private final RemoteSupplierService remoteSupplierService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveDeep(WmsPurchaseReceiptEntity entity) {
         if (StrUtil.isNotBlank(entity.getPmsOrderNo())) {
-            requireOpenOrder(entity.getPmsOrderNo(), entity.getFactoryCode(), entity.getSupplierCode());
+            PmsOrderEntity order = requireOpenOrder(entity.getPmsOrderNo(), entity.getFactoryCode(), entity.getSupplierCode());
+            assertReceiptCapacity(order, Optional.ofNullable(entity.getDetails()).orElse(List.of()), null);
         }
         R<String> billNoR = remoteSeqConfigService.create("wms_purchase_receipt");
         if (!billNoR.isOk()) {
@@ -147,7 +148,7 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         if (current == null || !PurchaseReceiptStateEnum.PENDING.getCode().equals(current.getState())) {
             throw new CheckedException("只有待处理采购收料单允许编辑，已形成现场或质量事实的单据必须保留历史");
         }
-        requireOpenOrder(current.getPmsOrderNo(), current.getFactoryCode(), current.getSupplierCode());
+        PmsOrderEntity order = requireOpenOrder(current.getPmsOrderNo(), current.getFactoryCode(), current.getSupplierCode());
         wmsPurchaseReceipt.setBillNo(current.getBillNo());
         wmsPurchaseReceipt.setPmsOrderNo(current.getPmsOrderNo());
         wmsPurchaseReceipt.setSupplierCode(current.getSupplierCode());
@@ -157,6 +158,33 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         baseMapper.updateById(wmsPurchaseReceipt);
         List<WmsPurchaseReceiptDetailEntity> submittedDetails = wmsPurchaseReceipt.getDetails() == null
                 ? Collections.emptyList() : wmsPurchaseReceipt.getDetails();
+        List<WmsPurchaseReceiptDetailEntity> persistedDetails = wmsPurchaseReceiptDetailMapper.selectList(
+                new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
+                        .eq(WmsPurchaseReceiptDetailEntity::getBillId, current.getId())
+                        .orderByAsc(WmsPurchaseReceiptDetailEntity::getId).last("FOR UPDATE"));
+        long submittedExistingCount = submittedDetails.stream().filter(value -> value.getId() != null).count();
+        long submittedExistingDistinct = submittedDetails.stream().map(WmsPurchaseReceiptDetailEntity::getId)
+                .filter(Objects::nonNull).distinct().count();
+        if (submittedExistingCount != submittedExistingDistinct) throw new CheckedException("采购收料单明细重复提交");
+        Map<Long, WmsPurchaseReceiptDetailEntity> submittedById = submittedDetails.stream()
+                .filter(value -> value.getId() != null)
+                .collect(Collectors.toMap(WmsPurchaseReceiptDetailEntity::getId, Function.identity(),
+                        (first, ignored) -> first, LinkedHashMap::new));
+        for (WmsPurchaseReceiptDetailEntity submittedDetail : submittedDetails) {
+            if (submittedDetail.getId() == null) continue;
+            WmsPurchaseReceiptDetailEntity persisted = persistedDetails.stream()
+                    .filter(value -> Objects.equals(value.getId(), submittedDetail.getId())).findFirst().orElse(null);
+            if (persisted == null || !Objects.equals(persisted.getBillId(), current.getId())) {
+                throw new CheckedException("采购收料单明细不存在或不属于当前单据");
+            }
+            submittedDetail.setOrderDetailId(persisted.getOrderDetailId());
+        }
+        List<WmsPurchaseReceiptDetailEntity> effectiveDetails = new ArrayList<>();
+        for (WmsPurchaseReceiptDetailEntity persisted : persistedDetails) {
+            effectiveDetails.add(submittedById.getOrDefault(persisted.getId(), persisted));
+        }
+        effectiveDetails.addAll(submittedDetails.stream().filter(value -> value.getId() == null).toList());
+        assertReceiptCapacity(order, effectiveDetails, current.getId());
         for (WmsPurchaseReceiptDetailEntity wmsPurchaseReceiptDetail : submittedDetails) {
             if (Objects.isNull(wmsPurchaseReceiptDetail.getId())) {
                 wmsPurchaseReceiptDetail.setBillId(wmsPurchaseReceipt.getId());
@@ -348,6 +376,21 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
             // 查询采购收料单
             WmsPurchaseReceiptEntity wmsPurchase = this.getOne(new LambdaQueryWrapper<WmsPurchaseReceiptEntity>()
                     .eq(WmsPurchaseReceiptEntity::getBillNo, body.get(0).getNoticeId()), false);
+            if (wmsPurchase == null) {
+                throw new CheckedException("采购质检任务缺少有效采购收料单");
+            }
+            List<WmsPurchaseReceiptDetailEntity> allReceiptDetails = wmsPurchaseReceiptDetailMapper.selectList(
+                    new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
+                            .eq(WmsPurchaseReceiptDetailEntity::getBillId, wmsPurchase.getId()));
+            for (InspectionPurchaseCreateParam task : body) {
+                if (task.getOrderDetailId() != null) continue;
+                List<WmsPurchaseReceiptDetailEntity> matches = allReceiptDetails.stream()
+                        .filter(detail -> Objects.equals(detail.getMatCode(), task.getMatCode())).toList();
+                if (matches.size() != 1 || matches.get(0).getOrderDetailId() == null) {
+                    throw new CheckedException("采购质检任务必须唯一定位采购订单行，物料：" + task.getMatCode());
+                }
+                task.setOrderDetailId(matches.get(0).getOrderDetailId());
+            }
             // 查询采购收料单明细
             List<WmsPurchaseReceiptDetailEntity> wmsPurchaseReceiptDetailEntities = wmsPurchaseReceiptDetailMapper
                     .selectList(new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
@@ -363,6 +406,7 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
             wmsPurchaseReceiptDetailEntities.forEach(item -> {
                 WmsPurchaseReceiptBatchDetailEntity wmsPurchaseReceiptBatchDetailEntity = new WmsPurchaseReceiptBatchDetailEntity();
                 wmsPurchaseReceiptBatchDetailEntity.setBillId(wmsPurchase.getId());
+                wmsPurchaseReceiptBatchDetailEntity.setOrderDetailId(item.getOrderDetailId());
                 wmsPurchaseReceiptBatchDetailEntity.setMatBatch(item.getMatBatch());
                 wmsPurchaseReceiptBatchDetailEntity.setMatCode(item.getMatCode());
                 wmsPurchaseReceiptBatchDetailEntity.setMatName(item.getMatName());
@@ -428,10 +472,16 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         }
         Double qualityNum = Optional.ofNullable(body.getQualityNum()).orElse(0.0);
         // 更新单据明细的数量
-        WmsPurchaseReceiptDetailEntity billDetail = Optional.ofNullable(wmsPurchaseReceiptDetailMapper.selectOne(new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
-                        .eq(WmsPurchaseReceiptDetailEntity::getMatCode, body.getMatCode())
+        List<WmsPurchaseReceiptDetailEntity> matchedDetails = wmsPurchaseReceiptDetailMapper.selectList(
+                new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
                         .eq(WmsPurchaseReceiptDetailEntity::getBillId, wmsPurchaseReceipt.getId())
-                , false)).orElseThrow(() -> new CheckedException("采购收料单明细查找失败"));
+                        .eq(body.getOrderDetailId() != null, WmsPurchaseReceiptDetailEntity::getOrderDetailId,
+                                body.getOrderDetailId())
+                        .eq(WmsPurchaseReceiptDetailEntity::getMatCode, body.getMatCode()));
+        if (matchedDetails.size() != 1) {
+            throw new CheckedException("采购质检结果必须唯一定位采购订单明细，当前匹配数量：" + matchedDetails.size());
+        }
+        WmsPurchaseReceiptDetailEntity billDetail = matchedDetails.get(0);
         wmsPurchaseReceiptDetailMapper.update(new LambdaUpdateWrapper<WmsPurchaseReceiptDetailEntity>()
                 .set(InspectionTaskResultEnum.QUALIFIED.name().equals(body.getResult()) || InspectionTaskResultEnum.EXEMPTION.name().equals(body.getResult())
                         , WmsPurchaseReceiptDetailEntity::getInableNum, Optional.ofNullable(billDetail.getInableNum()).orElse(0d) + qualityNum)
@@ -443,6 +493,7 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         // 新增收料单收料明细
         WmsPurchaseReceiptBatchDetailEntity wmsPurchaseReceiptBatchDetailEntity = new WmsPurchaseReceiptBatchDetailEntity();
         wmsPurchaseReceiptBatchDetailEntity.setBillId(wmsPurchaseReceipt.getId());
+        wmsPurchaseReceiptBatchDetailEntity.setOrderDetailId(billDetail.getOrderDetailId());
         wmsPurchaseReceiptBatchDetailEntity.setMatBatch(body.getMatBatch());
         wmsPurchaseReceiptBatchDetailEntity.setMatCode(billDetail.getMatCode());
         wmsPurchaseReceiptBatchDetailEntity.setMatName(billDetail.getMatName());
@@ -499,13 +550,20 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
                 .eq(WmsPurchaseReceiptDetailEntity::getBillId, wmsPurchaseReceipt.getId())
         );
         for (WmsPurchaseReceiptBatchDetailEntity batchDetail : wmsPurchaseReceipt.getBatchDetails()) {
+            WmsPurchaseReceiptBatchDetailEntity persistedBatch = batchDetail.getId() == null ? null
+                    : batchDetailMapper.selectById(batchDetail.getId());
+            if (persistedBatch == null || !Objects.equals(persistedBatch.getBillId(), wmsPurchaseReceipt.getId())
+                    || persistedBatch.getOrderDetailId() == null) {
+                throw new CheckedException("采购入库通知明细缺少收料批次或采购订单行来源，不能生成不可追溯库存");
+            }
             WmsInNoticeDetailEntity noticeDetail = new WmsInNoticeDetailEntity();
-            BeanUtil.copyProperties(batchDetail, noticeDetail, "id");
+            BeanUtil.copyProperties(persistedBatch, noticeDetail, "id");
+            setPurchaseSource(noticeDetail, wmsPurchaseReceipt, persistedBatch);
             // 查找物料信息进行赋值
-            MdmMaterialEntity mat = matMap.get(batchDetail.getMatCode());
+            MdmMaterialEntity mat = matMap.get(persistedBatch.getMatCode());
             if (mat == null) {
-                mat = remoteMaterialService.getDetails(batchDetail.getMatCode()).getData();
-                matMap.put(batchDetail.getMatCode(), mat);
+                mat = remoteMaterialService.getDetails(persistedBatch.getMatCode()).getData();
+                matMap.put(persistedBatch.getMatCode(), mat);
             }
             if (mat == null) {
                 throw new CheckedException("未查找到物料信息，请维护物料");
@@ -523,7 +581,7 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
             noticeDetail.setSupplierCode(wmsPurchaseReceipt.getSupplierCode());
             noticeDetail.setSupplierName(wmsPurchaseReceipt.getSupplierName());
             // 数量
-            Double inNum = batchDetail.getQualityNum();
+            Double inNum = persistedBatch.getQualityNum();
             noticeDetail.setNoticeInNum(inNum);
             noticeDetail.setInNum(0d);
             noticeDetail.setNotInNum(inNum);
@@ -573,13 +631,19 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Boolean addMatNum(@NotNull Long billId, @NotNull String matCode, @NotNull String matBatch, @NotNull Double matNum) {
+    public Boolean addMatNum(@NotNull Long billId, Long orderDetailId, @NotNull String matCode,
+                             @NotNull String matBatch, @NotNull Double matNum) {
         // 更新收料明细数量
-        WmsPurchaseReceiptBatchDetailEntity batchDetailEntity = batchDetailMapper.selectOne(new LambdaQueryWrapper<WmsPurchaseReceiptBatchDetailEntity>()
-                        .eq(WmsPurchaseReceiptBatchDetailEntity::getMatCode, matCode)
-                        .eq(WmsPurchaseReceiptBatchDetailEntity::getMatBatch, matBatch)
+        List<WmsPurchaseReceiptBatchDetailEntity> batchMatches = batchDetailMapper.selectList(
+                new LambdaQueryWrapper<WmsPurchaseReceiptBatchDetailEntity>()
                         .eq(WmsPurchaseReceiptBatchDetailEntity::getBillId, billId)
-                , false);
+                        .eq(orderDetailId != null, WmsPurchaseReceiptBatchDetailEntity::getOrderDetailId, orderDetailId)
+                        .eq(WmsPurchaseReceiptBatchDetailEntity::getMatCode, matCode)
+                        .eq(WmsPurchaseReceiptBatchDetailEntity::getMatBatch, matBatch));
+        if (batchMatches.size() != 1) {
+            throw new CheckedException("采购入库必须唯一定位收料批次明细，当前匹配数量：" + batchMatches.size());
+        }
+        WmsPurchaseReceiptBatchDetailEntity batchDetailEntity = batchMatches.get(0);
         Double inedNum = Optional.ofNullable(batchDetailEntity.getInNum()).orElse(0d);
         Double inableNum = Optional.ofNullable(batchDetailEntity.getQualityNum()).orElse(0d);
         double inNum = inedNum + matNum;
@@ -603,10 +667,15 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
             updateById(byId);
         }
         // 更新单据明细数量
-        WmsPurchaseReceiptDetailEntity detailEntity = wmsPurchaseReceiptDetailMapper.selectOne(new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
-                        .eq(WmsPurchaseReceiptDetailEntity::getMatCode, matCode)
+        List<WmsPurchaseReceiptDetailEntity> detailMatches = wmsPurchaseReceiptDetailMapper.selectList(
+                new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
                         .eq(WmsPurchaseReceiptDetailEntity::getBillId, billId)
-                , false);
+                        .eq(WmsPurchaseReceiptDetailEntity::getOrderDetailId, batchDetailEntity.getOrderDetailId())
+                        .eq(WmsPurchaseReceiptDetailEntity::getMatCode, matCode));
+        if (detailMatches.size() != 1) {
+            throw new CheckedException("采购入库必须唯一定位采购订单明细，当前匹配数量：" + detailMatches.size());
+        }
+        WmsPurchaseReceiptDetailEntity detailEntity = detailMatches.get(0);
         Double allInedNum = Optional.ofNullable(detailEntity.getInNum()).orElse(0d);
         wmsPurchaseReceiptDetailMapper.update(new LambdaUpdateWrapper<WmsPurchaseReceiptDetailEntity>()
                 .set(WmsPurchaseReceiptDetailEntity::getInNum, allInedNum + matNum)
@@ -670,6 +739,7 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
             List<InspectionPurchaseCreateParam> body = pmsOrderDTO.getQmsDetails().stream().map(item -> {
                 InspectionPurchaseCreateParam inspectionPurchaseCreateParam = new InspectionPurchaseCreateParam();
                 BeanUtil.copyProperties(item, inspectionPurchaseCreateParam);
+                inspectionPurchaseCreateParam.setOrderDetailId(item.getOrderDetailId());
                 inspectionPurchaseCreateParam.setSupplierCode(pmsOrderDTO.getSupplierCode());
                 inspectionPurchaseCreateParam.setSupplierName(pmsOrderDTO.getSupplierName());
                 inspectionPurchaseCreateParam.setBatchNo(item.getMatBatch());
@@ -683,6 +753,7 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
             pmsOrderDTO.getWmsDetails().forEach(item -> {
                 WmsPurchaseReceiptBatchDetailEntity wmsPurchaseReceiptBatchDetailEntity = new WmsPurchaseReceiptBatchDetailEntity();
                 wmsPurchaseReceiptBatchDetailEntity.setBillId(entity.getId());
+                wmsPurchaseReceiptBatchDetailEntity.setOrderDetailId(item.getOrderDetailId());
                 wmsPurchaseReceiptBatchDetailEntity.setMatBatch(item.getMatBatch());
                 wmsPurchaseReceiptBatchDetailEntity.setMatCode(item.getMatCode());
                 wmsPurchaseReceiptBatchDetailEntity.setMatName(item.getMatName());
@@ -733,7 +804,8 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
     @Transactional(rollbackFor = Exception.class)
     public Boolean receive(PmsOrderPurchaseReceiptInspectionDTO pmsOrder) {
 
-        requireOpenOrder(pmsOrder.getPmsOrderNo(), pmsOrder.getFactoryCode(), pmsOrder.getSupplierCode());
+        PmsOrderEntity order = requireOpenOrder(pmsOrder.getPmsOrderNo(), pmsOrder.getFactoryCode(), pmsOrder.getSupplierCode());
+        assertReceiptCapacity(order, pmsOrder.getDetails(), null);
 
         MdmSupplierEntity mdmSupplierEntity = new MdmSupplierEntity();
         mdmSupplierEntity.setSupplierCode(pmsOrder.getSupplierCode());
@@ -816,6 +888,67 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
     }
 
     /**
+     * 在创建收料事实前按订单行锁定并校验有效未到货量。已受控撤回的数量、其他活动收料单
+     * 已占用的数量都不可再次收料；这也是行级采购变更不能被 WMS 旁路绕过的最终门禁。
+     */
+    private void assertReceiptCapacity(PmsOrderEntity order, List<?> submittedLines, Long excludeBillId) {
+        if (submittedLines == null || submittedLines.isEmpty()) throw new CheckedException("采购收料至少包含一条明细");
+        Map<Long, BigDecimal> requested = new LinkedHashMap<>();
+        for (Object value : submittedLines) {
+            Long detailId;
+            Double quantity;
+            if (value instanceof WmsPurchaseReceiptDetailEntity detail) {
+                detailId = detail.getOrderDetailId();
+                quantity = detail.getShouldNum();
+            } else if (value instanceof PmsOrderPurchaseReceiptInspectionDetailDTO detail) {
+                detailId = detail.getOrderDetailId();
+                quantity = detail.getShouldNum();
+            } else {
+                throw new CheckedException("不支持的采购收料明细类型");
+            }
+            if (detailId == null || quantity == null || quantity <= 0D)
+                throw new CheckedException("采购收料明细必须指定订单行和正数应收数量");
+            requested.merge(detailId, BigDecimal.valueOf(quantity), BigDecimal::add);
+        }
+        List<PmsOrderDetailEntity> orderLines = pmsOrderDetailMapper.selectList(
+                new LambdaQueryWrapper<PmsOrderDetailEntity>()
+                        .eq(PmsOrderDetailEntity::getPmsOrderId, order.getId())
+                        .in(PmsOrderDetailEntity::getId, requested.keySet())
+                        .orderByAsc(PmsOrderDetailEntity::getId).last("FOR UPDATE"));
+        if (orderLines.size() != requested.size())
+            throw new CheckedException("采购收料包含不存在或不属于当前订单的明细");
+
+        List<WmsPurchaseReceiptEntity> activeReceipts = baseMapper.selectList(
+                new LambdaQueryWrapper<WmsPurchaseReceiptEntity>()
+                        .eq(WmsPurchaseReceiptEntity::getPmsOrderNo, order.getPmsOrderNo())
+                        .ne(excludeBillId != null, WmsPurchaseReceiptEntity::getId, excludeBillId)
+                        .and(value -> value.isNull(WmsPurchaseReceiptEntity::getState)
+                                .or().ne(WmsPurchaseReceiptEntity::getState, PurchaseReceiptStateEnum.COMPLETED.getCode())));
+        Map<Long, BigDecimal> occupied = new HashMap<>();
+        if (!activeReceipts.isEmpty()) {
+            wmsPurchaseReceiptDetailMapper.selectList(new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
+                            .in(WmsPurchaseReceiptDetailEntity::getBillId,
+                                    activeReceipts.stream().map(WmsPurchaseReceiptEntity::getId).toList())
+                            .in(WmsPurchaseReceiptDetailEntity::getOrderDetailId, requested.keySet()))
+                    .forEach(value -> occupied.merge(value.getOrderDetailId(),
+                            BigDecimal.valueOf(Optional.ofNullable(value.getShouldNum()).orElse(0D)), BigDecimal::add));
+        }
+        for (PmsOrderDetailEntity line : orderLines) {
+            BigDecimal ordered = BigDecimal.valueOf(Optional.ofNullable(line.getOrderNum()).orElse(0D));
+            BigDecimal arrived = BigDecimal.valueOf(Optional.ofNullable(line.getArrivalNum()).orElse(0D));
+            BigDecimal cancelled = BigDecimal.valueOf(Optional.ofNullable(line.getCancelledNum()).orElse(0D));
+            BigDecimal available = ordered.subtract(arrived).subtract(cancelled)
+                    .subtract(occupied.getOrDefault(line.getId(), BigDecimal.ZERO));
+            BigDecimal currentRequest = requested.get(line.getId());
+            if (available.signum() < 0 || currentRequest.compareTo(available) > 0) {
+                throw new CheckedException("采购订单行" + line.getId() + "可收数量仅为"
+                        + available.max(BigDecimal.ZERO).stripTrailingZeros().toPlainString()
+                        + "，已到货、已撤回或活动收料占用数量不得重复收料");
+            }
+        }
+    }
+
+    /**
      * 根据id查询采购收料单
      *
      * @param id id
@@ -863,6 +996,7 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
             // 新增收料单收料明细
             WmsPurchaseReceiptBatchDetailEntity wmsPurchaseReceiptBatchDetailEntity = new WmsPurchaseReceiptBatchDetailEntity();
             wmsPurchaseReceiptBatchDetailEntity.setBillId(wmsPurchaseReceipt.getId());
+            wmsPurchaseReceiptBatchDetailEntity.setOrderDetailId(detail.getOrderDetailId());
             wmsPurchaseReceiptBatchDetailEntity.setMatBatch(detail.getMatBatch());
             wmsPurchaseReceiptBatchDetailEntity.setMatCode(detail.getMatCode());
             wmsPurchaseReceiptBatchDetailEntity.setMatName(detail.getMatName());
@@ -878,6 +1012,7 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
 
             WmsInNoticeDetailEntity noticeDetail = new WmsInNoticeDetailEntity();
             BeanUtil.copyProperties(wmsPurchaseReceiptBatchDetailEntity, noticeDetail, "id");
+            setPurchaseSource(noticeDetail, wmsPurchaseReceipt, wmsPurchaseReceiptBatchDetailEntity);
             // 查找物料信息进行赋值
             MdmMaterialEntity mat = matMap.get(detail.getMatCode());
             if (mat == null) {
@@ -937,5 +1072,33 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         }
 
         return Boolean.TRUE;
+    }
+
+    /**
+     * 将采购来源写入WMS通知明细，后续通过入库单、实时库存和流水原样传递。
+     */
+    private void setPurchaseSource(WmsInNoticeDetailEntity noticeDetail,
+                                   WmsPurchaseReceiptEntity receipt,
+                                   WmsPurchaseReceiptBatchDetailEntity batchDetail) {
+        if (receipt.getId() == null || batchDetail.getId() == null || batchDetail.getOrderDetailId() == null) {
+            throw new CheckedException("采购收料来源不完整，不能生成不可追溯的入库通知");
+        }
+
+        WmsPurchaseReceiptEntity persistedReceipt = Optional.ofNullable(baseMapper.selectById(receipt.getId()))
+                .orElseThrow(() -> new CheckedException("采购收料单不存在，不能生成入库通知"));
+        PmsOrderDetailEntity orderDetail = Optional.ofNullable(pmsOrderDetailMapper.selectById(batchDetail.getOrderDetailId()))
+                .orElseThrow(() -> new CheckedException("采购收料批次对应的采购订单行不存在"));
+        if (!Objects.equals(batchDetail.getBillId(), persistedReceipt.getId())
+                || StrUtil.isBlank(persistedReceipt.getPmsOrderNo())
+                || !Objects.equals(orderDetail.getOrderNo(), persistedReceipt.getPmsOrderNo())) {
+            throw new CheckedException("采购收料单、收料批次与采购订单行来源不一致，请先修复来源数据");
+        }
+
+        noticeDetail.setSourceOrderNo(persistedReceipt.getPmsOrderNo());
+        noticeDetail.setSourceOrderDetailId(batchDetail.getOrderDetailId());
+        noticeDetail.setSourceReceiptId(persistedReceipt.getId());
+        noticeDetail.setSourceReceiptDetailId(batchDetail.getId());
+        noticeDetail.setDocumentId(batchDetail.getId());
+        noticeDetail.setDocumentTable("mom_pms.wms_purchase_receipt_batch_detail");
     }
 }

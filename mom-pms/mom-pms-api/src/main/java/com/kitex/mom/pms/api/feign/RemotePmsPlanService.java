@@ -6,6 +6,8 @@ import com.kitex.mom.pms.dto.PmsPlanProcessBackDTO;
 import com.kitex.mom.pms.dto.PmsAgentSupplyEvidenceDTO;
 import com.kitex.mom.pms.dto.PmsAgentSupplyEvidenceQueryDTO;
 import com.kitex.mom.pms.dto.PmsPlanSupplyWithdrawalDTO;
+import com.kitex.mom.pms.dto.PmsOmsSupplyWithdrawalDTO;
+import com.kitex.mom.pms.dto.PmsOrderChangeDTO;
 import com.kitex.mom.pms.entity.PmsPlanEntity;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -52,5 +54,20 @@ public interface RemotePmsPlanService {
 
     @PostMapping("/pmsPlan/internal/supply-withdrawal")
     R<PmsPlanSupplyWithdrawalDTO.Receipt> withdrawSupplyPlan(@RequestBody PmsPlanSupplyWithdrawalDTO.Command command);
+
+    /** OMS订单变更预览精确采购订单行的可撤回事实。 */
+    @PostMapping("/pmsOrderChange/internal/oms-line-withdrawal-preview")
+    R<PmsOrderChangeDTO.Preview> previewOmsLineWithdrawal(
+            @RequestBody PmsOmsSupplyWithdrawalDTO.PreviewCommand command);
+
+    /** OMS级联案件幂等创建PMS撤回申请；申请仍须由采购角色异岗复核。 */
+    @PostMapping("/pmsOrderChange/internal/oms-line-withdrawal-submit")
+    R<PmsOmsSupplyWithdrawalDTO.Receipt> submitOmsLineWithdrawal(
+            @RequestBody PmsOmsSupplyWithdrawalDTO.SubmitCommand command);
+
+    /** 按OMS永久请求号查询采购撤回审批回执。 */
+    @GetMapping("/pmsOrderChange/internal/oms-line-withdrawal-receipt")
+    R<PmsOmsSupplyWithdrawalDTO.Receipt> getOmsLineWithdrawalReceipt(
+            @RequestParam("requestId") String requestId);
 
 }

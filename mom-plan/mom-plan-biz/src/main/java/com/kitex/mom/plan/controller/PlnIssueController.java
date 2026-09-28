@@ -32,7 +32,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeParseException;
 import java.util.List;
@@ -125,8 +124,8 @@ public class PlnIssueController {
     @Operation(summary = "主生产计划分页查询", description = "主生产计划分页查询")
     @GetMapping("/mesPlan/page")
     public R<Page<PlnIssueEntity>> getMesPlanPage(@ParameterObject SearchPage page,
-                                                   @RequestParam(value = "issueTime", required = false) String issueTime,
-                                                   @ParameterObject PlnIssueEntity plnIssueEntity) {
+                                                  @RequestParam(value = "issueTime", required = false) String issueTime,
+                                                  @ParameterObject PlnIssueEntity plnIssueEntity) {
         if (StrUtil.isNotBlank(issueTime) && plnIssueEntity.getIssueTime() == null) {
             try {
                 plnIssueEntity.setIssueTime(LocalDate.parse(issueTime).atStartOfDay());

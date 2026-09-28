@@ -11,25 +11,16 @@ import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
-import com.kitex.mom.mes.dto.MesTaskReportFeedVO;
-import com.kitex.mom.mes.dto.MesDeviceGateDecision;
-import com.kitex.mom.mes.dto.MesQualityGateDecision;
-import com.kitex.mom.mes.dto.MesTaskReportResult;
-import com.kitex.mom.mes.dto.MesTaskReportUnqualifiedVO;
-import com.kitex.mom.mes.dto.MesTaskReportVO;
+import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.*;
-import com.kitex.mom.mes.enums.MesProduceTaskStatusEnum;
-import com.kitex.mom.mes.enums.MesSourceQuantityKind;
-import com.kitex.mom.mes.enums.MesDeviceGateStageEnum;
-import com.kitex.mom.mes.enums.ReportModeEnum;
-import com.kitex.mom.mes.enums.ReportRecordTypeEnum;
-import com.kitex.mom.mes.enums.ReportStatusEnum;
-import com.kitex.mom.mes.enums.QualityQuantityStatusEnum;
-import com.kitex.mom.mes.enums.WorksiteTypeEnum;
+import com.kitex.mom.mes.enums.*;
 import com.kitex.mom.mes.event.FeedRecordSaveEvent;
+import com.kitex.mom.mes.extension.MesReportExtensionChain;
+import com.kitex.mom.mes.extension.MesReportExtensionContext;
 import com.kitex.mom.mes.mapper.MesTaskReportMapper;
 import com.kitex.mom.mes.process.ProcessOperationFactory;
 import com.kitex.mom.mes.service.*;
+import com.kitex.mom.mes.support.MesQualityEvidenceSupport;
 import lombok.AllArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
@@ -68,6 +59,11 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
     private final MesAndonProductionReleaseService andonProductionReleaseService;
     private final MesRepairProductionReleaseService repairProductionReleaseService;
     private final MesApsSourceQuantityService sourceQuantityService;
+    private final MesStationPassService stationPassService;
+    private final MesExecutionTemplateService executionTemplateService;
+    private final MesIdentifierMappingService identifierMappingService;
+    private final MesReportExtensionChain reportExtensionChain;
+    private final MesActualFactoryAccessService factoryAccess;
 
 
     /**
@@ -78,20 +74,35 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void report(MesTaskReportVO params) {
-        reportInternal(params, false);
+        reportInternal(params, MesReportChannelEnum.STATION);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void reportMobile(MesTaskReportVO params) {
+        reportInternal(params, MesReportChannelEnum.MOBILE);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void reportIntegration(MesTaskReportVO params) {
+        reportInternal(params, MesReportChannelEnum.INTEGRATION);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void reportAuto(MesTaskReportVO params) {
-        reportInternal(params, true);
+        reportInternal(params, MesReportChannelEnum.DEVICE);
     }
 
-    private void reportInternal(MesTaskReportVO params, boolean automatic) {
+    private void reportInternal(MesTaskReportVO params, MesReportChannelEnum channel) {
+        boolean automatic = channel.isAutomatic();
         if (params == null || StrUtil.isBlank(params.getArrangeCode())) {
             throw new CheckedException("派工单号不能为空");
         }
+        String factory = factoryAccess.require("write");
         MesTaskArrangeEntity arrange = arrangeService.getOne(new LambdaQueryWrapper<MesTaskArrangeEntity>()
+                .eq(MesTaskArrangeEntity::getFactoryCode, factory)
                 .eq(MesTaskArrangeEntity::getCode, params.getArrangeCode()).last("FOR UPDATE"));
 
         if (Objects.isNull(arrange)) {
@@ -102,6 +113,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         }
 
         MesTaskEntity task = taskService.getOne(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getFactoryCode, factory)
                 .eq(MesTaskEntity::getCode, arrange.getTaskCode()).last("FOR UPDATE"));
         if (Objects.isNull(task)) {
             throw new CheckedException("未找到派工任务对应的生产工单");
@@ -113,28 +125,34 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
                 throw new CheckedException("设备自动报工必须提供来源事件号和设备编码");
             }
             MesTaskReportEntity sourceOwner = this.getOne(new LambdaQueryWrapper<MesTaskReportEntity>()
+                    .eq(MesTaskReportEntity::getFactoryCode, factory)
                     .eq(MesTaskReportEntity::getSourceEventId, params.getSourceEventId()), false);
             if (sourceOwner != null && !Objects.equals(sourceOwner.getRequestId(), params.getRequestId())) {
                 throw new CheckedException("设备来源事件已生成其他报工记录，禁止重复记产");
             }
         }
         MesTaskReportEntity existingReport = this.getOne(new LambdaQueryWrapper<MesTaskReportEntity>()
+                .eq(MesTaskReportEntity::getFactoryCode, factory)
                 .eq(MesTaskReportEntity::getRequestId, params.getRequestId()));
         if (existingReport != null) {
+            String existingSubmitted = StrUtil.blankToDefault(existingReport.getSubmittedIdentifier(),
+                    existingReport.getTransferCode());
             if (Objects.equals(existingReport.getArrangeCode(), arrange.getCode())
                     && existingReport.getReportNum() != null
                     && params.getPassNum() != null
                     && existingReport.getReportNum().compareTo(params.getPassNum()) == 0
-                    && Objects.equals(StrUtil.nullToEmpty(existingReport.getTransferCode()).trim(),
+                    && Objects.equals(StrUtil.nullToEmpty(existingSubmitted).trim(),
                     StrUtil.nullToEmpty(params.getTransferCode()).trim())) {
                 return;
             }
             throw new CheckedException("报工请求号已被其他业务使用，请刷新后重新提交");
         }
 
-        ReportModeEnum reportMode = ReportModeEnum.fromCode(arrange.getRouteType());
+        ReportModeEnum reportMode = ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType());
+        identifierMappingService.resolve(arrange, task, reportMode, params);
+        executionTemplateService.validateReport(arrange, params, channel);
         reworkMaterialPlans.assertReady(task);
-        prepareReportContext(params, arrange, task, reportMode, automatic);
+        prepareReportContext(params, arrange, task, reportMode, channel);
         changePointHandleService.assertReportAllowed(arrange);
         andonProductionReleaseService.assertAllowed(arrange, automatic ? "设备自动报工" : "人工报工");
         repairProductionReleaseService.assertAllowed(arrange, automatic ? "设备自动报工" : "人工报工");
@@ -155,6 +173,12 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         params.setDeviceGateMessage(deviceDecision.getMessage());
         params.setDeviceGateCheckTime(deviceDecision.getCheckTime());
 
+        MesReportExtensionContext extensionContext = extensionContext(params, arrange, task, reportMode, channel);
+        params.setExtensionEvidenceSnapshot(reportExtensionChain.validate(extensionContext));
+
+        // 人员、实际工位、工装、条码物料、重复过站和逐标识前置工序统一在报工事务内校验。
+        stationPassService.validate(params, arrange, task, reportMode, channel);
+
         MesQualityGateDecision gate;
         if ("REWORK".equals(task.getResourceType())) {
             // 返工产出只允许进入隔离库存，必须由返工复检结论按数量解除隔离。
@@ -173,9 +197,14 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
                 : ("WARN".equals(gate.getGateMode()) && gate.getMessage().startsWith("质量门预警")
                 ? "WARN" : ("NONE".equals(gate.getGateMode()) ? "NONE" : "PASSED")));
         params.setQualityGateMessage(gate.getMessage());
+        MesQualityEvidenceSupport.Evidence qualityEvidence = MesQualityEvidenceSupport.capture(gate);
+        params.setQualityTaskIds(qualityEvidence.taskIdsJson());
+        params.setQualityEvidenceFingerprint(qualityEvidence.fingerprint());
+        params.setQualityEvidenceSnapshot(qualityEvidence.snapshotJson());
         boolean qualityReleased = Boolean.TRUE.equals(gate.getPassed());
         params.setQualityQuantityStatus(qualityReleased
-                ? ("NONE".equals(gate.getGateMode()) ? QualityQuantityStatusEnum.NOT_REQUIRED.name()
+                ? ("NONE".equals(gate.getGateMode()) || gate.getItems() == null || gate.getItems().isEmpty()
+                ? QualityQuantityStatusEnum.NOT_REQUIRED.name()
                 : QualityQuantityStatusEnum.RELEASED.name())
                 : QualityQuantityStatusEnum.PENDING.name());
         params.setQualityReleasedNum(qualityReleased ? params.getPassNum() : BigDecimal.ZERO);
@@ -188,7 +217,8 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
             throw new CheckedException("产出物料不可用，报工失败");
         }
         params.setMatUnit(mat.getBasicUnit());
-        if (StrUtil.isBlank(params.getMatUnit())) throw new CheckedException("产出物料缺少基本单位，不能生成无单位报工事实");
+        if (StrUtil.isBlank(params.getMatUnit()))
+            throw new CheckedException("产出物料缺少基本单位，不能生成无单位报工事实");
 
         // 当前的派工任务
         params.setTaskArrange(arrange);
@@ -199,6 +229,8 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         report.setReportUnit(params.getMatUnit());
         report.setReportMode(reportMode.getCode());
         this.save(report);
+        identifierMappingService.recordSuccessfulUse(report, params);
+        reportExtensionChain.afterPersist(extensionContext, report);
         processOperationFactory.applyInventory(reportMode.getCode(), params);
         // 保存操作记录
         MesTaskReportRecordEntity record = new MesTaskReportRecordEntity();
@@ -227,6 +259,22 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
 
         // 更新生产工单状态
         updateTask(arrange, task, report);
+
+        // 成功过站履历必须和报工、物料消耗、产出及数量回写原子提交。
+        stationPassService.recordAccepted(params, arrange, task, reportMode, report);
+    }
+
+    private MesReportExtensionContext extensionContext(MesTaskReportVO params, MesTaskArrangeEntity arrange,
+                                                       MesTaskEntity task, ReportModeEnum mode,
+                                                       MesReportChannelEnum channel) {
+        return MesReportExtensionContext.builder()
+                .requestId(params.getRequestId()).factoryCode(arrange.getFactoryCode())
+                .taskCode(task.getCode()).arrangeCode(arrange.getCode())
+                .produceTaskCode(arrange.getProduceTaskCode()).materialCode(arrange.getMatCode())
+                .routeCode(arrange.getRouteCode()).worksiteCode(params.getWorksiteCode())
+                .deviceCode(params.getDeviceCode()).canonicalIdentifier(params.getTransferCode())
+                .submittedIdentifier(params.getSubmittedIdentifier()).identifierType(params.getIdentifierType())
+                .quantity(params.getPassNum()).reportMode(mode).channel(channel).build();
     }
 
     private void prepareRequestId(MesTaskReportVO params) {
@@ -235,6 +283,9 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
 
     private String normalizeRequestId(String requestId) {
         String normalized = StrUtil.isBlank(requestId) ? UUID.randomUUID().toString() : requestId.trim();
+        if (normalized.length() < 8) {
+            throw new CheckedException("业务请求号长度不能少于8位");
+        }
         if (normalized.length() > 64) {
             throw new CheckedException("业务请求号长度不能超过64位");
         }
@@ -245,29 +296,28 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
      * 使用数据库中的工单/派工数据覆盖前端上下文字段，并执行报工通用控制。
      */
     private void prepareReportContext(MesTaskReportVO params, MesTaskArrangeEntity arrange,
-                                      MesTaskEntity task, ReportModeEnum reportMode, boolean automatic) {
+                                      MesTaskEntity task, ReportModeEnum reportMode,
+                                      MesReportChannelEnum channel) {
+        boolean automatic = channel.isAutomatic();
         if (params.getPassNum() == null || params.getPassNum().compareTo(BigDecimal.ZERO) <= 0) {
             throw new CheckedException("合格报工数量必须大于0");
         }
 
         BigDecimal completed = Objects.requireNonNullElse(arrange.getCompleteNum(), BigDecimal.ZERO);
-        if (arrange.getNoticeNum() != null
-                && completed.add(params.getPassNum()).compareTo(arrange.getNoticeNum()) > 0) {
-            throw new CheckedException(String.format("报工后数量[%s]超过派工数量[%s]",
-                    completed.add(params.getPassNum()), arrange.getNoticeNum()));
-        }
-
         if (reportMode.isIdentifierRequired()) {
             if (StrUtil.isBlank(params.getTransferCode())) {
                 throw new CheckedException(reportMode.getName() + "必须提供条码、流转卡或容器码");
             }
-            boolean duplicated = this.count(new LambdaQueryWrapper<MesTaskReportEntity>()
-                    .eq(MesTaskReportEntity::getProduceTaskCode, arrange.getProduceTaskCode())
-                    .eq(MesTaskReportEntity::getTransferCode, params.getTransferCode().trim())
-                    .and(item -> item.isNull(MesTaskReportEntity::getStatus)
-                            .or().ne(MesTaskReportEntity::getStatus, ReportStatusEnum.REVERSED.name()))) > 0;
-            if (duplicated) {
-                throw new CheckedException("该标识已在当前工序报工，请勿重复提交");
+            // 一物一码和流转卡由统一过站防错门记录拒绝原因；包装模式仍在这里防止容器复用。
+            if (reportMode.isPackaging()) {
+                boolean duplicated = this.count(new LambdaQueryWrapper<MesTaskReportEntity>()
+                        .eq(MesTaskReportEntity::getProduceTaskCode, arrange.getProduceTaskCode())
+                        .eq(MesTaskReportEntity::getTransferCode, params.getTransferCode().trim())
+                        .and(item -> item.isNull(MesTaskReportEntity::getStatus)
+                                .or().ne(MesTaskReportEntity::getStatus, ReportStatusEnum.REVERSED.name()))) > 0;
+                if (duplicated) {
+                    throw new CheckedException("该包装标识已在当前工序报工，请勿重复提交");
+                }
             }
             params.setTransferCode(params.getTransferCode().trim());
         }
@@ -295,7 +345,11 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
             }
             params.setManualOverrideReason(params.getManualOverrideReason().trim());
         }
-        params.setType(automatic ? WorksiteTypeEnum.AUTO.name() : WorksiteTypeEnum.MANUAL.name());
+        params.setType(switch (channel) {
+            case DEVICE -> WorksiteTypeEnum.AUTO.name();
+            case INTEGRATION -> "API";
+            default -> WorksiteTypeEnum.MANUAL.name();
+        });
 
         if (reportMode == ReportModeEnum.PACKAGE_ONE_CODE) {
             if (params.getPassNum().compareTo(BigDecimal.ONE) != 0) {
@@ -419,7 +473,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
             throw new CheckedException("生产任务未在进行中，请先对任务开工");
         }
 
-        ReportModeEnum reportMode = ReportModeEnum.fromCode(arrange.getRouteType());
+        ReportModeEnum reportMode = ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType());
         if ((reportMode == ReportModeEnum.ONE_CODE
                 || reportMode == ReportModeEnum.PACKAGE_ONE_CODE
                 || reportMode == ReportModeEnum.TRANSFER_CARD)

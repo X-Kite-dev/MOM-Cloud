@@ -11,15 +11,15 @@ import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.wms.dto.WmsInBillDetailQueryDTO;
 import com.kitex.mom.wms.dto.WmsSalesShipmentCorrectionCommand;
-import com.kitex.mom.wms.entity.WmsOutBillEntity;
-import com.kitex.mom.wms.entity.WmsSalesShipmentCorrectionEntity;
-import com.kitex.mom.wms.entity.WmsSalesShipmentCorrectionDetailEntity;
 import com.kitex.mom.wms.entity.WmsOmsShipmentCorrectionOutboxEntity;
+import com.kitex.mom.wms.entity.WmsOutBillEntity;
+import com.kitex.mom.wms.entity.WmsSalesShipmentCorrectionDetailEntity;
+import com.kitex.mom.wms.entity.WmsSalesShipmentCorrectionEntity;
 import com.kitex.mom.wms.enums.OutBillTypeEnum;
+import com.kitex.mom.wms.service.impl.WmsOmsShipmentCorrectionOutboxService;
+import com.kitex.mom.wms.service.impl.WmsSalesShipmentCorrectionService;
 import com.kitex.mom.wms.service.outBill.WmsOutBillFactory;
 import com.kitex.mom.wms.service.outBill.WmsOutBillHandler;
-import com.kitex.mom.wms.service.impl.WmsSalesShipmentCorrectionService;
-import com.kitex.mom.wms.service.impl.WmsOmsShipmentCorrectionOutboxService;
 import com.kitex.mom.wms.vo.WmsOutBillDetailExcelVO;
 import com.kitex.mom.wms.vo.WmsOutBillExcelVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -82,7 +82,7 @@ public class WmsSalesOutBillController {
     @PreAuthorize("@pms.hasPermission('wms_salesShipmentCorrection_apply')")
     @SysLog("重新提交销售发运记账纠错")
     public R<WmsSalesShipmentCorrectionEntity> resubmitCorrection(@PathVariable Long id,
-            @RequestBody WmsSalesShipmentCorrectionCommand command) {
+                                                                  @RequestBody WmsSalesShipmentCorrectionCommand command) {
         return R.ok(shipmentCorrectionService.resubmit(id, command));
     }
 
@@ -97,7 +97,7 @@ public class WmsSalesOutBillController {
     @PreAuthorize("@pms.hasPermission('wms_salesShipmentCorrection_review')")
     @SysLog("驳回销售发运记账纠错")
     public R<WmsSalesShipmentCorrectionEntity> rejectCorrection(@PathVariable Long id,
-            @RequestBody WmsSalesShipmentCorrectionCommand command) {
+                                                                @RequestBody WmsSalesShipmentCorrectionCommand command) {
         return R.ok(shipmentCorrectionService.reject(id, command));
     }
 

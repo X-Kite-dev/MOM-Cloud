@@ -16,9 +16,9 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -140,7 +140,7 @@ public class MdmCalendarController {
             @RequestParam("end") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
         LambdaQueryWrapper<MdmCalendarEntity> wrapper = Wrappers.lambdaQuery();
         wrapper.between(MdmCalendarEntity::getTime, start, end)
-               .orderByAsc(MdmCalendarEntity::getTime);
+                .orderByAsc(MdmCalendarEntity::getTime);
         return R.ok(mdmCalendarService.list(wrapper));
     }
 }

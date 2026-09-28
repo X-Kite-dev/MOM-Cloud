@@ -5,6 +5,7 @@ import cn.afterturn.easypoi.excel.entity.TemplateExportParams;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -14,10 +15,11 @@ import com.kitex.common.query.enums.CommonQuery;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
-import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
 import com.kitex.mom.mdm.entity.MdmMaterialAuthorizationEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialAuthorizationService;
+import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
+import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
+import com.kitex.mom.mes.dto.MesTaskReceiveRequestSigner;
 import com.kitex.mom.pms.api.feign.RemotePurchaseReceiptService;
 import com.kitex.mom.pms.dto.WmsPurchaseReceiptSetQualifiedNumDTO;
 import com.kitex.mom.qms.dto.ReportListRespDTO;
@@ -50,7 +52,6 @@ import java.time.LocalTime;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import cn.hutool.json.JSONUtil;
 
 /**
  * 来料质检
@@ -120,7 +121,8 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
         }
 
         // 创建质检任务
-        val task = new QmsInspectionPurchaseTaskEntity().setBatchNo(createParam.getBatchNo())
+        val task = new QmsInspectionPurchaseTaskEntity().setOrderDetailId(createParam.getOrderDetailId())
+                .setBatchNo(createParam.getBatchNo())
                 .setTaskCode(createParam.getNoticeId())
                 .setMatCode(createParam.getMatCode()).setMatName(createParam.getMatName()).setMatSpec(createParam.getMatSpec())
                 .setMatProduceDate(createParam.getMatProduceDate()).setSupplierCode(createParam.getSupplierCode())
@@ -763,6 +765,7 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
     private void pmsReceiptHandler(QmsInspectionPurchaseTaskEntity task, Integer receiptNum) {
         // 如果不合格 入不合格品管理
         WmsPurchaseReceiptSetQualifiedNumDTO receipt = new WmsPurchaseReceiptSetQualifiedNumDTO();
+        receipt.setOrderDetailId(task.getOrderDetailId());
         receipt.setMatBatch(task.getBatchNo());
         receipt.setMatCode(task.getMatCode());
         receipt.setMatName(task.getMatName());
@@ -831,6 +834,7 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
     public Map<String, Long> getStatusCount(InspectionPurchaseTaskReq param) {
         QueryWrapper<QmsInspectionPurchaseTaskEntity> autoQueryWrapper = new QueryWrapper<>();
         autoQueryWrapper.lambda()
+                .eq(param.getTaskId() != null, QmsInspectionPurchaseTaskEntity::getId, param.getTaskId())
                 .like(StrUtil.isNotBlank(param.getMatCode()), QmsInspectionPurchaseTaskEntity::getMatCode, param.getMatCode())
                 .like(StrUtil.isNotBlank(param.getMatName()), QmsInspectionPurchaseTaskEntity::getMatName, param.getMatName())
                 .like(StrUtil.isNotBlank(param.getSupplierCode()), QmsInspectionPurchaseTaskEntity::getSupplierCode,
@@ -856,6 +860,7 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
                                                       CommonQuery commonQuery) {
         QueryWrapper<QmsInspectionPurchaseTaskEntity> autoQueryWrapper = new QueryWrapper<>();
         autoQueryWrapper.lambda()
+                .eq(param.getTaskId() != null, QmsInspectionPurchaseTaskEntity::getId, param.getTaskId())
                 .like(StrUtil.isNotBlank(param.getMatCode()), QmsInspectionPurchaseTaskEntity::getMatCode, param.getMatCode())
                 .like(StrUtil.isNotBlank(param.getMatName()), QmsInspectionPurchaseTaskEntity::getMatName, param.getMatName())
                 .like(StrUtil.isNotBlank(param.getMatSpec()), QmsInspectionPurchaseTaskEntity::getMatSpec, param.getMatSpec())
@@ -1075,8 +1080,14 @@ public class InspectionPurchaseTaskServiceImpl extends ServiceImpl<QmsInspection
         dto.setResourceType(HandleResultEnum.REWORK.name());
         dto.setResourceId(task.getId());
         dto.setType("PART");
+        dto.setFactoryCode(task.getFactoryCode());
+        MesTaskReceiveRequestSigner.seal(dto, "QMS_PURCHASE_REWORK:" + record.getId());
         try {
-            remoteMesTaskService.add(dto);
+            var response = remoteMesTaskService.add(dto);
+            if (response == null || !response.isOk() || response.getData() == null
+                    || !Objects.equals(dto.getSourceRequestId(), response.getData().getRequestId())) {
+                throw new RuntimeException("MES未返回可核验的返工工单接收回执");
+            }
 
             record.setStatus(Boolean.TRUE);
             handleRecordService.updateById(record);

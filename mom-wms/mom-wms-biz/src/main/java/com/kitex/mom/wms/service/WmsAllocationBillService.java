@@ -31,11 +31,15 @@ public interface WmsAllocationBillService extends IService<WmsAllocationBillEnti
 
     Boolean cancel(WmsAllocationCancelDTO command);
 
-    /** 读取跨仓可调库存并按需求顺序分配，绝不在建议阶段锁定或修改库存。 */
+    /**
+     * 读取跨仓可调库存并按需求顺序分配，绝不在建议阶段锁定或修改库存。
+     */
     List<WmsCrossWarehouseTransferDTO.Recommendation> transferRecommendations(
             WmsCrossWarehouseTransferDTO.Query query);
 
-    /** 执行已审批的Agent调拨命令；执行前重新锁库并复核安全库存、预留、质量和在途。 */
+    /**
+     * 执行已审批的Agent调拨命令；执行前重新锁库并复核安全库存、预留、质量和在途。
+     */
     WmsCrossWarehouseTransferDTO.Receipt executeAgentTransfer(
             WmsCrossWarehouseTransferDTO.AgentCommand command);
 

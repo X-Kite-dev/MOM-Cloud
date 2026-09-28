@@ -10,20 +10,9 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.common.security.annotation.Inner;
+import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.PlanMatMrpEntity;
 import com.kitex.mom.plan.entity.PlanMrpInventoryPeggingEntity;
-import com.kitex.mom.plan.dto.PlanMatSubstituteDecisionDTO;
-import com.kitex.mom.plan.dto.PlanMatMrpReconcileEvidenceDTO;
-import com.kitex.mom.plan.dto.PlanMatMrpReconcileQueryDTO;
-import com.kitex.mom.plan.dto.PlanMatReservationReallocateDTO;
-import com.kitex.mom.plan.dto.PlanMrpShortageAnalysisDTO;
-import com.kitex.mom.plan.dto.PlanMrpShortageQueryDTO;
-import com.kitex.mom.plan.dto.PlanAgentSubstituteDecisionDTO;
-import com.kitex.mom.plan.dto.PlanAgentTransferDecisionDTO;
-import com.kitex.mom.plan.dto.PlanAgentTransferReceiptDTO;
-import com.kitex.mom.plan.dto.PlanAgentPurchaseOrderDTO;
-import com.kitex.mom.plan.dto.PlanAgentPurchaseReceiptDTO;
-import com.kitex.mom.plan.dto.PlanAgentPurchaseRejectionDTO;
 import com.kitex.mom.plan.service.PlanMatMrpService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -67,6 +56,7 @@ public class PlanMatMrpController {
     public R getPlanMatMrpPage(@ParameterObject SearchPage page, @ParameterObject PlanMatMrpEntity planMatMrp) {
         QueryWrapper<PlanMatMrpEntity> wrapper = Wrappers.query();
         wrapper.lambda()
+                .eq(Objects.nonNull(planMatMrp.getId()), PlanMatMrpEntity::getId, planMatMrp.getId())
                 .like(StrUtil.isNotBlank(planMatMrp.getPlanDemandNo()), PlanMatMrpEntity::getPlanDemandNo, planMatMrp.getPlanDemandNo())
                 .like(StrUtil.isNotBlank(planMatMrp.getSaleOrderCode()), PlanMatMrpEntity::getSaleOrderCode, planMatMrp.getSaleOrderCode())
                 .like(StrUtil.isNotBlank(planMatMrp.getMatCode()), PlanMatMrpEntity::getMatCode, planMatMrp.getMatCode())
@@ -93,6 +83,7 @@ public class PlanMatMrpController {
     public R getCount(@ParameterObject PlanMatMrpEntity planMatMrp) {
         QueryWrapper<PlanMatMrpEntity> wrapper = Wrappers.query();
         wrapper.lambda().select(PlanMatMrpEntity::getStatus)
+                .eq(Objects.nonNull(planMatMrp.getId()), PlanMatMrpEntity::getId, planMatMrp.getId())
                 .like(StrUtil.isNotBlank(planMatMrp.getPlanDemandNo()), PlanMatMrpEntity::getPlanDemandNo, planMatMrp.getPlanDemandNo())
                 .like(StrUtil.isNotBlank(planMatMrp.getSaleOrderCode()), PlanMatMrpEntity::getSaleOrderCode, planMatMrp.getSaleOrderCode())
                 .like(StrUtil.isNotBlank(planMatMrp.getMatCode()), PlanMatMrpEntity::getMatCode, planMatMrp.getMatCode())

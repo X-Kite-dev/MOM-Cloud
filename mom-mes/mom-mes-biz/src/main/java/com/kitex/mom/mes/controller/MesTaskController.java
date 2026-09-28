@@ -48,9 +48,8 @@ public class MesTaskController {
 
     @Operation(summary = "生产工单接收", description = "生产工单接收")
     @PostMapping("/add")
-    public R<Void> add(@RequestBody MesTaskReceiveDTO receive) {
-        service.add(receive);
-        return R.ok();
+    public R<MesTaskIssueReceiptDTO> add(@RequestBody MesTaskReceiveDTO receive) {
+        return R.ok(service.add(receive));
     }
 
     @Operation(summary = "接收QMS返工工单", description = "按原工单冻结BOM和指定返工工序创建可执行返工工单，永久幂等")
@@ -91,7 +90,7 @@ public class MesTaskController {
     }
 
     @Operation(summary = "内部开工前计划撤回",
-            description = "仅允许APS来源完整、派工未接收且无现场执行事实的独占MES工单关闭；合批和历史来源故障关闭")
+            description = "仅允许APS来源完整且无现场执行事实的独占MES工单关闭；覆盖待接收及已接收未开工并释放资源，合批和历史来源故障关闭")
     @Inner
     @PostMapping("/internal/plan-withdraw")
     public R<MesPlanWithdrawalDTO.Receipt> withdrawPlan(@RequestBody MesPlanWithdrawalDTO.Command command) {
@@ -102,7 +101,7 @@ public class MesTaskController {
             description = "按MES请求号返回本次实际归集到各PLAN计划的数量增量，供QMS等事实源精确核对回执")
     @GetMapping("/internal/source-quantity-mapping")
     public R<MesSourceQuantityMappingDTO> sourceQuantityMapping(@RequestParam("requestId") String requestId,
-                                                                 @RequestParam("factoryCode") String factoryCode) {
+                                                                @RequestParam("factoryCode") String factoryCode) {
         return R.ok(service.sourceQuantityMapping(requestId, factoryCode));
     }
 
@@ -161,6 +160,13 @@ public class MesTaskController {
     @PreAuthorize("@pms.hasPermission('mesTask:update')")
     public R<Boolean> inWms(@RequestBody MesTaskInWmsDTO mesTaskInWmsDTO) {
         return R.ok(service.inWms(mesTaskInWmsDTO));
+    }
+
+    @Operation(summary = "预览成品入库报工来源", description = "按末工序有效报工和质量可用量计算FIFO来源")
+    @PostMapping("/inWms/source-preview")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
+    public R<MesTaskInWmsSourceDTO> previewInWmsSource(@RequestBody MesTaskInWmsDTO mesTaskInWmsDTO) {
+        return R.ok(service.previewInWmsSource(mesTaskInWmsDTO));
     }
 
     /**

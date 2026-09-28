@@ -3,12 +3,12 @@ package com.kitex.mom.qms.service;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.common.query.enums.CommonQuery;
+import com.kitex.mom.qms.dto.QmsProcedureSourceWithdrawalDTO;
 import com.kitex.mom.qms.dto.ReportListRespDTO;
 import com.kitex.mom.qms.dto.inspection.InspectionAppendParam;
 import com.kitex.mom.qms.dto.inspection.InspectionCheckResultBatchParam;
 import com.kitex.mom.qms.dto.inspection.InspectionCheckResultParam;
 import com.kitex.mom.qms.dto.inspection.InspectionProcedureCreateParam;
-import com.kitex.mom.qms.dto.QmsProcedureSourceWithdrawalDTO;
 import com.kitex.mom.qms.dto.req.InspectionProcedureTaskReq;
 import com.kitex.mom.qms.dto.resp.*;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureTaskDetailEntity;
@@ -53,7 +53,9 @@ public interface InspectionProcedureTaskService extends IService<QmsInspectionPr
      */
     void canceled(Long taskId, String reason);
 
-    /** MES来源计划撤回时，按精确来源和冻结证据幂等作废未开始的工序质检任务。 */
+    /**
+     * MES来源计划撤回时，按精确来源和冻结证据幂等作废未开始的工序质检任务。
+     */
     QmsProcedureSourceWithdrawalDTO.Receipt withdrawByMesSource(
             QmsProcedureSourceWithdrawalDTO.Command command);
 

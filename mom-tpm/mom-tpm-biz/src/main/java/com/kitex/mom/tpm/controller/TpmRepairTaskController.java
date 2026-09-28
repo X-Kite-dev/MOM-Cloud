@@ -14,7 +14,6 @@ import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.tpm.entity.TpmRepairTaskEntity;
 import com.kitex.mom.tpm.entity.TpmSparePartsApplicationEntity;
-import com.kitex.mom.tpm.enums.RepairStateEnum;
 import com.kitex.mom.tpm.enums.RepairTaskTypeEnum;
 import com.kitex.mom.tpm.service.TpmRepairTaskService;
 import com.kitex.mom.tpm.service.TpmSparePartsApplicationService;

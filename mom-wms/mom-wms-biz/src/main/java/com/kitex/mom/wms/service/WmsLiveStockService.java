@@ -10,8 +10,8 @@ import com.kitex.mom.wms.dto.WmsLiveStockDynamicGroupDTO;
 import com.kitex.mom.wms.dto.WmsLiveStockQueryDTO;
 import com.kitex.mom.wms.dto.WmsLiveStockQuerySumDTO;
 import com.kitex.mom.wms.dto.app.WmsLiveStockMoveDTO;
-import com.kitex.mom.wms.entity.WmsLiveStockEntity;
 import com.kitex.mom.wms.entity.WmsInoutFlowEntity;
+import com.kitex.mom.wms.entity.WmsLiveStockEntity;
 import com.kitex.mom.wms.entity.WmsOutBillDetailEntity;
 import com.kitex.mom.wms.vo.WmsLiveStockByMaterialExcelVO;
 import com.kitex.mom.wms.vo.WmsLiveStockBySupplierExcelVO;
@@ -76,17 +76,25 @@ public interface WmsLiveStockService extends IService<WmsLiveStockEntity> {
      */
     Boolean billStockMove(WmsLiveStockMoveDTO wmsLiveStockMoveDTO);
 
-    /** 发起调拨时按库存行加锁、保护生产预留并扣减源仓，返回被转出的权威属性快照。 */
+    /**
+     * 发起调拨时按库存行加锁、保护生产预留并扣减源仓，返回被转出的权威属性快照。
+     */
     WmsLiveStockEntity transferOut(Long stockId, Double quantity, String expectedWarehouseCode);
 
-    /** 按发起流水冻结的批次、供应商和质量属性写入接收仓或取消返还仓。 */
+    /**
+     * 按发起流水冻结的批次、供应商和质量属性写入接收仓或取消返还仓。
+     */
     void transferIn(WmsInoutFlowEntity sourceFlow, String warehouseCode, String warehouseName,
                     String siteCode, String siteName, String containerCode);
 
-    /** 按不可变销售发运证据恢复一条独立库存行，供尚未离场的受控红冲使用。 */
+    /**
+     * 按不可变销售发运证据恢复一条独立库存行，供尚未离场的受控红冲使用。
+     */
     WmsLiveStockEntity restoreSalesShipment(WmsInoutFlowEntity sourceFlow);
 
-    /** 调拨成功接收后，源容器已无库存时解除占用并结束使用履历。 */
+    /**
+     * 调拨成功接收后，源容器已无库存时解除占用并结束使用履历。
+     */
     void releaseTransferSourceContainer(WmsInoutFlowEntity sourceFlow);
 
     /**

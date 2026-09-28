@@ -16,7 +16,9 @@ import java.util.Map;
 
 public interface MdmBomService extends MPJDeepService<MdmBomEntity> {
 
-    /** 工程发布前只读复核结构化替代策略及当前权威认证，不修改冻结版本。 */
+    /**
+     * 工程发布前只读复核结构化替代策略及当前权威认证，不修改冻结版本。
+     */
     void validateEngineeringSubstitutes(MdmBomEntity bom, List<MdmBomChildEntity> children);
 
     /**
@@ -68,6 +70,17 @@ public interface MdmBomService extends MPJDeepService<MdmBomEntity> {
      * @return 子物料集合, 按层级展开
      */
     List<MdmBomChildDTO> getChildMaterials(String productCode, Long bomId, String version);
+
+    /**
+     * 按指定版本读取BOM维护结构。
+     *
+     * <p>该接口可读取尚未发布的草案和审批冻结版本，只用于主数据维护预览，
+     * 不代表该BOM已经具备生产、计划或领料执行资格。</p>
+     *
+     * @param bomId BOM版本ID
+     * @return 完整层级结构
+     */
+    List<MdmBomChildDTO> getMaintenanceStructure(Long bomId);
 
     /**
      * 导入excel 表

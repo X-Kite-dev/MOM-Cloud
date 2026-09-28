@@ -1,5 +1,6 @@
 package com.kitex.mom.plan.service.impl;
 
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -17,9 +18,9 @@ import com.kitex.mom.mdm.entity.MdmProcessRouteEntity;
 import com.kitex.mom.mdm.feign.RemoteCalendarService;
 import com.kitex.mom.mdm.feign.RemoteClassesService;
 import com.kitex.mom.mdm.feign.RemoteProcessRouteService;
-import com.kitex.mom.plan.dto.PlnSchedulingGanttDetailQueryDTO;
 import com.kitex.mom.plan.dto.PlnMaterialConstraintEvaluationDTO;
 import com.kitex.mom.plan.dto.PlnOperationScheduleEvaluationDTO;
+import com.kitex.mom.plan.dto.PlnSchedulingGanttDetailQueryDTO;
 import com.kitex.mom.plan.entity.*;
 import com.kitex.mom.plan.mapper.PlnIssueMapper;
 import com.kitex.mom.plan.mapper.PlnSchedulingConflictMapper;
@@ -29,8 +30,6 @@ import com.kitex.mom.plan.service.PlnSchedulingRuleService;
 import com.kitex.mom.plan.vo.PlnSchedulingGanttDetailVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import cn.hutool.core.util.ObjUtil;
-import cn.hutool.core.util.StrUtil;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -70,13 +69,13 @@ public class PlnSchedulingRuleServiceImpl extends ServiceImpl<PlnSchedulingRuleS
 
     @Override
     public Page<PlnSchedulingTaskEntity> pageTask(SearchPage page, String mode, String taskNo) {
-        return pageTask(page,mode,taskNo,null);
+        return pageTask(page, mode, taskNo, null);
     }
 
     @Override
-    public Page<PlnSchedulingTaskEntity> pageTask(SearchPage page, String mode, String taskNo,Boolean resultArchived) {
+    public Page<PlnSchedulingTaskEntity> pageTask(SearchPage page, String mode, String taskNo, Boolean resultArchived) {
         return plnSchedulingTaskMapper.selectPage(page.toMpPage(), Wrappers.<PlnSchedulingTaskEntity>lambdaQuery()
-                .eq(resultArchived!=null,PlnSchedulingTaskEntity::getResultArchived,resultArchived)
+                .eq(resultArchived != null, PlnSchedulingTaskEntity::getResultArchived, resultArchived)
                 .eq(mode != null && !mode.isBlank(), PlnSchedulingTaskEntity::getMode, mode)
                 .like(taskNo != null && !taskNo.isBlank(), PlnSchedulingTaskEntity::getTaskNo, taskNo == null ? null : taskNo.trim())
                 .orderByDesc(PlnSchedulingTaskEntity::getCreateTime)
@@ -319,9 +318,10 @@ public class PlnSchedulingRuleServiceImpl extends ServiceImpl<PlnSchedulingRuleS
         if (isNull(taskId) || isNull(issueId) || isNull(scheduledDate)) {
             throw new CheckedException("调整参数不能为空");
         }
-        if(plnSchedulingTaskMapper.acquireTransactionLock(taskId)==null)throw new CheckedException("任务不存在");
+        if (plnSchedulingTaskMapper.acquireTransactionLock(taskId) == null) throw new CheckedException("任务不存在");
         PlnSchedulingTaskEntity task = plnSchedulingTaskMapper.selectById(taskId);
-        if(task!=null && Boolean.TRUE.equals(task.getResultArchived()))throw new CheckedException("已归档结果不能调整");
+        if (task != null && Boolean.TRUE.equals(task.getResultArchived()))
+            throw new CheckedException("已归档结果不能调整");
         if (task == null) {
             throw new CheckedException("任务不存在");
         }
@@ -671,11 +671,11 @@ public class PlnSchedulingRuleServiceImpl extends ServiceImpl<PlnSchedulingRuleS
     }
 
     @Override
-    public Page<PlnSchedulingGanttDetailVO> queryLockedGantt(SearchPage page, String productCode,String productName, LocalDate startDate, LocalDate endDate) {
+    public Page<PlnSchedulingGanttDetailVO> queryLockedGantt(SearchPage page, String productCode, String productName, LocalDate startDate, LocalDate endDate) {
         LambdaQueryWrapper<PlnIssueEntity> wrapper = new LambdaQueryWrapper<PlnIssueEntity>()
                 .eq(PlnIssueEntity::getLockStatus, Boolean.TRUE)
                 .like(productCode != null && !productCode.isBlank(), PlnIssueEntity::getProductCode, productCode)
-                .like(productName != null && !productName.isBlank(), PlnIssueEntity::getProductName,productName)
+                .like(productName != null && !productName.isBlank(), PlnIssueEntity::getProductName, productName)
                 .ge(startDate != null, PlnIssueEntity::getScheduledDate, startDate)
                 .le(endDate != null, PlnIssueEntity::getScheduledDate, endDate)
                 .orderByAsc(PlnIssueEntity::getScheduledDate)

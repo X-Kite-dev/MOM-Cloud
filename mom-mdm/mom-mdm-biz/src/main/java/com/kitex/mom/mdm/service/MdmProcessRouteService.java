@@ -169,7 +169,9 @@ public interface MdmProcessRouteService extends IService<MdmProcessRouteEntity> 
      */
     List<MdmProcessProcedureMatEntity> getMatByCode(String routeCode, String processCode);
 
-    /** 批量查询工艺路线工序投料映射，供PLAN/Agent计算缺料影响工序。 */
+    /**
+     * 批量查询工艺路线工序投料映射，供PLAN/Agent计算缺料影响工序。
+     */
     List<MdmProcessProcedureMatEntity> getMaterialAssignments(MdmRouteMaterialAssignmentQueryDTO query);
 
     /**

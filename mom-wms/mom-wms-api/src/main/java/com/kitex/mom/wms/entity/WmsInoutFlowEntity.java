@@ -25,6 +25,27 @@ import java.time.LocalDateTime;
 @Schema(description = "出入库流水")
 public class WmsInoutFlowEntity extends BaseEntity<WmsInoutFlowEntity> {
 
+    @Schema(description = "库存首次形成时的WMS入库单ID快照")
+    private Long sourceInBillId;
+
+    @Schema(description = "库存首次形成时的WMS入库单明细ID快照")
+    private Long sourceInBillDetailId;
+
+    @Schema(description = "MES成品入库永久请求号快照")
+    private String sourceMesInboundRequestId;
+
+    @Schema(description = "来源采购订单号快照")
+    private String sourceOrderNo;
+
+    @Schema(description = "来源采购订单明细ID快照")
+    private Long sourceOrderDetailId;
+
+    @Schema(description = "来源采购收料单ID快照")
+    private Long sourceReceiptId;
+
+    @Schema(description = "来源采购收料批次明细ID快照")
+    private Long sourceReceiptDetailId;
+
     /**
      * 单据id
      */
@@ -219,6 +240,15 @@ public class WmsInoutFlowEntity extends BaseEntity<WmsInoutFlowEntity> {
 
     @Schema(description = "质检任务ID快照")
     private Long qualityTaskId;
+
+    @Schema(description = "首次成品入库实际依赖的QMS任务ID JSON数组快照")
+    private String sourceQualityTaskIds;
+
+    @Schema(description = "首次成品入库QMS质量证据SHA-256指纹快照")
+    private String sourceQualityEvidenceFingerprint;
+
+    @Schema(description = "首次成品入库QMS质量证据快照")
+    private String sourceQualityEvidenceSnapshot;
 
     @Schema(description = "有效期检测状态快照")
     private Boolean expirationStatus;

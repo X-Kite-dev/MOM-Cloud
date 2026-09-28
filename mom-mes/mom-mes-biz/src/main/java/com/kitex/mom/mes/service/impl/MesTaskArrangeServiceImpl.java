@@ -4,8 +4,8 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.util.StrUtil;
-import cn.hutool.json.JSONUtil;
 import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -15,11 +15,11 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
-import com.kitex.mom.mdm.entity.MdmDeviceEntity;
 import com.kitex.mom.mdm.dto.MdmToolingAvailabilityQueryDTO;
 import com.kitex.mom.mdm.dto.MdmToolingCandidateDTO;
 import com.kitex.mom.mdm.dto.MdmToolingUsageLineDTO;
 import com.kitex.mom.mdm.dto.MdmToolingUsageRequestDTO;
+import com.kitex.mom.mdm.entity.MdmDeviceEntity;
 import com.kitex.mom.mdm.feign.RemoteDeviceService;
 import com.kitex.mom.mdm.feign.RemoteMdmToolingService;
 import com.kitex.mom.mdm.feign.RemoteWorkCenterService;
@@ -27,17 +27,15 @@ import com.kitex.mom.mes.batch.BatchGenerator;
 import com.kitex.mom.mes.batch.BatchGeneratorService;
 import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.*;
-import com.kitex.mom.mes.enums.MesProduceTaskStatusEnum;
 import com.kitex.mom.mes.enums.MesDeviceGateStageEnum;
+import com.kitex.mom.mes.enums.MesProduceTaskStatusEnum;
 import com.kitex.mom.mes.enums.MesTaskStatusEnum;
 import com.kitex.mom.mes.enums.WorksiteTypeEnum;
-import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
 import com.kitex.mom.mes.mapper.MesChangeoverExecutionMapper;
+import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
 import com.kitex.mom.mes.mapper.MesTaskExecutionSegmentMapper;
 import com.kitex.mom.mes.mapper.MesToolingExecutionMapper;
 import com.kitex.mom.mes.service.*;
-import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
-import com.kitex.mom.oms.enums.OrderLongStateEnum;
 import com.kitex.mom.plan.feign.RemotePlnIssueService;
 import com.kitex.mom.tpm.api.feign.RemoteDeviceCheckService;
 import com.kitex.mom.tpm.api.feign.RemoteTpmDeviceService;
@@ -50,7 +48,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -88,8 +85,10 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
     private final MesRepairProductionReleaseService repairProductionReleaseService;
     private final MesRepairResumeEventService repairResumeEventService;
     private final MesChangePointHandleService changePointHandleService;
+    private final MesDispatchReturnService dispatchReturnService;
     private final MesTaskExecutionSegmentMapper executionSegmentMapper;
     private final MesChangeoverExecutionMapper changeoverExecutionMapper;
+    private final MesExecutionTemplateService executionTemplateService;
 
     private static void calculateFeedAllNum(MdmBomChildDTO node, Map<String, BigDecimal> feedMap, Map<String, BigDecimal> usedMap) {
         BigDecimal totalFeedNum = BigDecimal.ZERO;
@@ -128,7 +127,9 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
     public void arrange(MesTaskArrangeDTO dto) {
         long existCount = this.count(new LambdaQueryWrapper<MesTaskArrangeEntity>()
                 .eq(MesTaskArrangeEntity::getShiftCode, dto.getShiftCode())
-                .eq(MesTaskArrangeEntity::getTaskCode, dto.getCode()));
+                .eq(MesTaskArrangeEntity::getTaskCode, dto.getCode())
+                .notIn(MesTaskArrangeEntity::getStatus,
+                        MesProduceTaskStatusEnum.CLOSE.name(), MesProduceTaskStatusEnum.FINISH.name()));
         if (existCount > 0) {
             throw new RuntimeException("该班次已完成派工,无法重复派工");
         }
@@ -244,6 +245,9 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
             newTask.setWrapCapacity(mainTask.getWrapCapacity());
             newTask.setWrapCode(null);
             newTask.setFactoryCode(mainTask.getFactoryCode());
+
+            // 派工是生产执行策略的冻结边界；后续模板发布、退役均不得改变在制任务。
+            executionTemplateService.freezeForDispatch(mainTask, newTask);
 
             produceTaskCodes.add(newTask.getProduceTaskCode());
             finalTaskArrangeList.add(newTask);
@@ -538,7 +542,8 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
     }
 
     private com.kitex.mom.tpm.dto.TpmDevicePauseReceipt pauseArrange(MesTaskArrangeEntity task, String pauseReason, String requestId) {
-        if (requestId == null || !requestId.matches("[A-Za-z0-9_-]{16,64}")) throw new CheckedException("暂停尝试请求号无效");
+        if (requestId == null || !requestId.matches("[A-Za-z0-9_-]{16,64}"))
+            throw new CheckedException("暂停尝试请求号无效");
         com.kitex.mom.tpm.dto.TpmDevicePauseReceipt receipt = null;
         if (com.kitex.common.data.tenant.TenantContextHolder.getTenantId() == null
                 || com.kitex.common.data.tenant.TenantContextHolder.getTenantSkip()
@@ -561,7 +566,8 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
                 String worksite = task.getActualWorksiteCode();
                 if (StrUtil.isBlank(worksite)) {
                     var configured = splitCsv(task.getWorksiteCodes()).stream().distinct().toList();
-                    if (configured.size() != 1) throw new CheckedException("暂停设备缺少唯一实际工位，不能取多个候选中的第一项");
+                    if (configured.size() != 1)
+                        throw new CheckedException("暂停设备缺少唯一实际工位，不能取多个候选中的第一项");
                     worksite = configured.get(0);
                 }
                 var pauseBindings = worksiteMoldService.list(
@@ -572,7 +578,8 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
                 if (pauseBindings.size() > 1) throw new CheckedException("工位设备模具绑定重复，禁止猜测暂停对象");
                 MesWorksiteMoldEntity bind = pauseBindings.isEmpty() ? null : pauseBindings.get(0);
                 var command = new com.kitex.mom.tpm.dto.TpmDevicePauseCommand();
-                command.setRequestId(requestId); command.setDeviceCode(task.getPlannedDeviceCode());
+                command.setRequestId(requestId);
+                command.setDeviceCode(task.getPlannedDeviceCode());
                 command.setMoldCode(bind == null ? null : bind.getMoldCode());
                 command.setReason(pauseReason + "；派工ID=" + task.getId() + "；只转换业务状态，不代表PLC停机");
                 var pauseResult = remoteTpmDeviceService.devicePauseReceipt(command);
@@ -733,8 +740,10 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
         if (Objects.isNull(task)) {
             throw new RuntimeException("加工任务不存在");
         }
-        if (!(MesProduceTaskStatusEnum.UN_RECEIVE.name().equals(task.getStatus()) || MesProduceTaskStatusEnum.CLOSE.name().equals(task.getStatus()))) {
-            throw new RuntimeException("加工任务已被接收");
+        if (!MesProduceTaskStatusEnum.UN_RECEIVE.name().equals(task.getStatus())) {
+            throw new RuntimeException(MesProduceTaskStatusEnum.CLOSE.name().equals(task.getStatus())
+                    ? "派工任务已关闭，必须重新派工，不能恢复原派工"
+                    : "加工任务已被接收");
         }
         assertAssignedWorker(task);
         if (StrUtil.isBlank(worksiteCode) || !splitCsv(task.getWorksiteCodes()).contains(worksiteCode)) {
@@ -796,6 +805,7 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
             throw new RuntimeException("只有已接收、已暂停任务才能开工");
         }
         assertAssignedWorker(task);
+        dispatchReturnService.assertExecutionAllowed(task);
         assertToolingsCheckedIn(task);
         sopExecutionService.assertStartAllowed(task);
         andonProductionReleaseService.assertAllowed(task, "开工/复工");
@@ -852,7 +862,9 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
         repairResumeEventService.recordActualResume(task, resumedSegment);
     }
 
-    /** 并行分支可独立执行，汇合工序必须等待其全部直接前置工序完成。 */
+    /**
+     * 并行分支可独立执行，汇合工序必须等待其全部直接前置工序完成。
+     */
     private void assertPredecessorsFinished(MesProduceTaskEntity current) {
         List<String> predecessorCodes = splitCsv(current.getPredecessorCodes());
         if (predecessorCodes.isEmpty()) {
@@ -1014,6 +1026,10 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
         if (task == null) {
             throw new CheckedException("加工任务不存在");
         }
+        if (MesProduceTaskStatusEnum.RECEIVE.name().equals(task.getStatus())) {
+            throw new CheckedException("已接收未开工任务必须走受控退派申请，不能直接关闭");
+        }
+        assertAssignedWorker(task);
         long inUseToolings = toolingExecutionMapper.selectCount(new LambdaQueryWrapper<MesToolingExecutionEntity>()
                 .eq(MesToolingExecutionEntity::getArrangeCode, task.getCode())
                 .eq(MesToolingExecutionEntity::getStatus, "IN_USE"));
@@ -1358,8 +1374,8 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
     }
 
     private MesTaskExecutionSegmentEntity segmentOf(MesTaskArrangeEntity task, int no, LocalDateTime start,
-                                                     LocalDateTime end, String status, String closeReason,
-                                                     boolean eligible, String exclusion) {
+                                                    LocalDateTime end, String status, String closeReason,
+                                                    boolean eligible, String exclusion) {
         MesTaskExecutionSegmentEntity segment = new MesTaskExecutionSegmentEntity().setArrangeId(task.getId()).setArrangeCode(task.getCode())
                 .setSegmentNo(no).setSegmentType("RUN").setStartTime(start).setEndTime(end)
                 .setDurationSeconds(end == null ? null : Math.max(0L, Duration.between(start, end).getSeconds()))

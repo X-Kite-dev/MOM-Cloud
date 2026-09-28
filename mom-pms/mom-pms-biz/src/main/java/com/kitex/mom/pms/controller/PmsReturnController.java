@@ -10,8 +10,11 @@ import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
+import com.kitex.mom.pms.dto.PmsSupplierReturnCommand;
+import com.kitex.mom.pms.dto.PmsSupplierReturnEvent;
 import com.kitex.mom.pms.entity.PmsReturnEntity;
 import com.kitex.mom.pms.service.PmsReturnService;
+import com.kitex.mom.wms.dto.WmsSupplierReturnCommand;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -56,6 +59,8 @@ public class PmsReturnController {
                 .like(StrUtil.isNotBlank(pmsReturn.getOrderNo()), PmsReturnEntity::getOrderNo, pmsReturn.getOrderNo())
                 .like(StrUtil.isNotBlank(pmsReturn.getSupplierCode()), PmsReturnEntity::getSupplierCode, pmsReturn.getSupplierCode())
                 .like(StrUtil.isNotBlank(pmsReturn.getSupplierName()), PmsReturnEntity::getSupplierName, pmsReturn.getSupplierName())
+                .eq(StrUtil.isNotBlank(pmsReturn.getWorkflowStatus()), PmsReturnEntity::getWorkflowStatus,
+                        pmsReturn.getWorkflowStatus())
                 .orderByDesc(PmsReturnEntity::getCreateTime);
         return R.ok(pmsReturnService.page(page.toMpPage(), wrapper));
     }
@@ -101,6 +106,41 @@ public class PmsReturnController {
         return R.ok(pmsReturnService.updateDeep(pmsReturn));
     }
 
+    @PostMapping("/eligible-stocks")
+    @Operation(summary = "查询可退供精确库存", description = "扣除生产和销售预留并过滤质量、效期后返回WMS库存行")
+    @PreAuthorize("@pms.hasPermission('pms_pmsReturn_add')")
+    public R<List<WmsSupplierReturnCommand.StockCandidate>> eligibleStocks(
+            @RequestBody WmsSupplierReturnCommand.StockQuery query) {
+        return R.ok(pmsReturnService.eligibleStocks(query));
+    }
+
+    @PostMapping("/submit")
+    @Operation(summary = "提交采购退供申请")
+    @PreAuthorize("@pms.hasPermission('pms_pmsReturn_submit')")
+    public R<PmsReturnEntity> submit(@RequestBody PmsSupplierReturnCommand.Submit command) {
+        return R.ok(pmsReturnService.submit(command));
+    }
+
+    @PostMapping("/review")
+    @Operation(summary = "异岗复核采购退供申请")
+    @PreAuthorize("@pms.hasPermission('pms_pmsReturn_review')")
+    public R<PmsReturnEntity> review(@RequestBody PmsSupplierReturnCommand.Review command) {
+        return R.ok(pmsReturnService.review(command));
+    }
+
+    @PostMapping("/cancel")
+    @Operation(summary = "申请人撤回待复核退供申请")
+    @PreAuthorize("@pms.hasPermission('pms_pmsReturn_submit')")
+    public R<PmsReturnEntity> cancel(@RequestBody PmsSupplierReturnCommand.Cancel command) {
+        return R.ok(pmsReturnService.cancel(command));
+    }
+
+    @PostMapping("/internal/wms-completed")
+    @Operation(summary = "接收WMS采购退供实际出库永久事件")
+    public R<PmsSupplierReturnEvent.Receipt> receiveCompleted(@RequestBody PmsSupplierReturnEvent event) {
+        return R.ok(pmsReturnService.receiveCompleted(event));
+    }
+
     /**
      * 修改状态
      *
@@ -111,7 +151,7 @@ public class PmsReturnController {
     @SysLog("修改状态")
     @PutMapping("/statusChange")
     public R<Boolean> statusChange(@RequestBody PmsReturnEntity pmsReturn) {
-        return R.ok(pmsReturnService.updateById(pmsReturn));
+        throw new IllegalStateException("采购退供状态禁止直接修改，请使用提交、复核、撤回和WMS回写接口");
     }
 
     /**

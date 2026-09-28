@@ -27,6 +27,10 @@ import java.math.BigDecimal;
 @Schema(description = "wms_out_notice_detail")
 public class WmsOutNoticeDetailEntity extends BaseEntity<WmsOutNoticeDetailEntity> {
 
+    /** 受控出库锁定的实时库存行；为空时沿用历史批次匹配逻辑。 */
+    @Schema(description = "受控出库锁定的实时库存行ID")
+    private Long sourceStockId;
+
     /**
      * 通知单id
      */
@@ -161,4 +165,24 @@ public class WmsOutNoticeDetailEntity extends BaseEntity<WmsOutNoticeDetailEntit
     @TableField(exist = false)
     @Schema(description = "单据类型")
     private String billType;
+
+    /** 以下字段仅用于PDA展示冻结库存，不落出库通知明细表。 */
+    @TableField(exist = false)
+    @Schema(description = "冻结库存批次（PDA）")
+    private String matBatch;
+    @TableField(exist = false)
+    @Schema(description = "冻结库存供应商编码（PDA）")
+    private String supplierCode;
+    @TableField(exist = false)
+    @Schema(description = "冻结库存供应商名称（PDA）")
+    private String supplierName;
+    @TableField(exist = false)
+    @Schema(description = "冻结库存库位编码（PDA）")
+    private String siteCode;
+    @TableField(exist = false)
+    @Schema(description = "冻结库存库位名称（PDA）")
+    private String siteName;
+    @TableField(exist = false)
+    @Schema(description = "冻结库存容器编码（PDA）")
+    private String containerCode;
 }

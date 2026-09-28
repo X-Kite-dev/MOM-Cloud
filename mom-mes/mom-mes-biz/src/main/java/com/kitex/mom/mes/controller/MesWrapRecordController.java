@@ -69,7 +69,7 @@ public class MesWrapRecordController {
     @GetMapping("/available/page")
     @PreAuthorize("@pms.hasPermission('mesWrap:show')")
     public R<IPage<MesWrapRecordEntity>> availablePage(Page<MesWrapRecordEntity> pageParam,
-                                                        MesWrapRecordEntity query) {
+                                                       MesWrapRecordEntity query) {
         QueryWrapper<MesWrapRecordEntity> wrapper = QueryGenerator.initQueryWrapper(query);
         wrapper.in("packing_status", "UNPACKED", "PARTIAL")
                 .gt("available_quantity", 0)

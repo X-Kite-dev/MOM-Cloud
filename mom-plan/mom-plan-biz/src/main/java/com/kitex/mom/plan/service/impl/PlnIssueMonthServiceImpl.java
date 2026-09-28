@@ -304,7 +304,8 @@ public class PlnIssueMonthServiceImpl extends ServiceImpl<PlnIssueMonthMapper, P
      * @param mdmMaterialEntity   物料
      */
     private void savePmsPlan(PlnIssueMonthEntity plnIssueMonthEntity, MdmMaterialEntity mdmMaterialEntity) {
-        if (mdmMaterialEntity == null) throw new CheckedException("月计划物料主数据不存在：" + plnIssueMonthEntity.getProductCode());
+        if (mdmMaterialEntity == null)
+            throw new CheckedException("月计划物料主数据不存在：" + plnIssueMonthEntity.getProductCode());
         String sourceFingerprint = sourceFingerprint(plnIssueMonthEntity);
         PmsPlanEntity pmsPlan = new PmsPlanEntity();
         pmsPlan.setPmsPlanNo(remoteSeqConfigService.create("pms_plan").getData());

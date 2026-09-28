@@ -1,16 +1,16 @@
 package com.kitex.mom.mes.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
-import com.kitex.mom.mes.entity.MesWipTimeoutHandleEntity;
-import com.kitex.mom.mes.entity.MesWipTimeoutOperationEntity;
 import com.kitex.mom.mes.dto.WipTimeoutCancelCommand;
 import com.kitex.mom.mes.dto.WipTimeoutHandleCommand;
 import com.kitex.mom.mes.dto.WipTimeoutVerifyCommand;
+import com.kitex.mom.mes.entity.MesWipTimeoutHandleEntity;
+import com.kitex.mom.mes.entity.MesWipTimeoutOperationEntity;
 import com.kitex.mom.mes.service.MesWipTimeoutHandleService;
 import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -39,9 +39,9 @@ public class MesWipTimeoutHandleController {
     @GetMapping("/getById")
     @PreAuthorize("@pms.hasPermission('mesWipTimeoutHandle:show')")
     public R<MesWipTimeoutHandleEntity> getById(Long id) {
-        var event = service.getOne(new LambdaQueryWrapper<MesWipTimeoutHandleEntity>().eq(MesWipTimeoutHandleEntity::getId,id)
-                .eq(MesWipTimeoutHandleEntity::getFactoryCode,factoryAccess.require("read")));
-        if(event==null)throw new com.kitex.common.core.exception.CheckedException("当前工厂超时事件不存在");
+        var event = service.getOne(new LambdaQueryWrapper<MesWipTimeoutHandleEntity>().eq(MesWipTimeoutHandleEntity::getId, id)
+                .eq(MesWipTimeoutHandleEntity::getFactoryCode, factoryAccess.require("read")));
+        if (event == null) throw new com.kitex.common.core.exception.CheckedException("当前工厂超时事件不存在");
         return R.ok(event);
     }
 

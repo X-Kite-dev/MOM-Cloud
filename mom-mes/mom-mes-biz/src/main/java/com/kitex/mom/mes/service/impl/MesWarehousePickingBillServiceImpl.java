@@ -14,19 +14,18 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
+import com.kitex.mom.mes.dto.MdmBomChildDTO;
 import com.kitex.mom.mes.dto.MesPickingReceiveMatDTO;
 import com.kitex.mom.mes.dto.MesPickingWmsOutBillBackDTO;
-import com.kitex.mom.mes.dto.MdmBomChildDTO;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.entity.MesWarehouseMaterialInBillEntity;
 import com.kitex.mom.mes.entity.MesWarehousePickingBillDetailEntity;
 import com.kitex.mom.mes.entity.MesWarehousePickingBillEntity;
-import com.kitex.mom.mes.enums.MesMaterialInStateEnum;
 import com.kitex.mom.mes.enums.MesPickingBillStateEnum;
 import com.kitex.mom.mes.enums.YesNoEnum;
+import com.kitex.mom.mes.mapper.MesTaskMapper;
 import com.kitex.mom.mes.mapper.MesWarehousePickingBillDetailMapper;
 import com.kitex.mom.mes.mapper.MesWarehousePickingBillMapper;
-import com.kitex.mom.mes.mapper.MesTaskMapper;
 import com.kitex.mom.mes.service.MesWarehouseMaterialInBillService;
 import com.kitex.mom.mes.service.MesWarehousePickingBillService;
 import com.kitex.mom.mes.util.MesMaterialSubstituteResolver;
@@ -39,15 +38,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.Objects;
-import java.util.Set;
+import java.time.LocalDateTime;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -145,7 +139,10 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
             throw new CheckedException("生产工单[" + entity.getTaskCode() + "]不存在");
         }
         reworkMaterialPlans.assertReady(task);
-        if(task.getReworkMaterialPlanId()!=null){entity.setFactoryCode(task.getFactoryCode());entity.setTenantId(task.getTenantId());}
+        if (task.getReworkMaterialPlanId() != null) {
+            entity.setFactoryCode(task.getFactoryCode());
+            entity.setTenantId(task.getTenantId());
+        }
         Map<String, MdmBomChildDTO> requirements = MesMaterialSubstituteResolver.flattenBom(task.getBomSnapshot())
                 .stream().collect(Collectors.toMap(MdmBomChildDTO::getMaterialCode, item -> item, (left, right) -> left));
         boolean reservationSnapshotFrozen = StrUtil.isNotBlank(task.getMaterialReservationSnapshot());
@@ -165,9 +162,10 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
             detail.setSubstituteFlag(binding.substitute());
             detail.setSubstituteRatio(binding.ratio());
             detail.setRequirementMatNum(detail.getMatNum().divide(binding.ratio(), 8, RoundingMode.HALF_UP));
-            if(task.getReworkMaterialPlanId()!=null){
-                detail.setRequirementMatNum(detail.getMatNum().divide(binding.ratio(),8,RoundingMode.UNNECESSARY).stripTrailingZeros());
-                detail.setFactoryCode(task.getFactoryCode());detail.setTenantId(task.getTenantId());
+            if (task.getReworkMaterialPlanId() != null) {
+                detail.setRequirementMatNum(detail.getMatNum().divide(binding.ratio(), 8, RoundingMode.UNNECESSARY).stripTrailingZeros());
+                detail.setFactoryCode(task.getFactoryCode());
+                detail.setTenantId(task.getTenantId());
             }
             detail.setReservationNo(null);
             if (reservationSnapshotFrozen) {
@@ -200,29 +198,33 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
                 reservationUsed.merge(reservationKey(matched), detail.getMatNum(), BigDecimal::add);
             }
         }
-        if(task.getReworkMaterialPlanId()!=null)assertReworkPickingBudget(task,entity,requirements);
+        if (task.getReworkMaterialPlanId() != null) assertReworkPickingBudget(task, entity, requirements);
     }
 
-    private void assertReworkPickingBudget(MesTaskEntity task,MesWarehousePickingBillEntity incoming,Map<String,MdmBomChildDTO> requirements){
-        var prior=mesWarehousePickingBillDetailMapper.reworkBudget(task.getCode(),task.getTenantId(),task.getFactoryCode());
-        if(prior.size()>5000)throw new CheckedException("返工领料行超过5000条，须受控扩容，不能截断后重新分配额度");
-        Set<Long> replaced=incoming.getDetailList().stream().map(MesWarehousePickingBillDetailEntity::getId).filter(Objects::nonNull).collect(Collectors.toSet());
-        Map<String,BigDecimal> used=new HashMap<>();
-        List<MesWarehousePickingBillDetailEntity> all=new ArrayList<>(prior.stream().filter(d->!Objects.equals(d.getBillId(),incoming.getId()) || !replaced.contains(d.getId())).toList());
+    private void assertReworkPickingBudget(MesTaskEntity task, MesWarehousePickingBillEntity incoming, Map<String, MdmBomChildDTO> requirements) {
+        var prior = mesWarehousePickingBillDetailMapper.reworkBudget(task.getCode(), task.getTenantId(), task.getFactoryCode());
+        if (prior.size() > 5000) throw new CheckedException("返工领料行超过5000条，须受控扩容，不能截断后重新分配额度");
+        Set<Long> replaced = incoming.getDetailList().stream().map(MesWarehousePickingBillDetailEntity::getId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<String, BigDecimal> used = new HashMap<>();
+        List<MesWarehousePickingBillDetailEntity> all = new ArrayList<>(prior.stream().filter(d -> !Objects.equals(d.getBillId(), incoming.getId()) || !replaced.contains(d.getId())).toList());
         all.addAll(incoming.getDetailList());
-        for(var d:all){if(StrUtil.isBlank(d.getRequirementMatCode()) || d.getRequirementMatNum()==null || d.getRequirementMatNum().signum()<=0)
-            throw new CheckedException("返工已有领料缺少精确需求量来源，不能绕过批准额度");
-            used.merge(d.getRequirementMatCode(),d.getRequirementMatNum(),BigDecimal::add);}
-        for(var entry:used.entrySet()){var requirement=requirements.get(entry.getKey());
-            if(requirement==null || requirement.getQuantity()==null || entry.getValue().compareTo(requirement.getQuantity().multiply(task.getNoticeNum()))>0)
-                throw new CheckedException("返工物料["+entry.getKey()+"]累计领料含草稿超过批准总量；删去未执行草稿或走后续受控补料，不自动回补退料额度");}
+        for (var d : all) {
+            if (StrUtil.isBlank(d.getRequirementMatCode()) || d.getRequirementMatNum() == null || d.getRequirementMatNum().signum() <= 0)
+                throw new CheckedException("返工已有领料缺少精确需求量来源，不能绕过批准额度");
+            used.merge(d.getRequirementMatCode(), d.getRequirementMatNum(), BigDecimal::add);
+        }
+        for (var entry : used.entrySet()) {
+            var requirement = requirements.get(entry.getKey());
+            if (requirement == null || requirement.getQuantity() == null || entry.getValue().compareTo(requirement.getQuantity().multiply(task.getNoticeNum())) > 0)
+                throw new CheckedException("返工物料[" + entry.getKey() + "]累计领料含草稿超过批准总量；删去未执行草稿或走后续受控补料，不自动回补退料额度");
+        }
     }
 
-    private void verifySavedPickingQuantities(MesWarehousePickingBillDetailEntity expected){
-        var stored=mesWarehousePickingBillDetailMapper.selectById(expected.getId());
-        if(stored==null || stored.getMatNum()==null || stored.getMatNum().compareTo(expected.getMatNum())!=0
-                || stored.getRequirementMatNum()==null || stored.getRequirementMatNum().compareTo(expected.getRequirementMatNum())!=0
-                || stored.getSubstituteRatio()==null || stored.getSubstituteRatio().compareTo(expected.getSubstituteRatio())!=0)
+    private void verifySavedPickingQuantities(MesWarehousePickingBillDetailEntity expected) {
+        var stored = mesWarehousePickingBillDetailMapper.selectById(expected.getId());
+        if (stored == null || stored.getMatNum() == null || stored.getMatNum().compareTo(expected.getMatNum()) != 0
+                || stored.getRequirementMatNum() == null || stored.getRequirementMatNum().compareTo(expected.getRequirementMatNum()) != 0
+                || stored.getSubstituteRatio() == null || stored.getSubstituteRatio().compareTo(expected.getSubstituteRatio()) != 0)
             throw new CheckedException("领料数量或替代换算保存发生舍入，已回滚");
     }
 
@@ -233,7 +235,8 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean removeDeep(Long[] ids) {
-        if (ids == null || ids.length == 0 || java.util.Arrays.asList(ids).contains(null)) throw new CheckedException("请选择领料单");
+        if (ids == null || ids.length == 0 || java.util.Arrays.asList(ids).contains(null))
+            throw new CheckedException("请选择领料单");
         for (Long id : java.util.Arrays.stream(ids).distinct().sorted().toList()) lockDraft(id);
         baseMapper.deleteBatchIds(CollUtil.toList(ids));
         mesWarehousePickingBillDetailMapper.delete(Wrappers.<MesWarehousePickingBillDetailEntity>lambdaQuery().in(MesWarehousePickingBillDetailEntity::getBillId, ids));
@@ -245,8 +248,10 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
     public Boolean removeChild(Long[] ids) {
         if (ids == null || ids.length == 0) throw new CheckedException("请选择领料明细");
         List<MesWarehousePickingBillDetailEntity> details = mesWarehousePickingBillDetailMapper.selectBatchIds(java.util.Arrays.asList(ids));
-        if (details.size() != java.util.Arrays.stream(ids).distinct().count()) throw new CheckedException("领料明细不存在");
-        for (Long billId : details.stream().map(MesWarehousePickingBillDetailEntity::getBillId).distinct().sorted().toList()) lockDraft(billId);
+        if (details.size() != java.util.Arrays.stream(ids).distinct().count())
+            throw new CheckedException("领料明细不存在");
+        for (Long billId : details.stream().map(MesWarehousePickingBillDetailEntity::getBillId).distinct().sorted().toList())
+            lockDraft(billId);
         mesWarehousePickingBillDetailMapper.deleteBatchIds(CollUtil.toList(ids));
         return Boolean.TRUE;
     }
@@ -384,7 +389,7 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
                 .eq(MesWarehousePickingBillEntity::getId, id).last("FOR UPDATE"));
         if (bill == null || !MesPickingBillStateEnum.CREATED.getCode().equals(bill.getStatus())
                 || mesWarehouseMaterialInBillService.count(new LambdaQueryWrapper<MesWarehouseMaterialInBillEntity>()
-                        .eq(MesWarehouseMaterialInBillEntity::getBillId, id)) > 0)
+                .eq(MesWarehouseMaterialInBillEntity::getBillId, id)) > 0)
             throw new CheckedException("只有未提交、无发料及签收事实的领料草案可以修改、删除或提交");
         return bill;
     }

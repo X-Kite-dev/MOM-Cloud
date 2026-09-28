@@ -1,42 +1,33 @@
 package com.kitex.mom.mes.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
 import com.kitex.common.query.utils.QueryGenerator;
-import com.kitex.mom.mes.dto.MesTaskReportFeedVO;
-import com.kitex.mom.mes.dto.MesTaskReportReverseVO;
-import com.kitex.mom.mes.dto.MesTaskReportUnqualifiedVO;
-import com.kitex.mom.mes.dto.MesTaskReportVO;
-import com.kitex.mom.mes.dto.ReportModeOptionDTO;
-import com.kitex.mom.mes.dto.MesReportMaterialTraceVO;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
+import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.MesReportMaterialConsumeEntity;
+import com.kitex.mom.mes.entity.MesTaskReportEntity;
 import com.kitex.mom.mes.entity.MesWarehouseInoutEntity;
 import com.kitex.mom.mes.enums.ReportModeEnum;
 import com.kitex.mom.mes.enums.WarehouseInBizTypeEnum;
-import com.kitex.mom.mes.service.MesTaskReportReverseService;
-import com.kitex.mom.mes.service.MesTaskReportService;
 import com.kitex.mom.mes.service.MesReportMaterialConsumeService;
+import com.kitex.mom.mes.service.MesTaskReportService;
 import com.kitex.mom.mes.service.MesWarehouseInoutService;
+import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.stream.Collectors;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 生产报工
@@ -51,15 +42,16 @@ import java.util.ArrayList;
 public class MesTaskReportController {
 
     private final MesTaskReportService service;
-    private final MesTaskReportReverseService reverseService;
     private final MesReportMaterialConsumeService materialConsumeService;
     private final MesWarehouseInoutService warehouseInoutService;
+    private final MesActualFactoryAccessService factoryAccess;
 
     @Operation(summary = "报工记录分页查询", description = "查询原始报工事实及冲销状态")
     @GetMapping("/page")
     public R<IPage<MesTaskReportEntity>> page(Page<MesTaskReportEntity> pageParam, MesTaskReportEntity query) {
         QueryWrapper<MesTaskReportEntity> wrapper = QueryGenerator.initQueryWrapper(query);
-        wrapper.lambda().orderByDesc(MesTaskReportEntity::getReportTime);
+        wrapper.lambda().eq(MesTaskReportEntity::getFactoryCode, factoryAccess.require("read"))
+                .orderByDesc(MesTaskReportEntity::getReportTime);
         return R.ok(service.page(pageParam, wrapper));
     }
 
@@ -79,11 +71,19 @@ public class MesTaskReportController {
         return R.ok();
     }
 
-    @Operation(summary = "反报工/冲销", description = "反向恢复库存、投料消耗和生产数量，原记录永久保留")
+    @Operation(summary = "系统集成报工",
+            description = "使用独立权限并按执行模板的API触发来源校验；必须提供派工指定的operatorCode和operatorName")
+    @PostMapping("/report-integration")
+    @PreAuthorize("@pms.hasPermission('mesTaskReport:integration')")
+    public R<Void> reportIntegration(@RequestBody MesTaskReportVO params) {
+        service.reportIntegration(params);
+        return R.ok();
+    }
+
+    @Operation(summary = "旧报工冲销入口（已停用）", description = "冲销已升级为申请、异岗复核和事实重采流程")
     @PostMapping("/reverse")
     public R<Void> reverse(@RequestBody MesTaskReportReverseVO command) {
-        reverseService.reverse(command);
-        return R.ok();
+        return R.failed("直接冲销已停用，请使用报工受控冲销申请流程");
     }
 
     @Operation(summary = "查询报工实际用料", description = "按报工查询需求物料、实际物料、替代比例及实际批次")

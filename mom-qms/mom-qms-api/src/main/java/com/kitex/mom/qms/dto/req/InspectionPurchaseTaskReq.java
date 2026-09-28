@@ -12,6 +12,9 @@ import lombok.Data;
 @Data
 public class InspectionPurchaseTaskReq {
 
+    @Schema(description = "精确质检任务主键，供受控业务对象下钻使用")
+    private Long taskId;
+
     /**
      * 关联物料编码
      */

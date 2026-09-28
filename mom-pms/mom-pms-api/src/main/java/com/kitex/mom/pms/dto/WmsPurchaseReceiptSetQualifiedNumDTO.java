@@ -13,6 +13,9 @@ import lombok.Data;
 @Schema(description = "采购收料单明细新增DTO")
 public class WmsPurchaseReceiptSetQualifiedNumDTO {
 
+    @Schema(description = "采购订单明细ID")
+    private Long orderDetailId;
+
     /**
      * 采购收料单号
      */

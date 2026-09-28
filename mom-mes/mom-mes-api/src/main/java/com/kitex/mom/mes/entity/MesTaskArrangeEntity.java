@@ -85,6 +85,21 @@ public class MesTaskArrangeEntity extends BaseEntity<MesTaskArrangeEntity> {
     @Schema(description = "工序类型")
     private String routeType;
 
+    @Schema(description = "派工时冻结的报工模式；历史数据为空时兼容使用routeType")
+    private String reportMode;
+
+    @Schema(description = "派工时命中的生产执行模板ID")
+    private Long executionTemplateId;
+
+    @Schema(description = "派工时命中的生产执行模板编码")
+    private String executionTemplateCode;
+
+    @Schema(description = "派工时命中的生产执行模板版本")
+    private Integer executionTemplateVersion;
+
+    @Schema(description = "派工时冻结的完整生产执行策略JSON")
+    private String executionPolicySnapshot;
+
     /**
      * 工序工作中心
      */

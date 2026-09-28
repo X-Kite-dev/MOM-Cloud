@@ -61,6 +61,18 @@ public class MesProduceTaskEntity extends BaseEntity<MesProduceTaskEntity> {
     @Schema(description = "工艺路线版本")
     private String processRouteCode;
 
+    @Schema(description = "工单下达时冻结的工艺参数标准编码")
+    private String processParameterStandardNo;
+
+    @Schema(description = "工单下达时冻结的工艺参数标准版本")
+    private Integer processParameterStandardVersion;
+
+    @Schema(description = "仅包含本工序参数的冻结标准JSON")
+    private String processParameterStandardSnapshot;
+
+    @Schema(description = "本工序参数冻结JSON的SHA-256指纹")
+    private String processParameterSnapshotFingerprint;
+
     /**
      * 物料编码
      */

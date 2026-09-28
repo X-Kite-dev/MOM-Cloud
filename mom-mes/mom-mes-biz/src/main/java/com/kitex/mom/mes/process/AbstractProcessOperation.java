@@ -1,10 +1,9 @@
 package com.kitex.mom.mes.process;
 
-import com.baomidou.mybatisplus.core.toolkit.IdWorker;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import cn.hutool.core.util.StrUtil;
-import com.kitex.common.core.exception.CheckedException;
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.kitex.admin.api.feign.RemoteParamService;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
@@ -16,23 +15,22 @@ import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.entity.MesTaskReportEntity;
 import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
-import com.kitex.mom.mes.enums.MesWarehouseMatDetailTypeEnum;
 import com.kitex.mom.mes.enums.MesTaskTypeEnum;
+import com.kitex.mom.mes.enums.MesWarehouseMatDetailTypeEnum;
 import com.kitex.mom.mes.enums.ReportStatusEnum;
 import com.kitex.mom.mes.enums.WarehouseInBizTypeEnum;
-import com.kitex.mom.mes.enums.YesNoEnum;
 import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
-import com.kitex.mom.mes.util.MesTaskUtils;
 import com.kitex.mom.mes.util.MesMaterialSubstituteResolver;
+import com.kitex.mom.mes.util.MesTaskUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
-import java.time.LocalDateTime;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -51,8 +49,11 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
      * 各报工模式共用的报工记录构造，避免模式之间形成不同的数据口径。
      */
     protected MesTaskReportEntity createReport(MesTaskReportVO vo, MomUser currentUser) {
-        String workerCode = currentUser == null ? vo.getOperatorCode() : currentUser.getUsername();
-        String workerName = currentUser == null ? vo.getOperatorName() : currentUser.getName();
+        boolean integration = "API".equals(vo.getType());
+        String workerCode = integration || currentUser == null
+                ? vo.getOperatorCode() : currentUser.getUsername();
+        String workerName = integration || currentUser == null
+                ? vo.getOperatorName() : currentUser.getName();
         if (StrUtil.isBlank(workerCode) || StrUtil.isBlank(workerName)) {
             throw new CheckedException("报工操作主体不可识别");
         }
@@ -66,6 +67,11 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
                 .setMatName(vo.getMatName())
                 .setMatSpec(vo.getMatSpec())
                 .setTransferCode(vo.getTransferCode())
+                .setSubmittedIdentifier(vo.getSubmittedIdentifier())
+                .setIdentifierMappingId(vo.getIdentifierMappingId())
+                .setIdentifierType(vo.getIdentifierType())
+                .setIdentifierResolutionSnapshot(vo.getIdentifierResolutionSnapshot())
+                .setExtensionEvidenceSnapshot(vo.getExtensionEvidenceSnapshot())
                 .setReportNum(vo.getPassNum())
                 .setType(vo.getType())
                 .setSourceEventId(vo.getSourceEventId())
@@ -74,6 +80,9 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
                 .setQualityGateMode(vo.getQualityGateMode())
                 .setQualityGateStatus(vo.getQualityGateStatus())
                 .setQualityGateMessage(vo.getQualityGateMessage())
+                .setQualityTaskIds(vo.getQualityTaskIds())
+                .setQualityEvidenceFingerprint(vo.getQualityEvidenceFingerprint())
+                .setQualityEvidenceSnapshot(vo.getQualityEvidenceSnapshot())
                 .setQualityQuantityStatus(vo.getQualityQuantityStatus())
                 .setQualityReleasedNum(vo.getQualityReleasedNum())
                 .setQualityPendingNum(vo.getQualityPendingNum())
@@ -96,7 +105,11 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
     }
 
     protected String operatorName(MesTaskReportVO vo, MomUser currentUser) {
-        return currentUser == null ? StrUtil.blankToDefault(vo.getOperatorName(), "设备自动报工") : currentUser.getName();
+        if ("API".equals(vo.getType())) {
+            return vo.getOperatorName();
+        }
+        return currentUser == null
+                ? StrUtil.blankToDefault(vo.getOperatorName(), "设备自动报工") : currentUser.getName();
     }
 
     /**
@@ -202,9 +215,14 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
     }
 
     private BigDecimal availableBackflush(MesTaskArrangeEntity arrange, String actualMatCode) {
-        var request=new MesWarehouseLiveStockInoutDTO();request.setMatCode(actualMatCode);request.setFactoryCode(arrange.getFactoryCode());
-        request.setProduceTaskCode(arrange.getProduceTaskCode());request.setAllowUnassignedProduceTask(true);request.setNum(BigDecimal.ONE);
-        request.setMatDetailType(MesWarehouseMatDetailTypeEnum.RAW.name());request.setBizType(WarehouseInBizTypeEnum.BACK_FLUSH_OUT.getCode());
+        var request = new MesWarehouseLiveStockInoutDTO();
+        request.setMatCode(actualMatCode);
+        request.setFactoryCode(arrange.getFactoryCode());
+        request.setProduceTaskCode(arrange.getProduceTaskCode());
+        request.setAllowUnassignedProduceTask(true);
+        request.setNum(BigDecimal.ONE);
+        request.setMatDetailType(MesWarehouseMatDetailTypeEnum.RAW.name());
+        request.setBizType(WarehouseInBizTypeEnum.BACK_FLUSH_OUT.getCode());
         return liveStockService.previewOutCandidates(request)
                 .stream().map(MesWarehouseLiveStockEntity::getNum).filter(Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);

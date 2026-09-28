@@ -10,27 +10,19 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
-import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.component.PermissionService;
+import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.mom.mdm.entity.MdmWarehouseLocationEntity;
-import com.kitex.mom.mdm.entity.MdmWarehouseEntity;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
+import com.kitex.mom.mdm.entity.MdmWarehouseEntity;
+import com.kitex.mom.mdm.entity.MdmWarehouseLocationEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mdm.feign.RemoteWarehouseLocationService;
 import com.kitex.mom.mdm.feign.RemoteWarehouseService;
-import com.kitex.mom.wms.dto.WmsAllocationCancelDTO;
-import com.kitex.mom.wms.dto.WmsAllocationBillAddDTO;
-import com.kitex.mom.wms.dto.WmsDetailDTO;
-import com.kitex.mom.wms.dto.WmsCrossWarehouseTransferDTO;
-import com.kitex.mom.wms.dto.WmsTransferRoutePolicyDTO;
+import com.kitex.mom.wms.dto.*;
 import com.kitex.mom.wms.dto.app.WmsAllocationBillAppDTO;
 import com.kitex.mom.wms.dto.app.WmsLiveStockMoveDTO;
-import com.kitex.mom.wms.entity.WmsAllocationBillEntity;
-import com.kitex.mom.wms.entity.WmsContainerBarcodeEntity;
-import com.kitex.mom.wms.entity.WmsInoutFlowEntity;
-import com.kitex.mom.wms.entity.WmsLiveStockEntity;
-import com.kitex.mom.wms.entity.WmsTransferVarianceLineEntity;
+import com.kitex.mom.wms.entity.*;
 import com.kitex.mom.wms.enums.InBillTypeEnum;
 import com.kitex.mom.wms.enums.InOutEnum;
 import com.kitex.mom.wms.enums.OutBillTypeEnum;
@@ -38,12 +30,7 @@ import com.kitex.mom.wms.mapper.WmsAllocationBillMapper;
 import com.kitex.mom.wms.mapper.WmsContainerBarcodeMapper;
 import com.kitex.mom.wms.mapper.WmsInoutFlowMapper;
 import com.kitex.mom.wms.mapper.WmsTransferVarianceLineMapper;
-import com.kitex.mom.wms.service.WmsAllocationBillService;
-import com.kitex.mom.wms.service.WmsInoutFlowService;
-import com.kitex.mom.wms.service.WmsLiveStockService;
-import com.kitex.mom.wms.service.WmsMaterialReservationService;
-import com.kitex.mom.wms.service.WmsPlanShortageEventOutboxService;
-import com.kitex.mom.wms.service.WmsTransferRoutePolicyService;
+import com.kitex.mom.wms.service.*;
 import com.kitex.mom.wms.util.WmsStockAvailability;
 import com.kitex.mom.wms.vo.WmsAllocationBillExcelVO;
 import com.kitex.mom.wms.vo.WmsAllocationBillVO;
@@ -52,11 +39,11 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -70,37 +57,27 @@ import java.util.stream.Collectors;
 @AllArgsConstructor
 public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillMapper, WmsAllocationBillEntity> implements WmsAllocationBillService {
 
-    private final WmsInoutFlowMapper wmsInoutFlowMapper;
-
-    private final WmsInoutFlowService wmsInoutFlowService;
-
-    private final WmsLiveStockService wmsLiveStockService;
-
-    private final RemoteWarehouseLocationService remoteWarehouseLocationService;
-
-    private final RemoteWarehouseService remoteWarehouseService;
-
-    private final RemoteMaterialService remoteMaterialService;
-
-    private final PermissionService permissionService;
-
-    private final WmsContainerBarcodeMapper wmsContainerBarcodeMapper;
-
-    private final WmsMaterialReservationService wmsMaterialReservationService;
-
-    private final WmsTransferRoutePolicyService wmsTransferRoutePolicyService;
-
-    private final WmsTransferVarianceLineMapper wmsTransferVarianceLineMapper;
-
-    private final WmsPlanShortageEventOutboxService wmsPlanShortageEventOutboxService;
-
     private static final String IN_TRANSIT = "IN_TRANSIT";
     private static final String PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED";
     private static final String RECEIVED = "RECEIVED";
     private static final String CANCELLED = "CANCELLED";
     private static final String PARTIALLY_CANCELLED = "PARTIALLY_CANCELLED";
-    /** 仅供已发布v6工具按冻结契约重试；v7及以后必须使用路线策略。 */
+    /**
+     * 仅供已发布v6工具按冻结契约重试；v7及以后必须使用路线策略。
+     */
     private static final int LEGACY_V6_TRANSFER_LEAD_HOURS = 24;
+    private final WmsInoutFlowMapper wmsInoutFlowMapper;
+    private final WmsInoutFlowService wmsInoutFlowService;
+    private final WmsLiveStockService wmsLiveStockService;
+    private final RemoteWarehouseLocationService remoteWarehouseLocationService;
+    private final RemoteWarehouseService remoteWarehouseService;
+    private final RemoteMaterialService remoteMaterialService;
+    private final PermissionService permissionService;
+    private final WmsContainerBarcodeMapper wmsContainerBarcodeMapper;
+    private final WmsMaterialReservationService wmsMaterialReservationService;
+    private final WmsTransferRoutePolicyService wmsTransferRoutePolicyService;
+    private final WmsTransferVarianceLineMapper wmsTransferVarianceLineMapper;
+    private final WmsPlanShortageEventOutboxService wmsPlanShortageEventOutboxService;
 
     /**
      * 新增调拨单
@@ -139,7 +116,7 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
             return Boolean.TRUE;
         }
         require(count(new LambdaQueryWrapper<WmsAllocationBillEntity>()
-                .eq(WmsAllocationBillEntity::getBillNo, wmsAllocationBillAdd.getBillNo())) == 0,
+                        .eq(WmsAllocationBillEntity::getBillNo, wmsAllocationBillAdd.getBillNo())) == 0,
                 "调拨单号已存在");
         MomUser user = SecurityUtils.getUser();
         WmsAllocationBillEntity wmsAllocationBill = new WmsAllocationBillEntity();
@@ -213,7 +190,7 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
             WmsDetailDTO detail = receivedByFlow.get(issueFlow.getId());
             require(detail != null, "调拨明细不属于当前单据");
             require(detail.getOperateNum() != null
-                    && BigDecimal.valueOf(detail.getOperateNum()).compareTo(BigDecimal.valueOf(issueFlow.getMatNum())) == 0,
+                            && BigDecimal.valueOf(detail.getOperateNum()).compareTo(BigDecimal.valueOf(issueFlow.getMatNum())) == 0,
                     "当前版本必须按发起数量完整接收；差异请取消原单后重新发起");
             MdmWarehouseLocationEntity site = requireLocation(detail.getNewSiteCode(), target.getWarehouseCode(),
                     wmsAllocationBill.getFactoryCode());
@@ -657,7 +634,7 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
                 .collect(Collectors.groupingBy(WmsInoutFlowEntity::getSourceFlowId));
         Map<Long, WmsTransferVarianceLineEntity> varianceBySourceFlow = byId.getVarianceCaseId() == null ? Map.of()
                 : wmsTransferVarianceLineMapper.selectList(new LambdaQueryWrapper<WmsTransferVarianceLineEntity>()
-                .eq(WmsTransferVarianceLineEntity::getCaseId, byId.getVarianceCaseId())).stream()
+                        .eq(WmsTransferVarianceLineEntity::getCaseId, byId.getVarianceCaseId())).stream()
                 .collect(Collectors.toMap(WmsTransferVarianceLineEntity::getSourceFlowId,
                         item -> item, (left, right) -> right));
         List<WmsDetailDTO> details = wmsInoutFlowEntities.stream()
@@ -772,7 +749,7 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
     }
 
     private WmsInoutFlowEntity issueFlow(WmsAllocationBillEntity bill, WmsLiveStockEntity stock,
-                                          Long sourceStockId) {
+                                         Long sourceStockId) {
         WmsInoutFlowEntity flow = new WmsInoutFlowEntity();
         BeanUtils.copyProperties(stock, flow);
         clearInsertIdentity(flow);
@@ -901,8 +878,8 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
     }
 
     private Map<String, TransferStockPool> buildTransferPools(List<WmsLiveStockEntity> stocks,
-                                                               Map<String, MdmWarehouseEntity> warehouses,
-                                                               Map<String, BigDecimal> safetyByMaterial) {
+                                                              Map<String, MdmWarehouseEntity> warehouses,
+                                                              Map<String, BigDecimal> safetyByMaterial) {
         Map<String, TransferStockPool> pools = new LinkedHashMap<>();
         for (WmsLiveStockEntity stock : stocks) {
             String key = transferKey(stock.getWarehouseCode(), stock.getMatCode());
@@ -919,7 +896,7 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
     }
 
     private Map<String, BigDecimal> targetInTransitTotals(String factoryCode, Set<String> targetWarehouses,
-                                                           Set<String> materialCodes) {
+                                                          Set<String> materialCodes) {
         if (targetWarehouses.isEmpty() || materialCodes.isEmpty()) return Map.of();
         List<WmsAllocationBillEntity> bills = list(new LambdaQueryWrapper<WmsAllocationBillEntity>()
                 .eq(WmsAllocationBillEntity::getFactoryCode, factoryCode)
@@ -930,9 +907,9 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         Map<Long, String> targetByBill = bills.stream().collect(Collectors.toMap(
                 WmsAllocationBillEntity::getId, WmsAllocationBillEntity::getNewWarehouseCode));
         List<WmsInoutFlowEntity> issueFlows = wmsInoutFlowMapper.selectList(new LambdaQueryWrapper<WmsInoutFlowEntity>()
-                        .in(WmsInoutFlowEntity::getBillId, targetByBill.keySet())
-                        .eq(WmsInoutFlowEntity::getTransferAction, "ISSUE")
-                        .in(WmsInoutFlowEntity::getMatCode, materialCodes));
+                .in(WmsInoutFlowEntity::getBillId, targetByBill.keySet())
+                .eq(WmsInoutFlowEntity::getTransferAction, "ISSUE")
+                .in(WmsInoutFlowEntity::getMatCode, materialCodes));
         Map<Long, BigDecimal> received = new HashMap<>();
         if (!issueFlows.isEmpty()) {
             wmsInoutFlowMapper.selectList(new LambdaQueryWrapper<WmsInoutFlowEntity>()
@@ -1072,7 +1049,7 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
     }
 
     private WmsCrossWarehouseTransferDTO.Receipt transferReceipt(WmsAllocationBillEntity bill, String materialCode,
-                                                                  BigDecimal transferNum) {
+                                                                 BigDecimal transferNum) {
         return new WmsCrossWarehouseTransferDTO.Receipt().setAllocationBillId(bill.getId())
                 .setBillNo(bill.getBillNo()).setAllocationState(bill.getAllocationState())
                 .setRequestId(bill.getRequestId()).setSourceWarehouseCode(bill.getOldWarehouseCode())
@@ -1098,60 +1075,6 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         if (demandDate == null || !demandDate.isAfter(LocalDate.now())) return "EMERGENCY";
         if (!demandDate.isAfter(LocalDate.now().plusDays(1))) return "URGENT";
         return "NORMAL";
-    }
-
-    private static final class TransferStockPool {
-        private final String warehouseCode;
-        private final String warehouseName;
-        private final String materialCode;
-        private final BigDecimal safetyStock;
-        private BigDecimal initialPhysical = BigDecimal.ZERO;
-        private BigDecimal initialReserved = BigDecimal.ZERO;
-        private final List<TransferStockRow> rows = new ArrayList<>();
-
-        private TransferStockPool(String warehouseCode, String warehouseName, String materialCode,
-                                  BigDecimal safetyStock) {
-            this.warehouseCode = warehouseCode;
-            this.warehouseName = warehouseName;
-            this.materialCode = materialCode;
-            this.safetyStock = safetyStock;
-        }
-
-        private BigDecimal transferable() {
-            BigDecimal rowAvailable = rows.stream().map(row -> row.remaining)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-            return rowAvailable.subtract(safetyStock).max(BigDecimal.ZERO);
-        }
-
-        private List<WmsCrossWarehouseTransferDTO.StockAllocation> allocate(BigDecimal requested) {
-            BigDecimal remainingRequest = requested.min(transferable());
-            List<WmsCrossWarehouseTransferDTO.StockAllocation> result = new ArrayList<>();
-            for (TransferStockRow row : rows) {
-                if (remainingRequest.compareTo(BigDecimal.ZERO) <= 0) break;
-                BigDecimal before = row.remaining;
-                BigDecimal take = before.min(remainingRequest);
-                if (take.compareTo(BigDecimal.ZERO) <= 0) continue;
-                WmsLiveStockEntity stock = row.stock;
-                result.add(new WmsCrossWarehouseTransferDTO.StockAllocation().setStockId(stock.getId())
-                        .setSiteCode(stock.getSiteCode()).setSiteName(stock.getSiteName())
-                        .setContainerCode(stock.getContainerCode()).setBatchNo(stock.getMatBatch())
-                        .setSupplierCode(stock.getSupplierCode()).setValidEndDate(stock.getMatValidEndDate())
-                        .setStockInTime(stock.getInTime()).setAvailableNum(before).setSuggestedNum(take));
-                row.remaining = row.remaining.subtract(take);
-                remainingRequest = remainingRequest.subtract(take);
-            }
-            return result;
-        }
-    }
-
-    private static final class TransferStockRow {
-        private final WmsLiveStockEntity stock;
-        private BigDecimal remaining;
-
-        private TransferStockRow(WmsLiveStockEntity stock, BigDecimal remaining) {
-            this.stock = stock;
-            this.remaining = remaining;
-        }
     }
 
     private void requireText(String value, String message) {
@@ -1211,7 +1134,7 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
             return Boolean.TRUE;
         }
         require(count(new LambdaQueryWrapper<WmsAllocationBillEntity>()
-                .eq(WmsAllocationBillEntity::getBillNo, wmsAllocationBillAdd.getBillNo())) == 0,
+                        .eq(WmsAllocationBillEntity::getBillNo, wmsAllocationBillAdd.getBillNo())) == 0,
                 "调拨单号已存在");
         MdmWarehouseLocationEntity sourceSite = requireLocation(wmsAllocationBillAdd.getOldSiteCode(),
                 source.getWarehouseCode(), factoryCode);
@@ -1286,5 +1209,59 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
                     return wmsAllocationBillExcelVO;
                 })
                 .collect(Collectors.toList());
+    }
+
+    private static final class TransferStockPool {
+        private final String warehouseCode;
+        private final String warehouseName;
+        private final String materialCode;
+        private final BigDecimal safetyStock;
+        private final List<TransferStockRow> rows = new ArrayList<>();
+        private BigDecimal initialPhysical = BigDecimal.ZERO;
+        private BigDecimal initialReserved = BigDecimal.ZERO;
+
+        private TransferStockPool(String warehouseCode, String warehouseName, String materialCode,
+                                  BigDecimal safetyStock) {
+            this.warehouseCode = warehouseCode;
+            this.warehouseName = warehouseName;
+            this.materialCode = materialCode;
+            this.safetyStock = safetyStock;
+        }
+
+        private BigDecimal transferable() {
+            BigDecimal rowAvailable = rows.stream().map(row -> row.remaining)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            return rowAvailable.subtract(safetyStock).max(BigDecimal.ZERO);
+        }
+
+        private List<WmsCrossWarehouseTransferDTO.StockAllocation> allocate(BigDecimal requested) {
+            BigDecimal remainingRequest = requested.min(transferable());
+            List<WmsCrossWarehouseTransferDTO.StockAllocation> result = new ArrayList<>();
+            for (TransferStockRow row : rows) {
+                if (remainingRequest.compareTo(BigDecimal.ZERO) <= 0) break;
+                BigDecimal before = row.remaining;
+                BigDecimal take = before.min(remainingRequest);
+                if (take.compareTo(BigDecimal.ZERO) <= 0) continue;
+                WmsLiveStockEntity stock = row.stock;
+                result.add(new WmsCrossWarehouseTransferDTO.StockAllocation().setStockId(stock.getId())
+                        .setSiteCode(stock.getSiteCode()).setSiteName(stock.getSiteName())
+                        .setContainerCode(stock.getContainerCode()).setBatchNo(stock.getMatBatch())
+                        .setSupplierCode(stock.getSupplierCode()).setValidEndDate(stock.getMatValidEndDate())
+                        .setStockInTime(stock.getInTime()).setAvailableNum(before).setSuggestedNum(take));
+                row.remaining = row.remaining.subtract(take);
+                remainingRequest = remainingRequest.subtract(take);
+            }
+            return result;
+        }
+    }
+
+    private static final class TransferStockRow {
+        private final WmsLiveStockEntity stock;
+        private BigDecimal remaining;
+
+        private TransferStockRow(WmsLiveStockEntity stock, BigDecimal remaining) {
+            this.stock = stock;
+            this.remaining = remaining;
+        }
     }
 }

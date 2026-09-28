@@ -1,9 +1,13 @@
 package com.kitex.mom.mes.dto;
 
+import com.kitex.mom.mes.entity.MesMaterialReturnOperationEntity;
+import com.kitex.mom.mes.entity.MesWarehouseStockFeedJudgeEntity;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
+import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * 生产退料
@@ -13,7 +17,7 @@ import java.math.BigDecimal;
  */
 @Data
 public class MesWarehouseFeedDTO {
-    @Schema(description = "单据号")
+    @Schema(description = "线边库存来源领料/签收单号")
     private String billNo;
 
     /**
@@ -83,8 +87,10 @@ public class MesWarehouseFeedDTO {
     @Schema(description = "仓库名称")
     private String warehouseName;
 
+    @Schema(description = "线边库位编码")
     private String siteCode;
 
+    @Schema(description = "线边库位名称")
     private String siteName;
 
     /**
@@ -102,5 +108,33 @@ public class MesWarehouseFeedDTO {
     private BigDecimal backNum;
 
     private String factoryCode;
+
+    @Schema(description = "提交永久幂等请求号")
+    private String requestId;
+
+    @Schema(description = "预览取得的来源事实指纹")
+    private String expectedEvidenceFingerprint;
+
+    /** 受控退料资格、数量和冻结证据。 */
+    @Data
+    @Accessors(chain = true)
+    public static class Evidence {
+        private MesWarehouseFeedDTO source;
+        private String evidenceFingerprint;
+        private String evidenceSnapshot;
+        private BigDecimal availableQuantity;
+        private Boolean eligible;
+        private List<String> blockers;
+        private MesWarehouseStockFeedJudgeEntity activeRequest;
+    }
+
+    /** 退料申请、实时事实和不可变操作履历。 */
+    @Data
+    @Accessors(chain = true)
+    public static class Detail {
+        private MesWarehouseStockFeedJudgeEntity request;
+        private Evidence currentEvidence;
+        private List<MesMaterialReturnOperationEntity> operations;
+    }
 
 }

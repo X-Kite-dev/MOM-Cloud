@@ -1,26 +1,21 @@
 package com.kitex.mom.mes.process.impl;
 
-import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.util.StrUtil;
 import com.kitex.admin.api.feign.RemoteParamService;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.mom.mdm.entity.MdmCustomerPartEntity;
-import com.kitex.mom.mdm.feign.RemoteCustomerPartService;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
-import com.kitex.mom.mes.dto.MesTaskReportVO;
 import com.kitex.mom.mes.dto.MesTaskReportResult;
+import com.kitex.mom.mes.dto.MesTaskReportVO;
 import com.kitex.mom.mes.entity.MesTaskReportEntity;
 import com.kitex.mom.mes.enums.ReportModeEnum;
 import com.kitex.mom.mes.process.AbstractProcessOperation;
 import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
-import jakarta.annotation.Resource;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
 
 /**
  * 一物一码报工实现
@@ -34,9 +29,6 @@ import java.util.List;
  */
 @Component
 public class OneCodeProcessOperation extends AbstractProcessOperation {
-
-    @Resource
-    private RemoteCustomerPartService partService;
 
     public OneCodeProcessOperation(MesWarehouseLiveStockService liveStockService, RemoteParamService remoteParamService, RemoteMaterialService materialService, MesWarehouseFeedService feedService) {
         super(liveStockService, remoteParamService, materialService, feedService);
@@ -54,8 +46,7 @@ public class OneCodeProcessOperation extends AbstractProcessOperation {
         if (StrUtil.isEmpty(params.getMatCode())) {
             throw new RuntimeException("物料编码不能为空");
         }
-        // 2. 一物一码校验 验证规则
-        validateOneCode(params.getTransferCode(), params.getMatCode());
+        // 2. 条码规则、错料和重复过站已由统一过站防错门校验，避免跨服务重复读取形成判定漂移。
 
         // 3. 报工
         MesTaskReportEntity report = createReport(params, currentUser);
@@ -64,30 +55,6 @@ public class OneCodeProcessOperation extends AbstractProcessOperation {
         String reportMessage = operatorName(params, currentUser) + "于" + DateUtil.format(report.getReportTime(), "yyyy-MM-dd HH:mm:ss") + "进行一物一码报工，合格数量为：" + report.getReportNum();
         return new MesTaskReportResult().setReport(report).setReportMessage(reportMessage);
     }
-
-    /**
-     * 验证一物一码
-     * <p>
-     * 验证一物一码是否符合产品的规则
-     *
-     * @param transferCode 流转码
-     * @param matCode      物料编码
-     */
-    private void validateOneCode(String transferCode, String matCode) {
-        List<MdmCustomerPartEntity> partList = partService.getPartCodeByMatCode(matCode).getData();
-        if (CollUtil.isEmpty(partList)) {
-            throw new RuntimeException("未匹配到条码信息");
-        }
-
-        boolean matchRegular = partList.stream()
-                .anyMatch(part -> StrUtil.isNotEmpty(part.getRegular()) &&
-                        transferCode.matches(part.getRegular()));
-
-        if (!matchRegular) {
-            throw new RuntimeException("扫描报工条码/流转卡错误，请重新扫描");
-        }
-    }
-
 
     @Override
     public ReportModeEnum getMode() {
