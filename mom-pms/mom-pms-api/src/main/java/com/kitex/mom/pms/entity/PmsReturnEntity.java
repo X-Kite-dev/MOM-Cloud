@@ -10,8 +10,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.util.List;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 采购退货
@@ -74,7 +74,9 @@ public class PmsReturnEntity extends BaseEntity<PmsReturnEntity> {
     @Schema(description = "备注")
     private String remark;
 
-    /** 草稿、待复核、待仓库出库、部分出库、已完成、已驳回、已取消、已失效。 */
+    /**
+     * 草稿、待复核、待仓库出库、部分出库、已完成、已驳回、已取消、已失效。
+     */
     @Schema(description = "受控退供状态")
     private String workflowStatus;
 

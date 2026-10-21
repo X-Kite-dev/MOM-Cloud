@@ -151,7 +151,9 @@ public class MesWarehouseMaterialInBillEntity extends BaseEntity<MesWarehouseMat
     @Schema(description = "实际入库数量")
     private BigDecimal inNum;
 
-    /** 首次进入受控签收时冻结的历史净收量，不伪造历史签收操作。 */
+    /**
+     * 首次进入受控签收时冻结的历史净收量，不伪造历史签收操作。
+     */
     private BigDecimal receiptBaselineQuantity;
 
     /**

@@ -3,11 +3,11 @@ package com.kitex.mom.mdm.feign;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
 import com.kitex.mom.mdm.Constants;
+import com.kitex.mom.mdm.dto.MdmProcessRouteDTO;
+import com.kitex.mom.mdm.dto.MdmRouteMaterialAssignmentQueryDTO;
 import com.kitex.mom.mdm.entity.MdmProcessProcedureMatEntity;
 import com.kitex.mom.mdm.entity.MdmProcessRouteEntity;
 import com.kitex.mom.mdm.entity.MdmProcessRouteWorkingEntity;
-import com.kitex.mom.mdm.dto.MdmProcessRouteDTO;
-import com.kitex.mom.mdm.dto.MdmRouteMaterialAssignmentQueryDTO;
 import com.kitex.mom.mdm.vo.MdmProcedureSopVO;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.cloud.openfeign.SpringQueryMap;
@@ -101,6 +101,10 @@ public interface RemoteProcessRouteService {
     @GetMapping("/mdmProcessRoute/getProcessWorkingById")
     R<MdmProcessRouteWorkingEntity> getProcessWorkingById(@RequestParam("id") Long id);
 
+    /** 读取当前组织路线的真实节点清单，供旧按主工序维护的消费者先核定唯一归属。 */
+    @GetMapping("/mdmProcessRoute/getProcedureList")
+    R<List<MdmProcessRouteWorkingEntity>> getProcedureList(@RequestParam("routeCode") String routeCode);
+
     @GetMapping("/mdmProcessRoute/getDeviceList")
     R<List<String>> getDeviceList(@RequestParam("id") Long id);
 
@@ -109,6 +113,19 @@ public interface RemoteProcessRouteService {
      */
     @GetMapping("/mdmProcessRoute/getDefaultByProductCode")
     R<MdmProcessRouteEntity> getDefaultByProductCode(@RequestParam("productCode") String productCode);
+
+    /**
+     * 批量查询启用的默认工艺路线；保留重复行，由调用方识别主数据冲突。
+     */
+    @PostMapping("/mdmProcessRoute/defaultsByProductCodes")
+    R<List<MdmProcessRouteEntity>> getDefaultsByProductCodes(@RequestBody List<String> productCodes);
+
+    /**
+     * 批量查询产品全部启用工艺路线。每条启用路线代表该产品已经维护并批准使用的
+     * 产线/速率关系，供MPS粗能力平衡显式选择合格替代产线。
+     */
+    @PostMapping("/mdmProcessRoute/enabledByProductCodes")
+    R<List<MdmProcessRouteEntity>> getEnabledByProductCodes(@RequestBody List<String> productCodes);
 
     /**
      * 批量获取工艺路线、工序和启用工位能力，用于APS生成工序级资源占用。

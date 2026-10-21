@@ -14,6 +14,10 @@ import java.util.Map;
 @FeignClient(contextId = "remoteDeviceService", value = Constants.Name)
 public interface RemoteDeviceService {
 
+    /** 明确当前组织的真实实物查询；不合并重复身份，也不将调用失败返回为空。 */
+    @GetMapping("/mdmDevice/scopedListByCodes")
+    R<List<MdmDeviceEntity>> scopedListByCodes(@RequestParam("deviceCodes") List<String> deviceCodes);
+
     @PostMapping("/mdmDevice/controlled-pause")
     R<com.kitex.mom.mdm.entity.MdmDevicePauseReceipt> controlledPause(
             @RequestBody com.kitex.mom.mdm.dto.MdmDevicePauseCommand command);

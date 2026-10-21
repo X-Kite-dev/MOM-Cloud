@@ -25,6 +25,12 @@ import lombok.EqualsAndHashCode;
 public class MesProcessProcedureMoldEntity extends BaseEntity<MesProcessProcedureMoldEntity> {
 
     /**
+     * 真实路线节点；主工序可重复，不能再用processCode代表本次绑定。
+     */
+    @Schema(description = "稳定路线节点编号")
+    private String routeNodeCode;
+
+    /**
      * 工艺路线编码
      */
     @Schema(description = "工艺路线编码")

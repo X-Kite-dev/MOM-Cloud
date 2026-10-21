@@ -7,7 +7,6 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.admin.api.entity.SysUserEntity;
 import com.kitex.admin.api.feign.RemoteParamService;
 import com.kitex.admin.api.feign.RemoteUserService;
-import com.kitex.common.core.util.R;
 import com.kitex.mom.common.message.api.feign.RemoteMessagePushService;
 import com.kitex.mom.common.message.constant.enums.MessageTypeEnum;
 import com.kitex.mom.common.message.dto.MessageDTO;
@@ -25,7 +24,7 @@ import com.kitex.mom.mes.service.MesInspectionGenRecordService;
 import com.kitex.mom.mes.service.MesInspectionRuleService;
 import com.kitex.mom.mes.service.MesProduceTaskService;
 import com.kitex.mom.mes.service.MesTaskService;
-import com.kitex.mom.qms.api.feign.RemoteProcedureService;
+import com.kitex.mom.mes.service.impl.MesQmsInspectionCoordinator;
 import com.kitex.mom.qms.api.feign.RemoteQualityStandardService;
 import com.kitex.mom.qms.dto.inspection.InspectionProcedureCreateParam;
 import com.kitex.mom.qms.entity.QmsQualityStandardEntity;
@@ -56,7 +55,7 @@ import java.util.stream.Collectors;
 public class ProcedureCreateTask {
 
     private final MesInspectionGenRecordService genRecordService;
-    private final RemoteProcedureService remoteProcedureService;
+    private final MesQmsInspectionCoordinator qmsInspectionCoordinator;
     private final RemoteClassesService remoteClassesService;
     private final RemoteQualityStandardService remoteQualityStandardService;
     private final MesProduceTaskService produceTaskService;
@@ -149,7 +148,7 @@ public class ProcedureCreateTask {
         LocalDateTime dueTime = record.getNextTime();
         String dueShift = record.getNextShift();
         String scheduleKey = dueTime == null ? dueShift : DateUtil.format(dueTime, "yyyyMMddHHmmss");
-        String sourceRequestId = "MES_QMS:" + produceTask.getCode() + ":MIDDLE:"
+        String sourceRequestId = "MES_QMS_V2:" + produceTask.getCode() + ":MIDDLE:"
                 + StrUtil.blankToDefault(scheduleKey, String.valueOf(record.getId()));
         MesInspectionGenRecordEntity generated = genRecordService.getOne(
                 new LambdaQueryWrapper<MesInspectionGenRecordEntity>()
@@ -197,11 +196,7 @@ public class ProcedureCreateTask {
                 }
                 createParam.setInspectionNum(Integer.parseInt(inspectionNum));
             }
-            R<Long> response = remoteProcedureService.create(createParam);
-            taskId = response == null ? null : response.getData();
-            if (taskId == null) {
-                throw new IllegalStateException(response == null ? "QMS未返回结果" : response.getMsg());
-            }
+            taskId = qmsInspectionCoordinator.create(createParam, produceTask.getFactoryCode());
         } catch (Exception exception) {
             failure = rootMessage(exception);
         }

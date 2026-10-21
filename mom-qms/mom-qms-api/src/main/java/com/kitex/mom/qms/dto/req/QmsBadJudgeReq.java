@@ -1,9 +1,10 @@
 package com.kitex.mom.qms.dto.req;
 
-import lombok.Data;
-import java.math.BigDecimal;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
+import lombok.Data;
+
+import java.math.BigDecimal;
 
 /**
  * 不良判定

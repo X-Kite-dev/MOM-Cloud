@@ -14,6 +14,11 @@ import com.kitex.mom.mes.enums.ReportModeEnum;
 import com.kitex.mom.mes.enums.WarehouseInBizTypeEnum;
 import com.kitex.mom.mes.service.MesReportMaterialConsumeService;
 import com.kitex.mom.mes.service.MesTaskReportService;
+import com.kitex.mom.mes.service.MesTaskReportUnqualifiedService;
+import com.kitex.mom.mes.service.MesReportCommandService;
+import com.kitex.mom.mes.dto.MesReportOperatorContextDTO;
+import com.kitex.mom.mes.dto.MesReportRequestCloseVO;
+import com.kitex.mom.mes.enums.MesReportChannelEnum;
 import com.kitex.mom.mes.service.MesWarehouseInoutService;
 import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -45,6 +50,29 @@ public class MesTaskReportController {
     private final MesReportMaterialConsumeService materialConsumeService;
     private final MesWarehouseInoutService warehouseInoutService;
     private final MesActualFactoryAccessService factoryAccess;
+    private final MesReportCommandService reportCommands;
+    private final MesTaskReportUnqualifiedService unqualifiedReports;
+
+    @Operation(summary = "查询本人报工原号回执", description = "只读查询首次成功结果及当前有效状态，不触发报工重试")
+    @GetMapping("/receipt")
+    @PreAuthorize("@pms.hasPermission('mesTaskReport:show','mesTaskReport:report','mesStationPass:report','mesTaskReport:integration')")
+    public R<MesReportCommandReceiptDTO> receipt(@RequestParam String requestId) {
+        return R.ok(reportCommands.receipt(requestId));
+    }
+
+    @GetMapping("/command-context")
+    @Operation(summary = "查询原号登记真实身份", description = "不包含令牌，不授予报工或离线许可")
+    @PreAuthorize("@pms.hasPermission('mesTaskReport:show','mesTaskReport:report','mesStationPass:report','mesTaskReport:integration')")
+    public R<MesReportOperatorContextDTO> commandContext() {
+        return R.ok(reportCommands.operatorContext());
+    }
+
+    @PostMapping("/close-unaccepted")
+    @Operation(summary = "工站封存未受理原号", description = "已有成功返回原回执；未成功才永久封存，不冲销生产事实")
+    @PreAuthorize("@pms.hasPermission('mesTaskReport:report')")
+    public R<MesReportCommandReceiptDTO> closeUnaccepted(@RequestBody MesReportRequestCloseVO input) {
+        return R.ok(reportCommands.closeUnaccepted(input.getCommand(), MesReportChannelEnum.STATION, input.getReason()));
+    }
 
     @Operation(summary = "报工记录分页查询", description = "查询原始报工事实及冲销状态")
     @GetMapping("/page")
@@ -134,10 +162,27 @@ public class MesTaskReportController {
 
     @Operation(summary = "生产报工-不合格品上报", description = "生产报工-不合格品上报")
     @PostMapping("/unqualified")
-//    @PreAuthorize("@pms.hasPermission('mesTaskReport:unqualified')")
-    public R<Void> unqualified(@RequestBody MesTaskReportUnqualifiedVO params) {
+    @PreAuthorize("@pms.hasPermission('mesTaskReport:unqualified')")
+    public R<MesProductionNgSourceDTO> unqualified(@RequestBody MesTaskReportUnqualifiedVO params) {
         service.unqualified(params);
-        return R.ok();
+        return R.ok(unqualifiedReports.source(params.getRequestId()));
+    }
+
+    @Operation(summary = "查询不良报工原计量", description = "仅查询当前工厂原请求结果；未库存化不是可用库存，历史缺单位不补造")
+    @GetMapping("/unqualified/source")
+    @PreAuthorize("@pms.hasPermission('mesTaskReport:show','mesTaskReport:unqualified')")
+    public R<MesProductionNgSourceDTO> unqualifiedSource(@RequestParam String requestId) {
+        return R.ok(unqualifiedReports.source(requestId));
+    }
+
+    @Operation(summary = "不良报工时间证据分页", description = "独立NG报告域，只读原事实，不重算历史、不触发报工")
+    @GetMapping("/unqualified/timing-page")
+    @PreAuthorize("@pms.hasPermission('mesTaskReport:show','mesTaskReport:unqualified')")
+    public R<IPage<MesUnqualifiedTimingRecordDTO>> unqualifiedTimingPage(
+            @RequestParam(defaultValue = "1") long current, @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) String taskCode, @RequestParam(required = false) String arrangeCode,
+            @RequestParam(required = false) String identifier) {
+        return R.ok(unqualifiedReports.timingPage(current, size, taskCode, arrangeCode, identifier));
     }
 
     @Operation(summary = "生产投料", description = "生产投料")

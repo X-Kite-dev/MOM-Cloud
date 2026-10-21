@@ -20,6 +20,7 @@ import com.kitex.mom.wms.api.feign.RemoteContainerBarcodeService;
 import com.kitex.mom.wms.entity.WmsContainerBarcodeEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 import java.util.Objects;
 
@@ -64,10 +65,19 @@ public class PackageQuantityProcessOperation extends AbstractProcessOperation {
         if (Objects.nonNull(wrap)) {
             throw new RuntimeException("该箱码已形成生产包装，不能重复占用");
         }
-        // 2. 创建并保存报工记录
+        // 2. 构造报告，由统一入口先保存；此处不能提前保存引用reportId的包装明细。
         MesTaskReportEntity report = createReport(params, currentUser);
         params.setReportId(report.getId());
-        // 3. 建立独立包装主档与可追溯内容关系
+        String reportMessage = operatorName(params, currentUser) + "于" + DateUtil.format(report.getReportTime(), "yyyy-MM-dd HH:mm:ss") + "进行箱码扫描数量报工，箱码：" + params.getTransferCode() + "，装箱数量：" + report.getReportNum();
+        return new MesTaskReportResult().setReport(report).setReportMessage(reportMessage);
+    }
+
+    /**
+     * 实际报告存在后，同事务建立独立包装主档及内容关系；不放宽数据库缺父检查。
+     */
+    @Override
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
+    public void persistAssociations(MesTaskReportVO params, MesTaskReportResult result) {
         MesWrapEntity productionWrap = new MesWrapEntity()
                 .setWrapCode(params.getTransferCode())
                 .setRuleCode(params.getWrapRuleCode())
@@ -77,10 +87,7 @@ public class PackageQuantityProcessOperation extends AbstractProcessOperation {
                 .setArrangeCode(params.getArrangeCode())
                 .setWrapType(params.getTaskType())
                 .setFactoryCode(params.getFactoryCode());
-        wrapService.registerQuantityPackage(productionWrap, report.getId(), params.getTransferCode(), params.getPassNum());
-        // 4. 返回处理结果
-        String reportMessage = operatorName(params, currentUser) + "于" + DateUtil.format(report.getReportTime(), "yyyy-MM-dd HH:mm:ss") + "进行箱码扫描数量报工，箱码：" + params.getTransferCode() + "，装箱数量：" + report.getReportNum();
-        return new MesTaskReportResult().setReport(report).setReportMessage(reportMessage);
+        wrapService.registerQuantityPackage(productionWrap, result.getReport().getId(), params.getTransferCode(), params.getPassNum());
     }
 
 

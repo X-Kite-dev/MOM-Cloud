@@ -33,6 +33,9 @@ public class QmsInspectionProcedureTaskEntity extends BaseEntity<QmsInspectionPr
     @Schema(description = "来源系统永久幂等请求号")
     private String sourceRequestId;
 
+    @Schema(description = "来源系统固定创建参数SHA-256；用于精确幂等核账")
+    private String sourceRequestFingerprint;
+
     @Deprecated
     @Schema(description = "任务名称")
     private String name;

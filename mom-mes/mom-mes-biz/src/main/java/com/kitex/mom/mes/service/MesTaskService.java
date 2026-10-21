@@ -19,6 +19,9 @@ import java.util.List;
  */
 public interface MesTaskService extends IService<MesTaskEntity> {
 
+    /** 最新独立事务核对原入库参数；无MES回执只返回UNKNOWN，不写业务或调用远端。 */
+    MesTaskInWmsReceiptDTO resolveInWms(MesTaskInWmsDTO command);
+
     /**
      * 查询分页
      *

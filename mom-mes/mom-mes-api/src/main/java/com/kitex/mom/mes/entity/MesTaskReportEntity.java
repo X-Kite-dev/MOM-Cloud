@@ -112,6 +112,22 @@ public class MesTaskReportEntity extends BaseEntity<MesTaskReportEntity> {
     @Schema(description = "报工数量")
     private BigDecimal reportNum;
 
+    @Schema(description = "受控数量纠正后的当前有效报工数量；新版报工等于原报工数量")
+    private BigDecimal effectiveReportNum;
+
+    @Schema(description = "已批准数量纠正累计数量；原报工数量=有效数量+累计纠正数量")
+    private BigDecimal correctedReportNum;
+
+    @Schema(description = "最近一次数量纠正时间")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime lastCorrectionTime;
+
+    @Schema(description = "本次报工使用的受控重报许可ID")
+    private Long correctionPermitId;
+
+    @Schema(description = "本次报工使用的受控重报许可号")
+    private String correctionPermitNo;
+
     @Schema(description = "本次报工实际使用的基本单位；历史未冻结保持空，不用当前主数据补造")
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private String reportUnit;
@@ -127,6 +143,18 @@ public class MesTaskReportEntity extends BaseEntity<MesTaskReportEntity> {
     @Schema(description = "报工时间")
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime reportTime;
+
+    /**
+     * 数据库时钟采集的本次报工接受时刻；与设备上报的事件时间分离。
+     */
+    @Schema(description = "服务器报工接受时刻，历史缺失不补造")
+    private LocalDateTime timingAcceptedAt;
+
+    /**
+     * 当次全部时间规则、来源事实与窗口判定，只保存成功接受的真实证据。
+     */
+    @Schema(description = "跨工序时间校验证据JSON")
+    private String timingEvidenceJson;
 
     /**
      * 条码/流转码
@@ -146,8 +174,48 @@ public class MesTaskReportEntity extends BaseEntity<MesTaskReportEntity> {
     @Schema(description = "标识解析不可变快照")
     private String identifierResolutionSnapshot;
 
+    /**
+     * 动态外码具体占用实例；不混用静态别名映射ID。
+     */
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    @Schema(description = "本次使用的动态外码实例ID文本")
+    private Long identifierBindingId;
+
+    /**
+     * 本次动作执行前后使用的占用生命周期版本，USE不递增。
+     */
+    @Schema(description = "本次实际使用的外码实例生命周期版本")
+    private Integer identifierBindingVersion;
+
+    /**
+     * 从原派工契约和永久组核定的BIND/USE/RELEASE，不接受终端自报动作。
+     */
+    @Schema(description = "本次真实工艺节点动作；非动态报工为空")
+    private String identifierNodeAction;
+
+    /**
+     * 实例、永久组、原扫描与生命周期的不可变核定依据。
+     */
+    @Schema(description = "动态外码解析和节点动作不可变快照JSON")
+    private String identifierBindingSnapshot;
+
     @Schema(description = "行业报工扩展校验证据快照")
     private String extensionEvidenceSnapshot;
+
+    @Schema(description = "执行种类：NORMAL-正常生产，ROUTE_RETURN-逐标识退回上序重过站")
+    private String executionKind;
+
+    @Schema(description = "退回上序申请ID；正常生产为空")
+    private Long routeReturnId;
+
+    @Schema(description = "逐标识路线版本；正常生产默认为1")
+    private Integer identifierRouteVersion;
+
+    @Schema(description = "载具逐件展开操作ID；普通单件报工为空")
+    private Long carrierOperationId;
+
+    @Schema(description = "执行本次逐件报工时所在的生产载具编码")
+    private String carrierCode;
 
     /**
      * 类型 手动 自动

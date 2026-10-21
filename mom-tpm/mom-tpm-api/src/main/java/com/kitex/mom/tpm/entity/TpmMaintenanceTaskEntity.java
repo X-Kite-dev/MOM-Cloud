@@ -91,11 +91,15 @@ public class TpmMaintenanceTaskEntity extends BaseEntity<TpmMaintenanceTaskEntit
     @Schema(description = "保养时间")
     private LocalDateTime maintenanceTime;
 
-    /** 首次实际处理保养项目的时间，不再使用任务创建时间冒充实际停机开始。 */
+    /**
+     * 首次实际处理保养项目的时间，不再使用任务创建时间冒充实际停机开始。
+     */
     @Schema(description = "保养实际开始时间")
     private LocalDateTime maintenanceStartTime;
 
-    /** 基于标准时长或首次投递前人工校正的计划恢复时刻。 */
+    /**
+     * 基于标准时长或首次投递前人工校正的计划恢复时刻。
+     */
     @Schema(description = "预计恢复时间")
     private LocalDateTime expectedRecoveryTime;
 

@@ -40,7 +40,9 @@ public class PmsContractDetailEntity extends Model<PmsContractDetailEntity> {
     @Schema(description = "采购订单明细主键")
     private Long orderDetailId;
 
-    /** 订单行对应的采购计划号，用于订单变更后回退计划占用。 */
+    /**
+     * 订单行对应的采购计划号，用于订单变更后回退计划占用。
+     */
     @Schema(description = "采购计划号")
     private String pmsPlanNo;
     /**
@@ -69,15 +71,21 @@ public class PmsContractDetailEntity extends Model<PmsContractDetailEntity> {
     @Schema(description = "采购数量")
     private Double orderNum;
 
-    /** 已通过受控变更撤回、不得继续收料的未到货数量；原合同数量永久保留。 */
+    /**
+     * 已通过受控变更撤回、不得继续收料的未到货数量；原合同数量永久保留。
+     */
     @Schema(description = "受控撤回数量")
     private BigDecimal cancelledNum;
 
-    /** 最近一次执行合同条款供给撤回的采购订单变更申请。 */
+    /**
+     * 最近一次执行合同条款供给撤回的采购订单变更申请。
+     */
     @Schema(description = "撤回申请ID")
     private Long cancellationRequestId;
 
-    /** 合同条款商业数量变更版本。 */
+    /**
+     * 合同条款商业数量变更版本。
+     */
     @Schema(description = "条款变更版本")
     private Integer changeVersion;
     /**

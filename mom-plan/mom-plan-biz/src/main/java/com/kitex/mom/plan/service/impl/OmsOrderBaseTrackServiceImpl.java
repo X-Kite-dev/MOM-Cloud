@@ -1418,10 +1418,14 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
     private void lifePlan(String demandNo, OmsLifeVO result) {
         // 查询生产排产任务
         List<PlnIssueEntity> mesPlan = plnIssueService.list(new LambdaQueryWrapper<PlnIssueEntity>()
-                .eq(PlnIssueEntity::getIssueNo, demandNo));
+                .and(query -> query.eq(PlnIssueEntity::getSourceDemandNo, demandNo)
+                        .or().and(legacy -> legacy.isNull(PlnIssueEntity::getSourceDemandNo)
+                                .eq(PlnIssueEntity::getIssueNo, demandNo))));
         // 产讯采购排产任务
         List<PlnIssueMonthEntity> pmsPlan = plnIssueMonthService.list(new LambdaQueryWrapper<PlnIssueMonthEntity>()
-                .eq(PlnIssueMonthEntity::getIssueMonthNo, demandNo));
+                .and(query -> query.eq(PlnIssueMonthEntity::getSourceDemandNo, demandNo)
+                        .or().and(legacy -> legacy.isNull(PlnIssueMonthEntity::getSourceDemandNo)
+                                .eq(PlnIssueMonthEntity::getIssueMonthNo, demandNo))));
         // 使用Stream流转换生产排产任务数据
         List<OmsLifePlanVO> planList = new ArrayList<>();
         if (CollUtil.isNotEmpty(mesPlan)) {

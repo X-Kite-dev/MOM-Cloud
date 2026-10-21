@@ -12,6 +12,12 @@ public class ProcessProcedureDTO {
     @Schema(description = "主键ID")
     private String id;
 
+    /**
+     * MDM真实节点身份，随新工单路线快照保留；不代替主工序编码。
+     */
+    @Schema(description = "路线内稳定节点编码")
+    private String routeNodeCode;
+
     @Schema(description = "工序编码")
     private String processCode;
 
@@ -31,6 +37,12 @@ public class ProcessProcedureDTO {
     private BigDecimal transferBatchQuantity;
     private Boolean timeCheck;
     private BigDecimal timeVal;
+
+    /**
+     * 目标工序的跨工序自然时间规则；下达时冻结，空表示未配置。
+     */
+    @Schema(description = "跨工序时间规则JSON，MOM_PROCESS_TIMING_V1")
+    private String timingRulesJson;
 
     @Schema(description = "车间编码")
     private String workshopCode;

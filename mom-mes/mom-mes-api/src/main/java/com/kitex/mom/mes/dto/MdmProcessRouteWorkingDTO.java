@@ -3,8 +3,8 @@ package com.kitex.mom.mes.dto;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
-import java.util.List;
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * 工序列表
@@ -14,10 +14,35 @@ import java.math.BigDecimal;
  */
 @Data
 public class MdmProcessRouteWorkingDTO {
-    /** 返工工艺转换也必须保留实际用料，最终由返工补料方案冻结。 */
+    /**
+     * 来源真实路线节点；旧已下达快照保持为空，不从当前MDM反推。
+     */
+    @Schema(description = "路线内稳定节点编码")
+    private String routeNodeCode;
+    /**
+     * 原工程节点关系，与主工序关系分开保留，不从工序序号推算。
+     */
+    private String[] preRouteNodeCodes;
+    private String[] nextRouteNodeCodes;
+    /**
+     * 原节点时间规则，后续执行转换必须保留来源节点。
+     */
+    private String nodeTimingRulesJson;
+
+    /**
+     * 返工工艺转换也必须保留实际用料，最终由返工补料方案冻结。
+     */
     private java.util.List<ProcessProcedureDTO.ProcessProcedureMatDTO> mdmProcessProcedureMatList;
-    /** 保留工单冻结SOP引用；null为历史未声明，空列表才表示明确无附件。 */
+    /**
+     * 保留工单冻结SOP引用；null为历史未声明，空列表才表示明确无附件。
+     */
     private java.util.List<MesSopReferenceDTO> mdmProcessProcedureSopList;
+
+    /**
+     * 新下达由MDM正式来源冻结；历史null仍是旧附件语义，不能查询今日版本回填。
+     */
+    @Schema(description = "MES正式SOP节点冻结证明，MES_FORMAL_SOP_NODE_V1")
+    private MesFormalSopNodeDTO formalSops;
 
     /**
      * 工艺路线编码
@@ -62,6 +87,12 @@ public class MdmProcessRouteWorkingDTO {
     private BigDecimal transferBatchQuantity;
     private Boolean timeCheck;
     private BigDecimal timeVal;
+
+    /**
+     * 目标工序的跨工序自然时间规则；下达时冻结，空表示未配置。
+     */
+    @Schema(description = "跨工序时间规则JSON，MOM_PROCESS_TIMING_V1")
+    private String timingRulesJson;
 
     /**
      * 工厂编码 - 数据所属的工厂编码

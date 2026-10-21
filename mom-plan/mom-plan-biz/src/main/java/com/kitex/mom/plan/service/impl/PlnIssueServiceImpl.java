@@ -10,7 +10,10 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
+import com.kitex.mom.mdm.dto.MdmRouteEngineeringDTO;
+import com.kitex.mom.mdm.feign.RemoteMdmRouteEngineeringService;
 import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
@@ -18,6 +21,7 @@ import com.kitex.mom.plan.constant.IssueStatusEnum;
 import com.kitex.mom.plan.constant.ModuleEnum;
 import com.kitex.mom.plan.constant.UpdateTypeEnum;
 import com.kitex.mom.plan.dto.MonthPlanQueryDTO;
+import com.kitex.mom.plan.dto.PlnEngineeringReleaseBindDTO;
 import com.kitex.mom.plan.dto.PlnIssueModuleDTO;
 import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
 import com.kitex.mom.plan.entity.*;
@@ -73,6 +77,7 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
     private final PlnSchedulingTaskDetailMapper schedulingTaskDetailMapper;
     private final PlnSchedulingOperationMapper schedulingOperationMapper;
     private final RemoteMesTaskService remoteMesTaskService;
+    private final RemoteMdmRouteEngineeringService remoteMdmRouteEngineeringService;
 
     /**
      * 新增或修改计划下达任务
@@ -216,6 +221,123 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
         }
 
         return plnSchedulingEngineService.issueToModule(plnIssueModuleDTO);
+    }
+
+    /** 先核计划真实工厂和产品，再通过内部令牌读取MDM已发布候选。 */
+    @Override
+    @Transactional(readOnly = true)
+    public List<MdmRouteEngineeringDTO.ProductionCandidate> engineeringCandidates(Long issueId) {
+        PlnIssueEntity issue = requireIssueInCurrentFactory(issueId, false);
+        R<List<MdmRouteEngineeringDTO.ProductionCandidate>> response =
+                remoteMdmRouteEngineeringService.productionCandidates(issue.getProductCode());
+        if (response == null || !response.isOk() || response.getData() == null) {
+            throw new CheckedException("MDM工程版本候选不可用：" + (response == null ? "无响应" : response.getMsg()));
+        }
+        return response.getData();
+    }
+
+    /**
+     * 工程版本只能在未下达且尚未形成APS/MES事实时直接绑定。MDM精确取包成功后，
+     * 只保存服务器返回的版本身份，不接受页面自行填写路线或BOM。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public PlnIssueEntity bindEngineeringRelease(PlnEngineeringReleaseBindDTO command) {
+        if (command == null || command.getIssueId() == null || command.getReleaseId() == null
+                || StrUtil.isBlank(command.getContentHash()) || StrUtil.isBlank(command.getReason())
+                || command.getReason().trim().length() > 1000) {
+            throw new CheckedException("绑定工程版本必须提供计划、版本ID、内容指纹及1至1000字选择依据");
+        }
+        PlnIssueEntity issue = requireEngineeringEditableIssue(command.getIssueId());
+        R<MdmRouteEngineeringDTO.ProductionPackage> response = remoteMdmRouteEngineeringService.resolveForProduction(
+                new MdmRouteEngineeringDTO.ProductionQuery()
+                        .setReleaseId(command.getReleaseId())
+                        .setContentHash(command.getContentHash().trim())
+                        .setProductCode(issue.getProductCode()));
+        if (response == null || !response.isOk() || response.getData() == null) {
+            throw new CheckedException("MDM工程版本精确核验失败：" + (response == null ? "无响应" : response.getMsg()));
+        }
+        MdmRouteEngineeringDTO.ProductionPackage selected = response.getData();
+        if (!Objects.equals(selected.getReleaseId(), command.getReleaseId())
+                || !Objects.equals(selected.getContentHash(), command.getContentHash().trim())
+                || !Objects.equals(selected.getProductCode(), issue.getProductCode())
+                || !Objects.equals(selected.getFactoryCode(), issue.getFactoryCode())) {
+            throw new CheckedException("MDM返回的工程版本对、产品或工厂不一致，禁止绑定");
+        }
+        if (Objects.equals(issue.getEngineeringReleaseId(), selected.getReleaseId())
+                && Objects.equals(issue.getEngineeringContentHash(), selected.getContentHash())
+                && Objects.equals(issue.getEngineeringVersionNo(), selected.getVersionNo())
+                && Objects.equals(issue.getEngineeringRouteId(), selected.getRouteId())
+                && Objects.equals(issue.getEngineeringRouteCode(), selected.getRouteCode())
+                && Objects.equals(issue.getEngineeringBomId(), selected.getBomId())
+                && Objects.equals(issue.getEngineeringBomVersion(), selected.getBomVersion())) {
+            return issue;
+        }
+
+        String oldBinding = engineeringBinding(issue);
+        issue.setEngineeringReleaseId(selected.getReleaseId());
+        issue.setEngineeringContentHash(selected.getContentHash());
+        issue.setEngineeringVersionNo(selected.getVersionNo());
+        issue.setEngineeringRouteId(selected.getRouteId());
+        issue.setEngineeringRouteCode(selected.getRouteCode());
+        issue.setEngineeringBomId(selected.getBomId());
+        issue.setEngineeringBomVersion(selected.getBomVersion());
+        issue.setEngineeringBoundBy(SecurityUtils.getUser().getUsername());
+        issue.setEngineeringBoundTime(LocalDateTime.now());
+        if (!this.updateById(issue)) {
+            throw new CheckedException("生产计划工程版本保存失败，请刷新后核对");
+        }
+        PlnUpdateLogEntity log = createUpdateLog(issue, UpdateTypeEnum.ENGINEERING_RELEASE_BIND,
+                oldBinding, engineeringBinding(issue) + "|reason=" + command.getReason().trim());
+        log.setOperateTime(LocalDateTime.now());
+        plnUpdateLogService.saveUpdateLog(Collections.singletonList(log));
+        return issue;
+    }
+
+    /** 计划读取必须显式核当前工厂，不能只依赖页面传入的ID。 */
+    private PlnIssueEntity requireIssueInCurrentFactory(Long issueId, boolean lock) {
+        if (issueId == null || issueId <= 0) {
+            throw new CheckedException("请选择有效生产计划");
+        }
+        LambdaQueryWrapper<PlnIssueEntity> query = new LambdaQueryWrapper<PlnIssueEntity>()
+                .eq(PlnIssueEntity::getId, issueId);
+        if (lock) {
+            query.last("FOR UPDATE");
+        }
+        PlnIssueEntity issue = baseMapper.selectOne(query);
+        if (issue == null) {
+            throw new CheckedException("生产计划不存在或当前租户无权读取");
+        }
+        String factory = FactoryContextHolder.getFactoryCode();
+        if (StrUtil.isBlank(factory) || !Objects.equals(factory, issue.getFactoryCode())) {
+            throw new CheckedException("当前工厂无权读取或绑定该生产计划");
+        }
+        return issue;
+    }
+
+    /** 任何APS锁、排程明细、批次分配或MES永久号出现后都禁止旧入口换版。 */
+    private PlnIssueEntity requireEngineeringEditableIssue(Long issueId) {
+        PlnIssueEntity issue = requireIssueInCurrentFactory(issueId, true);
+        if (!IssueStatusEnum.UNISSUED.getCode().equals(issue.getStatus())
+                || Boolean.TRUE.equals(issue.getLockStatus()) || issue.getLockTaskId() != null
+                || StrUtil.isNotBlank(issue.getMesIssueRequestId()) || issue.getMesTaskId() != null
+                || StrUtil.isNotBlank(issue.getMesTaskCode())
+                || batchAllocationMapper.selectCount(new LambdaQueryWrapper<PlnSchedulingBatchAllocationEntity>()
+                .eq(PlnSchedulingBatchAllocationEntity::getIssueId, issueId)) != 0
+                || schedulingTaskDetailMapper.selectCount(new LambdaQueryWrapper<PlnSchedulingTaskDetailEntity>()
+                .eq(PlnSchedulingTaskDetailEntity::getIssueId, issueId)) != 0
+                || schedulingOperationMapper.selectCount(new LambdaQueryWrapper<PlnSchedulingOperationEntity>()
+                .eq(PlnSchedulingOperationEntity::getIssueId, issueId)) != 0) {
+            throw new CheckedException("计划已进入排程、合批或MES下达，工程版本只能通过正式计划变更流程调整");
+        }
+        return issue;
+    }
+
+    /** 更新日志保存精确版本对和业务编号，便于人工追溯而不依赖显示版本号。 */
+    private String engineeringBinding(PlnIssueEntity issue) {
+        return "issueId=" + issue.getId() + "|issueNo=" + Objects.toString(issue.getIssueNo(), "")
+                + "|releaseId=" + Objects.toString(issue.getEngineeringReleaseId(), "")
+                + "|contentHash=" + Objects.toString(issue.getEngineeringContentHash(), "");
     }
 
     /**
@@ -515,6 +637,9 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
             throw new CheckedException("计划已下发、锁定或存在执行/质量事实，不能通过旧接口修改；请走受控变更");
         }
         if (StrUtil.isBlank(issue.getIssueNo())
+                || StrUtil.isNotBlank(issue.getSourceDemandNo())
+                || StrUtil.isNotBlank(issue.getPlanningSourceKey())
+                || issue.getSourceMrpId() != null || issue.getMpsLineId() != null
                 || this.count(new LambdaQueryWrapper<PlnIssueEntity>()
                 .eq(PlnIssueEntity::getIssueNo, issue.getIssueNo()).ne(PlnIssueEntity::getId, issueId)) != 0
                 || plnProductDemandMapper.selectCount(new LambdaQueryWrapper<PlnProductDemandEntity>()

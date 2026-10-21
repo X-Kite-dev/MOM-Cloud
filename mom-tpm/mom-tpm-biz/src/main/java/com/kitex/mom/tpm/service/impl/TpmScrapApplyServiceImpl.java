@@ -158,8 +158,7 @@ public class TpmScrapApplyServiceImpl extends ServiceImpl<TpmScrapApplyMapper, T
 
             //废除设备的所有信息
             //如果被绑定到模具上，删除绑定关系
-            tpmDeviceMoldRelaService.remove(new LambdaQueryWrapper<TpmDeviceMoldRelaEntity>()
-                    .in(TpmDeviceMoldRelaEntity::getMoldCode, deviceCodeList));
+            tpmDeviceMoldRelaService.removeByMoldCodes(deviceCodeList);
 
 
             //保养计划、未执行和处理中的任务

@@ -17,7 +17,9 @@ import java.time.LocalDateTime;
 @Data
 @Schema(description = "线边库实时库存出入库参数")
 public class MesWarehouseLiveStockInoutDTO {
-    /** 受控线边签收操作ID，只能由业务服务赋值。 */
+    /**
+     * 受控线边签收操作ID，只能由业务服务赋值。
+     */
     private Long materialReceiptId;
 
     /**

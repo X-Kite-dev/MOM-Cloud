@@ -17,6 +17,7 @@ import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.mdm.entity.MdmDeviceEntity;
 import com.kitex.mom.mdm.enums.DeviceStateEnum;
 import com.kitex.mom.mdm.service.MdmDeviceService;
+import com.kitex.mom.mdm.support.MdmScopedDeviceQuerySupport;
 import com.kitex.mom.mdm.utils.DynamicRefreshUtils;
 import com.kitex.mom.mdm.vo.excel.MdmDeviceExcelVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -48,6 +49,14 @@ import java.util.stream.Collectors;
 public class MdmDeviceController {
 
     private final MdmDeviceService mdmDeviceService;
+
+    private final MdmScopedDeviceQuerySupport scopedDeviceQuery;
+
+    @Operation(summary = "按精确当前租户和工厂查询实物编码")
+    @GetMapping("/scopedListByCodes")
+    public R<List<MdmDeviceEntity>> scopedListByCodes(@RequestParam("deviceCodes") List<String> deviceCodes) {
+        return R.ok(scopedDeviceQuery.listByCodes(deviceCodes));
+    }
 
 
     /**

@@ -10,9 +10,9 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.math.BigDecimal;
 
 /**
  * 出库单明细
@@ -28,7 +28,9 @@ import java.math.BigDecimal;
 @Schema(description = "出库单明细")
 public class WmsOutBillDetailEntity extends BaseEntity<WmsOutBillDetailEntity> {
 
-    /** 受控出库锁定的实时库存行；采购退供等场景禁止改用其他库存。 */
+    /**
+     * 受控出库锁定的实时库存行；采购退供等场景禁止改用其他库存。
+     */
     @Schema(description = "受控出库锁定的实时库存行ID")
     private Long sourceStockId;
 

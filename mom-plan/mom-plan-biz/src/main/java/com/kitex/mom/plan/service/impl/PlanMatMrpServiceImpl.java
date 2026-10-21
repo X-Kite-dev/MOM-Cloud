@@ -12,6 +12,7 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
+import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyDTO;
 import com.kitex.mom.mdm.dto.MdmRouteMaterialAssignmentQueryDTO;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.entity.MdmProcessProcedureMatEntity;
@@ -101,6 +102,8 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
 
     private final PlanMrpPurchaseStatusReceiptMapper purchaseStatusReceiptMapper;
 
+    private final PlnFormalPlanningGate formalPlanningGate;
+
     @Override
     public PlanMrpSupplyWithdrawalDTO.Evidence previewGeneratedSupplyWithdrawal(Long mrpId) {
         if (mrpId == null) throw new CheckedException("下层供应撤回资格校验必须提供MRP记录");
@@ -179,7 +182,8 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                 mesCommand.setReason(reason);
                 R<MesPlanWithdrawalDTO.Receipt> response = remoteMesTaskService.withdrawPlan(mesCommand);
                 requireSupply(response != null && response.isOk() && response.getData() != null
-                                && "SUCCEEDED".equals(response.getData().getStatus())
+                                && Set.of("SUCCEEDED", "ALREADY_WITHDRAWN")
+                                .contains(response.getData().getStatus())
                                 && Objects.equals(response.getData().getEvidenceFingerprint(), expectedDownstream),
                         "下层自制MES计划撤回失败：" + (response == null ? "无响应" : response.getMsg()));
             }
@@ -544,10 +548,13 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                 .filter(StrUtil::isNotBlank).collect(Collectors.toCollection(LinkedHashSet::new));
         Set<String> materialCodes = records.stream().map(PlanMatMrpEntity::getMatCode)
                 .filter(StrUtil::isNotBlank).collect(Collectors.toSet());
+        Set<Long> recordIds = records.stream().map(PlanMatMrpEntity::getId).collect(Collectors.toSet());
         Map<String, List<PlnIssueEntity>> productionSupply = demandNos.isEmpty() ? Map.of()
                 : plnIssueMapper.selectList(new LambdaQueryWrapper<PlnIssueEntity>()
                         .eq(PlnIssueEntity::getFactoryCode, query.getFactoryCode())
-                        .in(PlnIssueEntity::getIssueNo, demandNos)
+                        .and(scope -> scope.in(PlnIssueEntity::getSourceMrpId, recordIds)
+                                .or().and(legacy -> legacy.isNull(PlnIssueEntity::getSourceMrpId)
+                                        .in(PlnIssueEntity::getIssueNo, demandNos)))
                         .in(!materialCodes.isEmpty(), PlnIssueEntity::getProductCode, materialCodes)).stream()
                 .collect(Collectors.groupingBy(row -> supplyKey(row.getIssueNo(), row.getProductCode())));
         Map<Long, LocalDateTime> productionCompletionTimes = loadProductionCompletionTimes(productionSupply);
@@ -558,7 +565,12 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
             try {
                 PmsAgentSupplyEvidenceQueryDTO evidenceQuery = new PmsAgentSupplyEvidenceQueryDTO();
                 evidenceQuery.setFactoryCode(query.getFactoryCode());
-                evidenceQuery.setOrderNos(new ArrayList<>(demandNos));
+                Set<String> externalOrderNos = records.stream()
+                        .filter(row -> Set.of(MatAttributeEnum.PMS.getCode(), MatAttributeEnum.OUT.getCode())
+                                .contains(row.getType()))
+                        .map(row -> StrUtil.blankToDefault(row.getSupplySourceNo(), row.getPlanDemandNo()))
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+                evidenceQuery.setOrderNos(new ArrayList<>(externalOrderNos));
                 R<List<PmsAgentSupplyEvidenceDTO>> response = remotePmsPlanService.agentSupplyEvidence(evidenceQuery);
                 if (response == null || !response.isOk() || response.getData() == null) {
                     pmsEvidenceAvailable = false;
@@ -612,9 +624,10 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
             line.setDemandDate(row.getDemandDate());
             line.setPlannedReleaseDate(row.getOrderDate());
             line.setSupplyType(row.getType());
-            enrichSupplyAdvice(row, line, productionSupply.getOrDefault(supplyKey(row.getPlanDemandNo(), row.getMatCode()), List.of()),
+            String sourceNo = StrUtil.blankToDefault(row.getSupplySourceNo(), row.getPlanDemandNo());
+            enrichSupplyAdvice(row, line, productionSupply.getOrDefault(supplyKey(sourceNo, row.getMatCode()), List.of()),
                     productionCompletionTimes,
-                    pmsSupply.getOrDefault(supplyKey(row.getPlanDemandNo(), row.getMatCode()), List.of()), pmsAvailable,
+                    pmsSupply.getOrDefault(supplyKey(sourceNo, row.getMatCode()), List.of()), pmsAvailable,
                     query.getSupplyEvidenceVersion() == null || query.getSupplyEvidenceVersion() >= 3);
             if (operationImpactRequired) enrichOperationImpact(row, line, impactEvidence);
             return line;
@@ -858,10 +871,20 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         if (demandNos.isEmpty() || materialCodes.isEmpty()) {
             return new OperationImpactEvidence(Map.of(), Set.of(), Set.of(), true);
         }
+        List<PlnIssueEntity> sourceIssues = plnIssueMapper.selectList(new LambdaQueryWrapper<PlnIssueEntity>()
+                        .eq(PlnIssueEntity::getFactoryCode, factoryCode)
+                        .and(scope -> scope.in(PlnIssueEntity::getSourceDemandNo, demandNos)
+                                .or().and(legacy -> legacy.isNull(PlnIssueEntity::getSourceDemandNo)
+                                        .in(PlnIssueEntity::getIssueNo, demandNos))));
+        Set<String> issueNos = sourceIssues.stream().map(PlnIssueEntity::getIssueNo)
+                .filter(StrUtil::isNotBlank).collect(Collectors.toSet());
+        if (issueNos.isEmpty()) {
+            return new OperationImpactEvidence(Map.of(), Set.of(), Set.of(), true);
+        }
         List<PlnSchedulingOperationEntity> all = schedulingOperationMapper.selectList(
                 new LambdaQueryWrapper<PlnSchedulingOperationEntity>()
                         .eq(PlnSchedulingOperationEntity::getFactoryCode, factoryCode)
-                        .in(PlnSchedulingOperationEntity::getIssueNo, demandNos)
+                        .in(PlnSchedulingOperationEntity::getIssueNo, issueNos)
                         .orderByDesc(PlnSchedulingOperationEntity::getTaskId)
                         .orderByAsc(PlnSchedulingOperationEntity::getOperationSeq));
         if (all.isEmpty()) {
@@ -892,11 +915,20 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                                 Comparator.nullsLast(Integer::compareTo))).toList());
             }
         });
-        Set<String> routes = selected.values().stream().flatMap(List::stream)
+        Map<String, PlnIssueEntity> issueByNo = sourceIssues.stream()
+                .filter(item -> StrUtil.isNotBlank(item.getIssueNo()))
+                .collect(Collectors.toMap(PlnIssueEntity::getIssueNo, Function.identity(), (left, right) -> left));
+        Map<String, List<PlnSchedulingOperationEntity>> selectedBySource = selected.entrySet().stream()
+                .filter(entry -> issueByNo.containsKey(entry.getKey()))
+                .collect(Collectors.groupingBy(entry -> planningEvidenceKey(issueByNo.get(entry.getKey())),
+                        LinkedHashMap::new,
+                        Collectors.flatMapping(entry -> entry.getValue().stream(), Collectors.toList())));
+        Set<String> scheduledSources = byIssue.keySet().stream().map(issueByNo::get).filter(Objects::nonNull)
+                .map(this::planningEvidenceKey).collect(Collectors.toSet());
+        Set<String> routes = selectedBySource.values().stream().flatMap(List::stream)
                 .map(PlnSchedulingOperationEntity::getRouteCode).filter(StrUtil::isNotBlank).collect(Collectors.toSet());
         if (routes.isEmpty()) {
-            return new OperationImpactEvidence(selected, all.stream().map(PlnSchedulingOperationEntity::getIssueNo)
-                    .filter(StrUtil::isNotBlank).collect(Collectors.toSet()), Set.of(), true);
+            return new OperationImpactEvidence(selectedBySource, scheduledSources, Set.of(), true);
         }
         try {
             MdmRouteMaterialAssignmentQueryDTO assignmentQuery = new MdmRouteMaterialAssignmentQueryDTO();
@@ -905,14 +937,14 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
             assignmentQuery.setMaterialCodes(materialCodes);
             R<List<MdmProcessProcedureMatEntity>> response = remoteProcessRouteService.getMaterialAssignments(assignmentQuery);
             if (response == null || !response.isOk() || response.getData() == null) {
-                return new OperationImpactEvidence(selected, byIssue.keySet(), Set.of(), false);
+                return new OperationImpactEvidence(selectedBySource, scheduledSources, Set.of(), false);
             }
             Set<String> assignments = response.getData().stream()
                     .map(item -> operationMaterialKey(item.getRouteCode(), item.getProcessCode(), item.getMaterialCode()))
                     .collect(Collectors.toSet());
-            return new OperationImpactEvidence(selected, byIssue.keySet(), assignments, true);
+            return new OperationImpactEvidence(selectedBySource, scheduledSources, assignments, true);
         } catch (Exception ignored) {
-            return new OperationImpactEvidence(selected, byIssue.keySet(), Set.of(), false);
+            return new OperationImpactEvidence(selectedBySource, scheduledSources, Set.of(), false);
         }
     }
 
@@ -923,10 +955,11 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
             line.setOperationImpactStatus("NOT_SHORTAGE");
             return;
         }
-        List<PlnSchedulingOperationEntity> operations = evidence.operationsByIssue().getOrDefault(row.getPlanDemandNo(), List.of());
+        String planningKey = planningEvidenceKey(row);
+        List<PlnSchedulingOperationEntity> operations = evidence.operationsByIssue().getOrDefault(planningKey, List.of());
         if (operations.isEmpty()) {
             line.setOperationImpactEvidenceComplete(false)
-                    .setOperationImpactStatus(evidence.issuesWithAnySchedule().contains(row.getPlanDemandNo())
+                    .setOperationImpactStatus(evidence.issuesWithAnySchedule().contains(planningKey)
                             ? "OFFICIAL_SCHEDULE_MISSING" : "APS_NOT_SCHEDULED");
             return;
         }
@@ -1251,6 +1284,18 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
 
     private String supplyKey(String demandNo, String materialCode) {
         return StrUtil.blankToDefault(demandNo, "") + "\u0000" + StrUtil.blankToDefault(materialCode, "");
+    }
+
+    private String planningEvidenceKey(PlnIssueEntity issue) {
+        if (issue.getMpsLineId() != null) return "MPS:" + issue.getMpsLineId();
+        if (StrUtil.isNotBlank(issue.getPlanningSourceKey())) return "SOURCE:" + issue.getPlanningSourceKey();
+        return "DEMAND:" + StrUtil.blankToDefault(issue.getSourceDemandNo(), issue.getIssueNo());
+    }
+
+    private String planningEvidenceKey(PlanMatMrpEntity mrp) {
+        if (mrp.getMpsLineId() != null) return "MPS:" + mrp.getMpsLineId();
+        if (StrUtil.isNotBlank(mrp.getPlanningSourceKey())) return "SOURCE:" + mrp.getPlanningSourceKey();
+        return "DEMAND:" + StrUtil.blankToDefault(mrp.getPlanDemandNo(), "");
     }
 
     private BigDecimal optional(BigDecimal value) {
@@ -1879,6 +1924,8 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         if (duplicatedRequest != null) {
             throw new CheckedException("替代决策请求号已被其他MRP记录使用");
         }
+        MdmFactoryPlanningPolicyDTO planningPolicy = formalPlanningGate.requireMomSubstituteApproval(
+                mrp.getFactoryCode());
         requireNoPendingDemandChange(mrp);
         if (Boolean.TRUE.equals(mrp.getStatus())) {
             throw new CheckedException("MRP记录已下发，不能再变更替代方案");
@@ -1895,6 +1942,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         MomUser user = SecurityUtils.getUser();
         LocalDateTime decisionTime = LocalDateTime.now();
         if ("CANCEL".equalsIgnoreCase(command.getAction())) {
+            formalPlanningGate.revalidate(planningPolicy);
             return cancelDecision(mrp, command, user, decisionTime);
         }
         if (!Set.of(MrpSubstituteStatusEnum.PENDING.getCode(),
@@ -1902,6 +1950,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
             throw new CheckedException("当前MRP记录没有待确认的替代建议");
         }
         if ("REJECT".equalsIgnoreCase(command.getAction())) {
+            formalPlanningGate.revalidate(planningPolicy);
             return updateDecision(mrp, command, user, decisionTime,
                     MrpSubstituteStatusEnum.REJECTED.getCode(),
                     MrpReadinessStatusEnum.SHORTAGE.getCode(),
@@ -1993,6 +2042,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         String readinessStatus = remaining.compareTo(BigDecimal.ZERO) == 0
                 ? MrpReadinessStatusEnum.SUBSTITUTE_APPROVED.getCode()
                 : MrpReadinessStatusEnum.PARTIAL_SHORTAGE.getCode();
+        formalPlanningGate.revalidate(planningPolicy);
         WmsMaterialReservationResultDTO reservation = createReservation(mrp, command, normalized);
         try {
             return updateDecision(mrp, command, user, decisionTime, substituteStatus, readinessStatus,
@@ -2141,7 +2191,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         reserve.setRequestId(command.getRequestId());
         reserve.setSourceType("PLAN_MRP_SUBSTITUTE");
         reserve.setSourceId(mrp.getId());
-        reserve.setSourceNo(mrp.getPlanDemandNo());
+        reserve.setSourceNo(StrUtil.blankToDefault(mrp.getPlanningSourceKey(), mrp.getPlanDemandNo()));
         reserve.setFactoryCode(mrp.getFactoryCode());
         reserve.setWarehouseCode(mrp.getDemandWarehouseCode());
         reserve.setWarehouseName(mrp.getDemandWarehouseName());
@@ -2559,7 +2609,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         command.setRequestId("PLAN-MRP-MAIN-" + mrp.getId());
         command.setSourceType("PLAN_MRP_MAIN");
         command.setSourceId(mrp.getId());
-        command.setSourceNo(mrp.getPlanDemandNo());
+        command.setSourceNo(StrUtil.blankToDefault(mrp.getPlanningSourceKey(), mrp.getPlanDemandNo()));
         command.setFactoryCode(mrp.getFactoryCode());
         command.setWarehouseCode(mrp.getDemandWarehouseCode());
         command.setWarehouseName(mrp.getDemandWarehouseName());
@@ -2772,8 +2822,30 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean completeNumHandle(List<OmsOrderLifeCycleDTO> omsOrderLifeCycleDtoList) {
-        Map<String, PlanMatMrpEntity> matMrpMap = this.list(new LambdaQueryWrapper<PlanMatMrpEntity>().in(PlanMatMrpEntity::getPlanDemandNo,
-                        omsOrderLifeCycleDtoList.stream().map(OmsOrderLifeCycleDTO::getNo).collect(Collectors.toList()))).stream()
+        List<String> issueNos = omsOrderLifeCycleDtoList.stream().map(OmsOrderLifeCycleDTO::getNo)
+                .filter(StrUtil::isNotBlank).distinct().toList();
+        Map<String, PlnIssueEntity> issues = plnIssueMapper.selectList(new LambdaQueryWrapper<PlnIssueEntity>()
+                        .in(PlnIssueEntity::getIssueNo, issueNos)).stream()
+                .collect(Collectors.toMap(entity -> entity.getIssueNo() + "_" + entity.getProductCode(),
+                        Function.identity(), (left, right) -> left));
+        Set<Long> sourceMrpIds = issues.values().stream().map(PlnIssueEntity::getSourceMrpId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, PlanMatMrpEntity> mrpById = sourceMrpIds.isEmpty() ? Map.of()
+                : this.listByIds(sourceMrpIds).stream().collect(Collectors.toMap(
+                PlanMatMrpEntity::getId, Function.identity()));
+        Set<Long> mpsLineIds = issues.values().stream()
+                .filter(issue -> issue.getSourceMrpId() == null)
+                .map(PlnIssueEntity::getMpsLineId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<String, PlanMatMrpEntity> mpsRootMrp = mpsLineIds.isEmpty() ? Map.of()
+                : this.list(new LambdaQueryWrapper<PlanMatMrpEntity>()
+                .in(PlanMatMrpEntity::getMpsLineId, mpsLineIds)).stream()
+                .filter(entity -> entity.getSubitemBomId() != null && entity.getSubitemBomId() == 0)
+                .collect(Collectors.toMap(
+                        entity -> entity.getMpsLineId() + "_" + entity.getMatCode(),
+                        Function.identity(), (left, right) -> left));
+        // 兼容升级前issue_no直接等于需求号的旧生产计划。
+        Map<String, PlanMatMrpEntity> legacyMrp = this.list(new LambdaQueryWrapper<PlanMatMrpEntity>()
+                        .in(PlanMatMrpEntity::getPlanDemandNo, issueNos)).stream()
                 .collect(Collectors.toMap(
                         entity -> entity.getPlanDemandNo() + "_" + entity.getMatCode(),
                         Function.identity(),
@@ -2783,14 +2855,27 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         // 客户订单完成数量修改
         List<OmsOrderLifeCycleDTO> plnProductDemandList = new ArrayList<>();
         for (OmsOrderLifeCycleDTO omsOrderLifeCycleDTO : omsOrderLifeCycleDtoList) {
-            PlanMatMrpEntity matMrp = matMrpMap.get(omsOrderLifeCycleDTO.getNo() + "_" + omsOrderLifeCycleDTO.getProductCode());
+            PlnIssueEntity issue = issues.get(omsOrderLifeCycleDTO.getNo() + "_"
+                    + omsOrderLifeCycleDTO.getProductCode());
+            PlanMatMrpEntity matMrp = issue != null && issue.getSourceMrpId() != null
+                    ? mrpById.get(issue.getSourceMrpId())
+                    : issue != null && issue.getMpsLineId() != null
+                    ? mpsRootMrp.get(issue.getMpsLineId() + "_" + omsOrderLifeCycleDTO.getProductCode())
+                    : legacyMrp.get(omsOrderLifeCycleDTO.getNo() + "_" + omsOrderLifeCycleDTO.getProductCode());
+            if (matMrp == null) {
+                throw new CheckedException("生产完成回传缺少精确MRP来源：" + omsOrderLifeCycleDTO.getNo()
+                        + "/" + omsOrderLifeCycleDTO.getProductCode());
+            }
             if (omsOrderLifeCycleDTO.getFinishNum() != null) {
                 matMrp.setCompleteNum(Optional.ofNullable(matMrp.getCompleteNum()).orElse(BigDecimal.ZERO)
                         .add(omsOrderLifeCycleDTO.getFinishNum()));
                 mrpList.add(matMrp);
             }
             if (matMrp.getSubitemBomId() != null && matMrp.getSubitemBomId() == 0) {
-                plnProductDemandList.add(omsOrderLifeCycleDTO);
+                OmsOrderLifeCycleDTO demandCallback = new OmsOrderLifeCycleDTO();
+                BeanUtils.copyProperties(omsOrderLifeCycleDTO, demandCallback);
+                demandCallback.setNo(matMrp.getPlanDemandNo());
+                plnProductDemandList.add(demandCallback);
             }
         }
         // 如果有产品数量修改则修改客户订单完成数量
@@ -2830,7 +2915,11 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
      */
     private void mesHandler(PlanMatMrpEntity planMatMrpEntity) {
         PlnIssueEntity plnIssueEntity = new PlnIssueEntity();
-        plnIssueEntity.setIssueNo(planMatMrpEntity.getPlanDemandNo());
+        plnIssueEntity.setIssueNo("MRP-" + planMatMrpEntity.getId());
+        plnIssueEntity.setSourceDemandNo(planMatMrpEntity.getPlanDemandNo());
+        plnIssueEntity.setSourceMrpId(planMatMrpEntity.getId());
+        plnIssueEntity.setPlanningSourceKey(planMatMrpEntity.getPlanningSourceKey());
+        plnIssueEntity.setMpsLineId(planMatMrpEntity.getMpsLineId());
         plnIssueEntity.setCustomerName(planMatMrpEntity.getCustomerName());
         plnIssueEntity.setCustomerCode(planMatMrpEntity.getCustomerCode());
         plnIssueEntity.setProductCode(planMatMrpEntity.getMatCode());
@@ -2857,7 +2946,11 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
      */
     private void pmsHandler(PlanMatMrpEntity planMatMrpEntity) {
         PlnIssueMonthEntity plnIssueMonthEntity = new PlnIssueMonthEntity();
-        plnIssueMonthEntity.setIssueMonthNo(planMatMrpEntity.getPlanDemandNo());
+        plnIssueMonthEntity.setIssueMonthNo("MRP-" + planMatMrpEntity.getId());
+        plnIssueMonthEntity.setSourceDemandNo(planMatMrpEntity.getPlanDemandNo());
+        plnIssueMonthEntity.setSourceMrpId(planMatMrpEntity.getId());
+        plnIssueMonthEntity.setPlanningSourceKey(planMatMrpEntity.getPlanningSourceKey());
+        plnIssueMonthEntity.setMpsLineId(planMatMrpEntity.getMpsLineId());
         plnIssueMonthEntity.setCustomerName(planMatMrpEntity.getCustomerName());
         plnIssueMonthEntity.setCustomerCode(planMatMrpEntity.getCustomerCode());
         plnIssueMonthEntity.setProductCode(planMatMrpEntity.getMatCode());
@@ -2879,7 +2972,11 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
      */
     private void outHandler(PlanMatMrpEntity planMatMrpEntity) {
         PlnIssueMonthEntity plnIssueMonthEntity = new PlnIssueMonthEntity();
-        plnIssueMonthEntity.setIssueMonthNo(planMatMrpEntity.getPlanDemandNo());
+        plnIssueMonthEntity.setIssueMonthNo("MRP-" + planMatMrpEntity.getId());
+        plnIssueMonthEntity.setSourceDemandNo(planMatMrpEntity.getPlanDemandNo());
+        plnIssueMonthEntity.setSourceMrpId(planMatMrpEntity.getId());
+        plnIssueMonthEntity.setPlanningSourceKey(planMatMrpEntity.getPlanningSourceKey());
+        plnIssueMonthEntity.setMpsLineId(planMatMrpEntity.getMpsLineId());
         plnIssueMonthEntity.setCustomerName(planMatMrpEntity.getCustomerName());
         plnIssueMonthEntity.setCustomerCode(planMatMrpEntity.getCustomerCode());
         plnIssueMonthEntity.setProductCode(planMatMrpEntity.getMatCode());

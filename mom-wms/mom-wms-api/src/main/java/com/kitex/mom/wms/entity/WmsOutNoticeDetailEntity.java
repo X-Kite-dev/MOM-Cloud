@@ -10,8 +10,8 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
-import java.time.LocalDate;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 /**
  * 出库通知单明细
@@ -27,7 +27,9 @@ import java.math.BigDecimal;
 @Schema(description = "wms_out_notice_detail")
 public class WmsOutNoticeDetailEntity extends BaseEntity<WmsOutNoticeDetailEntity> {
 
-    /** 受控出库锁定的实时库存行；为空时沿用历史批次匹配逻辑。 */
+    /**
+     * 受控出库锁定的实时库存行；为空时沿用历史批次匹配逻辑。
+     */
     @Schema(description = "受控出库锁定的实时库存行ID")
     private Long sourceStockId;
 
@@ -166,7 +168,9 @@ public class WmsOutNoticeDetailEntity extends BaseEntity<WmsOutNoticeDetailEntit
     @Schema(description = "单据类型")
     private String billType;
 
-    /** 以下字段仅用于PDA展示冻结库存，不落出库通知明细表。 */
+    /**
+     * 以下字段仅用于PDA展示冻结库存，不落出库通知明细表。
+     */
     @TableField(exist = false)
     @Schema(description = "冻结库存批次（PDA）")
     private String matBatch;

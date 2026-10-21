@@ -4,24 +4,8 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.feign.annotation.InternalCall;
 import com.kitex.common.feign.annotation.NoToken;
 import com.kitex.mom.mes.Constants;
-import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
-import com.kitex.mom.mes.dto.MesTaskIssueReceiptDTO;
-import com.kitex.mom.mes.dto.MesDurationEvidenceDTO;
-import com.kitex.mom.mes.dto.MesReworkInspectionResultDTO;
-import com.kitex.mom.mes.dto.MesApsLocalScheduleDTO;
-import com.kitex.mom.mes.dto.MesQualityDispositionDTO;
-import com.kitex.mom.mes.dto.MesPlanSourceMappingDTO;
-import com.kitex.mom.mes.dto.MesPlanWithdrawalDTO;
-import com.kitex.mom.mes.dto.MesSourceQuantityMappingDTO;
-import com.kitex.mom.mes.dto.PlanMesQueryDTO;
-import com.kitex.mom.mes.agent.dto.MesProductionProgressDTO;
-import com.kitex.mom.mes.agent.dto.MesReportingAnalysisDTO;
-import com.kitex.mom.mes.agent.dto.MesResourceExecutionConformanceDTO;
-import com.kitex.mom.mes.agent.dto.MesOperationWipDTO;
-import com.kitex.mom.mes.agent.dto.MesBatchTraceDTO;
-import com.kitex.mom.mes.agent.dto.MesMaterialConsumptionDTO;
-import com.kitex.mom.mes.agent.dto.MesProcessConformanceDTO;
-import com.kitex.mom.mes.agent.dto.MesProcessTelemetryScopeDTO;
+import com.kitex.mom.mes.agent.dto.*;
+import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.vo.MesTaskReportOmsVO;
 import org.springframework.cloud.openfeign.FeignClient;
@@ -65,7 +49,7 @@ public interface RemoteMesTaskService {
 
     @GetMapping("/mesTask/internal/source-quantity-mapping")
     R<MesSourceQuantityMappingDTO> sourceQuantityMapping(@RequestParam("requestId") String requestId,
-                                                          @RequestParam("factoryCode") String factoryCode);
+                                                         @RequestParam("factoryCode") String factoryCode);
 
     /**
      * 根据生产订单号查询生产工单最后一道工序的报工记录
@@ -111,50 +95,84 @@ public interface RemoteMesTaskService {
     R<MesApsLocalScheduleDTO.ApplyReceipt> applyApsLocalSchedule(
             @RequestBody MesApsLocalScheduleDTO.ApplyCommand command);
 
+    /**
+     * 必须转发当前实名令牌，读取原应用账及当前精确计划，不能匿名核销。
+     */
+    @InternalCall(userTokenRequired = true)
+    @PostMapping("/mesApsPublicationProbe/internal/probe")
+    R<MesApsPublicationProbeDTO.Reply> probeApsPublication(@RequestBody MesApsPublicationProbeDTO.Query query);
+
+    @InternalCall(userTokenRequired = true)
+    @PostMapping("/mesApsPublicationProbe/internal/catalog")
+    R<java.util.List<MesApsPublicationProbeDTO.ReceiptRef>> apsPublicationCatalog(@RequestBody MesApsPublicationProbeDTO.Scope scope);
+
     @InternalCall
     @PostMapping("/mesDurationEvidence/internal/query")
     R<MesDurationEvidenceDTO.Bundle> durationEvidence(@RequestBody MesDurationEvidenceDTO.Query query);
 
-    /** 当前人员在实际工厂范围内查询生产进度权威证据。 */
+    /**
+     * 当前人员在实际工厂范围内查询生产进度权威证据。
+     */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesAgentQuery/internal/production-progress")
     R<MesProductionProgressDTO.Evidence> productionProgress(@RequestBody MesProductionProgressDTO.Query query);
 
-    /** 当前人员在实际工厂范围内查询报工与质量数量权威证据。 */
+    /**
+     * 当前人员在实际工厂范围内冻结生产计划对应的直接及APS合批工单范围。
+     */
+    @InternalCall(userTokenRequired = true)
+    @PostMapping("/mesAgentQuery/internal/plan-task-scope")
+    R<MesPlanTaskScopeDTO.Evidence> planTaskScope(@RequestBody MesPlanTaskScopeDTO.Query query);
+
+    /**
+     * 当前人员在实际工厂范围内查询报工与质量数量权威证据。
+     */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesAgentQuery/internal/reporting-analysis")
     R<MesReportingAnalysisDTO.Evidence> reportingAnalysis(@RequestBody MesReportingAnalysisDTO.Query query);
 
-    /** 当前人员在实际工厂范围内查询指定工单有效报工对应的实际物料消耗。 */
+    /**
+     * 当前人员在实际工厂范围内查询指定工单有效报工对应的实际物料消耗。
+     */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesAgentQuery/internal/material-consumption")
     R<MesMaterialConsumptionDTO.Evidence> materialConsumption(
             @RequestBody MesMaterialConsumptionDTO.Query query);
 
-    /** 当前人员在实际工厂范围内核对指定工单冻结工艺与工序任务。 */
+    /**
+     * 当前人员在实际工厂范围内核对指定工单冻结工艺与工序任务。
+     */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesAgentQuery/internal/process-conformance")
     R<MesProcessConformanceDTO.Evidence> processConformance(
             @RequestBody MesProcessConformanceDTO.Query query);
 
-    /** 当前人员在实际工厂范围内核对指定工单计划资源与现场执行资源。 */
+    /**
+     * 当前人员在实际工厂范围内核对指定工单计划资源与现场执行资源。
+     */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesAgentQuery/internal/resource-execution-conformance")
     R<MesResourceExecutionConformanceDTO.Evidence> resourceExecutionConformance(
             @RequestBody MesResourceExecutionConformanceDTO.Query query);
 
-    /** 为 IoT 参数取证返回指定工单的实际设备连续生产时间窗。 */
+    /**
+     * 为 IoT 参数取证返回指定工单的实际设备连续生产时间窗。
+     */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesAgentQuery/internal/process-telemetry-scope")
     R<MesProcessTelemetryScopeDTO.Evidence> processTelemetryScope(
             @RequestBody MesProcessTelemetryScopeDTO.Query query);
 
-    /** 当前人员在实际工厂范围内查询工序在制与停滞风险权威证据。 */
+    /**
+     * 当前人员在实际工厂范围内查询工序在制与停滞风险权威证据。
+     */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesAgentQuery/internal/operation-wip")
     R<MesOperationWipDTO.Evidence> operationWip(@RequestBody MesOperationWipDTO.Query query);
 
-    /** 原料物料批次到实际报工和包装标识的受控正向追溯。 */
+    /**
+     * 原料物料批次到实际报工和包装标识的受控正向追溯。
+     */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesAgentQuery/internal/batch-trace")
     R<MesBatchTraceDTO.Evidence> batchTrace(@RequestBody MesBatchTraceDTO.Query query);

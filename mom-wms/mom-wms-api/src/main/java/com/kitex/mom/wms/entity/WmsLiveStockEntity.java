@@ -10,9 +10,9 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.math.BigDecimal;
 
 /**
  * 实时库存
@@ -61,7 +61,9 @@ public class WmsLiveStockEntity extends BaseEntity<WmsLiveStockEntity> {
     @Schema(description = "物料名称")
     private String matName;
 
-    /** 物料条码或产品序列号；有值时代表不可拆分的单件身份。 */
+    /**
+     * 物料条码或产品序列号；有值时代表不可拆分的单件身份。
+     */
     @Schema(description = "物料条码或产品序列号")
     private String matBarcode;
 

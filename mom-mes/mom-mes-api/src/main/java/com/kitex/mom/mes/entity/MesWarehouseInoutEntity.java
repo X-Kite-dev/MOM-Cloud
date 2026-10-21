@@ -3,10 +3,10 @@ package com.kitex.mom.mes.entity;
 import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.kitex.common.core.entity.BaseEntity;
-import com.kitex.common.core.util.TenantTable;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
+import com.kitex.common.core.entity.BaseEntity;
+import com.kitex.common.core.util.TenantTable;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -36,6 +36,30 @@ public class MesWarehouseInoutEntity extends BaseEntity<MesWarehouseInoutEntity>
     @Schema(description = "该库存行原始报工来源，非本次扣料报工")
     @JsonSerialize(using = ToStringSerializer.class)
     private Long sourceReportId;
+
+    /**
+     * 真实生产不良来源；与GOOD报工来源互斥。
+     */
+    @Schema(description = "生产不良报告主键")
+    private Long sourceUnqualifiedReportId;
+
+    /**
+     * 初始隔离采集原账，不随质量放行改写。
+     */
+    @Schema(description = "生产不良采集主键")
+    private Long productionNgCaptureId;
+
+    /** 转换OUT所属执行或转换IN所属输出；不拿直接生产报告ID代替多来源。 */
+    @Schema(description = "实物转换执行主键")
+    private Long physicalTransformExecutionId;
+    @Schema(description = "实物转换输出主键")
+    private Long physicalTransformOutputId;
+
+    /**
+     * 后续NG处置OUT/IN的精确永久回执，初始入库为空。
+     */
+    @Schema(description = "生产不良实物处置回执主键")
+    private Long qualityDispositionReceiptId;
     @JsonSerialize(using = ToStringSerializer.class)
     private BigDecimal stockBeforeNum;
     @JsonSerialize(using = ToStringSerializer.class)

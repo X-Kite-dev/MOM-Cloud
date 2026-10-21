@@ -3,16 +3,16 @@ package com.kitex.mom.qms.entity;
 import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
-import java.math.BigDecimal;
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
-import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
+import java.math.BigDecimal;
 import java.util.Date;
 
 @EqualsAndHashCode(callSuper = true)
@@ -25,7 +25,9 @@ public class QmsBadInfoDetailEntity extends BaseEntity<QmsBadInfoDetailEntity> {
 
     @Schema(description = "不合格明细永久编号")
     private String detailNo;
-    /** 实际发布的多岗位会签提案；历史决策不补造。 */
+    /**
+     * 实际发布的多岗位会签提案；历史决策不补造。
+     */
     private Long mrbProposalId;
 
     @Schema(description = "判定幂等请求号")
@@ -103,12 +105,16 @@ public class QmsBadInfoDetailEntity extends BaseEntity<QmsBadInfoDetailEntity> {
     private String wmsSyncMessage;
     private String executionRef;
     private String mesDecisionKey;
-    @JsonSerialize(using=ToStringSerializer.class) private Long mesDeciderUserId;
+    @JsonSerialize(using = ToStringSerializer.class)
+    private Long mesDeciderUserId;
     private Boolean mesConcessionUnrestricted;
-    @TableField(updateStrategy=com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
-    @JsonSerialize(using=ToStringSerializer.class) private Long mesReceiptId;
-    @TableField(updateStrategy=com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS) private String mesExecutorCode;
-    @TableField(updateStrategy=com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS) private String mesExecutionEvidence;
+    @TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+    @JsonSerialize(using = ToStringSerializer.class)
+    private Long mesReceiptId;
+    @TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+    private String mesExecutorCode;
+    @TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+    private String mesExecutionEvidence;
 
     private String verificationResult;
     private String verificationRemark;

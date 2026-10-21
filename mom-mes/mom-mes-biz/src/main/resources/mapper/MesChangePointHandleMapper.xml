@@ -17,6 +17,21 @@
         <if test="query.status != null and query.status != '' ">
             AND status = #{query.status}
         </if>
+        <if test="query.lossCategory != null and query.lossCategory != '' and query.lossCategory != 'NONE' ">
+            AND loss_category = #{query.lossCategory}
+        </if>
+        <if test="query.lossCategory == 'NONE' ">
+            AND loss_category IS NULL
+        </if>
+        <if test="query.queryStartTime != null">
+            AND trigger_time &gt;= #{query.queryStartTime}
+        </if>
+        <if test="query.queryEndTime != null">
+            AND trigger_time &lt; #{query.queryEndTime}
+        </if>
+        <if test="query.wipClearedOnly != null and query.wipClearedOnly">
+            AND affected_wip_qty IS NOT NULL
+        </if>
         <if test="query.taskCode != null and query.taskCode != '' ">
             AND task_code = #{query.taskCode}
         </if>
@@ -26,7 +41,40 @@
         <if test="query.transferCode != null and query.transferCode != '' ">
             AND transfer_code = #{query.transferCode}
         </if>
+        <if test="query.factoryCode != null and query.factoryCode != '' ">
+            AND factory_code = #{query.factoryCode}
+        </if>
         order by create_time desc
+    </select>
+
+    <select id="lossGroups" resultType="com.kitex.mom.mes.dto.MesChangePointLossGroupDTO">
+        SELECT
+        <choose>
+            <when test="dimension == 'CATEGORY'">category AS group_code, category AS group_name,</when>
+            <when test="dimension == 'CONFIG'">config_code AS group_code, config_name AS group_name,</when>
+            <when test="dimension == 'LOSS'">COALESCE(loss_category,'NONE') AS group_code, COALESCE(loss_category,'NONE') AS group_name,</when>
+            <otherwise>'TOTAL' AS group_code, '合计' AS group_name,</otherwise>
+        </choose>
+        COUNT(*) AS event_count,
+        COUNT(*) FILTER (WHERE auto_pause_required) AS auto_pause_required_count,
+        COUNT(*) FILTER (WHERE auto_pause_required AND NOT production_paused
+          AND pause_outcome IN ('FAILED_UNKNOWN','MDM_CONFIRMED_MES_FAILED')) AS pause_failure_count,
+        COALESCE(SUM(affected_wip_qty),0) AS affected_wip_qty,
+        COALESCE(SUM(released_wip_qty),0) AS released_wip_qty,
+        COALESCE(SUM(rework_wip_qty),0) AS rework_wip_qty,
+        COALESCE(SUM(scrap_wip_qty),0) AS scrap_wip_qty,
+        COALESCE(SUM(loss_amount),0) AS loss_amount,
+        COALESCE(AVG(EXTRACT(EPOCH FROM (close_time-trigger_time))/60)
+          FILTER (WHERE close_time IS NOT NULL AND trigger_time IS NOT NULL),0) AS average_close_minutes
+        FROM mes_change_point_handle
+        WHERE del_flag='0' AND factory_code=#{factoryCode}
+          AND trigger_time&gt;=#{startTime} AND trigger_time&lt;#{endTime}
+          AND affected_wip_qty IS NOT NULL
+        <choose>
+            <when test="dimension == 'CATEGORY'">GROUP BY category ORDER BY loss_amount DESC, event_count DESC</when>
+            <when test="dimension == 'CONFIG'">GROUP BY config_code,config_name ORDER BY loss_amount DESC, event_count DESC</when>
+            <when test="dimension == 'LOSS'">GROUP BY COALESCE(loss_category,'NONE') ORDER BY loss_amount DESC, event_count DESC</when>
+        </choose>
     </select>
 
 </mapper>

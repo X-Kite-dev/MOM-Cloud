@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.extension.activerecord.Model;
+import com.kitex.common.core.util.TenantTable;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -16,6 +17,7 @@ import lombok.EqualsAndHashCode;
  * @date 2025-03-18 10:00:49
  */
 @Data
+@TenantTable
 @TableName("tpm_device_mold_rela")
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "TPM设备-模具关联表")
@@ -28,6 +30,15 @@ public class TpmDeviceMoldRelaEntity extends Model<TpmDeviceMoldRelaEntity> {
     @TableId(type = IdType.ASSIGN_ID)
     @Schema(description = "主键ID")
     private Long id;
+
+    /**
+     * 关系由当前真实组织持有，不能根据设备同编码跨组织认领历史数据。
+     */
+    @Schema(description = "租户ID", hidden = true)
+    private Long tenantId;
+
+    @Schema(description = "工厂编码", hidden = true)
+    private String factoryCode;
 
     /**
      * 设备编码

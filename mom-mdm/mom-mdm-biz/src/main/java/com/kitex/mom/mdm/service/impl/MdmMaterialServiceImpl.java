@@ -6,15 +6,21 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.admin.api.entity.SysDictItemEntity;
 import com.kitex.admin.api.feign.RemoteDictService;
 import com.kitex.common.core.util.R;
+import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
+import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.common.excel.vo.ErrorMessage;
 import com.kitex.mom.common.barcode.api.feign.RemotePrintService;
 import com.kitex.mom.common.barcode.dto.req.PreviewObj;
 import com.kitex.mom.common.barcode.dto.req.PrintReq;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
+import com.kitex.mom.mdm.dto.MdmMaterialMeasureDTO;
 import com.kitex.mom.mdm.entity.MdmMaterialGroupEntity;
 import com.kitex.mom.mdm.mapper.MdmMaterialMapper;
 import com.kitex.mom.mdm.service.MdmMaterialGroupService;
@@ -48,6 +54,36 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
     private final RemotePrintService remotePrintService;
 
     private final FileUrlUtil fileUrlUtil;
+
+    @Override
+    @Transactional(readOnly = true)
+    public MdmMaterialMeasureDTO productionMeasure(String materialCode) {
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        var actor = SecurityUtils.getUser();
+        if (tenant == null || tenant <= 0 || TenantContextHolder.getTenantSkip()
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) || StrUtil.isBlank(factory)
+                || actor == null || actor.getId() == null || StrUtil.isBlank(materialCode)) {
+            throw new CheckedException("物料计量观察需要已认证用户与实际租户工厂，禁止跳过隔离");
+        }
+        var rows = list(new LambdaQueryWrapper<MdmMaterialEntity>()
+                .eq(MdmMaterialEntity::getTenantId, tenant).eq(MdmMaterialEntity::getFactoryCode, factory)
+                .eq(MdmMaterialEntity::getMaterialCode, materialCode).last("LIMIT 2"));
+        if (rows.size() != 1 || !Boolean.TRUE.equals(rows.get(0).getStatus()) || StrUtil.isBlank(rows.get(0).getBasicUnit())) {
+            throw new CheckedException("当前租户工厂未找到唯一启用物料及明确基本单位");
+        }
+        var row = rows.get(0);
+        var result = new MdmMaterialMeasureDTO();
+        result.setMaterialId(row.getId().toString());
+        result.setTenantId(row.getTenantId().toString());
+        result.setFactoryCode(row.getFactoryCode());
+        result.setMaterialCode(row.getMaterialCode());
+        result.setBasicUnit(row.getBasicUnit());
+        result.setEnabled(row.getStatus());
+        // 以原值.toString保留微秒；不截到秒，不把观察时间当发布版本。
+        result.setUpdatedAt(row.getUpdateTime() == null ? null : row.getUpdateTime().toString());
+        return result;
+    }
 
     /**
      * 导入excel 表格

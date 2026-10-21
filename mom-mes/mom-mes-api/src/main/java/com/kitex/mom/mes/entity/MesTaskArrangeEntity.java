@@ -1,6 +1,7 @@
 package com.kitex.mom.mes.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.kitex.common.core.entity.BaseEntity;
@@ -72,6 +73,29 @@ public class MesTaskArrangeEntity extends BaseEntity<MesTaskArrangeEntity> {
      */
     @Schema(description = "工序编码")
     private String routeCode;
+
+    /**
+     * 从真实工序任务出生合同复制；不从当前MDM或页面输入推断。
+     */
+    @Schema(description = "原工序任务的路线节点")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String sourceRouteNodeCode;
+
+    @Schema(description = "冻结执行图协议，NODE_EXECUTION_V1或历史空值")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String routeExecutionSchemaVersion;
+
+    @Schema(description = "原工序任务的冻结前序节点CSV")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String predecessorNodeCodes;
+
+    @Schema(description = "原工序任务的冻结后序节点CSV")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String successorNodeCodes;
+
+    @Schema(description = "原工序任务的冻结节点时间规则JSON")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String nodeTimingRulesJson;
 
     /**
      * 工序名称
@@ -274,7 +298,7 @@ public class MesTaskArrangeEntity extends BaseEntity<MesTaskArrangeEntity> {
 
     @Schema(description = "质量已放行完成数量")
     private BigDecimal qualityReleasedNum;
-    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     private Long materialGateRecordId;
 
     /**

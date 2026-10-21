@@ -132,6 +132,27 @@ public class MesChangePointConfigEntity extends BaseEntity<MesChangePointConfigE
     @Schema(description = "通知通道，SYSTEM固定，可附加DINGDING或WECHAT")
     private String notifyChannels;
 
+    @Schema(description = "是否要求独立恢复生产审批；生产控制非NOTICE时由系统强制开启")
+    private Boolean productionReleaseRequired;
+
+    @Schema(description = "恢复生产审批角色编码，多个以逗号分隔")
+    private String productionReleaseRole;
+
+    @Schema(description = "恢复生产审批SLA分钟")
+    private Integer releaseSlaMin;
+
+    @Schema(description = "触发阻断型变化点时是否自动暂停正在生产的关联派工")
+    private Boolean autoPauseRequired;
+
+    @Schema(description = "复产批准后是否进入加严巡检监控")
+    private Boolean intensifiedInspectionRequired;
+
+    @Schema(description = "加严巡检间隔分钟")
+    private Integer intensifiedInspectionIntervalMin;
+
+    @Schema(description = "退出加严监控所需连续合格次数")
+    private Integer intensifiedInspectionPassCount;
+
     /**
      * 所属组织
      */

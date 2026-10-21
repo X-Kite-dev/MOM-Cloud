@@ -30,6 +30,42 @@ import java.time.LocalDateTime;
 @TableName("mes_production_order")
 public class MesProductionOrderEntity extends BaseEntity<MesProductionOrderEntity> {
 
+    @Schema(description = "正式计划合同代表行ID")
+    private Long formalPlanContractId;
+
+    @Schema(description = "正式计划合同编号")
+    private String formalPlanContractNo;
+
+    @Schema(description = "正式计划合同版本")
+    private Integer formalPlanContractVersion;
+
+    @Schema(description = "正式计划合同内容SHA-256")
+    private String formalPlanContractFingerprint;
+
+    @Schema(description = "正式计划来源系统")
+    private String sourceSystem;
+
+    @Schema(description = "正式计划来源计划号")
+    private String sourcePlanNo;
+
+    @Schema(description = "正式计划来源版本")
+    private String sourcePlanVersion;
+
+    @Schema(description = "工厂计划权威策略ID")
+    private Long planningPolicyId;
+
+    @Schema(description = "工厂计划权威策略版本")
+    private Integer planningPolicyVersion;
+
+    @Schema(description = "工厂计划权威策略SHA-256")
+    private String planningPolicyFingerprint;
+
+    @Schema(description = "生产订单建立时冻结的正式MRP权威")
+    private String mrpAuthority;
+
+    @Schema(description = "ERP正式生产订单号")
+    private String erpProductionOrderNo;
+
     /**
      * 生产订单编号
      */

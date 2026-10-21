@@ -82,16 +82,29 @@ public class MesChangePointConfigServiceImpl extends ServiceImpl<MesChangePointC
         config.setMonitorField(upper(config.getMonitorField()));
         config.setNotifyRoles(normalizeCsv(config.getNotifyRoles()));
         config.setVerifyRole(normalizeCsv(config.getVerifyRole()));
+        config.setProductionReleaseRole(normalizeCsv(config.getProductionReleaseRole()));
         config.setControlMode(StrUtil.blankToDefault(upper(config.getControlMode()), "NOTICE"));
         config.setInspectionRequired(Boolean.TRUE.equals(config.getInspectionRequired()));
         config.setResponseSlaMin(config.getResponseSlaMin() == null ? 30 : config.getResponseSlaMin());
         config.setHandleSlaMin(config.getHandleSlaMin() == null ? 240 : config.getHandleSlaMin());
+        config.setReleaseSlaMin(config.getReleaseSlaMin() == null ? 60 : config.getReleaseSlaMin());
+        config.setAutoPauseRequired(Boolean.TRUE.equals(config.getAutoPauseRequired()));
+        config.setIntensifiedInspectionRequired(Boolean.TRUE.equals(config.getIntensifiedInspectionRequired()));
+        config.setIntensifiedInspectionIntervalMin(config.getIntensifiedInspectionIntervalMin() == null
+                ? 60 : config.getIntensifiedInspectionIntervalMin());
+        config.setIntensifiedInspectionPassCount(config.getIntensifiedInspectionPassCount() == null
+                ? 3 : config.getIntensifiedInspectionPassCount());
         config.setNotifyChannels(normalizeChannels(config.getNotifyChannels()));
         config.setEnabled(!Boolean.FALSE.equals(config.getEnabled()));
         if (!"NOTICE".equals(config.getControlMode()) || Boolean.TRUE.equals(config.getInspectionRequired())) {
             config.setIsVerify(true);
         }
         config.setIsVerify(Boolean.TRUE.equals(config.getIsVerify()));
+        // 只要配置会阻断生产，处置验证与解除生产门就必须由两个岗位分步完成。
+        config.setProductionReleaseRequired(!"NOTICE".equals(config.getControlMode()));
+        if (!Boolean.TRUE.equals(config.getProductionReleaseRequired())) {
+            config.setAutoPauseRequired(false);
+        }
 
         require(StrUtil.isNotBlank(config.getName()), "变化点名称不能为空");
         require(CATEGORIES.contains(config.getCategory()), "4M1E大类无效");
@@ -102,11 +115,31 @@ public class MesChangePointConfigServiceImpl extends ServiceImpl<MesChangePointC
                 "接收SLA必须在1～10080分钟之间");
         require(config.getHandleSlaMin() > config.getResponseSlaMin() && config.getHandleSlaMin() <= 43200,
                 "处置SLA必须大于接收SLA且不超过43200分钟");
+        require(config.getReleaseSlaMin() >= 1 && config.getReleaseSlaMin() <= 10080,
+                "恢复生产审批SLA必须在1～10080分钟之间");
         require(StrUtil.isNotBlank(config.getNotifyRoles()), "通知角色不能为空");
         require(!Boolean.TRUE.equals(config.getIsVerify()) || StrUtil.isNotBlank(config.getVerifyRole()),
                 "需要验证时必须配置验证角色");
+        require(!Boolean.TRUE.equals(config.getProductionReleaseRequired())
+                        || StrUtil.isNotBlank(config.getProductionReleaseRole()),
+                "生产控制会阻断执行时必须配置独立恢复生产审批角色");
+        require(!Boolean.TRUE.equals(config.getAutoPauseRequired())
+                        || Boolean.TRUE.equals(config.getProductionReleaseRequired()),
+                "自动暂停只能用于阻断型变化点");
         require(!Boolean.TRUE.equals(config.getInspectionRequired()) || StrUtil.isNotBlank(config.getRouteCode()),
                 "要求变化点首检时必须限定工序编码");
+        require(!Boolean.TRUE.equals(config.getIntensifiedInspectionRequired())
+                        || Boolean.TRUE.equals(config.getProductionReleaseRequired()),
+                "加严巡检只能用于需要独立恢复生产审批的阻断型变化点");
+        require(!Boolean.TRUE.equals(config.getIntensifiedInspectionRequired())
+                        || Boolean.TRUE.equals(config.getInspectionRequired()),
+                "启用加严巡检时必须同时启用变化点首检");
+        require(config.getIntensifiedInspectionIntervalMin() >= 5
+                        && config.getIntensifiedInspectionIntervalMin() <= 1440,
+                "加严巡检间隔必须在5～1440分钟之间");
+        require(config.getIntensifiedInspectionPassCount() >= 1
+                        && config.getIntensifiedInspectionPassCount() <= 20,
+                "加严巡检连续合格次数必须在1～20之间");
         if (config.getUpperLimit() != null || config.getLowerLimit() != null) {
             require(StrUtil.isNotBlank(config.getMonitorField()), "数值型变化点必须配置监控字段");
             require(config.getUpperLimit() != null && config.getLowerLimit() != null

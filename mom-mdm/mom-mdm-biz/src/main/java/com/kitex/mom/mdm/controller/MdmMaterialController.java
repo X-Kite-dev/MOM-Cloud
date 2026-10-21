@@ -16,6 +16,7 @@ import com.kitex.common.log.annotation.SysLog;
 import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.common.barcode.dto.req.PrintReq;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
+import com.kitex.mom.mdm.dto.MdmMaterialMeasureDTO;
 import com.kitex.mom.mdm.entity.MdmSchedulingFamilyEntity;
 import com.kitex.mom.mdm.enums.MatTypeEnum;
 import com.kitex.mom.mdm.service.MdmMaterialService;
@@ -212,6 +213,15 @@ public class MdmMaterialController {
     public R<MdmMaterialEntity> details(String materialCode) {
         return R.ok(mdmMaterialService
                 .getOne(Wrappers.<MdmMaterialEntity>lambdaQuery().eq(MdmMaterialEntity::getMaterialCode, materialCode)));
+    }
+
+    /** 内部标记不替代实名与实际scope；原更新时间文本保留精度。 */
+    @Inner
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "观察生产物料基本计量", description = "仅实际租户工厂唯一启用物料，不提供匿名或跨厂旁路")
+    @GetMapping("/internal/production-measure")
+    public R<MdmMaterialMeasureDTO> productionMeasure(@RequestParam String materialCode) {
+        return R.ok(mdmMaterialService.productionMeasure(materialCode));
     }
 
     /**

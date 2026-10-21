@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -30,6 +32,13 @@ import java.time.LocalDateTime;
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "线边库投料记录")
 public class MesWarehouseFeedEntity extends BaseEntity<MesWarehouseFeedEntity> {
+
+    /**
+     * 仅服务器稳定命令设置；旧投料为空，禁止事后补原号。
+     */
+    @Schema(description = "服务器稳定投料命令主键，非客户端请求字段")
+    @JsonSerialize(using = ToStringSerializer.class)
+    private Long feedCommandId;
 
     /**
      * 任务编码

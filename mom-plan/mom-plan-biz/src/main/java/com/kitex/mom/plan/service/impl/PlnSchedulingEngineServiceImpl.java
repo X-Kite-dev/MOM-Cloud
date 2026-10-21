@@ -6,6 +6,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.constant.CommonConstants;
 import com.kitex.common.core.exception.CheckedException;
@@ -72,7 +73,9 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
     private static final int PLAN_START_HOUR = 8;
 
     private final PlnSchedulingTaskMapper plnSchedulingTaskMapper;
+    private final PlnSchedulingOperationMapper plnSchedulingOperationMapper;
     private final PlnSchedulingScenarioMapper plnSchedulingScenarioMapper;
+    private final PlnApsCaseMapper plnApsCaseMapper;
     private final PlnObjectiveTemplateService objectiveTemplates;
     private final PlnProductDemandMapper plnProductDemandMapper;
     private final PlnIssueMapper plnIssueMapper;
@@ -97,6 +100,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
     private final com.kitex.mom.plan.service.solver.SequenceSolverRegistry sequenceSolvers;
     private final com.kitex.mom.plan.mapper.PlnSchedulingSequenceProofMapper sequenceProofs;
     private final org.mybatis.spring.SqlSessionTemplate sqlSession;
+    private final PlnApsFormalContractResolver formalContractResolver;
 
     @Override
     public PlnSchedulingRunInput captureRun(PlnSchedulingRunDTO original) {
@@ -402,6 +406,352 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         return scenarioView(scenario);
     }
 
+    /**
+     * 专业调整只产生同情景的新候选版本。原任务、工序、批次及初始排序证据保持不变；
+     * 任何当前来源、资源或工序硬约束失败，整笔派生事务回滚，不能形成可选方案。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public PlnSchedulingScenarioDTO deriveScenarioCandidate(
+            Long caseId, PlnApsDecisionDTO.DeriveCommand command) {
+        if (caseId == null || command == null || command.getOperations() == null
+                || command.getOperations().isEmpty()) throw new CheckedException("专业调整参数不完整");
+        if (StrUtil.isBlank(command.getRequestId()) || command.getRequestId().trim().length() > 64
+                || StrUtil.isBlank(command.getReason()) || command.getReason().trim().length() > 500
+                || command.getOperations().size() > 100)
+            throw new CheckedException("专业调整请求号、原因或工序数量不符合约束");
+        Long parentId = positiveId(command.getParentCandidateTaskId(), "父候选任务主键");
+        String requestId = command.getRequestId().trim();
+        String commandHash = sha256(JSONUtil.toJsonStr(command));
+        PlnApsCaseEntity apsCase = plnApsCaseMapper.selectById(caseId);
+        if (apsCase == null || !"EVALUATED".equals(apsCase.getCaseStatus())
+                || !Objects.equals(apsCase.getContextFingerprint(), command.getExpectedCaseFingerprint())
+                || apsCase.getScenarioId() == null) throw new CheckedException("APS案件已变化或不允许专业调整");
+        PlnSchedulingScenarioEntity header = plnSchedulingScenarioMapper.selectById(apsCase.getScenarioId());
+        if (header == null || !Objects.equals(header.getFactoryCode(), apsCase.getFactoryCode()))
+            throw new CheckedException("案件情景与工厂不一致");
+        plnSchedulingScenarioMapper.lock("APS_SCENARIO_SELECT:" + header.getScenarioNo());
+        PlnSchedulingScenarioEntity scenario = plnSchedulingScenarioMapper.selectOne(
+                new LambdaQueryWrapper<PlnSchedulingScenarioEntity>()
+                        .eq(PlnSchedulingScenarioEntity::getId, header.getId()).last("FOR UPDATE"));
+        if (scenario == null) throw new CheckedException("专业调整的排产情景不存在");
+        PlnSchedulingTaskEntity replay = plnSchedulingTaskMapper.selectOne(
+                new LambdaQueryWrapper<PlnSchedulingTaskEntity>()
+                        .eq(PlnSchedulingTaskEntity::getScenarioId, scenario.getId())
+                        .eq(PlnSchedulingTaskEntity::getFactoryCode, scenario.getFactoryCode())
+                        .eq(PlnSchedulingTaskEntity::getDerivationRequestId, requestId).last("LIMIT 1"));
+        if (replay != null) {
+            if (!Objects.equals(replay.getDerivationRequestFingerprint(), commandHash))
+                throw new CheckedException("专业调整请求号已用于不同内容");
+            return scenarioView(scenario);
+        }
+        if (!"EVALUATED".equals(scenario.getScenarioStatus())
+                || scenario.getSelectedTaskId() != null
+                || scenario.getExpiresTime() == null || !scenario.getExpiresTime().isAfter(LocalDateTime.now()))
+            throw new CheckedException("情景已选案、过期或不能再派生候选");
+        int derivedCount = Objects.requireNonNullElse(scenario.getDerivedCandidateCount(), 0);
+        if (derivedCount >= 9) throw new CheckedException("同一情景最多保留9个专业调整版本，请新建案件重新求解");
+        PlnSchedulingTaskEntity parent = plnSchedulingTaskMapper.selectById(parentId);
+        if (parent == null || !Objects.equals(parent.getScenarioId(), scenario.getId())
+                || !Objects.equals(parent.getFactoryCode(), scenario.getFactoryCode())
+                || !"WAIT_CONFIRM".equals(parent.getTaskStatus())
+                || !Boolean.TRUE.equals(parent.getCandidateFeasible())
+                || Boolean.TRUE.equals(parent.getSelectedCandidate())
+                || Boolean.TRUE.equals(parent.getResultArchived()))
+            throw new CheckedException("父候选不属于可调整的当前情景，或存在硬阻断");
+        PlnSchedulingRuleSetEntity activeRule = requiredActiveRule();
+        if (!Objects.equals(activeRule.getRuleCode(), scenario.getRuleCode())
+                || !Objects.equals(activeRule.getRuleVersion(), scenario.getRuleVersion()))
+            throw new CheckedException("排产规则已变化，请重新求解后调整");
+        List<Long> sourceIds = parseLongList(scenario.getSourceIssueIdsSnapshot());
+        List<PlnIssueEntity> issues = plnIssueMapper.selectBatchIds(sourceIds);
+        if (issues.size() != sourceIds.size()
+                || issues.stream().anyMatch(issue -> !Objects.equals(issue.getFactoryCode(), scenario.getFactoryCode())
+                || !Objects.equals(issue.getTenantId(), scenario.getTenantId()))
+                || !Objects.equals(sourceFingerprint(issues), scenario.getSourceFingerprint()))
+            throw new CheckedException("计划来源已变化，禁止基于旧候选调整");
+
+        List<PlnSchedulingTaskDetailEntity> sourceDetails = plnSchedulingTaskDetailMapper.selectList(
+                new LambdaQueryWrapper<PlnSchedulingTaskDetailEntity>()
+                        .eq(PlnSchedulingTaskDetailEntity::getTaskId, parentId));
+        List<PlnSchedulingOperationEntity> sourceOperations = plnSchedulingOperationMapper.selectList(
+                new LambdaQueryWrapper<PlnSchedulingOperationEntity>()
+                        .eq(PlnSchedulingOperationEntity::getTaskId, parentId)
+                        .orderByAsc(PlnSchedulingOperationEntity::getIssueId)
+                        .orderByAsc(PlnSchedulingOperationEntity::getOperationSeq));
+        List<PlnSchedulingBatchEntity> sourceBatches = plnSchedulingBatchMapper.selectList(
+                new LambdaQueryWrapper<PlnSchedulingBatchEntity>()
+                        .eq(PlnSchedulingBatchEntity::getTaskId, parentId));
+        if (sourceDetails.size() != sourceIds.size() || sourceOperations.isEmpty()
+                || sourceBatches.size() != sourceDetails.size()
+                || sourceBatches.stream().anyMatch(batch -> !"SINGLE".equals(batch.getBatchType())
+                || !Objects.equals(batch.getAllocationCount(), 1) || Boolean.TRUE.equals(batch.getLockStatus()))
+                || sourceDetails.stream().anyMatch(detail -> Boolean.TRUE.equals(detail.getLockStatus()))
+                || sourceOperations.stream().anyMatch(op -> Boolean.TRUE.equals(op.getLockStatus())))
+            throw new CheckedException("父候选缺少完整单批次排程或已有执行锁；专业调整不能丢失批次数量账");
+        schedulingBatchService.validateBeforeLock(parentId);
+
+        PlnSchedulingTaskEntity derived = copyForInsert(parent, PlnSchedulingTaskEntity.class);
+        derived.setTaskNo("APS-D-" + UUID.randomUUID().toString().replace("-", "").toUpperCase(Locale.ROOT));
+        derived.setCandidateCode("DERIVED_" + (derivedCount + 1));
+        derived.setCandidateName("专业调整方案 " + (derivedCount + 1));
+        derived.setTaskStatus("EVALUATING");
+        derived.setExecutionId(null);
+        derived.setResultArchived(false);
+        derived.setLifecycleVersion(0);
+        derived.setSelectedCandidate(false);
+        derived.setCandidateMetricsSnapshot(null);
+        derived.setCandidateScore(null);
+        derived.setCandidateRank(null);
+        derived.setCandidateFeasible(null);
+        derived.setEvaluatedTime(null);
+        derived.setParentCandidateTaskId(parentId);
+        derived.setDerivationRequestId(requestId);
+        derived.setDerivationRequestFingerprint(commandHash);
+        derived.setDerivationReason(command.getReason().trim());
+        derived.setDerivationDiffSnapshot("[]");
+        derived.setRemark("由候选" + parent.getCandidateCode() + "派生；" + command.getReason().trim());
+        if (plnSchedulingTaskMapper.insert(derived) != 1) throw new CheckedException("派生候选保存失败");
+
+        Map<Long, PlnApsDecisionDTO.OperationAdjustment> edits = new LinkedHashMap<>();
+        for (PlnApsDecisionDTO.OperationAdjustment edit : command.getOperations()) {
+            Long operationId = positiveId(edit == null ? null : edit.getOperationId(), "父候选工序主键");
+            if (edits.putIfAbsent(operationId, edit) != null) throw new CheckedException("同一道工序不能重复调整");
+        }
+        Set<Long> matched = new HashSet<>();
+        List<Map<String, Object>> differences = new ArrayList<>();
+        Map<Long, List<PlnSchedulingOperationEntity>> derivedByIssue = new LinkedHashMap<>();
+        for (PlnSchedulingOperationEntity source : sourceOperations) {
+            PlnSchedulingOperationEntity operation = copyForInsert(source, PlnSchedulingOperationEntity.class);
+            operation.setTaskId(derived.getId());
+            operation.setSchedulingBatchId(null);
+            operation.setSchedulingBatchNo(null);
+            operation.setSchedulingBatchType(null);
+            operation.setBatchAllocationSnapshot(null);
+            operation.setLockStatus(false);
+            operation.setLockTime(null);
+            PlnApsDecisionDTO.OperationAdjustment edit = edits.get(source.getId());
+            if (edit != null) {
+                matched.add(source.getId());
+                applyProfessionalEdit(source, operation, edit, differences);
+            }
+            if (plnSchedulingOperationMapper.insert(operation) != 1)
+                throw new CheckedException("派生候选工序复制失败");
+            derivedByIssue.computeIfAbsent(operation.getIssueId(), ignored -> new ArrayList<>()).add(operation);
+        }
+        if (matched.size() != edits.size() || differences.isEmpty())
+            throw new CheckedException("调整工序不属于父候选，或没有实际时刻/资源变化");
+        derived.setDerivationDiffSnapshot(toJson(differences));
+        plnSchedulingTaskMapper.updateById(derived);
+        List<PlnSchedulingTaskDetailEntity> details = new ArrayList<>();
+        for (PlnSchedulingTaskDetailEntity source : sourceDetails) {
+            PlnSchedulingTaskDetailEntity detail = copyForInsert(source, PlnSchedulingTaskDetailEntity.class);
+            detail.setTaskId(derived.getId());
+            detail.setLockStatus(false);
+            detail.setLockTaskId(null);
+            detail.setLockTime(null);
+            List<PlnSchedulingOperationEntity> operations = derivedByIssue
+                    .getOrDefault(source.getIssueId(), List.of());
+            LocalDateTime first = operations.stream().map(PlnSchedulingOperationEntity::getScheduledStartTime)
+                    .filter(Objects::nonNull).min(LocalDateTime::compareTo).orElse(null);
+            LocalDateTime last = operations.stream().map(PlnSchedulingOperationEntity::getScheduledEndTime)
+                    .filter(Objects::nonNull).max(LocalDateTime::compareTo).orElse(null);
+            if (first == null || last == null) throw new CheckedException("派生候选存在未排时工序");
+            detail.setScheduledDate(first.toLocalDate());
+            detail.setScheduledEndDate(last.toLocalDate());
+            detail.setOperationStartTime(first);
+            detail.setOperationEndTime(last);
+            if (plnSchedulingTaskDetailMapper.insert(detail) != 1)
+                throw new CheckedException("派生候选计划明细复制失败");
+            details.add(detail);
+        }
+        schedulingBatchService.initializeSingleBatches(derived.getId(), issues);
+        refreshMaterialConstraints(details, LocalDate.now());
+        schedulingBatchService.validateBeforeLock(derived.getId());
+        operationSchedulingService.validateDerivedCalendar(derived.getId());
+        operationSchedulingService.validateBeforeLock(derived.getId(), details);
+        List<PlnSchedulingConflictEntity> conflicts = conflictEngine.detect(derived.getId(), details);
+        if (details.stream().anyMatch(item -> Boolean.TRUE.equals(item.getMaterialHardBlocked())
+                || Boolean.TRUE.equals(item.getOperationHardBlocked()))
+                || conflicts.stream().anyMatch(item -> Boolean.TRUE.equals(item.getHardConstraint()))) {
+            String explanation = details.stream().filter(item -> Boolean.TRUE.equals(item.getOperationHardBlocked()))
+                    .map(PlnSchedulingTaskDetailEntity::getOperationScheduleSummary)
+                    .filter(StrUtil::isNotBlank).findFirst()
+                    .orElseGet(() -> conflicts.stream().filter(item -> Boolean.TRUE.equals(item.getHardConstraint()))
+                            .map(PlnSchedulingConflictEntity::getConflictContent).findFirst()
+                            .orElse("存在物料、资源或工序硬冲突"));
+            throw new CheckedException("专业调整未通过硬约束校验：" + explanation);
+        }
+        for (PlnSchedulingConflictEntity conflict : conflicts)
+            plnSchedulingConflictMapper.insert(conflict);
+        cloneSequenceProof(parentId, derived);
+        Map<Long, BaselinePlan> baseline = issues.stream().collect(Collectors.toMap(
+                PlnIssueEntity::getId, issue -> new BaselinePlan(issue.getScheduledDate())));
+        List<CandidateEvaluation> evaluations = new ArrayList<>();
+        List<PlnSchedulingTaskEntity> allCandidates = scenarioTasks(scenario.getId());
+        if (allCandidates.stream().anyMatch(task -> !"WAIT_CONFIRM".equals(task.getTaskStatus())
+                && !Objects.equals(task.getId(), derived.getId())))
+            throw new CheckedException("情景中存在已取消或已冻结的候选，不能重新比较");
+        for (PlnSchedulingTaskEntity task : allCandidates) {
+            CandidateMetrics metrics = candidateMetrics(task.getId(), baseline);
+            PlnSchedulingCandidateProfileDTO profile = candidateProfile(task.getObjectiveWeightsSnapshot());
+            task.setCandidateFeasible(metrics.hardBlockedCount == 0);
+            task.setEvaluatedTime(LocalDateTime.now());
+            evaluations.add(new CandidateEvaluation(task, metrics, profile));
+        }
+        rankCandidates(evaluations);
+        scenario.setDerivedCandidateCount(derivedCount + 1);
+        plnSchedulingScenarioMapper.updateById(scenario);
+        return scenarioView(scenario);
+    }
+
+    private Long positiveId(String value, String label) {
+        try {
+            long id = Long.parseLong(value);
+            if (id > 0) return id;
+        } catch (RuntimeException ignored) {
+            // 统一返回领域错误，不把格式异常泄漏给前端。
+        }
+        throw new CheckedException(label + "必须是正整数");
+    }
+
+    private <T extends com.kitex.common.core.entity.BaseEntity<T>> T copyForInsert(T source, Class<T> type) {
+        try {
+            T target = type.getDeclaredConstructor().newInstance();
+            org.springframework.beans.BeanUtils.copyProperties(source, target,
+                    "id", "createBy", "createTime", "updateBy", "updateTime");
+            return target;
+        } catch (ReflectiveOperationException exception) {
+            throw new CheckedException("排产快照复制失败");
+        }
+    }
+
+    private void applyProfessionalEdit(PlnSchedulingOperationEntity source,
+                                       PlnSchedulingOperationEntity target,
+                                       PlnApsDecisionDTO.OperationAdjustment edit,
+                                       List<Map<String, Object>> differences) {
+        LocalDateTime oldStart = source.getScheduledStartTime();
+        LocalDateTime oldEnd = source.getScheduledEndTime();
+        if (oldStart == null || oldEnd == null || !oldEnd.isAfter(oldStart))
+            throw new CheckedException("父候选工序没有可移动的有效时间窗口");
+        if (edit.getScheduledStartTime() == null && oldStart.isBefore(LocalDateTime.now()))
+            throw new CheckedException("历史时段工序不能只换资源；请明确新的未来开工时刻");
+        if (edit.getScheduledStartTime() != null) {
+            LocalDateTime start = edit.getScheduledStartTime();
+            if (start.isBefore(LocalDateTime.now()) || start.isAfter(LocalDateTime.now().plusDays(366)))
+                throw new CheckedException("专业调整只能安排未来366天内尚未执行的工序");
+            Duration delta = Duration.between(oldStart, start);
+            target.setScheduledStartTime(start);
+            target.setScheduledEndTime(oldEnd.plus(delta));
+            if (source.getTransferReadyTime() != null)
+                target.setTransferReadyTime(source.getTransferReadyTime().plus(delta));
+        }
+        if (edit.getResourceChoiceIndex() != null) {
+            if (StrUtil.isBlank(source.getCandidateResourceSnapshot()))
+                throw new CheckedException("父候选没有可核验的许可资源快照，不能切换资源");
+            try {
+                JsonNode options = OBJECT_MAPPER.readTree(source.getCandidateResourceSnapshot());
+                int index = edit.getResourceChoiceIndex();
+                if (!options.isArray() || index < 0 || index >= options.size())
+                    throw new CheckedException("目标资源不在父候选冻结的许可资源目录内");
+                JsonNode choice = options.get(index);
+                if (!choice.isObject() || !choice.path("type").isTextual()
+                        || !choice.path("code").isTextual())
+                    throw new CheckedException("目标资源组合缺少类型或编码，不能应用");
+                JsonNode current = null;
+                for (JsonNode option : options) {
+                    if (Objects.equals(option.path("type").asText(null), source.getResourceType())
+                            && Objects.equals(option.path("code").asText(null), source.getResourceCode())
+                            && Objects.equals(nullableInt(option, "slotNo"), source.getResourceSlotNo())
+                            && Objects.equals(option.path("resourceGroupCode").asText(null),
+                                    source.getResourceGroupCode())
+                            && Objects.equals(nullableInt(option, "resourceGroupSlotNo"),
+                                    source.getResourceGroupSlotNo())
+                            && Objects.equals(option.path("deviceCode").asText(null), source.getDeviceCode())
+                            && Objects.equals(option.path("employeeCode").asText(null), source.getEmployeeCode())) {
+                        current = option;
+                        break;
+                    }
+                }
+                if (current == null || !Objects.equals(current.path("type").asText(null),
+                        choice.path("type").asText(null))
+                        || !sameDurationInput(current, choice, "stationCapacity")
+                        || !sameDurationInput(current, choice, "standardWorkingTime"))
+                    throw new CheckedException("切换资源会改变工时/产能计算，须重新求解生成候选，不能仅复制旧工序时长");
+                target.setResourceType(choice.path("type").asText(null));
+                target.setResourceCode(choice.path("code").asText(null));
+                target.setResourceName(choice.path("name").asText(null));
+                target.setResourceSlotNo(nullableInt(choice, "slotNo"));
+                target.setResourceGroupCode(choice.path("resourceGroupCode").asText(null));
+                target.setResourceGroupName(choice.path("resourceGroupName").asText(null));
+                target.setResourceGroupCapacity(nullableInt(choice, "resourceGroupCapacity"));
+                target.setResourceGroupSlotNo(nullableInt(choice, "resourceGroupSlotNo"));
+                target.setDeviceCode(choice.path("deviceCode").asText(null));
+                target.setDeviceName(choice.path("deviceName").asText(null));
+                target.setEmployeeCode(choice.path("employeeCode").asText(null));
+                target.setEmployeeName(choice.path("employeeName").asText(null));
+                target.setDeviceAvailabilitySnapshot(null);
+                target.setWorkforceAvailabilitySnapshot(null);
+            } catch (JsonProcessingException exception) {
+                throw new CheckedException("父候选许可资源快照损坏，不能切换资源");
+            }
+        }
+        boolean changed = !Objects.equals(oldStart, target.getScheduledStartTime())
+                || !Objects.equals(source.getResourceType(), target.getResourceType())
+                || !Objects.equals(source.getResourceCode(), target.getResourceCode())
+                || !Objects.equals(source.getResourceSlotNo(), target.getResourceSlotNo())
+                || !Objects.equals(source.getResourceGroupCode(), target.getResourceGroupCode())
+                || !Objects.equals(source.getResourceGroupSlotNo(), target.getResourceGroupSlotNo())
+                || !Objects.equals(source.getDeviceCode(), target.getDeviceCode())
+                || !Objects.equals(source.getEmployeeCode(), target.getEmployeeCode());
+        if (!changed) return;
+        Map<String, Object> diff = new LinkedHashMap<>();
+        diff.put("parentOperationId", String.valueOf(source.getId()));
+        diff.put("issueNo", source.getIssueNo());
+        diff.put("processCode", source.getProcessCode());
+        diff.put("oldStart", oldStart.toString());
+        diff.put("newStart", target.getScheduledStartTime().toString());
+        diff.put("oldEnd", oldEnd.toString());
+        diff.put("newEnd", target.getScheduledEndTime().toString());
+        diff.put("oldResource", source.getResourceType() + ":" + source.getResourceCode());
+        diff.put("newResource", target.getResourceType() + ":" + target.getResourceCode());
+        differences.add(diff);
+    }
+
+    private Integer nullableInt(JsonNode node, String name) {
+        JsonNode value = node.path(name);
+        if (value.isMissingNode() || value.isNull()) return null;
+        if (!value.isIntegralNumber()) throw new CheckedException("许可资源快照中的" + name + "不是整数");
+        return value.asInt();
+    }
+
+    private boolean sameDurationInput(JsonNode left, JsonNode right, String name) {
+        JsonNode leftValue = left.path(name);
+        JsonNode rightValue = right.path(name);
+        if (leftValue.isMissingNode() || leftValue.isNull())
+            return rightValue.isMissingNode() || rightValue.isNull();
+        return leftValue.isNumber() && rightValue.isNumber()
+                && leftValue.decimalValue().compareTo(rightValue.decimalValue()) == 0;
+    }
+
+    private PlnSchedulingCandidateProfileDTO candidateProfile(String snapshot) {
+        try {
+            return OBJECT_MAPPER.readValue(snapshot, PlnSchedulingCandidateProfileDTO.class);
+        } catch (JsonProcessingException exception) {
+            throw new CheckedException("候选目标权重快照损坏，无法重新比较");
+        }
+    }
+
+    private void cloneSequenceProof(Long parentId, PlnSchedulingTaskEntity derived) {
+        PlnSchedulingSequenceProof parentProof = sequenceProofs.selectOne(
+                new LambdaQueryWrapper<PlnSchedulingSequenceProof>()
+                        .eq(PlnSchedulingSequenceProof::getTaskId, parentId).last("LIMIT 1"));
+        if (parentProof == null) throw new CheckedException("父候选缺少初始排序证据，不能安全派生");
+        PlnSchedulingSequenceProof proof = copyForInsert(parentProof, PlnSchedulingSequenceProof.class);
+        proof.setTaskId(derived.getId());
+        if (sequenceProofs.insert(proof) != 1) throw new CheckedException("派生候选排序证据复制失败");
+    }
+
     @Override
     public PlnSchedulingScenarioDTO selectScenarioCandidate(String scenarioNo,
                                                             PlnSchedulingScenarioSelectDTO command) {
@@ -531,6 +881,12 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         if (plnIssueEntities.size() != Arrays.stream(plnIssueModuleDTO.getIds()).distinct().count()) {
             throw new CheckedException("存在无效生产计划，禁止下达MES");
         }
+        String factoryCode = plnIssueEntities.stream().map(PlnIssueEntity::getFactoryCode)
+                .filter(StrUtil::isNotBlank).distinct().reduce((left, right) -> {
+                    throw new CheckedException("不能跨工厂下达生产计划");
+                }).orElseThrow(() -> new CheckedException("生产计划缺少工厂编码"));
+        PlnApsFormalContractResolver.Resolution formalResolution =
+                formalContractResolver.resolveIssues(plnIssueEntities, factoryCode);
         Set<Long> selectedIssueIds = plnIssueEntities.stream().map(PlnIssueEntity::getId).collect(Collectors.toSet());
         List<Long> lockTaskIds = plnIssueEntities.stream().map(PlnIssueEntity::getLockTaskId)
                 .filter(Objects::nonNull).distinct().toList();
@@ -545,7 +901,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
             if (linkedIssueCount != selectedIssueIds.size()) {
                 throw new CheckedException("所选计划同时包含批次化与历史非批次任务，请分开下达MES");
             }
-            return issueApsBatches(plnIssueModuleDTO, plnIssueEntities, selectedBatchLinks);
+            return issueApsBatches(plnIssueModuleDTO, plnIssueEntities, selectedBatchLinks, formalResolution);
         }
 
         List<PlnUpdateLogEntity> updateLogs = plnIssueEntities.stream()
@@ -570,17 +926,15 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
             plnIssueMapper.updateById(plnIssueEntity);
         }
 
-        List<PlanMatMrpEntity> demandMrpList = planMatMrpService.list(new LambdaQueryWrapper<PlanMatMrpEntity>()
-                .in(PlanMatMrpEntity::getPlanDemandNo, toIssue.stream().map(PlnIssueEntity::getIssueNo).toList()));
-        Map<String, PlanMatMrpEntity> matMrpMap = demandMrpList.stream()
-                .collect(Collectors.toMap(entity -> entity.getPlanDemandNo() + "_" + entity.getMatCode(), Function.identity(), (v1, v2) -> v1));
-        Map<String, List<PlanMatMrpEntity>> demandMrpMap = demandMrpList.stream()
-                .collect(Collectors.groupingBy(PlanMatMrpEntity::getPlanDemandNo));
+        Map<String, List<PlanMatMrpEntity>> demandMrpMap = loadMrpsByIssue(toIssue);
 
         for (PlnIssueEntity plnIssueEntity : toIssue) {
+            List<PlanMatMrpEntity> issueMrps = demandMrpMap.getOrDefault(plnIssueEntity.getIssueNo(), List.of());
+            PlanMatMrpEntity productMrp = issueMrps.stream()
+                    .filter(row -> Objects.equals(row.getMatCode(), plnIssueEntity.getProductCode()))
+                    .findFirst().orElse(null);
             saveMesPlan(plnIssueEntity, plnIssueModuleDTO.getWorkshopName(), plnIssueModuleDTO.getWorkshopCode(),
-                    matMrpMap.get(plnIssueEntity.getIssueNo() + "_" + plnIssueEntity.getProductCode()),
-                    demandMrpMap.getOrDefault(plnIssueEntity.getIssueNo(), List.of()));
+                    productMrp, issueMrps, formalResolution);
         }
 
         return Boolean.TRUE;
@@ -956,7 +1310,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
     }
 
     private Boolean issueApsBatches(PlnIssueModuleDTO request, List<PlnIssueEntity> selectedIssues,
-                                    List<PlnSchedulingBatchAllocationEntity> selectedLinks) {
+                                    List<PlnSchedulingBatchAllocationEntity> selectedLinks,
+                                    PlnApsFormalContractResolver.Resolution formalResolution) {
         Set<Long> selectedIssueIds = selectedIssues.stream().map(PlnIssueEntity::getId).collect(Collectors.toSet());
         Set<Long> batchIds = selectedLinks.stream().map(PlnSchedulingBatchAllocationEntity::getBatchId)
                 .filter(Objects::nonNull).collect(Collectors.toCollection(LinkedHashSet::new));
@@ -994,11 +1349,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
             }
         }
 
-        List<PlanMatMrpEntity> mrps = planMatMrpService.list(new LambdaQueryWrapper<PlanMatMrpEntity>()
-                .in(PlanMatMrpEntity::getPlanDemandNo,
-                        selectedIssues.stream().map(PlnIssueEntity::getIssueNo).toList()));
-        Map<String, List<PlanMatMrpEntity>> mrpsByIssueNo = mrps.stream()
-                .collect(Collectors.groupingBy(PlanMatMrpEntity::getPlanDemandNo));
+        Map<String, List<PlanMatMrpEntity>> mrpsByIssueNo = loadMrpsByIssue(selectedIssues);
         Map<Long, List<WmsMaterialReservationLinkDTO>> reservationLinksByBatch =
                 allocateReservationLinksByBatch(selectedIssues, allocations, mrpsByIssueNo, batchById);
         Map<Long, List<PlnSchedulingBatchAllocationEntity>> allocationsByBatch = allocations.stream()
@@ -1006,7 +1357,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         for (PlnSchedulingBatchEntity batch : batches) {
             saveMesBatch(batch, allocationsByBatch.getOrDefault(batch.getId(), List.of()), issueById,
                     reservationLinksByBatch.getOrDefault(batch.getId(), List.of()), mrpsByIssueNo,
-                    request.getWorkshopName(), request.getWorkshopCode());
+                    request.getWorkshopName(), request.getWorkshopCode(), formalResolution);
         }
 
         List<PlnUpdateLogEntity> logs = new ArrayList<>();
@@ -1020,6 +1371,39 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         }
         if (!logs.isEmpty()) plnUpdateLogService.saveUpdateLog(logs);
         return Boolean.TRUE;
+    }
+
+    /**
+     * 生产计划号是执行单据身份，产品需求号是业务来源；MPS跨期拆量后两者不再相同。
+     * 先按来源需求批量取数，再用MPS桶或独立计划来源键隔离每一张生产计划的MRP。
+     */
+    private Map<String, List<PlanMatMrpEntity>> loadMrpsByIssue(List<PlnIssueEntity> issues) {
+        if (CollUtil.isEmpty(issues)) return Map.of();
+        Set<String> demandNos = issues.stream()
+                .map(issue -> StrUtil.blankToDefault(issue.getSourceDemandNo(), issue.getIssueNo()))
+                .filter(StrUtil::isNotBlank).collect(Collectors.toCollection(LinkedHashSet::new));
+        if (demandNos.isEmpty()) return Map.of();
+        List<PlanMatMrpEntity> candidates = planMatMrpService.list(
+                new LambdaQueryWrapper<PlanMatMrpEntity>()
+                        .in(PlanMatMrpEntity::getPlanDemandNo, demandNos)
+                        .orderByAsc(PlanMatMrpEntity::getId));
+        Map<String, List<PlanMatMrpEntity>> result = new LinkedHashMap<>();
+        for (PlnIssueEntity issue : issues) {
+            String demandNo = StrUtil.blankToDefault(issue.getSourceDemandNo(), issue.getIssueNo());
+            List<PlanMatMrpEntity> matched = candidates.stream()
+                    .filter(row -> Objects.equals(row.getPlanDemandNo(), demandNo))
+                    .filter(row -> matchesPlanningSource(issue, row)).toList();
+            result.put(issue.getIssueNo(), matched);
+        }
+        return result;
+    }
+
+    private boolean matchesPlanningSource(PlnIssueEntity issue, PlanMatMrpEntity mrp) {
+        if (issue.getMpsLineId() != null) return Objects.equals(issue.getMpsLineId(), mrp.getMpsLineId());
+        if (StrUtil.isNotBlank(issue.getPlanningSourceKey())) {
+            return Objects.equals(issue.getPlanningSourceKey(), mrp.getPlanningSourceKey());
+        }
+        return mrp.getMpsLineId() == null;
     }
 
     private Map<Long, List<WmsMaterialReservationLinkDTO>> allocateReservationLinksByBatch(
@@ -1068,7 +1452,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                               Map<Long, PlnIssueEntity> issueById,
                               List<WmsMaterialReservationLinkDTO> reservationLinks,
                               Map<String, List<PlanMatMrpEntity>> mrpsByIssueNo,
-                              String workshopName, String workshopCode) {
+                              String workshopName, String workshopCode,
+                              PlnApsFormalContractResolver.Resolution formalResolution) {
         if (allocations.isEmpty()) throw new CheckedException("APS批次[" + batch.getBatchNo() + "]缺少来源分配");
         PlnIssueEntity primary = issueById.get(batch.getPrimaryIssueId());
         if (primary == null) throw new CheckedException("APS批次[" + batch.getBatchNo() + "]主计划不存在");
@@ -1090,6 +1475,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         receive.setWorkshopName(workshopName);
         receive.setWorkshopCode(workshopCode);
         receive.setFactoryCode(batch.getFactoryCode());
+        applyFormalContract(receive, formalResolution,
+                allocations.stream().map(PlnSchedulingBatchAllocationEntity::getIssueId).toList(), primary);
         receive.setResourceType("APS_BATCH");
         receive.setResourceId(batch.getId());
         receive.setApsTaskId(batch.getTaskId());
@@ -1097,6 +1484,9 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         receive.setApsBatchNo(batch.getBatchNo());
         receive.setApsBatchType(batch.getBatchType());
         receive.setApsBatchFingerprint(batch.getSourceFingerprint());
+        receive.setEngineeringReleaseId(batch.getEngineeringReleaseId());
+        receive.setEngineeringContentHash(batch.getEngineeringContentHash());
+        receive.setEngineeringVersionNo(batch.getEngineeringVersionNo());
         receive.setApsBatchAllocations(allocations.stream().map(allocation -> new MesApsBatchAllocationDTO()
                 .setAllocationSeq(allocation.getAllocationSeq()).setIssueId(allocation.getIssueId())
                 .setIssueNo(allocation.getIssueNo())
@@ -1184,7 +1574,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
     }
 
     private void saveMesPlan(PlnIssueEntity plnIssueEntity, String workshopName, String workshopCode,
-                             PlanMatMrpEntity matMrpEntity, List<PlanMatMrpEntity> demandMrpList) {
+                             PlanMatMrpEntity matMrpEntity, List<PlanMatMrpEntity> demandMrpList,
+                             PlnApsFormalContractResolver.Resolution formalResolution) {
         MesTaskReceiveDTO receive = new MesTaskReceiveDTO();
         receive.setPlanNo(plnIssueEntity.getIssueNo());
         receive.setMatCode(plnIssueEntity.getProductCode());
@@ -1194,6 +1585,10 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         receive.setWorkshopName(workshopName);
         receive.setWorkshopCode(workshopCode);
         receive.setFactoryCode(plnIssueEntity.getFactoryCode());
+        applyFormalContract(receive, formalResolution, List.of(plnIssueEntity.getId()), plnIssueEntity);
+        receive.setEngineeringReleaseId(plnIssueEntity.getEngineeringReleaseId());
+        receive.setEngineeringContentHash(plnIssueEntity.getEngineeringContentHash());
+        receive.setEngineeringVersionNo(plnIssueEntity.getEngineeringVersionNo());
         List<WmsMaterialReservationLinkDTO> reservationLinks = reservationLinksForIssue(demandMrpList);
         receive.setMaterialReservationSnapshot(cn.hutool.json.JSONUtil.toJsonStr(reservationLinks));
         if (ObjUtil.isNotEmpty(matMrpEntity)) {
@@ -1226,9 +1621,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                 plnIssueEntity.getProductCode(), plnIssueEntity.getNum(), planStart, plnIssueEntity.getDemandTime());
         receive.setPlanEndDate(toDate(planEnd));
 
-        // 下发工艺路线编码（供 MES 自动绑定工艺路线）
-        String processRouteCode = queryDefaultRouteCode(plnIssueEntity.getProductCode());
-        receive.setProcessRouteCode(processRouteCode);
+        // 路线只能来自计划已绑定工程版本，MES会再向MDM精确取包并覆盖其他可编辑配置。
+        receive.setProcessRouteCode(plnIssueEntity.getEngineeringRouteCode());
 
         sealMesIssueRequest(receive, "PLAN_ISSUE:" + plnIssueEntity.getId());
         R<MesTaskIssueReceiptDTO> response = remoteTaskService.add(receive);
@@ -1248,6 +1642,65 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         plnIssueEntity.setMesIssueTime(receipt.getAcceptedTime());
         if (plnIssueMapper.updateById(plnIssueEntity) != 1) {
             throw new CheckedException("MES接收成功，但生产计划回执保存失败；请使用原计划重新下达以幂等取回回执");
+        }
+    }
+
+    /**
+     * 把发布时核验的工厂策略与正式合同写入 MES 接收载荷。
+     * 合批场景只能对应一个执行订单号；否则 MES 无法在一张工单上保持 ERP 订单追溯一致性。
+     */
+    private void applyFormalContract(MesTaskReceiveDTO receive,
+                                     PlnApsFormalContractResolver.Resolution resolution,
+                                     List<Long> issueIds, PlnIssueEntity representative) {
+        if (resolution == null || resolution.policy() == null || resolution.contract() == null
+                || representative == null || issueIds == null || issueIds.isEmpty()) {
+            throw new CheckedException("MES下达缺少正式计划合同或工厂策略证据");
+        }
+        PlnFormalPlanContractDTO contract = resolution.contract();
+        PlnFormalPlanContractDTO.Line contractLine = contract.getLines().stream()
+                .filter(line -> "MAKE".equals(line.getSupplyType()))
+                .filter(line -> Objects.equals(line.getSourceDemandNo(), representative.getSourceDemandNo()))
+                .filter(line -> Objects.equals(line.getProductCode(), representative.getProductCode()))
+                .findFirst().orElseThrow(() -> new CheckedException(
+                        "生产计划[" + representative.getIssueNo() + "]没有匹配的正式合同自制行"));
+        Set<String> productionOrders = issueIds.stream()
+                .map(resolution.productionOrderByIssueId()::get)
+                .filter(StrUtil::isNotBlank).collect(Collectors.toCollection(LinkedHashSet::new));
+        if (productionOrders.size() != 1) {
+            throw new CheckedException("一个MES执行单元只能对应一个正式生产订单；请拆分APS合批后下达");
+        }
+        receive.setFormalPlanContractId(parseLong(contractLine.getId(), "正式计划合同主键"));
+        receive.setFormalPlanContractNo(contract.getContractNo());
+        receive.setFormalPlanContractVersion(contract.getContractVersion());
+        receive.setFormalPlanContractFingerprint(contract.getSourceContentFingerprint());
+        receive.setSourceSystem(contract.getSourceSystemCode());
+        receive.setSourcePlanNo(contract.getSourcePlanNo());
+        receive.setSourcePlanVersion(contract.getSourcePlanVersion());
+        receive.setPlanningPolicyId(parseLong(resolution.policy().getId(), "工厂计划权威策略主键"));
+        receive.setPlanningPolicyVersion(resolution.policy().getVersionNo());
+        receive.setPlanningPolicyFingerprint(resolution.policy().getContentFingerprint());
+        receive.setMrpAuthority(resolution.policy().getMrpAuthority());
+        receive.setProductionOrderSyncMode(resolution.policy().getProductionOrderSyncMode());
+        String productionOrder = productionOrders.iterator().next();
+        receive.setProductionOrder(productionOrder);
+        BigDecimal productionOrderQuantity = issueIds.stream().distinct()
+                .map(resolution.issueQuantityById()::get)
+                .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (productionOrderQuantity.signum() <= 0) {
+            throw new CheckedException("正式生产订单总量无效");
+        }
+        receive.setProductionOrderQuantity(productionOrderQuantity);
+        receive.setErpProductionOrderNo("ERP_ORDER_REQUIRED".equals(
+                resolution.policy().getProductionOrderSyncMode()) ? productionOrder : null);
+    }
+
+    private static Long parseLong(String value, String label) {
+        try {
+            long parsed = Long.parseLong(value);
+            if (parsed <= 0) throw new NumberFormatException("not positive");
+            return parsed;
+        } catch (RuntimeException exception) {
+            throw new CheckedException(label + "格式不正确");
         }
     }
 
@@ -1875,6 +2328,12 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
             detail.setPlanType(issue.getPlanType());
             detail.setMatchedRules(issue.getMatchedRules());
             detail.setScoreBreakdown(issue.getScoreBreakdown());
+            detail.setEngineeringReleaseId(issue.getEngineeringReleaseId());
+            detail.setEngineeringContentHash(issue.getEngineeringContentHash());
+            detail.setEngineeringVersionNo(issue.getEngineeringVersionNo());
+            detail.setEngineeringRouteId(issue.getEngineeringRouteId());
+            detail.setEngineeringBomId(issue.getEngineeringBomId());
+            detail.setEngineeringBomVersion(issue.getEngineeringBomVersion());
             detail.setMaterialConstraintStatus(issue.getMaterialConstraintStatus());
             detail.setMaterialAvailableDate(issue.getMaterialAvailableDate());
             detail.setMaterialAvailableTime(issue.getMaterialAvailableTime());
@@ -1891,12 +2350,8 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
             detail.setOperationStartTime(issue.getOperationStartTime());
             detail.setOperationEndTime(issue.getOperationEndTime());
             detail.setFactoryCode(issue.getFactoryCode());
-            // 快照工艺路线编码，用于 ConflictEngine 冲突检测（查询失败不影响主流程）
-            try {
-                detail.setProcessRouteCode(queryDefaultRouteCode(issue.getProductCode()));
-            } catch (Exception ignored) {
-                // 查询失败留空，ConflictEngine 会产出 ROUTE_NOT_ASSIGNED 软冲突
-            }
+            // APS只保存已经MDM核验的精确工程路线，不再二次选择“当前默认路线”。
+            detail.setProcessRouteCode(issue.getEngineeringRouteCode());
             plnSchedulingTaskDetailMapper.insert(detail);
         }
     }
@@ -2046,6 +2501,15 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         result.setOvertimeWeight(BigDecimal.valueOf(overtime));
         result.setDisturbanceWeight(BigDecimal.valueOf(disturbance));
         return result;
+    }
+
+    @Override
+    public String agentPermanentRequestFingerprint(PlnSchedulingScenarioRunDTO command) {
+        command.setFactoryCode(StrUtil.blankToDefault(command.getFactoryCode(), "").trim());
+        command.setTriggerType(StrUtil.blankToDefault(command.getTriggerType(), "AGENT").toUpperCase(Locale.ROOT));
+        String cycle = StrUtil.blankToDefault(command.getCycleType(), "DAY").trim().toUpperCase(Locale.ROOT);
+        command.setCycleType("T+N".equals(cycle) ? "TN" : cycle);
+        return scenarioRequestFingerprint(command, normalizeCandidateProfiles(command.getCandidateProfiles()));
     }
 
     private String scenarioRequestFingerprint(PlnSchedulingScenarioRunDTO command,

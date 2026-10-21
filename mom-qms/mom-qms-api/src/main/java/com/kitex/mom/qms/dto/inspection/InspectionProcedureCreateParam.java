@@ -27,6 +27,9 @@ public class InspectionProcedureCreateParam {
     @Schema(description = "来源系统永久幂等请求号")
     private String sourceRequestId;
 
+    @Schema(description = "来源系统固定创建参数SHA-256；V2请求必填")
+    private String sourceRequestFingerprint;
+
     @Schema(description = "标签类型")
     private String labelType;
 

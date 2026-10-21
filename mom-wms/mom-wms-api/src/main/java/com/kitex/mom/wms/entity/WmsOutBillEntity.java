@@ -128,15 +128,21 @@ public class WmsOutBillEntity extends BaseEntity<WmsOutBillEntity> {
     @Schema(description = "来源")
     private String source;
 
-    /** 销售发运记账纠错状态：NULL/NONE、PENDING、REJECTED、EXECUTED。 */
+    /**
+     * 销售发运记账纠错状态：NULL/NONE、PENDING、REJECTED、EXECUTED。
+     */
     @Schema(description = "销售发运记账纠错状态")
     private String correctionState;
 
-    /** 新生产发料是否必须经过线边配送交接后才允许MES签收。 */
+    /**
+     * 新生产发料是否必须经过线边配送交接后才允许MES签收。
+     */
     @Schema(description = "是否强制线边配送交接")
     private Boolean lineDeliveryRequired;
 
-    /** 唯一线边配送任务。 */
+    /**
+     * 唯一线边配送任务。
+     */
     @Schema(description = "线边配送任务ID")
     private Long lineDeliveryTaskId;
 

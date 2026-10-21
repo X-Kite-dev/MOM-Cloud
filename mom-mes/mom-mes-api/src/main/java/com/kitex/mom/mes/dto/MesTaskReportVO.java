@@ -1,5 +1,6 @@
 package com.kitex.mom.mes.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -15,6 +16,18 @@ import java.time.LocalDateTime;
  * @since 2025-05-13
  */
 @Data
+@JsonIgnoreProperties(value = {
+        "reportId", "submittedIdentifier", "identifierMappingId", "identifierType", "identifierResolutionSnapshot",
+        "extensionEvidenceSnapshot", "executionKind", "routeReturnId", "identifierRouteVersion",
+        "identifierBindingId", "identifierBindingVersion", "identifierNodeAction", "identifierBindingSnapshot",
+        "carrierOperationId", "carrierCode", "correctionPermitId", "sourceEventId", "sourceEventTime",
+        "qualityGateMode", "qualityGateStatus", "qualityGateMessage", "qualityTaskIds", "qualityEvidenceFingerprint",
+        "qualityEvidenceSnapshot", "qualityQuantityStatus", "qualityReleasedNum", "qualityPendingNum", "qualityRejectedNum",
+        "deviceGateStage", "deviceGateAllowed", "deviceGateState", "deviceGateStateName", "deviceGateMessage",
+        "deviceGateCheckTime", "stationPassFingerprint", "stationPassValidationSnapshot",
+        "task", "taskArrange", "matCode", "matName", "matSpec", "matUnit",
+        "completeNum", "noticeNum", "type", "taskType", "factoryCode", "deviceName"
+}, allowGetters = true)
 public class MesTaskReportVO {
 
     @Schema(hidden = true)
@@ -25,6 +38,36 @@ public class MesTaskReportVO {
 
     @Schema(description = "流转码/条码")
     private String transferCode;
+
+    /**
+     * 绑定节点第二次扫描的外码；使用/释放节点仍在transferCode提交现场扫描值。
+     */
+    @Schema(description = "BIND节点的第二个扫描值：外码，最长200字符")
+    private String externalIdentifier;
+
+    /**
+     * 使用/释放前由只读预览取得的具体实例，必须按文本传递，不能只传外码。
+     */
+    @Schema(description = "USE/RELEASE预览取得的活动实例ID文本")
+    private String expectedBindingId;
+
+    /**
+     * 占用生命周期版本，不是每一次USE的次数；并行节点不相互使采集失效。
+     */
+    @Schema(description = "USE/RELEASE采集时的实例生命周期版本")
+    private Integer expectedBindingVersion;
+
+    @Schema(hidden = true)
+    private Long identifierBindingId;
+
+    @Schema(hidden = true)
+    private Integer identifierBindingVersion;
+
+    @Schema(hidden = true)
+    private String identifierNodeAction;
+
+    @Schema(hidden = true)
+    private String identifierBindingSnapshot;
 
     @Schema(hidden = true)
     private String submittedIdentifier;
@@ -41,11 +84,32 @@ public class MesTaskReportVO {
     @Schema(hidden = true)
     private String extensionEvidenceSnapshot;
 
+    @Schema(hidden = true)
+    private String executionKind;
+
+    @Schema(hidden = true)
+    private Long routeReturnId;
+
+    @Schema(hidden = true)
+    private Integer identifierRouteVersion;
+
+    @Schema(hidden = true)
+    private Long carrierOperationId;
+
+    @Schema(hidden = true)
+    private String carrierCode;
+
     @Schema(description = "完成数量")
     private BigDecimal completeNum;
 
     @Schema(description = "合格数量")
     private BigDecimal passNum;
+
+    @Schema(description = "受控重报许可号；仅纠正后补报时填写", maxLength = 40)
+    private String correctionPermitNo;
+
+    @Schema(hidden = true)
+    private Long correctionPermitId;
 
     @Schema(description = "派工单号")
     private String arrangeCode;

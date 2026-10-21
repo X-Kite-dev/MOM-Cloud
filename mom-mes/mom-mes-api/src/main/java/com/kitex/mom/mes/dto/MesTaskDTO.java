@@ -1,5 +1,6 @@
 package com.kitex.mom.mes.dto;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
@@ -85,6 +86,28 @@ public class MesTaskDTO {
 
     @Schema(description = "工艺路线版本")
     private String processRouteCode;
+
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    @Schema(description = "精确工程版本ID")
+    private Long engineeringReleaseId;
+
+    @Schema(description = "工程版本原文SHA256")
+    private String engineeringContentHash;
+
+    @Schema(description = "路线内工程显示版本号")
+    private Integer engineeringVersionNo;
+
+    @Schema(description = "返工来源生产工单")
+    private String sourceTaskCode;
+
+    @Schema(description = "返工来源实际工序任务")
+    private String sourceProduceTaskCode;
+
+    @Schema(description = "返工执行主工序")
+    private String reworkProcessCode;
+
+    @Schema(description = "返工执行稳定节点")
+    private String reworkRouteNodeCode;
 
     @Schema(description = "车间编码")
     private String workshopCode;

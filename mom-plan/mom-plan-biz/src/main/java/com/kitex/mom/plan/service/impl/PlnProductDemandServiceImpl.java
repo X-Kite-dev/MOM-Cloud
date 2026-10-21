@@ -17,6 +17,7 @@ import com.kitex.common.excel.vo.ErrorMessage;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
 import com.kitex.mom.mdm.dto.MdmBomChildDTO;
 import com.kitex.mom.mdm.dto.MdmBomSubstituteOptionDTO;
+import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyDTO;
 import com.kitex.mom.mdm.entity.MdmCustomerEntity;
 import com.kitex.mom.mdm.entity.MdmMaterialAuthorizationEntity;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
@@ -38,6 +39,7 @@ import com.kitex.mom.plan.service.PlanMatMrpService;
 import com.kitex.mom.plan.service.PlanMrpInventoryPeggingService;
 import com.kitex.mom.plan.service.PlnIssueService;
 import com.kitex.mom.plan.service.PlnProductDemandService;
+import com.kitex.mom.plan.service.PlnFormalPlanContractService;
 import com.kitex.mom.plan.vo.PlnProductDemandExcelVO;
 import com.kitex.mom.plan.vo.PlnTemporaryDemandDateVO;
 import com.kitex.mom.wms.api.feign.RemoteLiveStockService;
@@ -111,6 +113,8 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
     private final OmsDeliveryWithdrawalMapper deliveryWithdrawalMapper;
     private final OmsDeliveryIssueMapper deliveryIssueMapper;
     private final OmsOrderChangeVersionMapper omsOrderChangeVersionMapper;
+    private final PlnFormalPlanningGate formalPlanningGate;
+    private final PlnFormalPlanContractService formalPlanContractService;
 
     /**
      * 导出Excel
@@ -408,14 +412,19 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
     private void requireNoExecutionFacts(PlnProductDemandEntity demand) {
         String demandNo = demand.getDemandNo();
         List<PlnIssueEntity> issues = plnIssueService.list(new LambdaQueryWrapper<PlnIssueEntity>()
-                .eq(PlnIssueEntity::getIssueNo, demandNo));
-        if (issues.stream().anyMatch(row -> !"4".equals(row.getStatus())
-                || optional(row.getFinishNum()).signum() != 0)) {
+                .and(query -> query.eq(PlnIssueEntity::getSourceDemandNo, demandNo)
+                        .or().and(legacy -> legacy.isNull(PlnIssueEntity::getSourceDemandNo)
+                                .eq(PlnIssueEntity::getIssueNo, demandNo))));
+        if (issues.stream().anyMatch(row -> !("4".equals(row.getStatus())
+                && optional(row.getFinishNum()).signum() == 0) && !pristineMpsRoot(row))) {
             throw new CheckedException("产品需求已关联生产计划或APS，不能直接修改或重算");
         }
+        Set<String> issueNos = issues.stream().map(PlnIssueEntity::getIssueNo)
+                .filter(StrUtil::isNotBlank).collect(Collectors.toCollection(LinkedHashSet::new));
+        issueNos.add(demandNo);
         List<PlnSchedulingBatchAllocationEntity> allocations = batchAllocationMapper.selectList(
                 new LambdaQueryWrapper<PlnSchedulingBatchAllocationEntity>()
-                        .eq(PlnSchedulingBatchAllocationEntity::getIssueNo, demandNo));
+                        .in(PlnSchedulingBatchAllocationEntity::getIssueNo, issueNos));
         for (PlnSchedulingBatchAllocationEntity allocation : allocations) {
             PlnSchedulingBatchEntity batch = schedulingBatchMapper.selectById(allocation.getBatchId());
             if (batch == null || !"WITHDRAWN".equals(batch.getBatchStatus()) || Boolean.TRUE.equals(batch.getLockStatus())) {
@@ -424,30 +433,54 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
         }
         List<PlnSchedulingTaskDetailEntity> taskDetails = schedulingTaskDetailMapper.selectList(
                 new LambdaQueryWrapper<PlnSchedulingTaskDetailEntity>()
-                        .eq(PlnSchedulingTaskDetailEntity::getIssueNo, demandNo));
+                        .in(PlnSchedulingTaskDetailEntity::getIssueNo, issueNos));
         if (taskDetails.stream().anyMatch(row -> !"WITHDRAWN".equals(row.getOperationScheduleStatus())
                 || Boolean.TRUE.equals(row.getLockStatus()))) {
             throw new CheckedException("产品需求仍有关联的活动APS任务明细，不能修改或重算");
         }
         List<PlnSchedulingOperationEntity> operations = schedulingOperationMapper.selectList(
                 new LambdaQueryWrapper<PlnSchedulingOperationEntity>()
-                        .eq(PlnSchedulingOperationEntity::getIssueNo, demandNo));
+                        .in(PlnSchedulingOperationEntity::getIssueNo, issueNos));
         if (operations.stream().anyMatch(row -> !"WITHDRAWN".equals(row.getScheduleStatus())
                 || Boolean.TRUE.equals(row.getLockStatus()))) {
             throw new CheckedException("产品需求仍有关联的活动APS工序占用，不能修改或重算");
         }
-        R<List<MesTaskEntity>> mes = remoteMesTaskService.omsLife(demandNo);
-        if (mes == null || !mes.isOk() || mes.getData() == null) {
-            throw new CheckedException("MES来源事实不可核验，禁止修改或重算产品需求");
+        for (String issueNo : issueNos) {
+            R<List<MesTaskEntity>> mes = remoteMesTaskService.omsLife(issueNo);
+            if (mes == null || !mes.isOk() || mes.getData() == null) {
+                throw new CheckedException("MES来源事实不可核验，禁止修改或重算产品需求");
+            }
+            if (mes.getData().stream().anyMatch(row -> !"CLOSE".equals(row.getStatus())
+                    || row.getStartTime() != null || row.getFinishTime() != null
+                    || optional(row.getCompleteNum()).signum() != 0
+                    || optional(row.getInStockNum()).signum() != 0
+                    || optional(row.getUnInStockNum()).signum() != 0
+                    || optional(row.getUnPassNum()).signum() != 0)) {
+                throw new CheckedException("产品需求已关联MES工单，不能修改或重算");
+            }
         }
-        if (mes.getData().stream().anyMatch(row -> !"CLOSE".equals(row.getStatus())
-                || row.getStartTime() != null || row.getFinishTime() != null
-                || optional(row.getCompleteNum()).signum() != 0
-                || optional(row.getInStockNum()).signum() != 0
-                || optional(row.getUnInStockNum()).signum() != 0
-                || optional(row.getUnPassNum()).signum() != 0)) {
-            throw new CheckedException("产品需求已关联MES工单，不能修改或重算");
-        }
+    }
+
+    /**
+     * MPS发布先形成独立桶根计划，再以同一活动桶执行MRP。只有尚未排产、下达或产生任何
+     * 执行/质量事实的根计划可穿过首次MRP门禁；不能把这一白名单扩展到人工计划或下层供应。
+     */
+    private boolean pristineMpsRoot(PlnIssueEntity issue) {
+        return issue.getMpsLineId() != null && issue.getSourceMrpId() == null
+                && "issue".equals(issue.getType()) && "0".equals(issue.getStatus())
+                && !Boolean.TRUE.equals(issue.getLockStatus()) && issue.getLockTaskId() == null
+                && issue.getMesTaskId() == null && StrUtil.isAllBlank(issue.getMesIssueRequestId(),
+                issue.getMesIssueFingerprint(), issue.getMesTaskCode())
+                && optional(issue.getFinishNum()).signum() == 0
+                && optional(issue.getUnqualifiedNum()).signum() == 0
+                && optional(issue.getQualityIsolatedNum()).signum() == 0
+                && optional(issue.getQualityReleasedNum()).signum() == 0
+                && optional(issue.getQualityRejectedNum()).signum() == 0
+                && optional(issue.getScrapNum()).signum() == 0
+                && optional(issue.getReworkNum()).signum() == 0
+                && optional(issue.getReworkCompletedNum()).signum() == 0
+                && optional(issue.getReworkQualifiedNum()).signum() == 0
+                && optional(issue.getReworkRejectedNum()).signum() == 0;
     }
 
     private List<PlanMatMrpEntity> requireDraftMrpRecalculable(PlnProductDemandEntity demand) {
@@ -663,6 +696,8 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
         if (ids == null || ids.length == 0 || Arrays.stream(ids).anyMatch(Objects::isNull)) {
             throw new CheckedException("MRP运算必须提供有效产品需求ID");
         }
+        MdmFactoryPlanningPolicyDTO planningPolicy = formalPlanningGate.requireMomMrp(
+                FactoryContextHolder.getFactoryCode());
         // 与需求变更复核共用行锁；同一批次按ID稳定取锁，避免MRP读到复核前旧数量。
         List<PlnProductDemandEntity> plnProductDemandEntities = new ArrayList<>();
         for (Long id : Arrays.stream(ids).distinct().sorted().toList()) {
@@ -698,23 +733,34 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
             demand.setMrpPriority(normalizeMrpPriority(demand.getMrpPriority()));
         }
         updateBatchById(plnProductDemandEntities);
-        // MPS只覆盖本次MRP的计划日期与同桶优先级，不回写客户原始需求交期。
+        // MPS按独立时间桶展开本次MRP上下文，不回写客户原始需求交期和全量数量。
         mpsService.lockPoliciesForMrp(plnProductDemandEntities);
-        Map<Long, PlnMpsLineEntity> mpsLines = new HashMap<>();
-        for (PlnProductDemandEntity demand : plnProductDemandEntities) {
-            PlnMpsLineEntity line = mpsService.forMrp(demand);
-            if (line != null) {
-                mpsLines.put(demand.getId(), line);
-                demand.setPlanEndDate(line.getPlannedDate());
-                demand.setMrpPriority(line.getMrpPriority());
+        List<PlnProductDemandEntity> planningDemands = new ArrayList<>();
+        Map<PlnProductDemandEntity, PlnMpsLineEntity> mpsLines = new IdentityHashMap<>();
+        for (PlnProductDemandEntity source : plnProductDemandEntities) {
+            List<PlnMpsLineEntity> buckets = mpsService.forMrp(source);
+            if (buckets.isEmpty()) {
+                planningDemands.add(source);
+                continue;
+            }
+            for (PlnMpsLineEntity bucket : buckets) {
+                PlnProductDemandEntity planning = new PlnProductDemandEntity();
+                BeanUtil.copyProperties(source, planning);
+                planning.setNeedNum(bucket.getPlanQuantity());
+                planning.setPlanEndDate(bucket.getPlannedDate());
+                planning.setMrpPriority(bucket.getMrpPriority());
+                planningDemands.add(planning);
+                mpsLines.put(planning, bucket);
             }
         }
-        plnProductDemandEntities.sort(Comparator
+        planningDemands.sort(Comparator
                 .comparing(PlnProductDemandEntity::getPlanEndDate, Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(PlnProductDemandEntity::getMrpPriority,
                         Comparator.nullsLast(Comparator.reverseOrder()))
-                .thenComparing(PlnProductDemandEntity::getDemandNo));
-        planMatMrpService.lockInventoryAllocationPools(plnProductDemandEntities.stream()
+                .thenComparing(PlnProductDemandEntity::getDemandNo)
+                .thenComparing(item -> Optional.ofNullable(mpsLines.get(item))
+                        .map(PlnMpsLineEntity::getBucketNo).orElse(1)));
+        planMatMrpService.lockInventoryAllocationPools(planningDemands.stream()
                 .map(item -> StrUtil.blankToDefault(item.getFactoryCode(), "_") + "\u0001"
                         + StrUtil.blankToDefault(item.getDemandWarehouseCode(), "_"))
                 .collect(Collectors.toCollection(LinkedHashSet::new)));
@@ -734,7 +780,7 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
             planMatMrpService.removeByIds(existingMrp.stream().map(PlanMatMrpEntity::getId).toList());
         }
         // 去重获取产品编码列表
-        List<String> productCodes = plnProductDemandEntities.stream().map(PlnProductDemandEntity::getProductCode)
+        List<String> productCodes = planningDemands.stream().map(PlnProductDemandEntity::getProductCode)
                 .distinct().collect(Collectors.toList());
         // 查询bom
         Map<String, MdmBomChildDTO> productBomMap = remoteBomService.getAllChildMaterials(productCodes).getData();
@@ -762,7 +808,7 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
         Map<String, MdmMaterialEntity> materialMap = remoteMaterialService.getListByCodes(new ArrayList<>(materialCodeSet)).getData().stream()
                 .collect(Collectors.toMap(MdmMaterialEntity::getMaterialCode, Function.identity(), (a, b) -> a));
         // 按需求领料仓查询库存；不同仓库绝不进入同一个MRP分配池。
-        Set<String> demandWarehouseCodes = plnProductDemandEntities.stream()
+        Set<String> demandWarehouseCodes = planningDemands.stream()
                 .map(PlnProductDemandEntity::getDemandWarehouseCode).collect(Collectors.toCollection(LinkedHashSet::new));
         List<WmsLiveStockEntity> liveStocks = new ArrayList<>();
         for (String warehouseCode : demandWarehouseCodes) {
@@ -814,7 +860,7 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
         List<String> errorList = new ArrayList<>();
         // 提交任务
         int demandAllocationSequence = 0;
-        for (PlnProductDemandEntity plnProductDemandEntity : plnProductDemandEntities) {
+        for (PlnProductDemandEntity plnProductDemandEntity : planningDemands) {
             demandAllocationSequence++;
             // 计算MRP数据
             AtomicReference<String> errorMsg = new AtomicReference<>("");
@@ -829,10 +875,14 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
             if (!planMatMrpEntities.isEmpty()) {
                 planMatMrpEntities.forEach(planMatMrpEntity -> {
                     planMatMrpEntity.setFactoryCode(plnProductDemandEntity.getFactoryCode());
-                    PlnMpsLineEntity mpsLine = mpsLines.get(plnProductDemandEntity.getId());
+                    PlnMpsLineEntity mpsLine = mpsLines.get(plnProductDemandEntity);
                     if (mpsLine != null) {
                         planMatMrpEntity.setMpsLineId(mpsLine.getId());
                         planMatMrpEntity.setMpsVersionId(mpsLine.getVersionId());
+                        planMatMrpEntity.setMpsBucketNo(mpsLine.getBucketNo());
+                        planMatMrpEntity.setPlanningSourceKey(mpsLine.getBucketKey());
+                    } else {
+                        planMatMrpEntity.setPlanningSourceKey("DEMAND-" + plnProductDemandEntity.getId());
                     }
                 });
                 completableFutures.addAll(planMatMrpEntities);
@@ -845,6 +895,7 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
         }
         // 如果没有MRP实体，直接返回
         if (completableFutures.isEmpty()) {
+            formalPlanningGate.revalidate(planningPolicy);
             return R.ok();
         }
         applySubstituteSuggestions(completableFutures, usableStockMap, physicalStockMap,
@@ -865,6 +916,8 @@ public class PlnProductDemandServiceImpl extends ServiceImpl<PlnProductDemandMap
         if (!peggingLines.isEmpty()) {
             inventoryPeggingService.saveBatch(peggingLines);
         }
+        formalPlanningGate.revalidate(planningPolicy);
+        formalPlanContractService.publishMomMrpContract(mrpRunNo, "MOM-MRP-CONTRACT-" + mrpRunNo);
         return R.ok();
     }
 

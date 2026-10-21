@@ -32,6 +32,18 @@ public class PlnIssueMonthEntity extends BaseEntity<PlnIssueMonthEntity> {
     @Schema(description = "采购计划下达号")
     private String issueMonthNo;
 
+    @Schema(description = "来源产品需求号；与唯一采购/外协计划号分离")
+    private String sourceDemandNo;
+
+    @Schema(description = "来源MRP记录ID")
+    private Long sourceMrpId;
+
+    @Schema(description = "独立计划来源键；MPS跨期拆量时保存桶键")
+    private String planningSourceKey;
+
+    @Schema(description = "来源MPS需求桶行ID")
+    private Long mpsLineId;
+
     /**
      * 客户编码
      */

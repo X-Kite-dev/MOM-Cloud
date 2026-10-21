@@ -3,18 +3,14 @@ package com.kitex.mom.wms.api.feign;
 import com.kitex.common.core.util.R;
 import com.kitex.common.feign.annotation.NoToken;
 import com.kitex.mom.wms.Constants;
+import com.kitex.mom.wms.dto.*;
 import com.kitex.mom.wms.entity.WmsDeliverGoodsPlanBaseEntity;
-import com.kitex.mom.wms.dto.WmsOmsDeliveryWithdrawalCommand;
-import com.kitex.mom.wms.dto.WmsOmsDeliveryIssueCommand;
-import com.kitex.mom.wms.dto.WmsOmsDeliveryLedger;
-import com.kitex.mom.wms.dto.WmsOmsSalesReturnLedger;
-import com.kitex.mom.wms.dto.WmsOmsShipmentCorrectionLedger;
-import com.kitex.mom.wms.dto.WmsOmsCustomerReceiptLedger;
-import com.kitex.mom.wms.dto.WmsOmsCustomerExceptionResolutionLedger;
-import com.kitex.mom.wms.dto.WmsOmsDeliverabilitySnapshot;
 import com.kitex.mom.wms.entity.WmsDeliverGoodsRecordEntity;
 import org.springframework.cloud.openfeign.FeignClient;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
 
@@ -54,7 +50,7 @@ public interface RemoteDeliverService {
     @GetMapping("/wmsDeliverGoodsPlanBase/omsCustomerReceiptLedger")
     R<WmsOmsCustomerReceiptLedger> omsCustomerReceiptLedger(@RequestParam("orderCode") String orderCode,
                                                             @RequestParam("detailsId") Long detailsId,
-                                                             @RequestParam("requestId") String requestId);
+                                                            @RequestParam("requestId") String requestId);
 
     @GetMapping("/wmsDeliverGoodsPlanBase/omsCustomerExceptionResolutionLedger")
     R<WmsOmsCustomerExceptionResolutionLedger> omsCustomerExceptionResolutionLedger(
@@ -65,7 +61,7 @@ public interface RemoteDeliverService {
     @NoToken
     @GetMapping("/wmsDeliverGoodsPlanBase/omsDeliverability")
     R<WmsOmsDeliverabilitySnapshot> omsDeliverability(@RequestParam("orderCode") String orderCode,
-                                                       @RequestParam("detailsId") Long detailsId);
+                                                      @RequestParam("detailsId") Long detailsId);
 
     @NoToken
     @PostMapping("/wmsDeliverGoodsPlanBase/withdrawOmsCommand")

@@ -2,11 +2,7 @@ package com.kitex.mom.wms.api.feign;
 
 import com.kitex.common.core.util.R;
 import com.kitex.mom.wms.Constants;
-import com.kitex.mom.wms.dto.WmsLiveStockByProductCodeDto;
-import com.kitex.mom.wms.dto.WmsLiveStockQueryDTO;
-import com.kitex.mom.wms.dto.WmsQualityActionExecuteCommand;
-import com.kitex.mom.wms.dto.WmsQualityStatusCommand;
-import com.kitex.mom.wms.dto.WmsQualityStatusResult;
+import com.kitex.mom.wms.dto.*;
 import com.kitex.mom.wms.entity.WmsLiveStockEntity;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.cloud.openfeign.SpringQueryMap;

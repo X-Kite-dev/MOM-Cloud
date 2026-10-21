@@ -28,20 +28,42 @@ import java.time.LocalDateTime;
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "线边库实时库存")
 public class MesWarehouseLiveStockEntity extends BaseEntity<MesWarehouseLiveStockEntity> {
-    /** 独立实物质量案件；原报工放行不能解除此隔离。 */
-    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    /**
+     * 独立实物质量案件；原报工放行不能解除此隔离。
+     */
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     private Long qualityCaseId;
-    /** 隔离根库存最后一次数量变动回执；新放行行以origin字段保留谱系。 */
-    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    /**
+     * 隔离根库存最后一次数量变动回执；新放行行以origin字段保留谱系。
+     */
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     private Long qualityDispositionReceiptId;
-    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     private Long qualityOriginCaseId;
-    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     private Long qualityReleaseReceiptId;
     private Long materialReceiptId;
 
     @Schema(description = "库存来源报工记录ID")
     private Long sourceReportId;
+
+    /**
+     * 独立生产不良来源；绝不写入合格报工sourceReportId。
+     */
+    @Schema(description = "真实生产不良报告主键，旧库存为空")
+    private Long sourceUnqualifiedReportId;
+
+    /**
+     * 首次实物隔离采集原账；放行子库存保持该原来源。
+     */
+    @Schema(description = "生产不良隔离采集主键")
+    private Long productionNgCaptureId;
+
+    /**
+     * 实物转换输出来源；与直接GOOD/NG生产来源分域，不能用任意一个原报告冒充多来源输出。
+     */
+    @Schema(description = "实物转换输出主键")
+    private Long physicalTransformOutputId;
 
     @Schema(description = "最近一次转运确认的现场库位，独立于来源工序库位")
     private String physicalLocationCode;

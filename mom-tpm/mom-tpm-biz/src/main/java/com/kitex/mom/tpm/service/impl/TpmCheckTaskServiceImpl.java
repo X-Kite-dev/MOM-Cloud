@@ -397,8 +397,7 @@ public class TpmCheckTaskServiceImpl extends ServiceImpl<TpmCheckTaskMapper, Tpm
         MdmDeviceEntity checkedMold = null;
         // 模具先点检，避免设备已经放行后才发现本次生产依赖的模具需要封锁。
         if (ObjectUtil.isNotEmpty(startDto.getMoldCode())) {
-            List<TpmDeviceMoldRelaEntity> relations = moldRelaService.list(new LambdaQueryWrapper<TpmDeviceMoldRelaEntity>()
-                    .eq(TpmDeviceMoldRelaEntity::getDeviceCode, device.getDeviceCode()));
+            List<TpmDeviceMoldRelaEntity> relations = moldRelaService.getListByDeviceCodes(List.of(device.getDeviceCode()));
             if (!relations.stream().map(TpmDeviceMoldRelaEntity::getMoldCode).toList().contains(startDto.getMoldCode())) {
                 resultMap.put("msg", "设备与模具未设置绑定关系，开机失败！");
                 return resultMap;

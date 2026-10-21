@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.dto.MesLiveStockQueryDTO;
 import com.kitex.mom.mes.dto.MesWarehouseFeedDTO;
 import com.kitex.mom.mes.dto.MesWarehouseLiveStockInoutDTO;
+import com.kitex.mom.mes.dto.MesWarehouseStockOutReceiptDTO;
 import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
 import com.kitex.mom.mes.vo.MesWarehouseLiveStockByMaterialExcelVO;
 import com.kitex.mom.mes.vo.MesWarehouseLiveStockDetailExcelVO;
@@ -32,9 +33,19 @@ public interface MesWarehouseLiveStockService extends IService<MesWarehouseLiveS
     Boolean outStock(MesWarehouseLiveStockInoutDTO mesWarehouseLiveStock);
 
     /**
+     * 仅内部原业务事务取得真实逐库存行OUT全集；必须已有事务，不新开HTTP或客户端跳过参数。
+     * 原单位/数量/必要写回读失败整笔回滚；不再次调用outStock，不按批次事后拼回来源。
+     */
+    MesWarehouseStockOutReceiptDTO outStockWithReceipt(MesWarehouseLiveStockInoutDTO request,
+                                                       MesWarehouseStockOutReceiptDTO.Lineage lineage);
+
+    /**
      * 只读可扣减候选；与真实出库相同资格/FIFO校验，不创建预留。
      */
     List<MesWarehouseLiveStockEntity> previewOutCandidates(MesWarehouseLiveStockInoutDTO request);
+
+    /** 投料来源全集观察，明确按来源仓库筛选；不虚构扣库数量/谱系或承诺库存预留。 */
+    List<MesWarehouseLiveStockEntity> previewFeedSources(MesWarehouseLiveStockInoutDTO request);
 
     /**
      * 生产退料

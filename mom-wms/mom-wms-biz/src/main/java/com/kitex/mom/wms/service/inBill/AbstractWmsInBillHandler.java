@@ -600,8 +600,12 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
                 ? null : wmsInNoticeMapper.selectById(inBill.getNoticeId());
         String mesInboundRequestId = null;
         if (notice != null && InBillTypeEnum.PRODUCT.getCode().equals(inBill.getBillType())
-                && StrUtil.startWith(notice.getSourceRequestId(), "MES_TASK_IN_WMS:")) {
-            mesInboundRequestId = StrUtil.removePrefix(notice.getSourceRequestId(), "MES_TASK_IN_WMS:");
+                && (StrUtil.startWith(notice.getSourceRequestId(), "MES_TASK_IN_WMS:")
+                || StrUtil.startWith(notice.getSourceRequestId(), "MES_TASK_IN_WMS_V2:"))) {
+            // V2只改变出站命名域，实收入库和后续红冲继续保存完整MES原请求号。
+            String prefix = StrUtil.startWith(notice.getSourceRequestId(), "MES_TASK_IN_WMS_V2:")
+                    ? "MES_TASK_IN_WMS_V2:" : "MES_TASK_IN_WMS:";
+            mesInboundRequestId = StrUtil.removePrefix(notice.getSourceRequestId(), prefix);
             if (StrUtil.isBlank(mesInboundRequestId)) {
                 throw new CheckedException("MES成品入库通知缺少有效永久请求号");
             }

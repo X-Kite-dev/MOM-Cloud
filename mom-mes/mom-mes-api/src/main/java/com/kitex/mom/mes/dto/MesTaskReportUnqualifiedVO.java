@@ -17,6 +17,12 @@ public class MesTaskReportUnqualifiedVO {
     @Schema(description = "不合格上报请求唯一号，用于网络重试幂等", maxLength = 64)
     private String requestId;
 
+    /**
+     * 声明不等于新增耗料；只有本次尚未耗用的实际投料才明确选FEED。
+     */
+    @Schema(description = "不良耗料方式：省略/NONE只声明，FEED同本次新不良登记实际投料耗用")
+    private String materialAccountingMode;
+
     @Schema(description = "流转码/条码")
     private String transferCode;
 

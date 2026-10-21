@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 import java.util.Date;
 
 @Data
+@Schema(description = "工站当前实名派工及其冻结生产执行契约")
 public class MesArrangeTaskVO {
 
     private Long id;
@@ -35,11 +36,35 @@ public class MesArrangeTaskVO {
     @Schema(description = "工序名称")
     private String routeName;
 
+    @Schema(description = "实际派工冻结的路线节点，旧派工允许为空")
+    private String sourceRouteNodeCode;
+
+    @Schema(description = "冻结执行图协议")
+    private String routeExecutionSchemaVersion;
+
+    @Schema(description = "冻结前序节点CSV")
+    private String predecessorNodeCodes;
+
+    @Schema(description = "冻结后序节点CSV")
+    private String successorNodeCodes;
+
     @Schema(description = "工序SOP")
     private String routeSop;
 
     @Schema(description = "工序类型")
     private String routeType;
+
+    /**
+     * 派工冻结策略确定的标准报工模式，不能从工序类型或当前模板推测。
+     */
+    @Schema(description = "标准报工模式，由派工冻结契约确定")
+    private String reportMode;
+
+    /**
+     * 与本次返回派工属于同一来源的执行契约；历史派工由服务端生成兼容契约。
+     */
+    @Schema(description = "本派工的冻结执行契约，包括报工对象、触发来源、终端和数量控制")
+    private MesExecutionContractDTO executionContract;
 
     @Schema(description = "工序工作中心")
     private String routeWorkCenter;

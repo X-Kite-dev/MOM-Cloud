@@ -10,7 +10,8 @@ import lombok.Getter;
 public enum UpdateTypeEnum {
     NUM_ADD("num_add", "数量修改"),
     NUM_UPDATE("num_update", "数量修改"),
-    STATUS_UPDATE("status_update", "状态变更");
+    STATUS_UPDATE("status_update", "状态变更"),
+    ENGINEERING_RELEASE_BIND("engineering_release_bind", "工程版本绑定");
 
     private final String code;
     private final String desc;

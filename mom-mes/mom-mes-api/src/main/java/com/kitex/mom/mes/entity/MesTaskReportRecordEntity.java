@@ -33,8 +33,43 @@ public class MesTaskReportRecordEntity extends BaseEntity<MesTaskReportRecordEnt
     @Schema(description = "关联报工记录ID")
     private Long reportId;
 
+    /**
+     * 从当前原报告按租户/工厂补充，不回写历史操作流水。
+     */
+    @TableField(exist = false)
+    @Schema(description = "原报告服务器接受时刻")
+    private LocalDateTime timingAcceptedAt;
+
+    /**
+     * 从原报告读取的不可变规则与来源证据；无证据不推断历史通过。
+     */
+    @TableField(exist = false)
+    @Schema(description = "原报告跨工序时间校验证据")
+    private String timingEvidenceJson;
+
+    @Schema(description = "载具逐件展开操作ID")
+    private Long carrierOperationId;
+
+    @Schema(description = "执行时所在的生产载具编码")
+    private String carrierCode;
+
     @Schema(description = "本次报工合格数量")
     private BigDecimal reportNum;
+
+    @Schema(description = "该操作完成后的当前有效报工数量")
+    private BigDecimal effectiveReportNum;
+
+    @Schema(description = "该操作完成后的累计纠正数量")
+    private BigDecimal correctedReportNum;
+
+    @Schema(description = "最近一次数量纠正时间")
+    private LocalDateTime lastCorrectionTime;
+
+    @Schema(description = "本次报工使用的受控重报许可ID")
+    private Long correctionPermitId;
+
+    @Schema(description = "本次报工使用的受控重报许可号")
+    private String correctionPermitNo;
 
     @Schema(description = "报工状态：EFFECTIVE-有效，REVERSED-已冲销")
     private String status;
@@ -197,6 +232,36 @@ public class MesTaskReportRecordEntity extends BaseEntity<MesTaskReportRecordEnt
 
     @Schema(description = "生产标识解析不可变快照")
     private String identifierResolutionSnapshot;
+
+    /**
+     * 只读返回原主报工的精确动态实例文本，不向历史流水回填或新增持久列。
+     */
+    @TableField(exist = false)
+    @Schema(description = "原动态占用实例ID文本", accessMode = Schema.AccessMode.READ_ONLY)
+    private String identifierBindingId;
+
+    /**
+     * 原主报工核定的动作，非当前模板的动作。
+     */
+    @TableField(exist = false)
+    @Schema(description = "原节点动作", accessMode = Schema.AccessMode.READ_ONLY)
+    private String identifierNodeAction;
+
+    /**
+     * 原主报工采集的生命周期版本，不能用当前实例版本覆盖。
+     */
+    @TableField(exist = false)
+    @Schema(description = "原节点生命周期版本", accessMode = Schema.AccessMode.READ_ONLY)
+    private Integer identifierBindingVersion;
+
+    @Schema(description = "执行种类：NORMAL或ROUTE_RETURN")
+    private String executionKind;
+
+    @Schema(description = "退回上序申请ID")
+    private Long routeReturnId;
+
+    @Schema(description = "逐标识路线版本")
+    private Integer identifierRouteVersion;
 
     /**
      * 所属组织

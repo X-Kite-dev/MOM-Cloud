@@ -103,7 +103,9 @@ public class WmsDeliverGoodsReturnEntity extends BaseEntity<WmsDeliverGoodsRetur
     @Schema(description = "退货原因")
     private String returnReason;
 
-    /** 客户交付异常处置来源；普通销售退货保持为空。 */
+    /**
+     * 客户交付异常处置来源；普通销售退货保持为空。
+     */
     @Schema(description = "客户交付异常处置单ID")
     private Long exceptionResolutionCaseId;
 

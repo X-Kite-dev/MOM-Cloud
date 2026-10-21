@@ -12,9 +12,11 @@ import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
+import com.kitex.mom.mdm.dto.MdmRouteEngineeringDTO;
 import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
 import com.kitex.mom.plan.dto.MonthPlanQueryDTO;
 import com.kitex.mom.plan.dto.PlnIssueDTO;
+import com.kitex.mom.plan.dto.PlnEngineeringReleaseBindDTO;
 import com.kitex.mom.plan.dto.PlnIssueModuleDTO;
 import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
 import com.kitex.mom.plan.entity.PlnIssueEntity;
@@ -264,6 +266,24 @@ public class PlnIssueController {
     @PostMapping("/module")
     public R<Boolean> module(@RequestBody PlnIssueModuleDTO plnIssueModuleDTO) {
         return R.ok(plnIssueService.module(plnIssueModuleDTO));
+    }
+
+    /** 当前生产计划产品可选择的已发布工程版本。 */
+    @Operation(summary = "查询生产计划工程版本候选")
+    @GetMapping("/engineering/candidates/{issueId}")
+    @PreAuthorize("@pms.hasPermission('pln_plnIssue_view')")
+    public R<List<MdmRouteEngineeringDTO.ProductionCandidate>> engineeringCandidates(
+            @PathVariable("issueId") Long issueId) {
+        return R.ok(plnIssueService.engineeringCandidates(issueId));
+    }
+
+    /** 排程前绑定或更换精确工程版本，进入排程后只能走正式计划变更。 */
+    @Operation(summary = "绑定生产计划工程版本")
+    @SysLog("绑定生产计划工程版本")
+    @PostMapping("/engineering/bind")
+    @PreAuthorize("@pms.hasPermission('pln_plnIssue_edit')")
+    public R<PlnIssueEntity> bindEngineeringRelease(@RequestBody PlnEngineeringReleaseBindDTO command) {
+        return R.ok(plnIssueService.bindEngineeringRelease(command));
     }
 
     /**

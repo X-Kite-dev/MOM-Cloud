@@ -17,6 +17,7 @@ import com.kitex.mom.mdm.entity.MdmProcessProcedureSettingEntity;
 import com.kitex.mom.mdm.entity.MdmProcessRouteEntity;
 import com.kitex.mom.mdm.entity.MdmProcessRouteWorkingEntity;
 import com.kitex.mom.mdm.service.MdmProcessRouteService;
+import com.kitex.mom.mdm.support.MdmRouteNodeDeviceSupport;
 import com.kitex.mom.mdm.vo.MdmProcedureSopVO;
 import com.kitex.mom.mdm.vo.MdmProcessRouteProcedureVO;
 import com.kitex.mom.mdm.vo.MdmProcessRouteTreeVO;
@@ -32,6 +33,7 @@ import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 工艺路线
@@ -48,6 +50,14 @@ public class MdmProcessRouteController {
 
     private final MdmProcessRouteService mdmProcessRouteService;
 
+    private final MdmRouteNodeDeviceSupport routeNodeDeviceSupport;
+
+    @Operation(summary = "查询已保存路线节点的工程设备候选")
+    @GetMapping("/getDeviceList")
+    public R<List<String>> getDeviceList(@RequestParam("id") Long id) {
+        return R.ok(routeNodeDeviceSupport.getDeviceList(id));
+    }
+
     /**
      * 根据产品编码查询默认启用工艺路线
      *
@@ -57,12 +67,60 @@ public class MdmProcessRouteController {
     @Operation(summary = "根据产品编码查询默认启用工艺路线", description = "根据产品编码查询默认启用工艺路线")
     @GetMapping("/getDefaultByProductCode")
     public R<MdmProcessRouteEntity> getDefaultByProductCode(@RequestParam("productCode") String productCode) {
-        return R.ok(mdmProcessRouteService.getOne(
+        MdmProcessRouteEntity route = mdmProcessRouteService.getOne(
                 Wrappers.<MdmProcessRouteEntity>lambdaQuery()
                         .eq(MdmProcessRouteEntity::getProductCode, productCode)
                         .eq(MdmProcessRouteEntity::getIsDefault, true)
                         .eq(MdmProcessRouteEntity::getStatus, true)
-                        .last("LIMIT 1")));
+                        .last("LIMIT 1"));
+        if (route != null) mdmProcessRouteService.requireLegacyExecutableRoutes(List.of(route));
+        return R.ok(route);
+    }
+
+    /**
+     * 批量返回启用的默认工艺路线。接口不对重复默认路线做静默合并，PLAN/RCCP必须将其视为
+     * 主数据冲突，避免任意选中一条路线后形成错误产能承诺。
+     */
+    @Operation(summary = "批量查询产品默认启用工艺路线")
+    @PostMapping("/defaultsByProductCodes")
+    public R<List<MdmProcessRouteEntity>> getDefaultsByProductCodes(@RequestBody List<String> productCodes) {
+        List<String> codes = normalizeProductCodes(productCodes);
+        if (codes.isEmpty()) return R.ok(List.of());
+        if (codes.size() > 1000) return R.failed("单次默认工艺路线查询不能超过1000个产品");
+        List<MdmProcessRouteEntity> routes = mdmProcessRouteService.list(Wrappers.<MdmProcessRouteEntity>lambdaQuery()
+                .in(MdmProcessRouteEntity::getProductCode, codes)
+                .eq(MdmProcessRouteEntity::getIsDefault, true)
+                .eq(MdmProcessRouteEntity::getStatus, true)
+                .orderByAsc(MdmProcessRouteEntity::getProductCode)
+                .orderByAsc(MdmProcessRouteEntity::getId));
+        mdmProcessRouteService.requireLegacyExecutableRoutes(routes);
+        return R.ok(routes);
+    }
+
+    /**
+     * 批量返回全部启用工艺路线，不把非默认路线静默排除。MPS只可在这些已维护路线中
+     * 选择替代产线，最终工序、设备、人员和工装有限能力仍由APS校验。
+     */
+    @Operation(summary = "批量查询产品全部启用工艺路线")
+    @PostMapping("/enabledByProductCodes")
+    public R<List<MdmProcessRouteEntity>> getEnabledByProductCodes(@RequestBody List<String> productCodes) {
+        List<String> codes = normalizeProductCodes(productCodes);
+        if (codes.isEmpty()) return R.ok(List.of());
+        if (codes.size() > 1000) return R.failed("单次启用工艺路线查询不能超过1000个产品");
+        List<MdmProcessRouteEntity> routes = mdmProcessRouteService.list(Wrappers.<MdmProcessRouteEntity>lambdaQuery()
+                .in(MdmProcessRouteEntity::getProductCode, codes)
+                .eq(MdmProcessRouteEntity::getStatus, true)
+                .orderByAsc(MdmProcessRouteEntity::getProductCode)
+                .orderByDesc(MdmProcessRouteEntity::getIsDefault)
+                .orderByAsc(MdmProcessRouteEntity::getId));
+        mdmProcessRouteService.requireLegacyExecutableRoutes(routes);
+        return R.ok(routes);
+    }
+
+    private List<String> normalizeProductCodes(List<String> productCodes) {
+        return productCodes == null ? List.of() : productCodes.stream()
+                .filter(Objects::nonNull).map(String::trim).filter(StrUtil::isNotBlank)
+                .distinct().limit(1001).toList();
     }
 
     /**
@@ -118,6 +176,30 @@ public class MdmProcessRouteController {
     @GetMapping("/selectPage")
     public R<Page<MdmProcessRouteEntity>> getMdmProcessRoutePageByProduct(SearchPage page, @ParameterObject MdmProcessRouteSelectDTO mdmProcessRoute) {
         return R.ok(mdmProcessRouteService.selectPage(page.toMpPage(), mdmProcessRoute));
+    }
+
+    /**
+     * 为工业知识图谱提供只读的正式路线候选。该入口复用 MDM 主数据和原菜单权限，
+     * 不允许 AI 模块建立第二套路线路目录。
+     */
+    @Operation(summary = "工业知识图谱查询正式路线候选")
+    @GetMapping("/knowledge/selectPage")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmProcessRoute_view')")
+    public R<Page<MdmProcessRouteEntity>> getKnowledgeRoutePage(SearchPage page,
+                                                                @ParameterObject MdmProcessRouteSelectDTO mdmProcessRoute) {
+        mdmProcessRoute.setStatus(Boolean.TRUE);
+        return R.ok(mdmProcessRouteService.selectPage(page.toMpPage(), mdmProcessRoute));
+    }
+
+    /**
+     * 为工业知识图谱返回所选正式路线的稳定节点。节点仍由 MDM 管理，Agent 只引用
+     * routeNodeCode，不复制名称、顺序或工序身份。
+     */
+    @Operation(summary = "工业知识图谱查询正式路线稳定节点")
+    @GetMapping("/knowledge/nodes")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmProcessRoute_view')")
+    public R<List<MdmProcessRouteWorkingEntity>> getKnowledgeRouteNodes(@RequestParam("routeCode") String routeCode) {
+        return R.ok(mdmProcessRouteService.getProcedureList(routeCode));
     }
 
     /**
@@ -271,6 +353,13 @@ public class MdmProcessRouteController {
         return R.ok(mdmProcessRouteService.getProcessWorking(routeId));
     }
 
+    @Operation(summary = "工程表头编辑读取", description = "不包含生产投影及画布快照")
+    @GetMapping("/engineeringHeader/{id}")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmProcessRoute_view')")
+    public R<MdmProcessRouteEntity> getEngineeringHeader(@PathVariable("id") Long id) {
+        return R.ok(mdmProcessRouteService.getEngineeringHeader(id));
+    }
+
     /**
      * 根据工艺路线ID查询工艺路线下的工序及工序下的工作中心
      *
@@ -292,8 +381,17 @@ public class MdmProcessRouteController {
      */
     @Operation(summary = "新增工艺路线下的工序", description = "新增工艺路线下的工序")
     @PutMapping("/saveProcessWorking")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmProcessRoute_edit')")
     public R<Boolean> saveProcessWorking(@RequestBody MdmProcessRouteProcedureDTO mdmProcessRouteProcedureDTO) {
         return R.ok(mdmProcessRouteService.saveProcessWorking(mdmProcessRouteProcedureDTO));
+    }
+
+    /** 使用现有工程编辑权限；来源和目标的实际组织、版本由服务层核验。 */
+    @Operation(summary = "复制路线结构", description = "只复制到空路线，不复制工程附件、参数版本及生产历史")
+    @PostMapping("/copyGraph")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmProcessRoute_edit')")
+    public R<Boolean> copyGraph(@RequestBody MdmRouteGraphCopyDTO command) {
+        return R.ok(mdmProcessRouteService.copyGraph(command));
     }
 
     /**
@@ -329,6 +427,7 @@ public class MdmProcessRouteController {
      */
     @Operation(summary = "新增工艺路线下的工序的SOP", description = "新增工艺路线下的工序的SOP")
     @PutMapping("/saveSop")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmProcessRoute_edit')")
     public R<Boolean> saveSop(@RequestBody MdmProcessProcedureSopDTO mdmProcessProcedureSopDTO) {
         return R.ok(mdmProcessRouteService.saveSop(mdmProcessProcedureSopDTO));
     }
@@ -366,6 +465,7 @@ public class MdmProcessRouteController {
      */
     @Operation(summary = "新增工艺路线下工序绑定的投料信息", description = "新增工艺路线下工序绑定的投料信息")
     @PutMapping("/saveMat")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmProcessRoute_edit')")
     public R<Boolean> saveMat(@RequestBody MdmProcessProcedureMatDTO mdmProcessProcedureMatDTO) {
         return R.ok(mdmProcessRouteService.saveMat(mdmProcessProcedureMatDTO));
     }
@@ -383,6 +483,14 @@ public class MdmProcessRouteController {
         return R.ok(mdmProcessRouteService.getSetByCode(routeCode, processCode));
     }
 
+    /** 工序配置按真实路线节点查询，避免重复主工序共用设置。 */
+    @Operation(summary = "查询路线节点配置")
+    @GetMapping("/getSetByNode")
+    public R<MdmProcessProcedureSettingEntity> getSetByNode(@RequestParam String routeCode,
+                                                          @RequestParam String routeNodeCode) {
+        return R.ok(mdmProcessRouteService.getSetByNode(routeCode, routeNodeCode));
+    }
+
     /**
      * 修改工艺路线下工序的设置信息
      *
@@ -391,8 +499,17 @@ public class MdmProcessRouteController {
      */
     @Operation(summary = "修改工艺路线下工序的设置信息", description = "修改工艺路线下工序的设置信息")
     @PutMapping("/saveOrUpdateSet")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmProcessRoute_edit')")
     public R<Boolean> saveOrUpdateSet(@RequestBody MdmProcessProcedureSettingEntity mdmProcessProcedureSetting) {
         return R.ok(mdmProcessRouteService.saveOrUpdateSet(mdmProcessProcedureSetting));
+    }
+
+    @Operation(summary = "移除工序配置依赖")
+    @SysLog("移除工序配置依赖")
+    @DeleteMapping("/settings/{id}")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmProcessRoute_edit')")
+    public R<Boolean> removeSetting(@PathVariable("id") Long id) {
+        return R.ok(mdmProcessRouteService.removeSetting(id));
     }
 
 }

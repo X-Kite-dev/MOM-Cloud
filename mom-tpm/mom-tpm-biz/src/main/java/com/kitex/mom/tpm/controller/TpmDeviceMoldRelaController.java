@@ -1,7 +1,6 @@
 package com.kitex.mom.tpm.controller;
 
 import cn.hutool.core.collection.CollUtil;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
@@ -51,8 +50,7 @@ public class TpmDeviceMoldRelaController {
     @Operation(summary = "列表查询 - 根据设备编码", description = "列表查询 - 根据设备编码")
     @GetMapping("/getListByDeviceCode")
     public R<List<TpmDeviceMoldRelaEntity>> getListByDeviceCode(@RequestParam("deviceCode") String deviceCode) {
-        return R.ok(tpmDeviceMoldRelaService.list(new LambdaQueryWrapper<TpmDeviceMoldRelaEntity>()
-                .eq(TpmDeviceMoldRelaEntity::getDeviceCode, deviceCode)));
+        return R.ok(tpmDeviceMoldRelaService.getListByDeviceCodes(List.of(deviceCode)));
     }
 
 
@@ -62,8 +60,7 @@ public class TpmDeviceMoldRelaController {
     @Operation(summary = "列表查询 - 根据设备编码", description = "列表查询 - 根据设备编码")
     @GetMapping("/getListByDeviceCodes")
     public R<List<TpmDeviceMoldRelaEntity>> getListByDeviceCodes(@RequestParam("deviceCodes") List<String> deviceCodes) {
-        return R.ok(tpmDeviceMoldRelaService.list(new LambdaQueryWrapper<TpmDeviceMoldRelaEntity>()
-                .in(TpmDeviceMoldRelaEntity::getDeviceCode, deviceCodes)));
+        return R.ok(tpmDeviceMoldRelaService.getListByDeviceCodes(deviceCodes));
     }
 
     /**
@@ -91,7 +88,7 @@ public class TpmDeviceMoldRelaController {
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('tpm_tpmDeviceItem')")
     public R<Boolean> removeById(@RequestBody Long[] ids) {
-        return R.ok(tpmDeviceMoldRelaService.removeBatchByIds(CollUtil.toList(ids)));
+        return R.ok(tpmDeviceMoldRelaService.removeScoped(CollUtil.toList(ids)));
     }
 
 

@@ -4,6 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.kitex.admin.api.feign.RemoteParamService;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
@@ -25,6 +26,8 @@ import com.kitex.mom.mes.util.MesMaterialSubstituteResolver;
 import com.kitex.mom.mes.util.MesTaskUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -49,7 +52,7 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
      * 各报工模式共用的报工记录构造，避免模式之间形成不同的数据口径。
      */
     protected MesTaskReportEntity createReport(MesTaskReportVO vo, MomUser currentUser) {
-        boolean integration = "API".equals(vo.getType());
+        boolean integration = "API".equals(vo.getType()) || "AUTO".equals(vo.getType());
         String workerCode = integration || currentUser == null
                 ? vo.getOperatorCode() : currentUser.getUsername();
         String workerName = integration || currentUser == null
@@ -72,7 +75,16 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
                 .setIdentifierType(vo.getIdentifierType())
                 .setIdentifierResolutionSnapshot(vo.getIdentifierResolutionSnapshot())
                 .setExtensionEvidenceSnapshot(vo.getExtensionEvidenceSnapshot())
+                .setExecutionKind(vo.getExecutionKind())
+                .setRouteReturnId(vo.getRouteReturnId())
+                .setIdentifierRouteVersion(vo.getIdentifierRouteVersion())
+                .setCarrierOperationId(vo.getCarrierOperationId())
+                .setCarrierCode(vo.getCarrierCode())
                 .setReportNum(vo.getPassNum())
+                .setEffectiveReportNum(vo.getPassNum())
+                .setCorrectedReportNum(BigDecimal.ZERO)
+                .setCorrectionPermitId(vo.getCorrectionPermitId())
+                .setCorrectionPermitNo(vo.getCorrectionPermitNo())
                 .setType(vo.getType())
                 .setSourceEventId(vo.getSourceEventId())
                 .setSourceEventTime(vo.getSourceEventTime())
@@ -101,11 +113,13 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
                 .setDeviceName(vo.getDeviceName())
                 .setFactoryCode(vo.getFactoryCode());
         report.setId(IdWorker.getId());
+        // 租户拦截器只补SQL条件，不保证回写Java对象；事实与原正文均显式使用真实租户。
+        report.setTenantId(TenantContextHolder.getTenantId());
         return report;
     }
 
     protected String operatorName(MesTaskReportVO vo, MomUser currentUser) {
-        if ("API".equals(vo.getType())) {
+        if ("API".equals(vo.getType()) || "AUTO".equals(vo.getType())) {
             return vo.getOperatorName();
         }
         return currentUser == null
@@ -113,20 +127,27 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
     }
 
     /**
-     * 通用物料消耗
+     * 通用物料消耗；必须与原报工、产出及数量回写处于同一生产事务。
      *
      * @param params
      */
     @Override
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public void use(MesTaskReportVO params) {
         log.info("通用物料消耗");
 
-        String backFlushFlag = remoteParamService.getByKey("BACK_FLUSH").getData();
+        var configuration = remoteParamService.getByKey("BACK_FLUSH");
+        if (configuration == null || !configuration.isOk()
+                || !("0".equals(configuration.getData()) || "1".equals(configuration.getData()))) {
+            throw new CheckedException("无法核定实际倒冲配置，不能默认为投料消耗");
+        }
+        String backFlushFlag = configuration.getData();
         MesTaskArrangeEntity arrange = params.getTaskArrange();
         MesTaskEntity task = params.getTask();
         // 倒冲则直接在线边库中扣除
         if ("1".equals(backFlushFlag)) {
-            ProcessProcedureDTO currentProcess = MesTaskUtils.getCurrentProcess(params.getTask(), params.getTaskArrange().getRouteCode());
+            ProcessProcedureDTO currentProcess = MesTaskUtils.getCurrentProcess(params.getTask().getProcessRouteSnapshot(),
+                    arrange.getRouteCode(), arrange.getSourceRouteNodeCode());
             // 工序的物料信息
             List<ProcessProcedureDTO.ProcessProcedureMatDTO> mdmProcessProcedureMatList = currentProcess.getMdmProcessProcedureMatList();
             if (mdmProcessProcedureMatList == null || mdmProcessProcedureMatList.isEmpty()) {
@@ -240,6 +261,7 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
      * @param params
      */
     @Override
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public void in(MesTaskReportVO params) {
         log.info("线边入库");
         // 生产任务
@@ -277,6 +299,8 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
         }
         in.setBizType(WarehouseInBizTypeEnum.PROCESS_PRODUCT_IN.getCode());
         in.setFactoryCode(arrange.getFactoryCode());
-        liveStockService.inStock(in);
+        if (!Boolean.TRUE.equals(liveStockService.inStock(in))) {
+            throw new CheckedException("GOOD实际产出入库必要写失败，整次报工回滚");
+        }
     }
 }

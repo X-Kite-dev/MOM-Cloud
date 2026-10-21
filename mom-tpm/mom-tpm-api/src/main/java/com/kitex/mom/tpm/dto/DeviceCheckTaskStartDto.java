@@ -32,4 +32,22 @@ public class DeviceCheckTaskStartDto {
 
     @Schema(description = "工作中心")
     private String worksiteCode;
+
+    /**
+     * 物理换型必须与只读观察时的组织核对；普通设备开机保持原契约。
+     */
+    @Schema(description = "换型观察时租户ID文本")
+    private String expectedTenantId;
+
+    /**
+     * 仅核对，不改变认证工厂。
+     */
+    @Schema(description = "换型观察时工厂编码")
+    private String expectedFactoryCode;
+
+    /**
+     * 物理换型当前执行人的真实用户ID。
+     */
+    @Schema(description = "换型观察时实名用户ID文本")
+    private String expectedActorUserId;
 }

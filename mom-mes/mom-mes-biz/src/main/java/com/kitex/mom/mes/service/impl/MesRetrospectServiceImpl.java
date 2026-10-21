@@ -18,6 +18,7 @@ import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.WarehouseInBizTypeEnum;
 import com.kitex.mom.mes.enums.WrapTypeEnum;
 import com.kitex.mom.mes.service.*;
+import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
 import com.kitex.mom.qms.api.feign.RemoteProcedureService;
 import com.kitex.mom.qms.api.feign.RemotePurchaseService;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureTaskDetailEntity;
@@ -712,23 +713,51 @@ public class MesRetrospectServiceImpl implements MesRetrospectService {
     }
 
     /**
-     * 处理工序流程图数据
+     * 读取原实际任务图；只有完整节点合同才能展示真实依赖。
+     * 历史列表及损坏图保留可观察的任务，不按主工序或排序猜测单件经过路径。
      *
      * @param produceTaskList 工序任务列表
      * @param flowDataList    流程图数据列表
      */
     private void processFlowData(List<MesProduceTaskEntity> produceTaskList, List<RetrospectVo.FlowDataDTO> flowDataList) {
+        if (produceTaskList.isEmpty()) {
+            return;
+        }
+        MesFrozenExecutionGraph graph = null;
+        String graphState = "LEGACY";
+        String graphIssue = "历史执行协议仅列实际任务，未据排序推断依赖关系";
+        if (produceTaskList.stream().anyMatch(task -> task.getRouteExecutionSchemaVersion() != null)) {
+            try {
+                graph = MesFrozenExecutionGraph.of(produceTaskList);
+                graphState = "NODE";
+                graphIssue = null;
+            } catch (CheckedException ex) {
+                // 不能把坏图画成另一条合法路线；保留任务及明确缺口供人工追查。
+                graphState = "INVALID";
+                graphIssue = ex.getMessage();
+            }
+        }
         List<MesProduceTaskEntity> sortedProduceTasks = produceTaskList.stream()
-                .sorted(Comparator.comparing(MesProduceTaskEntity::getRouteOrder, Comparator.nullsLast(Comparator.naturalOrder())))
+                .sorted(Comparator.comparing(MesProduceTaskEntity::getRouteOrder, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(MesProduceTaskEntity::getCode, Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
 
-        for (int i = 0; i < sortedProduceTasks.size(); i++) {
-            MesProduceTaskEntity currentTask = sortedProduceTasks.get(i);
+        for (MesProduceTaskEntity currentTask : sortedProduceTasks) {
             RetrospectVo.FlowDataDTO flowDataDTO = new RetrospectVo.FlowDataDTO();
+            flowDataDTO.setProduceTaskId(currentTask.getId() == null ? null : currentTask.getId().toString());
+            flowDataDTO.setProduceTaskCode(currentTask.getCode());
+            flowDataDTO.setTaskCode(currentTask.getTaskCode());
+            flowDataDTO.setProcessRouteCode(currentTask.getProcessRouteCode());
+            flowDataDTO.setSourceRouteNodeCode(currentTask.getSourceRouteNodeCode());
+            flowDataDTO.setRouteExecutionSchemaVersion(currentTask.getRouteExecutionSchemaVersion());
+            flowDataDTO.setGraphState(graphState);
+            flowDataDTO.setGraphIssue(graphIssue);
+            flowDataDTO.setPredecessorTaskCodes(graph == null ? List.of()
+                    : graph.predecessors(currentTask).stream().map(MesProduceTaskEntity::getCode).sorted().toList());
             flowDataDTO.setRouteCode(currentTask.getRouteCode());
             flowDataDTO.setRouteName(currentTask.getRouteName());
 
-            // 旧展示结构不能表达工序任务ID及DAG汇合，不从排序制造前后置边。
+            // 保留旧响应字段，避免将分叉汇合展开成重复的树节点。
             flowDataDTO.setChildren(List.of());
             flowDataList.add(flowDataDTO);
         }
@@ -765,7 +794,7 @@ public class MesRetrospectServiceImpl implements MesRetrospectService {
         result.setWarnings(List.of("旧汇总包含投料、倒冲及报工历史，不代表逐报工净消耗或召回范围；请使用实际消耗工作台核验主键证据。",
                 "物流未接入权威发运/签收，返回空列表；库存仅是同物料批次的当前参考，不证明原箱/工单来源，多处时不显示单一位置。",
                 "来料检验复用现用任务查询，排除作废任务，不代表全部历史检验。",
-                "工序只列节点，不按工序排序推造DAG依赖；当前库存不是历史库存快照。"));
+                "工序图仅NODE状态展示原完整实际任务依赖，旧协议或证据缺口只列任务；这不是被查单件已执行路径，当前库存也不是历史库存快照。"));
         return result;
     }
 

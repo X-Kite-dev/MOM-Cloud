@@ -43,13 +43,13 @@ public interface RemoteTpmDeviceService {
 
 
     /**
-     * 根据设备编码查询设备-模具关联表
+     * 根据设备编码查询当前真实租户/工厂的设备-模具关联表，旧无归属行不可返回。
      */
     @GetMapping("/tpmDeviceMoldRela/getListByDeviceCode")
     R<List<TpmDeviceMoldRelaEntity>> getListByDeviceCode(@RequestParam("deviceCode") String deviceCode);
 
     /**
-     * 根据设备编码查询设备-模具关联表
+     * 批量查询当前真实租户/工厂的设备-模具关联表；响应包含组织身份供调用方复核。
      */
     @GetMapping("/tpmDeviceMoldRela/getListByDeviceCodes")
     R<List<TpmDeviceMoldRelaEntity>> getListByDeviceCodes(@RequestParam("deviceCodes") List<String> deviceCodes);

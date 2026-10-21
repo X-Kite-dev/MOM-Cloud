@@ -65,6 +65,17 @@ public class ProcessOperationFactory {
     }
 
     /**
+     * 主报告保存后建立模式关联，保证实际父行先于包装等消费事实存在。
+     */
+    public void persistAssociations(String code, MesTaskReportVO params, MesTaskReportResult result) {
+        if (result == null || result.getReport() == null || result.getReport().getId() == null
+                || !result.getReport().getId().equals(params.getReportId())) {
+            throw new IllegalStateException("报工关联缺少已保存的同笔报告主键");
+        }
+        getOperation(code).persistAssociations(params, result);
+    }
+
+    /**
      * 报工主记录持久化后执行公共物料与产出事务，确保所有流水都能关联 reportId。
      */
     public void applyInventory(String code, MesTaskReportVO params) {

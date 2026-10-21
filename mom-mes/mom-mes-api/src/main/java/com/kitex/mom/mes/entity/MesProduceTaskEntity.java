@@ -1,6 +1,7 @@
 package com.kitex.mom.mes.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.kitex.common.core.entity.BaseEntity;
@@ -96,6 +97,35 @@ public class MesProduceTaskEntity extends BaseEntity<MesProduceTaskEntity> {
      */
     @Schema(description = "工序编码")
     private String routeCode;
+
+    /**
+     * 下达时从原路线快照取得；历史任务不回填、不借用当前MDM身份。
+     */
+    @Schema(description = "来源路线稳定节点编码，历史任务允许为空")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String sourceRouteNodeCode;
+
+    /**
+     * 完整执行图合同独立于参数/SOP的节点身份；旧任务保持空值。
+     */
+    @Schema(description = "冻结执行图协议，NODE_EXECUTION_V1或历史空值")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String routeExecutionSchemaVersion;
+
+    @Schema(description = "冻结前序节点CSV；空串表示起点，null表示旧执行合同")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String predecessorNodeCodes;
+
+    @Schema(description = "冻结后序节点CSV；空串表示终点，null表示旧执行合同")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String successorNodeCodes;
+
+    /**
+     * 保留工程节点时间原文，不替换旧时间证据及其解释协议。
+     */
+    @Schema(description = "冻结节点时间规则JSON")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    private String nodeTimingRulesJson;
 
     /**
      * 工序名称
@@ -236,6 +266,12 @@ public class MesProduceTaskEntity extends BaseEntity<MesProduceTaskEntity> {
      */
     @Schema(description = "实际开工时间")
     private LocalDateTime startTime;
+
+    /**
+     * 目标工序的跨工序自然时间规则；下达时冻结，空表示未配置。
+     */
+    @Schema(description = "跨工序时间规则JSON，MOM_PROCESS_TIMING_V1")
+    private String timingRulesJson;
 
     /**
      * 实际完工时间

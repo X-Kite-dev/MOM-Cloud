@@ -10,13 +10,17 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.BaseCore;
 import com.kitex.common.core.entity.SearchPage;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.mom.mes.dto.MesWarehouseFeedLeftDTO;
+import com.kitex.mom.mes.dto.MesWarehouseFeedBirthDTO;
 import com.kitex.mom.mes.entity.MesWarehouseFeedEntity;
 import com.kitex.mom.mes.service.MesWarehouseFeedService;
+import com.kitex.mom.mes.service.MesWarehouseFeedBirthService;
+import com.kitex.mom.mes.service.impl.MesStartPreparationDrilldownService;
 import com.kitex.mom.mes.vo.MesWarehouseFeedExcelVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -45,6 +49,16 @@ import java.util.List;
 public class MesWarehouseFeedController {
 
     private final MesWarehouseFeedService mesWarehouseFeedService;
+    private final MesWarehouseFeedBirthService feedBirths;
+    private final MesStartPreparationDrilldownService preparationDrilldown;
+
+    /** 原来源只读，所有原库存行均返回；不是按批次查询当前库存冒充出生。 */
+    @Operation(summary = "查询投料永久出生来源")
+    @GetMapping("/{id}/birth")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehouseFeed_view')")
+    public R<MesWarehouseFeedBirthDTO> birth(@PathVariable("id") Long id) {
+        return R.ok(feedBirths.evidence(id));
+    }
 
     /**
      * 分页查询
@@ -56,8 +70,14 @@ public class MesWarehouseFeedController {
     @Operation(summary = "分页查询", description = "分页查询")
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('mes_mesWarehouseFeed_view')")
-    public R getMesWarehouseFeedPage(@ParameterObject SearchPage page, @ParameterObject MesWarehouseFeedEntity mesWarehouseFeed) {
+    public R getMesWarehouseFeedPage(@ParameterObject SearchPage page, @ParameterObject MesWarehouseFeedEntity mesWarehouseFeed,
+                                     @RequestParam(required = false) Long preparationArrangeId) {
         LambdaQueryWrapper<MesWarehouseFeedEntity> wrapper = Wrappers.lambdaQuery();
+        if (preparationArrangeId != null) {
+            var arrange = preparationDrilldown.require(preparationArrangeId, mesWarehouseFeed.getArrangeCode(), mesWarehouseFeed.getTaskCode());
+            wrapper.eq(MesWarehouseFeedEntity::getTenantId, arrange.getTenantId())
+                    .eq(MesWarehouseFeedEntity::getFactoryCode, arrange.getFactoryCode());
+        }
         wrapper.eq(StrUtil.isNotBlank(mesWarehouseFeed.getArrangeCode()), MesWarehouseFeedEntity::getArrangeCode, mesWarehouseFeed.getArrangeCode());
         wrapper.eq(StrUtil.isNotBlank(mesWarehouseFeed.getProduceTaskCode()), MesWarehouseFeedEntity::getProduceTaskCode, mesWarehouseFeed.getProduceTaskCode());
         wrapper.eq(StrUtil.isNotBlank(mesWarehouseFeed.getTaskCode()), MesWarehouseFeedEntity::getTaskCode, mesWarehouseFeed.getTaskCode());
@@ -125,6 +145,8 @@ public class MesWarehouseFeedController {
     @PostMapping
     @PreAuthorize("@pms.hasPermission('mes_mesWarehouseFeed_add')")
     public R save(@Validated @RequestBody MesWarehouseFeedEntity mesWarehouseFeed) {
+        if (mesWarehouseFeed.getFeedCommandId() != null)
+            throw new CheckedException("客户端禁止指定内部命令主键；稳定投料请使用完整原文命令接口");
         return R.ok(mesWarehouseFeedService.saveFeed(mesWarehouseFeed));
     }
 

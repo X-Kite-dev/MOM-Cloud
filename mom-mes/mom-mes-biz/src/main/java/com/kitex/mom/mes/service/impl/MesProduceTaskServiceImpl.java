@@ -9,6 +9,7 @@ import com.kitex.mom.mes.dto.RouteProcessDTO;
 import com.kitex.mom.mes.entity.MesProduceTaskEntity;
 import com.kitex.mom.mes.mapper.MesProduceTaskMapper;
 import com.kitex.mom.mes.service.MesProduceTaskService;
+import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -52,8 +53,7 @@ public class MesProduceTaskServiceImpl extends ServiceImpl<MesProduceTaskMapper,
 
         List<RouteProcessDTO> processes = new ArrayList<>();
         if (CollUtil.isNotEmpty(processTasks)) {
-            Map<String, MesProduceTaskEntity> byProcess = processTasks.stream().collect(Collectors.toMap(
-                    MesProduceTaskEntity::getRouteCode, item -> item, (a, b) -> a, LinkedHashMap::new));
+            MesFrozenExecutionGraph graph = MesFrozenExecutionGraph.of(processTasks);
             processTasks.forEach(task -> {
                 RouteProcessDTO process = new RouteProcessDTO();
                 process.setProduceTaskCode(task.getCode());
@@ -65,18 +65,24 @@ public class MesProduceTaskServiceImpl extends ServiceImpl<MesProduceTaskMapper,
                 process.setWorksiteNames(task.getWorksiteNames());
                 process.setProcessCode(task.getRouteCode());
                 process.setProcessName(task.getRouteName());
+                process.setSourceRouteNodeCode(task.getSourceRouteNodeCode());
+                process.setRouteExecutionSchemaVersion(task.getRouteExecutionSchemaVersion());
+                process.setPredecessorNodeCodes(task.getPredecessorNodeCodes());
+                process.setSuccessorNodeCodes(task.getSuccessorNodeCodes());
                 process.setStatus(task.getStatus());
                 process.setPredecessorCodes(task.getPredecessorCodes());
                 process.setSuccessorCodes(task.getSuccessorCodes());
                 process.setOverlapEnabled(task.getOverlapEnabled());
                 process.setTransferBatchQuantity(task.getTransferBatchQuantity());
-                List<String> blocking = splitCodes(task.getPredecessorCodes()).stream().filter(code -> {
-                    MesProduceTaskEntity predecessor = byProcess.get(code);
-                    return predecessor == null || predecessor.getTransferReleasedTime() == null
-                            || predecessor.getTransferReleasedTime().isAfter(java.time.LocalDateTime.now());
-                }).toList();
+                List<MesProduceTaskEntity> blocking = graph.predecessors(task).stream().filter(predecessor ->
+                        predecessor.getTransferReleasedTime() == null
+                            || predecessor.getTransferReleasedTime().isAfter(java.time.LocalDateTime.now())).toList();
                 process.setReadyToStart(blocking.isEmpty());
-                process.setBlockingPredecessorCodes(String.join(",", blocking));
+                process.setBlockingPredecessorCodes(blocking.stream().map(MesProduceTaskEntity::getRouteCode)
+                        .collect(Collectors.joining(",")));
+                if (task.getRouteExecutionSchemaVersion() != null) {
+                    process.setBlockingPredecessorNodeCodes(blocking.stream().map(graph::key).collect(Collectors.joining(",")));
+                }
                 process.setFinishNum(task.getCompleteNum() != null ? task.getCompleteNum() : BigDecimal.ZERO);
                 if (task.getNoticeNum() != null && task.getNoticeNum().compareTo(BigDecimal.ZERO) > 0) {
                     BigDecimal percent = task.getCompleteNum() != null ?

@@ -38,6 +38,12 @@ public class PlanMatMrpEntity extends BaseEntity<PlanMatMrpEntity> {
     @Schema(description = "MRP运算采用的已发布MPS需求行ID")
     private Long mpsLineId;
 
+    @Schema(description = "独立计划来源键；MPS拆量时为桶键，未经过MPS时为需求键")
+    private String planningSourceKey;
+
+    @Schema(description = "MPS跨期桶序号；未经过MPS时为空")
+    private Integer mpsBucketNo;
+
     /**
      * 销售单号
      */

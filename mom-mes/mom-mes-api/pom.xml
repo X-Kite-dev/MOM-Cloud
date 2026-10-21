@@ -13,6 +13,12 @@
     <artifactId>mom-mes-api</artifactId>
 
     <dependencies>
+        <!-- 派工契约冻结正式MDM工程版本；仅依赖接口模块，不依赖业务实现。 -->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-mdm-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- 连表查询注解 -->
         <dependency>
             <groupId>com.github.yulichang</groupId>

@@ -68,6 +68,17 @@ public class PlnSchedulingTaskEntity extends BaseEntity<PlnSchedulingTaskEntity>
     private Boolean selectedCandidate;
     private LocalDateTime evaluatedTime;
 
+    @Schema(description = "专业调整来源候选任务；原始求解候选为空")
+    private Long parentCandidateTaskId;
+    @Schema(description = "派生候选永久幂等请求号")
+    private String derivationRequestId;
+    @Schema(description = "派生命令SHA-256，拒绝同号异载荷")
+    private String derivationRequestFingerprint;
+    @Schema(description = "调整原因，不能代替A2选择依据")
+    private String derivationReason;
+    @Schema(description = "相对父候选的工序时刻和资源差异JSON")
+    private String derivationDiffSnapshot;
+
     @Schema(description = "结果归档标签，不代表释放资源或撤回生产")
     private Boolean resultArchived;
     @Schema(description = "任务生命周期操作版本；历史基线为0")

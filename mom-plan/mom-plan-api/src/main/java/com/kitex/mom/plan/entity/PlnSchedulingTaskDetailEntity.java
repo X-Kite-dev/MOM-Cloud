@@ -3,6 +3,7 @@ package com.kitex.mom.plan.entity;
 import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -84,6 +85,29 @@ public class PlnSchedulingTaskDetailEntity extends BaseEntity<PlnSchedulingTaskD
 
     @Schema(description = "工艺路线编码（快照，用于冲突检测）")
     private String processRouteCode;
+
+    /** 排程开始时已由MDM精确核验的工程版本ID。 */
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    @Schema(description = "排程工程版本ID快照")
+    private Long engineeringReleaseId;
+
+    /** 与releaseId共同确定唯一工程原文的SHA256。 */
+    @Schema(description = "排程工程版本内容指纹")
+    private String engineeringContentHash;
+
+    @Schema(description = "排程工程版本号快照")
+    private Integer engineeringVersionNo;
+
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    @Schema(description = "排程精确路线ID快照")
+    private Long engineeringRouteId;
+
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    @Schema(description = "排程精确BOM ID快照")
+    private Long engineeringBomId;
+
+    @Schema(description = "排程精确BOM版本快照")
+    private String engineeringBomVersion;
 
     @Schema(description = "物料约束状态：READY、WAITING_SUPPLY及各类硬阻断状态")
     private String materialConstraintStatus;

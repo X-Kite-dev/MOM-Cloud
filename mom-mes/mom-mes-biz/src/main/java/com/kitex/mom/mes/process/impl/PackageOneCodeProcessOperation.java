@@ -21,6 +21,7 @@ import com.kitex.mom.mes.service.MesWrapRecordService;
 import com.kitex.mom.mes.service.MesWrapService;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -53,28 +54,37 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
             throw new RuntimeException("报工条码不能为空");
         }
         // 2. 条码规则、错料和重复过站已由统一过站防错门校验。
-        // 3. 预生成报工主记录ID，包装明细和后续库存流水统一关联该报工。
+        if (params.getPassNum() == null || params.getPassNum().compareTo(BigDecimal.ONE) != 0
+                || params.getCapacity() == null || params.getCapacity() <= 0) {
+            throw new IllegalArgumentException("包装逐件报工须单件合格量1及正包装容量");
+        }
+        // 3. 构造报告；包装关联后移到统一入口保存并核验报告之后。
         MesTaskReportEntity report = createReport(params, currentUser);
         params.setReportId(report.getId());
-        // 4. 保存装箱记录（保存一物一码条码）
-        createWrapRecord(params);
-        // 5. 扫码数量达到最大容量后生成箱码
-        String wrapCode = createNewWrapCode(params);
-        // 6. 返回处理结果
         String reportMessage = operatorName(params, currentUser) + "于" + DateUtil.format(report.getReportTime(), "yyyy-MM-dd HH:mm:ss") + "进行包装装箱报工，合格数量为：" + report.getReportNum();
-        MesTaskReportResult result = new MesTaskReportResult().setReport(report).setReportMessage(reportMessage);
+        return new MesTaskReportResult().setReport(report).setReportMessage(reportMessage);
+    }
+
+    /**
+     * 已保存报告的单件内容入待装区；达到容量时，整箱关联和履历同事务完成。
+     */
+    @Override
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
+    public void persistAssociations(MesTaskReportVO params, MesTaskReportResult result) {
+        MomUser currentUser = SecurityUtils.getUser();
+        createWrapRecord(params);
+        String wrapCode = createNewWrapCode(params);
         if (StrUtil.isNotEmpty(wrapCode)) {
-            String wrapMessage = operatorName(params, currentUser) + "于" + DateUtil.format(report.getReportTime(), "yyyy-MM-dd HH:mm:ss") + "完成装箱，生成箱码：" + wrapCode + "，容量：" + params.getCapacity();
+            String wrapMessage = operatorName(params, currentUser) + "于" + DateUtil.format(result.getReport().getReportTime(), "yyyy-MM-dd HH:mm:ss") + "完成装箱，生成箱码：" + wrapCode + "，容量：" + params.getCapacity();
             result.setWrapMessage(wrapMessage);
         }
-        return result;
     }
 
     /**
      * 生成箱码
      *
-     * @param params
-     * @return
+     * @param params 当前派工报工参数
+     * @return 容量已满时的新箱码，否则为null
      */
     private String createNewWrapCode(MesTaskReportVO params) {
         if (Objects.isNull(params.getCompleteNum())) {
@@ -104,7 +114,7 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
     /**
      * 保存装箱记录
      *
-     * @param params
+     * @param params 已绑定真实报告的单件参数
      */
     private void createWrapRecord(MesTaskReportVO params) {
         MesWrapRecordEntity record = new MesWrapRecordEntity();
@@ -117,7 +127,9 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
         record.setQuantity(BigDecimal.ONE);
         record.setAvailableQuantity(BigDecimal.ZERO);
         record.setPackingStatus(MesWrapRecordStatusEnum.STAGED.name());
-        wrapRecordService.save(record);
+        if (!wrapRecordService.save(record)) {
+            throw new IllegalStateException("包装单件明细必要写失败，整笔报工回滚");
+        }
     }
 
     /**
@@ -127,13 +139,14 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
         List<MesWrapRecordEntity> records = wrapRecordService.list(
                         new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MesWrapRecordEntity>()
                                 .eq(MesWrapRecordEntity::getArrangeCode, params.getArrangeCode())
+                                .eq(MesWrapRecordEntity::getFactoryCode, params.getFactoryCode())
+                                .eq(MesWrapRecordEntity::getTaskCode, params.getTaskCode())
+                                .eq(MesWrapRecordEntity::getProcedureTaskCode, params.getProduceTaskCode())
                                 .isNotNull(MesWrapRecordEntity::getReportId)
                                 .eq(MesWrapRecordEntity::getPackingStatus, MesWrapRecordStatusEnum.STAGED.name())
                                 .orderByDesc(MesWrapRecordEntity::getCreateTime)
-                                .orderByDesc(MesWrapRecordEntity::getId))
-                .stream()
-                .limit(params.getCapacity())
-                .toList();
+                                .orderByDesc(MesWrapRecordEntity::getId)
+                                .last("LIMIT " + params.getCapacity()));
         if (records.size() != params.getCapacity()) {
             throw new IllegalStateException("待封箱单件数量与包装容量不一致");
         }
@@ -142,7 +155,9 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
             record.setPackingStatus(MesWrapRecordStatusEnum.PACKED.name());
             record.setAvailableQuantity(BigDecimal.ZERO);
         });
-        wrapRecordService.updateBatchById(records);
+        if (!wrapRecordService.updateBatchById(records)) {
+            throw new IllegalStateException("封箱单件关联必要写失败，整笔报工回滚");
+        }
     }
 
     @Override

@@ -157,7 +157,9 @@ public class MdmStationSettingEntity extends BaseEntity<MdmStationSettingEntity>
     @Schema(description = "工位产能（件/小时）")
     private BigDecimal stationCapacity;
 
-    /** 同一工位可并发执行的独立资源槽位数，不替代设备、人员和工装各自的占用约束。 */
+    /**
+     * 同一工位可并发执行的独立资源槽位数，不替代设备、人员和工装各自的占用约束。
+     */
     @Schema(description = "并行资源槽位数")
     private Integer parallelCapacity;
 

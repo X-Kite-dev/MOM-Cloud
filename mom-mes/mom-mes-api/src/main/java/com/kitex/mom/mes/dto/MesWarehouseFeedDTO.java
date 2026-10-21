@@ -115,7 +115,9 @@ public class MesWarehouseFeedDTO {
     @Schema(description = "预览取得的来源事实指纹")
     private String expectedEvidenceFingerprint;
 
-    /** 受控退料资格、数量和冻结证据。 */
+    /**
+     * 受控退料资格、数量和冻结证据。
+     */
     @Data
     @Accessors(chain = true)
     public static class Evidence {
@@ -128,7 +130,9 @@ public class MesWarehouseFeedDTO {
         private MesWarehouseStockFeedJudgeEntity activeRequest;
     }
 
-    /** 退料申请、实时事实和不可变操作履历。 */
+    /**
+     * 退料申请、实时事实和不可变操作履历。
+     */
     @Data
     @Accessors(chain = true)
     public static class Detail {

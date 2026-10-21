@@ -101,10 +101,10 @@ public class QmsBadInfoServiceImpl extends ServiceImpl<QmsBadInfoMapper, QmsBadI
         if (isMesCase(info)) {
             var source = mesSource(info.getResourceTaskId());
             // 外部传入的来源、数量、位置和进度均不能覆盖MES原始事实。
-            var clean = new QmsBadInfoEntity().setResourceType("MES_WIP_TRANSFER").setResourceTaskId(source.getId())
+            var clean = new QmsBadInfoEntity().setResourceType(com.kitex.mom.mes.dto.MesInventoryQualityOrigin.resourceType(source)).setResourceTaskId(source.getId())
                     .setMatCode(source.getMatCode()).setMatName(source.getMatName()).setBatchNo(source.getMatBatch())
                     .setNum(source.getQuantity()).setQuantityUnit(source.getMatUnit()).setLocationCode(source.getLocationCode())
-                    .setLocationName(source.getLocationName()).setFactoryCode(source.getFactoryCode()).setRequestId("MES-WIP-CASE:" + source.getId());
+                    .setLocationName(source.getLocationName()).setFactoryCode(source.getFactoryCode()).setRequestId(com.kitex.mom.mes.dto.MesInventoryQualityOrigin.requestId(source));
             clean.setTenantId(source.getTenantId());
             info = clean;
             baseMapper.lockSource("QMS-MES-CASE:" + source.getTenantId() + ":" + source.getFactoryCode() + ":" + source.getId());
@@ -211,7 +211,7 @@ public class QmsBadInfoServiceImpl extends ServiceImpl<QmsBadInfoMapper, QmsBadI
                         && Objects.equals(owner.getHandlePersonId(), userCode(currentUser())), "MES决策请求号已用于不同内容或人员，请核对原决策");
             else {
                 var target = detailService.getById(req.getDetailId());
-                require(target != null && !"MES_WIP_TRANSFER".equals(target.getResourceType())
+                require(target != null && !com.kitex.mom.mes.dto.MesInventoryQualityOrigin.isMesResource(target.getResourceType())
                         && Objects.equals(target.getHandleResult(), req.getHandleResult()) && Objects.equals(target.getHandleRemark(), req.getHandleRemark())
                         && Objects.equals(StrUtil.blankToDefault(target.getHandleFile(), null), StrUtil.blankToDefault(req.getHandleFile(), null))
                         && Objects.equals(target.getExpectedCompletionTime(), req.getExpectedCompletionTime())
@@ -285,9 +285,10 @@ public class QmsBadInfoServiceImpl extends ServiceImpl<QmsBadInfoMapper, QmsBadI
         require(StrUtil.isNotBlank(req.getRemark()), "验证说明不能为空");
         QmsBadInfoDetailEntity detail = lockDetail(req.getDetailId());
         require(detail != null, "不合格明细不存在");
-        if (!"MES_WIP_TRANSFER".equals(detail.getResourceType()) && hasOperation(req.getRequestId())) return;
+        if (!com.kitex.mom.mes.dto.MesInventoryQualityOrigin.isMesResource(detail.getResourceType()) && hasOperation(req.getRequestId()))
+            return;
         require(Set.of(WAIT_WMS, WAIT_EXECUTION, WAIT_VERIFY).contains(detail.getStatus())
-                || "MES_WIP_TRANSFER".equals(detail.getResourceType()) && Set.of(CLOSED, WAIT_MRB).contains(detail.getStatus()), "当前状态不可验证");
+                || com.kitex.mom.mes.dto.MesInventoryQualityOrigin.isMesResource(detail.getResourceType()) && Set.of(CLOSED, WAIT_MRB).contains(detail.getStatus()), "当前状态不可验证");
         String beforeStatus = detail.getStatus();
         QmsBadInfoEntity info = lockInfo(detail.getBadId());
         MomUser user = currentUser();
@@ -365,11 +366,11 @@ public class QmsBadInfoServiceImpl extends ServiceImpl<QmsBadInfoMapper, QmsBadI
     private void syncInitialHold(QmsBadInfoEntity info, String requestId) {
         if (isMesCase(info)) {
             var c = assertMesSource(info);
-            info.setHoldOperationId(c.getReceiptId()).setHoldNo("MES-QC-" + c.getId()).setHoldSyncStatus("SUCCESS")
+            info.setHoldOperationId(com.kitex.mom.mes.dto.MesInventoryQualityOrigin.initialProofId(c)).setHoldNo("MES-QC-" + c.getId()).setHoldSyncStatus("SUCCESS")
                     .setHoldSyncMessage("已核对MES独立案件、剩余隔离库存和处置数量账；原始隔离事实不随处置改写");
             if ("WAIT_WMS_HOLD".equals(info.getStatus())) info.setStatus(WAIT_JUDGE);
             require(updateById(info), "MES隔离证明保存失败");
-            saveOperation(info, null, UUID.randomUUID().toString(), "MES_HOLD", null, info.getStatus(), "MES隔离案件=" + c.getId() + "，实收回执=" + c.getReceiptId() + "，数量=" + c.getQuantity() + " " + c.getMatUnit());
+            saveOperation(info, null, UUID.randomUUID().toString(), "MES_HOLD", null, info.getStatus(), "MES隔离案件=" + c.getId() + "，初始隔离事实=" + com.kitex.mom.mes.dto.MesInventoryQualityOrigin.initialProofId(c) + "，数量=" + c.getQuantity() + " " + c.getMatUnit());
             return;
         }
         SyncOutcome outcome = callWms(baseCommand(info, info.getNum())
@@ -435,7 +436,7 @@ public class QmsBadInfoServiceImpl extends ServiceImpl<QmsBadInfoMapper, QmsBadI
     }
 
     private boolean isMesCase(QmsBadInfoEntity info) {
-        return "MES_WIP_TRANSFER".equals(info.getResourceType());
+        return com.kitex.mom.mes.dto.MesInventoryQualityOrigin.isMesResource(info.getResourceType());
     }
 
     @Override
@@ -443,7 +444,7 @@ public class QmsBadInfoServiceImpl extends ServiceImpl<QmsBadInfoMapper, QmsBadI
         String factory = requireMesFactory();
         var detail = detailService.getOne(new LambdaQueryWrapper<QmsBadInfoDetailEntity>().eq(QmsBadInfoDetailEntity::getId, detailId)
                 .eq(QmsBadInfoDetailEntity::getFactoryCode, factory).eq(QmsBadInfoDetailEntity::getTenantId, com.kitex.common.data.tenant.TenantContextHolder.getTenantId()));
-        require(detail != null && "MES_WIP_TRANSFER".equals(detail.getResourceType()) && StrUtil.isNotBlank(detail.getMesDecisionKey()), "不存在本厂已提交MES处置决策");
+        require(detail != null && com.kitex.mom.mes.dto.MesInventoryQualityOrigin.isMesResource(detail.getResourceType()) && StrUtil.isNotBlank(detail.getMesDecisionKey()), "不存在本厂已提交MES处置决策");
         var info = getOne(new LambdaQueryWrapper<QmsBadInfoEntity>().eq(QmsBadInfoEntity::getId, detail.getBadId())
                 .eq(QmsBadInfoEntity::getFactoryCode, factory).eq(QmsBadInfoEntity::getTenantId, com.kitex.common.data.tenant.TenantContextHolder.getTenantId()));
         require(info != null && isMesCase(info) && Objects.equals(detail.getResourceTaskId(), info.getResourceTaskId()), "MES决策主从来源不一致");
@@ -492,7 +493,8 @@ public class QmsBadInfoServiceImpl extends ServiceImpl<QmsBadInfoMapper, QmsBadI
     public void discoverMesReconcile(Long detailId) {
         requireBackgroundScope();
         var d = lockDetail(detailId);
-        if (d == null || !"MES_WIP_TRANSFER".equals(d.getResourceType()) || d.getMesDecisionKey() == null) return;
+        if (d == null || !com.kitex.mom.mes.dto.MesInventoryQualityOrigin.isMesResource(d.getResourceType()) || d.getMesDecisionKey() == null)
+            return;
         var n = lockInfo(d.getBadId());
         require(n != null && isMesCase(n), "历史MES决策来源丢失");
         mesReceiptQueue.enqueue(n, d);
@@ -611,8 +613,7 @@ public class QmsBadInfoServiceImpl extends ServiceImpl<QmsBadInfoMapper, QmsBadI
         require(user != null && user.getId() != null && com.kitex.common.data.tenant.TenantContextHolder.getTenantId() != null
                 && !com.kitex.common.data.tenant.TenantContextHolder.getTenantSkip() && !Boolean.TRUE.equals(com.kitex.common.data.orgFilter.FactoryContextHolder.getFactorySkip())
                 && StrUtil.isNotBlank(factory), "MES处置须实名登录并选择单一实际工厂");
-        var grant = actualFactories.check(new com.kitex.mom.mdm.dto.MdmFactoryAccessCheck().setUserId(user.getId()).setFactoryCode(factory).setRequiredPermission("write"));
-        require(grant != null && grant.isOk() && Boolean.TRUE.equals(grant.getData()), "当前实际工厂无写权限或MDM不可核验");
+        // factory-code由原认证链路确定；岗位权限由入口校验，不增加第二套MDM工厂授权。
         return factory;
     }
 
@@ -627,7 +628,7 @@ public class QmsBadInfoServiceImpl extends ServiceImpl<QmsBadInfoMapper, QmsBadI
         var c = response.getData();
         require(Objects.equals(c.getId(), id) && Objects.equals(c.getTenantId(), com.kitex.common.data.tenant.TenantContextHolder.getTenantId())
                 && Objects.equals(c.getFactoryCode(), com.kitex.common.data.orgFilter.FactoryContextHolder.getFactoryCode())
-                && c.getReceiptId() != null && c.getStockId() != null && StrUtil.isNotBlank(c.getMatCode()), "MES隔离回执来源/归属不一致");
+                && com.kitex.mom.mes.dto.MesInventoryQualityOrigin.initialProofId(c) != null && c.getStockId() != null && StrUtil.isNotBlank(c.getMatCode()), "MES隔离回执来源/归属不一致");
         requireQuantity(c.getQuantity(), "MES实收隔离数量");
         return c;
     }
@@ -639,7 +640,8 @@ public class QmsBadInfoServiceImpl extends ServiceImpl<QmsBadInfoMapper, QmsBadI
     }
 
     private void assertMesSourceSnapshot(QmsBadInfoEntity info, com.kitex.mom.mes.entity.MesInventoryQualityCaseEntity c) {
-        require(c != null && Objects.equals(c.getId(), info.getResourceTaskId()) && c.getQuantity() != null && c.getReceiptId() != null && c.getStockId() != null
+        require(c != null && Objects.equals(c.getId(), info.getResourceTaskId()) && c.getQuantity() != null && com.kitex.mom.mes.dto.MesInventoryQualityOrigin.initialProofId(c) != null && c.getStockId() != null
+                && Objects.equals(com.kitex.mom.mes.dto.MesInventoryQualityOrigin.resourceType(c), info.getResourceType())
                 && Objects.equals(c.getTenantId(), info.getTenantId()) && Objects.equals(c.getFactoryCode(), info.getFactoryCode())
                 && Objects.equals(c.getMatCode(), info.getMatCode()) && Objects.equals(c.getMatBatch(), info.getBatchNo())
                 && Objects.equals(c.getMatUnit(), info.getQuantityUnit()) && Objects.equals(c.getLocationCode(), info.getLocationCode())

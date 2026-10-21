@@ -7,6 +7,7 @@ import com.kitex.mom.mes.entity.MesProductionOrderEntity;
 import com.kitex.mom.mes.vo.MesProductionOrderQueryVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 import java.util.Map;
@@ -21,6 +22,15 @@ import java.util.Map;
  */
 @Mapper
 public interface MesProductionOrderMapper extends BaseMapper<MesProductionOrderEntity> {
+
+    /**
+     * 串行化同一租户、工厂和生产订单号的接收，防止拆批并发时重复建立订单主记录。
+     *
+     * @param lockKey 租户、工厂和订单号组成的稳定锁键
+     * @return 数据库锁占位值
+     */
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(#{lockKey}, 0))")
+    Integer lockReceivedOrder(@Param("lockKey") String lockKey);
 
     /**
      * 分页查询生产订单（包含统计信息）

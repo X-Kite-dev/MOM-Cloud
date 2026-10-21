@@ -17,6 +17,7 @@ import com.kitex.mom.mes.entity.MesAndonRecordEntity;
 import com.kitex.mom.mes.enums.AndonStateEnum;
 import com.kitex.mom.mes.service.MesAndonRecordService;
 import com.kitex.mom.mes.service.impl.MesAndonProductionReleaseService;
+import com.kitex.mom.mes.service.impl.MesStartPreparationDrilldownService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -42,6 +43,7 @@ public class MesAndonRecordController {
 
     private final MesAndonRecordService service;
     private final MesAndonProductionReleaseService productionReleaseService;
+    private final MesStartPreparationDrilldownService preparationDrilldown;
 
     /**
      * 分页查询
@@ -54,9 +56,15 @@ public class MesAndonRecordController {
     @Operation(summary = "分页查询", description = "分页查询")
     @GetMapping("/record/page")
     @PreAuthorize("@pms.hasPermission('andonRecord:show')")
-    public R<IPage<MesAndonRecordEntity>> recordPage(Page<MesAndonRecordEntity> pageParam, MesAndonRecordEntity query) {
+    public R<IPage<MesAndonRecordEntity>> recordPage(Page<MesAndonRecordEntity> pageParam, MesAndonRecordEntity query,
+                                                    @RequestParam(required = false) Long preparationArrangeId) {
         QueryWrapper<MesAndonRecordEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
         autoQueryWrapper.eq("factory_code", productionReleaseService.authorizeFactory("read"));
+        if (preparationArrangeId != null) {
+            var arrange = preparationDrilldown.require(preparationArrangeId, query.getArrangeCode(), query.getTaskCode());
+            autoQueryWrapper.eq("tenant_id", arrange.getTenantId()).eq("arrange_code", arrange.getCode())
+                    .eq("task_code", arrange.getTaskCode());
+        }
         autoQueryWrapper.lambda().orderByDesc(MesAndonRecordEntity::getCreateTime);
         return R.ok(service.page(pageParam, autoQueryWrapper));
     }

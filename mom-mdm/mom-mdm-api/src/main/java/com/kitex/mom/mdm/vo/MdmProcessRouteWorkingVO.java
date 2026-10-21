@@ -23,6 +23,21 @@ import java.util.List;
 @Schema(description = "工艺路线和工序关联")
 public class MdmProcessRouteWorkingVO extends BaseEntity<MdmProcessRouteWorkingVO> {
 
+    /** 路线内稳定节点身份，不能作为主工序能力编号。 */
+    @Schema(description = "稳定路线节点编号")
+    private String routeNodeCode;
+
+    /** 精确节点前后关系，与主工序编码关系分开。 */
+    @Schema(description = "前置路线节点编号集合")
+    private String[] preRouteNodeCodes;
+
+    @Schema(description = "后置路线节点编号集合")
+    private String[] nextRouteNodeCodes;
+
+    /** 来源可为任意祖先节点；MOM_NODE_TIMING_V1。 */
+    @Schema(description = "跨节点时间规则JSON")
+    private String nodeTimingRulesJson;
+
     /**
      * 工序编码
      */
@@ -83,6 +98,10 @@ public class MdmProcessRouteWorkingVO extends BaseEntity<MdmProcessRouteWorkingV
     @Schema(description = "转序时间要求（分钟）")
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private BigDecimal timeVal;
+
+    /** 目标工序的跨工序自然时间规则；下达时冻结，空表示未配置。 */
+    @Schema(description = "跨工序时间规则JSON，MOM_PROCESS_TIMING_V1")
+    private String timingRulesJson;
 
     @Schema(description = "允许达到转移批量后与后序重叠执行")
     private Boolean overlapEnabled;

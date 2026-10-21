@@ -27,6 +27,48 @@ public class MesTaskReceiveDTO {
     @Schema(description = "MES工单接收完整载荷SHA-256指纹")
     private String sourceRequestFingerprint;
 
+    @Schema(description = "正式计划合同代表行ID")
+    private Long formalPlanContractId;
+
+    @Schema(description = "正式计划合同编号")
+    private String formalPlanContractNo;
+
+    @Schema(description = "正式计划合同版本")
+    private Integer formalPlanContractVersion;
+
+    @Schema(description = "正式计划合同内容SHA-256")
+    private String formalPlanContractFingerprint;
+
+    @Schema(description = "正式计划来源系统")
+    private String sourceSystem;
+
+    @Schema(description = "正式计划来源计划号")
+    private String sourcePlanNo;
+
+    @Schema(description = "正式计划来源版本")
+    private String sourcePlanVersion;
+
+    @Schema(description = "工厂计划权威策略ID")
+    private Long planningPolicyId;
+
+    @Schema(description = "工厂计划权威策略版本")
+    private Integer planningPolicyVersion;
+
+    @Schema(description = "工厂计划权威策略SHA-256")
+    private String planningPolicyFingerprint;
+
+    @Schema(description = "接单时冻结的正式MRP权威：ERP_MRP或MOM_MRP")
+    private String mrpAuthority;
+
+    @Schema(description = "生产订单同步模式")
+    private String productionOrderSyncMode;
+
+    @Schema(description = "ERP正式生产订单号；MOM自建订单模式允许为空")
+    private String erpProductionOrderNo;
+
+    @Schema(description = "生产订单总量；拆批工单仍携带完整订单量")
+    private BigDecimal productionOrderQuantity;
+
     /**
      * 生产订单号
      */
@@ -105,6 +147,13 @@ public class MesTaskReceiveDTO {
     @Schema(description = "原生产工单编码")
     private String sourceTaskCode;
 
+    /**
+     * 质量任务实际来自哪一道MES工序任务。新返工必须携带，用它解析稳定节点，
+     * 不能只凭可能重复的主工序编码选择返工位置。
+     */
+    @Schema(description = "原实际生产工序任务编码")
+    private String sourceProduceTaskCode;
+
     @Schema(description = "来源质检类型 PROCEDURE/PRODUCT")
     private String sourceInspectionType;
 
@@ -143,6 +192,18 @@ public class MesTaskReceiveDTO {
 
     @Schema(description = "APS批次包含的原计划数量分配")
     private List<MesApsBatchAllocationDTO> apsBatchAllocations;
+
+    /** PLAN/APS已选择且经MDM核验的工程版本ID。 */
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    @Schema(description = "精确工程版本ID")
+    private Long engineeringReleaseId;
+
+    /** 与releaseId共同组成不可替换的生产版本对。 */
+    @Schema(description = "工程版本原文SHA256")
+    private String engineeringContentHash;
+
+    @Schema(description = "路线内工程显示版本号")
+    private Integer engineeringVersionNo;
 
     /**
      * 工艺路线编码

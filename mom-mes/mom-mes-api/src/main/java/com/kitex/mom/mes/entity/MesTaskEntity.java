@@ -29,7 +29,7 @@ import java.util.List;
 @Schema(description = "生产工单")
 @TableName("mes_task")
 public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
-    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     private Long reworkMaterialPlanId;
 
     /**
@@ -55,6 +55,45 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
 
     @Schema(description = "MES工单接收完整载荷SHA-256指纹")
     private String sourceRequestFingerprint;
+
+    @Schema(description = "正式计划合同代表行ID")
+    private Long formalPlanContractId;
+
+    @Schema(description = "正式计划合同编号")
+    private String formalPlanContractNo;
+
+    @Schema(description = "正式计划合同版本")
+    private Integer formalPlanContractVersion;
+
+    @Schema(description = "正式计划合同内容SHA-256")
+    private String formalPlanContractFingerprint;
+
+    @Schema(description = "正式计划来源系统")
+    private String sourceSystem;
+
+    @Schema(description = "正式计划来源计划号")
+    private String sourcePlanNo;
+
+    @Schema(description = "正式计划来源版本")
+    private String sourcePlanVersion;
+
+    @Schema(description = "工厂计划权威策略ID")
+    private Long planningPolicyId;
+
+    @Schema(description = "工厂计划权威策略版本")
+    private Integer planningPolicyVersion;
+
+    @Schema(description = "工厂计划权威策略SHA-256")
+    private String planningPolicyFingerprint;
+
+    @Schema(description = "接单时冻结的正式MRP权威：ERP_MRP或MOM_MRP")
+    private String mrpAuthority;
+
+    @Schema(description = "生产订单同步模式")
+    private String productionOrderSyncMode;
+
+    @Schema(description = "ERP正式生产订单号")
+    private String erpProductionOrderNo;
 
     /**
      * 生产订单号
@@ -157,6 +196,12 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
     private LocalDateTime finishTime;
 
     /**
+     * 完工状态版本；报工冲销使已完成工单重新打开时递增。
+     */
+    @Schema(description = "完工状态版本，用于PLAN完成/重新打开事件排序")
+    private Integer completionVersion;
+
+    /**
      * 状态 新建、下达、已派工、生产中、完成
      */
     @Schema(description = "状态 新建、下达、已派工、生产中、完成")
@@ -198,6 +243,21 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
     @Schema(description = "工艺路线版本")
     private String processRouteCode;
 
+    /** 本工单在接收时精确核验的MDM工程版本。 */
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    @Schema(description = "精确工程版本ID")
+    private Long engineeringReleaseId;
+
+    @Schema(description = "工程版本原文SHA256")
+    private String engineeringContentHash;
+
+    @Schema(description = "路线内工程显示版本号")
+    private Integer engineeringVersionNo;
+
+    /** MDM经当前来源精确复核后返回的原始冻结UTF-8正文。 */
+    @Schema(description = "MDM工程联合包原始冻结正文")
+    private String engineeringBundleSnapshot;
+
     @Schema(description = "工单下达时冻结的工艺参数标准编码")
     private String processParameterStandardNo;
 
@@ -228,6 +288,9 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
     @Schema(description = "原生产工单编码")
     private String sourceTaskCode;
 
+    @Schema(description = "原实际生产工序任务编码；用于证明返工来源节点")
+    private String sourceProduceTaskCode;
+
     @Schema(description = "来源质检类型")
     private String sourceInspectionType;
 
@@ -239,6 +302,40 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
 
     @Schema(description = "返工执行工序")
     private String reworkProcessCode;
+
+    @Schema(description = "返工执行的原路线稳定节点；升级前历史返工允许为空")
+    private String reworkRouteNodeCode;
+
+    /** 返工执行方案批准的跨工单时间口径；新节点返工必须显式批准NONE或WINDOW。 */
+    private String reworkTimingPolicySnapshot;
+
+    /** INHERIT_SOURCE或APPROVED_OVERRIDE，由首轮返工执行方案异人批准。 */
+    @Schema(description = "返工SOP/参数工程口径")
+    private String reworkEngineeringMode;
+
+    /** MDM已批准单节点返工覆盖版本；继承原节点时为空。 */
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    @Schema(description = "返工工程覆盖版本ID")
+    private Long reworkEngineeringOverrideId;
+
+    @Schema(description = "返工工程覆盖版本原文SHA256")
+    private String reworkEngineeringOverrideHash;
+
+    @Schema(description = "返工工程选择及MDM覆盖包不可变原文")
+    private String reworkEngineeringScopeSnapshot;
+
+    @Schema(description = "返工工程选择原文SHA256")
+    private String reworkEngineeringScopeFingerprint;
+
+    /**
+     * 返工执行方案批准的原动态外码实例全集。返工不取得原实例所有权，
+     * 只按原冻结版本解析现场码并另记返工使用账。
+     */
+    @Schema(description = "返工批准的原动态实例范围JSON")
+    private String reworkIdentifierScopeSnapshot;
+
+    @Schema(description = "返工原动态实例范围SHA-256")
+    private String reworkIdentifierScopeFingerprint;
 
     @Schema(description = "返工原因/处置要求")
     private String reworkReason;

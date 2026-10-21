@@ -44,6 +44,21 @@ public class RouteProcessDTO {
     @Schema(description = "工序名称")
     private String processName;
 
+    @Schema(description = "实际任务冻结的路线节点，历史允许为空")
+    private String sourceRouteNodeCode;
+
+    @Schema(description = "完整执行图协议；不能仅由节点编码推断")
+    private String routeExecutionSchemaVersion;
+
+    @Schema(description = "冻结前序节点CSV")
+    private String predecessorNodeCodes;
+
+    @Schema(description = "冻结后序节点CSV")
+    private String successorNodeCodes;
+
+    @Schema(description = "未释放的前序节点CSV，旧合同为空")
+    private String blockingPredecessorNodeCodes;
+
     @Schema(description = "工序状态")
     private String status;
 

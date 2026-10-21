@@ -15,6 +15,15 @@ import java.util.List;
 @Data
 public class MdmProcessRouteProcedureVO {
 
+    /** 读取时的路线图并发版本，提交时必须原样带回。 */
+    @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING)
+    @Schema(description = "路线图并发版本")
+    private Long graphRevision;
+
+    /** 历史为空；编辑投影不等同已持久升级。 */
+    @Schema(description = "当前已持久化的图协议")
+    private String graphSchemaVersion;
+
     /**
      * 工艺路线ID
      */

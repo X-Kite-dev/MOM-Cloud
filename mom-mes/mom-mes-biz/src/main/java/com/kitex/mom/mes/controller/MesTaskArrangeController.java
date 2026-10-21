@@ -191,6 +191,7 @@ public class MesTaskArrangeController {
 
     @Operation(summary = "完工", description = "完工")
     @PostMapping("/finish")
+    @PreAuthorize("@pms.hasPermission('mesProduceTask:finish')")
     public R<Void> finish(Long id) {
         service.finish(id);
         return R.ok();
@@ -198,6 +199,7 @@ public class MesTaskArrangeController {
 
     @Operation(summary = "设备开机/换模", description = "设备开机/换模")
     @PostMapping("/deviceStart")
+    @PreAuthorize("#deviceCheckTaskStartDto != null and (#deviceCheckTaskStartDto.changeMold != true or (@pms.hasPermission('mesChangeoverExecution:view') and @pms.hasPermission('mesChangeoverExecution:complete')))")
     public R<Void> deviceStart(@RequestBody DeviceCheckTaskStartDto deviceCheckTaskStartDto) {
         service.deviceStart(deviceCheckTaskStartDto);
         return R.ok();
@@ -205,12 +207,14 @@ public class MesTaskArrangeController {
 
     @Operation(summary = "开始换型并建立计时账")
     @PostMapping("/changeover/begin")
+    @PreAuthorize("@pms.hasPermission('mesChangeoverExecution:view') and @pms.hasPermission('mesChangeoverExecution:start')")
     public R<MesChangeoverExecutionEntity> beginChangeover(@RequestBody MesChangeoverStartDTO dto) {
         return R.ok(service.beginChangeover(dto));
     }
 
     @Operation(summary = "取消未完成换型")
     @PostMapping("/changeover/cancel")
+    @PreAuthorize("@pms.hasPermission('mesChangeoverExecution:view') and @pms.hasPermission('mesChangeoverExecution:cancel')")
     public R<Void> cancelChangeover(@RequestBody MesChangeoverCancelDTO dto) {
         service.cancelChangeover(dto);
         return R.ok();

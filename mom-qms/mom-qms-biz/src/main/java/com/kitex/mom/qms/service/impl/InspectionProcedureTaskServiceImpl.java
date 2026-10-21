@@ -105,16 +105,29 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
             if (sourceRequestId.length() > 200) {
                 throw new RuntimeException("质检来源请求号长度不能超过200位");
             }
+            boolean v2Source = sourceRequestId.startsWith(InspectionProcedureSourceContract.REQUEST_PREFIX);
+            if (v2Source) {
+                if (StrUtil.isBlank(createParam.getSourceTaskCode())) {
+                    throw new RuntimeException("V2工序质检来源必须指定MES工序任务编码");
+                }
+                String expectedFingerprint = InspectionProcedureSourceContract.fingerprint(createParam);
+                if (!Objects.equals(expectedFingerprint, createParam.getSourceRequestFingerprint())) {
+                    throw new RuntimeException("V2工序质检来源完整参数摘要不一致");
+                }
+            } else if (StrUtil.isNotBlank(createParam.getSourceRequestFingerprint())) {
+                throw new RuntimeException("旧质检来源请求不得夹带V2参数摘要");
+            }
             QmsInspectionProcedureTaskEntity existing = this.lambdaQuery()
                     .eq(QmsInspectionProcedureTaskEntity::getSourceRequestId, sourceRequestId).one();
             if (existing != null) {
-                if (Objects.equals(existing.getSourceTaskCode(), createParam.getSourceTaskCode())
+                if ((!v2Source || Objects.equals(existing.getSourceRequestFingerprint(), createParam.getSourceRequestFingerprint()))
+                        && Objects.equals(existing.getSourceTaskCode(), createParam.getSourceTaskCode())
                         && Objects.equals(existing.getMatCode(), createParam.getMatCode())
                         && Objects.equals(existing.getProcessCode(), createParam.getProcessCode())
                         && Objects.equals(existing.getLabelType(), createParam.getLabelType())) {
                     return existing.getId();
                 }
-                throw new RuntimeException("质检来源请求号已被其他业务使用");
+                throw new RuntimeException("质检来源请求号已被参数不同的业务使用");
             }
             createParam.setSourceRequestId(sourceRequestId);
         } else if (this.existTask(createParam.getMatCode(), createParam.getProcessCode(), createParam.getBatchNo())) {
@@ -144,6 +157,7 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         val task = new QmsInspectionProcedureTaskEntity().setBatchNo(createParam.getBatchNo())
                 .setSourceTaskCode(StrUtil.blankToDefault(createParam.getSourceTaskCode(), createParam.getTaskCode()))
                 .setSourceRequestId(createParam.getSourceRequestId())
+                .setSourceRequestFingerprint(createParam.getSourceRequestFingerprint())
                 .setMatCode(createParam.getMatCode()).setMatName(createParam.getMatName()).setMatSpec(createParam.getMatSpec())
                 .setProcessCode(createParam.getProcessCode()).setProcessName(createParam.getProcessName())
                 .setStandardId(qualityStandard.getId()).setStandardName(qualityStandard.getStandardName())

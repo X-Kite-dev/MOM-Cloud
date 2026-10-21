@@ -16,6 +16,14 @@ public class MdmProcedureSopVO implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
+    /** 读取时附件业务属性指纹；保存时必须带回原集合，而非修改后的集合。 */
+    @Schema(description = "附件并发指纹")
+    private String attachmentHash;
+
+    /** SOP所属路线节点，不能用主工序编码代替。 */
+    @Schema(description = "工艺路线节点编号")
+    private String routeNodeCode;
+
     /**
      * 原始文件名
      */

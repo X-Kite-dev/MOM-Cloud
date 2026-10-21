@@ -15,6 +15,30 @@ import java.math.BigDecimal;
 @Schema(description = "生产工单入库DTO")
 public class MesTaskInWmsDTO {
 
+    /**
+     * 新入库命令协议；旧内部调用保持空值，不能借此字段跳过原业务校验。
+     */
+    @Schema(description = "MES_TASK_IN_WMS_COMMAND_V2")
+    private String commandVersion;
+
+    /**
+     * 原提交所见租户，只与实际认证上下文比较。
+     */
+    @Schema(description = "期望租户主键文本")
+    private String expectedTenantId;
+
+    /**
+     * 原提交所见工厂，不授予工厂权限。
+     */
+    @Schema(description = "期望工厂编码")
+    private String expectedFactoryCode;
+
+    /**
+     * 原提交实名用户，避免跨窗口切换账号后使用新身份执行旧参数。
+     */
+    @Schema(description = "期望用户主键文本")
+    private String expectedActorId;
+
     @Schema(description = "本次入库永久幂等号；所有生产成品入库必填，失败重试必须复用")
     private String requestId;
 

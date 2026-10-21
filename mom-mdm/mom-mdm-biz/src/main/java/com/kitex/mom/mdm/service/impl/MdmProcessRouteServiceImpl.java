@@ -10,13 +10,22 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.kitex.mom.mdm.support.MdmRouteNodeGraphSupport;
+import com.kitex.mom.mdm.support.MdmRouteNodeTimingPolicy;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.excel.vo.ErrorMessage;
 import com.kitex.mom.mdm.dto.*;
 import com.kitex.mom.mdm.entity.*;
 import com.kitex.mom.mdm.mapper.*;
 import com.kitex.mom.mdm.service.MdmProcessRouteService;
+import com.kitex.mom.mdm.sop.MdmSopSupport;
+import com.kitex.mom.mdm.sop.MdmSopWorkspace;
+import com.kitex.mom.mdm.support.MdmRouteNodeIdentitySupport;
+import com.kitex.mom.mdm.support.MdmRouteNodeResolver;
 import com.kitex.mom.mdm.vo.*;
 import com.kitex.mom.mdm.vo.excel.MdmProcessRouteExcelVO;
 import lombok.AllArgsConstructor;
@@ -24,6 +33,7 @@ import lombok.SneakyThrows;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.validation.BindingResult;
 
 import java.util.*;
@@ -55,6 +65,9 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
 
     private final MdmStationSettingMapper mdmStationSettingMapper;
 
+    private final MdmRouteNodeResolver routeNodeResolver;
+    private final MdmSopOriginMapper sopOrigins;
+
 
     /**
      * 通过id删除工艺路线
@@ -77,9 +90,10 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      */
     @Override
     @SneakyThrows
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public MdmProcessRouteDTO getRouteById(Long id) {
         MdmProcessRouteDTO mdmProcessRouteDTO = new MdmProcessRouteDTO();
-        MdmProcessRouteEntity mdmProcessRouteEntity = this.getById(id);
+        MdmProcessRouteEntity mdmProcessRouteEntity = routeInCurrentFactory(id, false);
         BeanUtils.copyProperties(mdmProcessRouteEntity, mdmProcessRouteDTO);
         if (mdmProcessRouteEntity.getProcedureSnapshot() != null) {
             ObjectMapper mapper = new ObjectMapper();
@@ -87,19 +101,15 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         }
         List<MdmProcessRouteWorkingEntity> mdmProcessRouteWorkingEntities = mdmProcessRouteWorkingMapper.selectList(
                 new LambdaQueryWrapper<MdmProcessRouteWorkingEntity>()
+                        .eq(MdmProcessRouteWorkingEntity::getFactoryCode, mdmProcessRouteEntity.getFactoryCode())
                         .eq(MdmProcessRouteWorkingEntity::getRouteCode, mdmProcessRouteEntity.getRouteCode()));
+        MdmRouteNodeGraphSupport.requireLegacyExecutable(mdmProcessRouteEntity.getGraphSchemaVersion(), mdmProcessRouteWorkingEntities);
         List<MdmProcessRouteWorkingVO> procedureList = new ArrayList<>();
         for (MdmProcessRouteWorkingEntity mdmProcessRouteWorkingEntity : mdmProcessRouteWorkingEntities) {
             MdmProcessRouteWorkingVO mdmProcessRouteWorkingVO = new MdmProcessRouteWorkingVO();
             BeanUtils.copyProperties(mdmProcessRouteWorkingEntity, mdmProcessRouteWorkingVO);
-            mdmProcessRouteWorkingVO.setMdmProcessProcedureSopList(mdmProcessProcedureSopMapper.selectList(
-                    new LambdaQueryWrapper<MdmProcessProcedureSopEntity>()
-                            .eq(MdmProcessProcedureSopEntity::getRouteCode, mdmProcessRouteEntity.getRouteCode())
-                            .eq(MdmProcessProcedureSopEntity::getProcessCode, mdmProcessRouteWorkingEntity.getProcessCode())));
-            mdmProcessRouteWorkingVO.setMdmProcessProcedureMatList(mdmProcessProcedureMatMapper.selectList(
-                    new LambdaQueryWrapper<MdmProcessProcedureMatEntity>()
-                            .eq(MdmProcessProcedureMatEntity::getRouteCode, mdmProcessRouteEntity.getRouteCode())
-                            .eq(MdmProcessProcedureMatEntity::getProcessCode, mdmProcessRouteWorkingEntity.getProcessCode())));
+            mdmProcessRouteWorkingVO.setMdmProcessProcedureSopList(mdmProcessProcedureSopMapper.selectList(sopQuery(mdmProcessRouteWorkingEntity)));
+            mdmProcessRouteWorkingVO.setMdmProcessProcedureMatList(mdmProcessProcedureMatMapper.selectList(matQuery(mdmProcessRouteWorkingEntity)));
             procedureList.add(mdmProcessRouteWorkingVO);
         }
         mdmProcessRouteDTO.setProcedureList(procedureList);
@@ -115,11 +125,12 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      */
     @Override
     @SneakyThrows
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public List<MdmProcessRouteDTO> getRouteByIds(List<Long> ids) {
         List<MdmProcessRouteDTO> result = new ArrayList<>();
         for (Long id : ids) {
             MdmProcessRouteDTO mdmProcessRouteDTO = new MdmProcessRouteDTO();
-            MdmProcessRouteEntity mdmProcessRouteEntity = this.getById(id);
+            MdmProcessRouteEntity mdmProcessRouteEntity = routeInCurrentFactory(id, false);
             BeanUtils.copyProperties(mdmProcessRouteEntity, mdmProcessRouteDTO);
             if (mdmProcessRouteEntity.getProcedureSnapshot() != null) {
                 ObjectMapper mapper = new ObjectMapper();
@@ -127,19 +138,15 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
             }
             List<MdmProcessRouteWorkingEntity> mdmProcessRouteWorkingEntities = mdmProcessRouteWorkingMapper.selectList(
                     new LambdaQueryWrapper<MdmProcessRouteWorkingEntity>()
+                            .eq(MdmProcessRouteWorkingEntity::getFactoryCode, mdmProcessRouteEntity.getFactoryCode())
                             .eq(MdmProcessRouteWorkingEntity::getRouteCode, mdmProcessRouteEntity.getRouteCode()));
+            MdmRouteNodeGraphSupport.requireLegacyExecutable(mdmProcessRouteEntity.getGraphSchemaVersion(), mdmProcessRouteWorkingEntities);
             List<MdmProcessRouteWorkingVO> procedureList = new ArrayList<>();
             for (MdmProcessRouteWorkingEntity mdmProcessRouteWorkingEntity : mdmProcessRouteWorkingEntities) {
                 MdmProcessRouteWorkingVO mdmProcessRouteWorkingVO = new MdmProcessRouteWorkingVO();
                 BeanUtils.copyProperties(mdmProcessRouteWorkingEntity, mdmProcessRouteWorkingVO);
-                mdmProcessRouteWorkingVO.setMdmProcessProcedureSopList(mdmProcessProcedureSopMapper.selectList(
-                        new LambdaQueryWrapper<MdmProcessProcedureSopEntity>()
-                                .eq(MdmProcessProcedureSopEntity::getRouteCode, mdmProcessRouteEntity.getRouteCode())
-                                .eq(MdmProcessProcedureSopEntity::getProcessCode, mdmProcessRouteWorkingEntity.getProcessCode())));
-                mdmProcessRouteWorkingVO.setMdmProcessProcedureMatList(mdmProcessProcedureMatMapper.selectList(
-                        new LambdaQueryWrapper<MdmProcessProcedureMatEntity>()
-                                .eq(MdmProcessProcedureMatEntity::getRouteCode, mdmProcessRouteEntity.getRouteCode())
-                                .eq(MdmProcessProcedureMatEntity::getProcessCode, mdmProcessRouteWorkingEntity.getProcessCode())));
+                mdmProcessRouteWorkingVO.setMdmProcessProcedureSopList(mdmProcessProcedureSopMapper.selectList(sopQuery(mdmProcessRouteWorkingEntity)));
+                mdmProcessRouteWorkingVO.setMdmProcessProcedureMatList(mdmProcessProcedureMatMapper.selectList(matQuery(mdmProcessRouteWorkingEntity)));
 
                 // 查询工序绑定的默认工作中心列表
                 List<MdmStationSettingEntity> stationList = mdmStationSettingMapper.selectList(
@@ -190,9 +197,10 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      */
     @Override
     @SneakyThrows
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public MdmProcessRouteDTO getRouteByIdAndLineCode(Long id, String lineCode) {
         MdmProcessRouteDTO mdmProcessRouteDTO = new MdmProcessRouteDTO();
-        MdmProcessRouteEntity mdmProcessRouteEntity = this.getById(id);
+        MdmProcessRouteEntity mdmProcessRouteEntity = routeInCurrentFactory(id, false);
         BeanUtils.copyProperties(mdmProcessRouteEntity, mdmProcessRouteDTO);
         if (mdmProcessRouteEntity.getProcedureSnapshot() != null) {
             ObjectMapper mapper = new ObjectMapper();
@@ -200,19 +208,15 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         }
         List<MdmProcessRouteWorkingEntity> mdmProcessRouteWorkingEntities = mdmProcessRouteWorkingMapper.selectList(
                 new LambdaQueryWrapper<MdmProcessRouteWorkingEntity>()
+                        .eq(MdmProcessRouteWorkingEntity::getFactoryCode, mdmProcessRouteEntity.getFactoryCode())
                         .eq(MdmProcessRouteWorkingEntity::getRouteCode, mdmProcessRouteEntity.getRouteCode()));
+        MdmRouteNodeGraphSupport.requireLegacyExecutable(mdmProcessRouteEntity.getGraphSchemaVersion(), mdmProcessRouteWorkingEntities);
         List<MdmProcessRouteWorkingVO> procedureList = new ArrayList<>();
         for (MdmProcessRouteWorkingEntity mdmProcessRouteWorkingEntity : mdmProcessRouteWorkingEntities) {
             MdmProcessRouteWorkingVO mdmProcessRouteWorkingVO = new MdmProcessRouteWorkingVO();
             BeanUtils.copyProperties(mdmProcessRouteWorkingEntity, mdmProcessRouteWorkingVO);
-            mdmProcessRouteWorkingVO.setMdmProcessProcedureSopList(mdmProcessProcedureSopMapper.selectList(
-                    new LambdaQueryWrapper<MdmProcessProcedureSopEntity>()
-                            .eq(MdmProcessProcedureSopEntity::getRouteCode, mdmProcessRouteEntity.getRouteCode())
-                            .eq(MdmProcessProcedureSopEntity::getProcessCode, mdmProcessRouteWorkingEntity.getProcessCode())));
-            mdmProcessRouteWorkingVO.setMdmProcessProcedureMatList(mdmProcessProcedureMatMapper.selectList(
-                    new LambdaQueryWrapper<MdmProcessProcedureMatEntity>()
-                            .eq(MdmProcessProcedureMatEntity::getRouteCode, mdmProcessRouteEntity.getRouteCode())
-                            .eq(MdmProcessProcedureMatEntity::getProcessCode, mdmProcessRouteWorkingEntity.getProcessCode())));
+            mdmProcessRouteWorkingVO.setMdmProcessProcedureSopList(mdmProcessProcedureSopMapper.selectList(sopQuery(mdmProcessRouteWorkingEntity)));
+            mdmProcessRouteWorkingVO.setMdmProcessProcedureMatList(mdmProcessProcedureMatMapper.selectList(matQuery(mdmProcessRouteWorkingEntity)));
 
             // 需要根据选择的线体，获取绑定工序的工位(工作中心)
             // 查询工序绑定的默认工作中心列表
@@ -355,11 +359,14 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
     @Override
     public Page<MdmProcessRouteEntity> selectPage(Page page, MdmProcessRouteSelectDTO mdmProcessRoute) {
         LambdaQueryWrapper<MdmProcessRouteEntity> queryWrapper = new LambdaQueryWrapper<>();
-        queryWrapper.like(StrUtil.isNotEmpty(mdmProcessRoute.getRouteCode()), MdmProcessRouteEntity::getRouteCode, mdmProcessRoute.getRouteCode())
+        queryWrapper.eq(MdmProcessRouteEntity::getFactoryCode, currentRouteFactory())
+                .like(StrUtil.isNotEmpty(mdmProcessRoute.getRouteCode()), MdmProcessRouteEntity::getRouteCode, mdmProcessRoute.getRouteCode())
                 .like(StrUtil.isNotEmpty(mdmProcessRoute.getRouteName()), MdmProcessRouteEntity::getRouteName, mdmProcessRoute.getRouteName())
                 .like(StrUtil.isNotEmpty(mdmProcessRoute.getWorkshopName()), MdmProcessRouteEntity::getWorkshopName, mdmProcessRoute.getWorkshopName())
                 .like(StrUtil.isNotEmpty(mdmProcessRoute.getWorkshopCode()), MdmProcessRouteEntity::getWorkshopCode, mdmProcessRoute.getWorkshopCode())
-                .eq(StrUtil.isNotEmpty(mdmProcessRoute.getProductCode()), MdmProcessRouteEntity::getProductCode, mdmProcessRoute.getProductCode());
+                .eq(StrUtil.isNotEmpty(mdmProcessRoute.getProductCode()), MdmProcessRouteEntity::getProductCode, mdmProcessRoute.getProductCode())
+                .eq(mdmProcessRoute.getStatus() != null, MdmProcessRouteEntity::getStatus, mdmProcessRoute.getStatus())
+                .orderByAsc(MdmProcessRouteEntity::getRouteCode);
         return baseMapper.selectPage(page, queryWrapper);
     }
 
@@ -371,17 +378,18 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      */
     @Override
     @SneakyThrows
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public MdmProcessRouteProcedureVO getProcessWorking(Long routeId) {
         MdmProcessRouteProcedureVO mdmProcessRouteProcedureVO = new MdmProcessRouteProcedureVO();
-        MdmProcessRouteEntity processRoute = this.getById(routeId);
+        MdmProcessRouteEntity processRoute = routeInCurrentFactory(routeId, false);
         BeanUtils.copyProperties(processRoute, mdmProcessRouteProcedureVO);
-        if (processRoute.getProcedureSnapshot() != null) {
-            ObjectMapper mapper = new ObjectMapper();
-            mdmProcessRouteProcedureVO.setProcedureSnapshot(mapper.readTree(processRoute.getProcedureSnapshot()));
-        }
         List<MdmProcessRouteWorkingEntity> mdmProcessRouteWorkingEntities = mdmProcessRouteWorkingMapper.selectList(
                 new LambdaQueryWrapper<MdmProcessRouteWorkingEntity>()
-                        .eq(MdmProcessRouteWorkingEntity::getRouteCode, processRoute.getRouteCode()));
+                        .eq(MdmProcessRouteWorkingEntity::getRouteCode, processRoute.getRouteCode())
+                        .eq(MdmProcessRouteWorkingEntity::getFactoryCode, processRoute.getFactoryCode()));
+        Map<String, String> canvasKeys = engineeringNodes(processRoute, mdmProcessRouteWorkingEntities);
+        mdmProcessRouteProcedureVO.setProcedureSnapshot(MdmRouteNodeGraphSupport.canonicalCanvas(
+                readCanvas(processRoute.getProcedureSnapshot()), mdmProcessRouteWorkingEntities, canvasKeys));
         List<MdmProcessRouteWorkingVO> procedureList = new ArrayList<>();
         for (MdmProcessRouteWorkingEntity mdmProcessRouteWorkingEntity : mdmProcessRouteWorkingEntities) {
             MdmProcessRouteWorkingVO mdmProcessRouteWorkingVO = new MdmProcessRouteWorkingVO();
@@ -400,7 +408,7 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      */
     @Override
     public MdmProcessRouteWorkingEntity getProcessWorkingById(Long id) {
-        return mdmProcessRouteWorkingMapper.selectById(id);
+        return routeNodeResolver.byId(id, false);
     }
 
 
@@ -411,36 +419,184 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      * @return R
      */
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public Boolean saveProcessWorking(MdmProcessRouteProcedureDTO mdmProcessRouteProcedureDTO) {
         if (mdmProcessRouteProcedureDTO == null || mdmProcessRouteProcedureDTO.getId() == null
                 || StrUtil.isBlank(mdmProcessRouteProcedureDTO.getRouteCode())) {
             throw new CheckedException("工艺路线及工序关系参数不完整");
         }
-        List<MdmProcessRouteWorkingEntity> procedureList = Optional.ofNullable(
-                mdmProcessRouteProcedureDTO.getProcedureList()).orElseGet(ArrayList::new);
-        validateAndNormalizeProcessGraph(procedureList);
-        if (!procedureList.isEmpty() && mdmProcessRouteProcedureDTO.getProcedureSnapshot() == null) {
-            throw new CheckedException("工艺路线画布快照不能为空");
+        MdmProcessRouteEntity parent = routeInCurrentFactory(mdmProcessRouteProcedureDTO.getId(), true);
+        if (!Objects.equals(parent.getRouteCode(), mdmProcessRouteProcedureDTO.getRouteCode())) {
+            throw new CheckedException("路线ID与编码不一致，请重新打开路线");
         }
-        String procedureSnapshot = mdmProcessRouteProcedureDTO.getProcedureSnapshot().toString();
-        this.update(new LambdaUpdateWrapper<MdmProcessRouteEntity>()
+        if (mdmProcessRouteProcedureDTO.getExpectedGraphRevision() == null
+                || !Objects.equals(parent.getGraphRevision(), mdmProcessRouteProcedureDTO.getExpectedGraphRevision())) {
+            throw new CheckedException("路线已被修改或页面版本已过期，请重新打开后核对，不能覆盖新图");
+        }
+        return saveGraph(mdmProcessRouteProcedureDTO, parent);
+    }
+
+    /** 调用方已经锁父路线并核原版本；图与节点必须在同一事务提交。 */
+    private Boolean saveGraph(MdmProcessRouteProcedureDTO command, MdmProcessRouteEntity parent) {
+        List<MdmProcessRouteWorkingEntity> procedureList = Optional.ofNullable(
+                command.getProcedureList()).orElseGet(ArrayList::new);
+        List<MdmProcessRouteWorkingEntity> current = routeNodes(parent);
+        boolean nodeGraph = MdmRouteNodeGraphSupport.VERSION.equals(command.getGraphSchemaVersion());
+        if (!nodeGraph && (command.getGraphSchemaVersion() != null || parent.getGraphSchemaVersion() != null)) {
+            throw new CheckedException("旧图保存协议不能覆盖节点图，请刷新升级后的页面");
+        }
+        List<MdmProcessRouteWorkingEntity> saved;
+        JsonNode canvas = decodeCanvas(command.getProcedureSnapshot());
+        if (nodeGraph) {
+            saved = MdmRouteNodeIdentitySupport.reconcileNodes(parent, current, procedureList);
+            Map<String, String> keys = MdmRouteNodeGraphSupport.normalize(saved);
+            canvas = MdmRouteNodeGraphSupport.canonicalCanvas(canvas, saved, keys);
+        } else {
+            validateAndNormalizeProcessGraph(procedureList);
+            if (!procedureList.isEmpty() && canvas == null) throw new CheckedException("工艺路线画布快照不能为空");
+            saved = MdmRouteNodeIdentitySupport.reconcile(parent, current, procedureList, command.getNewProcessCodes());
+        }
+        String procedureSnapshot = canvas == null ? null : canvas.toString();
+        LambdaUpdateWrapper<MdmProcessRouteEntity> update = new LambdaUpdateWrapper<MdmProcessRouteEntity>()
                 .set(MdmProcessRouteEntity::getProcedureSnapshot, procedureSnapshot)
-                .eq(MdmProcessRouteEntity::getId, mdmProcessRouteProcedureDTO.getId()));
-        // 工艺路线工序修改逻辑
-        mdmProcessRouteWorkingMapper.delete(new LambdaQueryWrapper<MdmProcessRouteWorkingEntity>()
-                .eq(MdmProcessRouteWorkingEntity::getRouteCode, mdmProcessRouteProcedureDTO.getRouteCode()));
-        if (!procedureList.isEmpty()) {
-            for (MdmProcessRouteWorkingEntity item : procedureList) {
-                MdmProcessRouteWorkingEntity mdmProcessRouteWorkingEntity = new MdmProcessRouteWorkingEntity();
-                BeanUtils.copyProperties(item, mdmProcessRouteWorkingEntity);
-                mdmProcessRouteWorkingEntity.setId(null);
-                mdmProcessRouteWorkingEntity.setRouteName(mdmProcessRouteProcedureDTO.getRouteName());
-                mdmProcessRouteWorkingEntity.setRouteCode(mdmProcessRouteProcedureDTO.getRouteCode());
-                mdmProcessRouteWorkingMapper.insert(mdmProcessRouteWorkingEntity);
+                .eq(MdmProcessRouteEntity::getId, parent.getId());
+        if (nodeGraph) update.set(MdmProcessRouteEntity::getGraphSchemaVersion, MdmRouteNodeGraphSupport.VERSION);
+        if (!this.update(update)) {
+            throw new CheckedException("路线画布保存失败");
+        }
+        Set<Long> currentIds = current.stream().map(MdmProcessRouteWorkingEntity::getId).collect(Collectors.toSet());
+        Set<Long> savedIds = saved.stream().map(MdmProcessRouteWorkingEntity::getId).collect(Collectors.toSet());
+        // 保留节点行而非全删重建；数据库同时核查删除依赖，失败则整图回滚。
+        for (MdmProcessRouteWorkingEntity old : current) {
+            if (!savedIds.contains(old.getId()) && mdmProcessRouteWorkingMapper.deleteById(old.getId()) != 1) {
+                throw new CheckedException("路线节点移除失败，请刷新后核对");
             }
         }
+        for (MdmProcessRouteWorkingEntity node : saved) {
+            int affected = currentIds.contains(node.getId()) ? mdmProcessRouteWorkingMapper.updateById(node)
+                    : mdmProcessRouteWorkingMapper.insert(node);
+            if (affected != 1) throw new CheckedException("路线节点保存失败：" + node.getProcessCode());
+        }
         return Boolean.TRUE;
+    }
+
+    /** 来源与目标按ID加锁；结构复制不能覆盖节点、附件或继承来源身份。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+    public Boolean copyGraph(MdmRouteGraphCopyDTO command) {
+        if (command == null || command.getId() == null || command.getSourceRouteId() == null
+                || Objects.equals(command.getId(), command.getSourceRouteId())) {
+            throw new CheckedException("请选择不同的来源和空目标路线");
+        }
+        Map<Long, MdmProcessRouteEntity> locked = new HashMap<>();
+        List.of(command.getId(), command.getSourceRouteId()).stream().sorted()
+                .forEach(id -> locked.put(id, routeInCurrentFactory(id, true)));
+        MdmProcessRouteEntity target = locked.get(command.getId());
+        MdmProcessRouteEntity source = locked.get(command.getSourceRouteId());
+        if (command.getExpectedGraphRevision() == null || command.getExpectedSourceGraphRevision() == null
+                || !Objects.equals(target.getGraphRevision(), command.getExpectedGraphRevision())
+                || !Objects.equals(source.getGraphRevision(), command.getExpectedSourceGraphRevision())) {
+            throw new CheckedException("来源或目标路线已被修改，请重新读取并确认复制范围");
+        }
+        if (!routeNodes(target).isEmpty()) throw new CheckedException("结构复制只允许空目标路线，不能覆盖已有节点");
+        List<MdmProcessRouteWorkingEntity> rows = routeNodes(source);
+        if (rows.isEmpty()) throw new CheckedException("来源路线没有可复制的节点");
+        Map<String, String> sourceKeys = engineeringNodes(source, rows);
+        JsonNode canvas = MdmRouteNodeGraphSupport.canonicalCanvas(readCanvas(source.getProcedureSnapshot()), rows, sourceKeys);
+        Map<String, String> newKeys = new LinkedHashMap<>();
+        rows.forEach(row -> newKeys.put(row.getRouteNodeCode(), "C-" + UUID.randomUUID()));
+        // 先按原图核验，随后画布和配置共同替换到新请求键，保存时再分配RN身份。
+        for (JsonNode node : canvas.path("nodes")) {
+            String replacement = newKeys.get(node.path("id").asText());
+            if (replacement != null) ((com.fasterxml.jackson.databind.node.ObjectNode) node).put("id", replacement);
+        }
+        for (JsonNode edge : canvas.path("edges")) {
+            for (String field : List.of("source", "target")) {
+                String replacement = newKeys.get(edge.path(field).asText());
+                if (replacement != null) ((com.fasterxml.jackson.databind.node.ObjectNode) edge).put(field, replacement);
+            }
+        }
+        for (MdmProcessRouteWorkingEntity row : rows) {
+            row.setClientNodeKey(newKeys.get(row.getRouteNodeCode()));
+            row.setNewNode(true);
+            row.setId(null);
+            row.setRouteNodeCode(null);
+            row.setPreRouteNodeCodes(Arrays.stream(row.getPreRouteNodeCodes()).map(newKeys::get).toArray(String[]::new));
+            row.setNodeTimingRulesJson(MdmRouteNodeTimingPolicy.remap(row.getNodeTimingRulesJson(), newKeys));
+        }
+        MdmProcessRouteProcedureDTO save = new MdmProcessRouteProcedureDTO();
+        save.setGraphSchemaVersion(MdmRouteNodeGraphSupport.VERSION);
+        save.setProcedureList(rows);
+        save.setProcedureSnapshot(canvas);
+        return saveGraph(save, target);
+    }
+
+    /** 当前工程图读取投影；历史头不改，旧关系先按原规则规范化。 */
+    private Map<String, String> engineeringNodes(MdmProcessRouteEntity parent, List<MdmProcessRouteWorkingEntity> rows) {
+        if (parent.getGraphSchemaVersion() == null) {
+            validateAndNormalizeProcessGraph(rows);
+            return MdmRouteNodeGraphSupport.projectLegacyForEditing(rows);
+        }
+        if (!MdmRouteNodeGraphSupport.VERSION.equals(parent.getGraphSchemaVersion())) {
+            throw new CheckedException("不支持的路线图协议，请升级服务");
+        }
+        rows.forEach(row -> row.setClientNodeKey(row.getRouteNodeCode()));
+        return MdmRouteNodeGraphSupport.normalize(rows);
+    }
+
+    private List<MdmProcessRouteWorkingEntity> routeNodes(MdmProcessRouteEntity parent) {
+        return mdmProcessRouteWorkingMapper.selectList(new LambdaQueryWrapper<MdmProcessRouteWorkingEntity>()
+                .eq(MdmProcessRouteWorkingEntity::getFactoryCode, parent.getFactoryCode())
+                .eq(MdmProcessRouteWorkingEntity::getRouteCode, parent.getRouteCode()));
+    }
+
+    @Override
+    public MdmProcessRouteEntity getEngineeringHeader(Long id) {
+        MdmProcessRouteEntity row = routeInCurrentFactory(id, false);
+        row.setProcedureSnapshot(null);
+        return row;
+    }
+
+    /** 兼容旧页面将JSON字符串再次编码为JSON字符串的快照，V2只存对象。 */
+    private JsonNode readCanvas(String value) {
+        try {
+            return value == null || value.isBlank() ? null : decodeCanvas(new ObjectMapper().readTree(value));
+        } catch (Exception ex) {
+            throw new CheckedException("路线画布快照无法读取，请核对原数据");
+        }
+    }
+
+    private JsonNode decodeCanvas(JsonNode value) {
+        try {
+            JsonNode result = value;
+            for (int i = 0; i < 2 && result != null && result.isTextual(); i++) {
+                result = new ObjectMapper().readTree(result.asText());
+            }
+            return result == null || result.isNull() ? null : result;
+        } catch (Exception ex) {
+            throw new CheckedException("路线画布JSON格式无效");
+        }
+    }
+
+    /** 旧选路/物料协议在返回数据前核能力；不静默过滤默认路线。 */
+    @Override
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public void requireLegacyExecutableRoutes(List<MdmProcessRouteEntity> routes) {
+        for (MdmProcessRouteEntity input : routes) {
+            MdmProcessRouteEntity actual = routeInCurrentFactory(input.getId(), false);
+            MdmRouteNodeGraphSupport.requireLegacyExecutable(actual.getGraphSchemaVersion(), routeNodes(actual));
+        }
+    }
+
+    /** 维护入口只认当前真实租户/工厂；写入口先锁父路线以串行图修改。 */
+    private MdmProcessRouteEntity routeInCurrentFactory(Long id, boolean lock) {
+        String factory = currentRouteFactory();
+        LambdaQueryWrapper<MdmProcessRouteEntity> query = new LambdaQueryWrapper<MdmProcessRouteEntity>()
+                .eq(MdmProcessRouteEntity::getId, id).eq(MdmProcessRouteEntity::getFactoryCode, factory);
+        if (lock) query.last("FOR UPDATE");
+        MdmProcessRouteEntity row = baseMapper.selectOne(query);
+        if (row == null) throw new CheckedException("路线不存在或不属于当前工厂");
+        return row;
     }
 
     /**
@@ -547,11 +703,17 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
                     .map(Map.Entry::getKey).collect(Collectors.joining(","));
             throw new CheckedException("工艺路线存在环路，涉及工序：" + cyclic);
         }
+        Map<String, String> timingModes = new HashMap<>();
+        procedures.forEach(procedure -> timingModes.put(procedure.getProcessCode(), procedure.getType()));
         procedures.forEach(procedure -> {
             String code = procedure.getProcessCode();
             procedure.setPreRouteCode(predecessors.get(code).toArray(String[]::new));
             procedure.setNextRouteCode(successors.get(code).toArray(String[]::new));
             procedure.setOrderNum(levels.get(code));
+            procedure.setTimingRulesJson(com.kitex.mom.mdm.support.MdmProcessTimingPolicy
+                    .parse(procedure.getTimingRulesJson()).normalize(code,
+                            com.kitex.mom.mdm.support.MdmProcessTimingPolicy.ancestors(code, predecessors)));
+            com.kitex.mom.mdm.support.MdmProcessTimingPolicy.parse(procedure.getTimingRulesJson()).validateModes(code, timingModes);
         });
     }
 
@@ -572,6 +734,7 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
     public List<MdmProcessRouteWorkingEntity> getProcedureList(String routeCode) {
         return mdmProcessRouteWorkingMapper.selectList(
                 new LambdaQueryWrapper<MdmProcessRouteWorkingEntity>()
+                        .eq(MdmProcessRouteWorkingEntity::getFactoryCode, currentRouteFactory())
                         .eq(MdmProcessRouteWorkingEntity::getRouteCode, routeCode).orderByAsc(MdmProcessRouteWorkingEntity::getOrderNum));
     }
 
@@ -582,25 +745,56 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      * @return R
      */
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public Boolean saveSop(MdmProcessProcedureSopDTO mdmProcessProcedureSopDTO) {
-        // 查询工艺路线-工序数据
-        MdmProcessRouteWorkingEntity mdmProcessRouteWorkingEntity = mdmProcessRouteWorkingMapper.selectById(mdmProcessProcedureSopDTO.getId());
-        // 删除工艺路线-工序-SOP数据
-        mdmProcessProcedureSopMapper.delete(new LambdaQueryWrapper<MdmProcessProcedureSopEntity>()
-                .eq(MdmProcessProcedureSopEntity::getRouteCode, mdmProcessRouteWorkingEntity.getRouteCode())
-                .eq(MdmProcessProcedureSopEntity::getProcessCode, mdmProcessRouteWorkingEntity.getProcessCode()));
-        // 插入工艺路线-工序-SOP数据
-        if (!mdmProcessProcedureSopDTO.getSopList().isEmpty()) {
-            mdmProcessProcedureSopDTO.getSopList().stream().map(item -> {
-                MdmProcessProcedureSopEntity mdmProcessProcedureSopEntity = new MdmProcessProcedureSopEntity();
-                mdmProcessProcedureSopEntity.setRouteCode(mdmProcessRouteWorkingEntity.getRouteCode());
-                mdmProcessProcedureSopEntity.setProcessCode(mdmProcessRouteWorkingEntity.getProcessCode());
-                mdmProcessProcedureSopEntity.setName(item.getName());
-                mdmProcessProcedureSopEntity.setFileName(item.getFileName());
-                mdmProcessProcedureSopEntity.setUrl(item.getUrl());
-                return mdmProcessProcedureSopEntity;
-            }).forEach(mdmProcessProcedureSopMapper::insert);
+        if (mdmProcessProcedureSopDTO == null || mdmProcessProcedureSopDTO.getSopList() == null
+                || mdmProcessProcedureSopDTO.getSopList().stream().anyMatch(Objects::isNull)) {
+            throw new CheckedException("请提供完整SOP列表，清空时提交空列表");
+        }
+        MdmProcessRouteWorkingEntity node = routeNodeResolver.byId(mdmProcessProcedureSopDTO.getId(), true);
+        var previous = mdmProcessProcedureSopMapper.selectList(sopQuery(node));
+        var expected = mdmProcessProcedureSopDTO.getExpectedAttachmentHashes();
+        if (expected != null) {
+            var actual = previous.stream().map(MdmSopWorkspace::legacyHash).sorted().toList();
+            if (expected.stream().anyMatch(Objects::isNull) || !actual.equals(expected.stream().sorted().toList())) {
+                throw new CheckedException("工序历史附件已被其他人员修改，请重新读取后操作");
+            }
+        } else if (sopOrigins.selectCount(new LambdaQueryWrapper<MdmSopOriginEntity>()
+                .eq(MdmSopOriginEntity::getTenantId, node.getTenantId())
+                .eq(MdmSopOriginEntity::getFactoryCode, node.getFactoryCode())
+                .eq(MdmSopOriginEntity::getRouteCode, node.getRouteCode())
+                .eq(MdmSopOriginEntity::getRouteNodeCode, node.getRouteNodeCode())) > 0) {
+            throw new CheckedException("该节点已接入统一SOP，请刷新前端后携带原附件指纹保存");
+        }
+        // 保留未改变文件的稳定ID，不能因保存整个列表就破坏已经形成的转入来源。
+        var retained = new HashSet<Long>();
+        var submitted = new HashSet<String>();
+        // 只接受文件业务属性；身份和审计不能由客户端继承或伪造。
+        for (var item : mdmProcessProcedureSopDTO.getSopList()) {
+            String key = MdmSopSupport.hash(item.getName(), item.getFileName(), item.getUrl());
+            if (!submitted.add(key)) throw new CheckedException("同一工序不能重复添加相同历史附件");
+            var unchanged = previous.stream().filter(old -> !retained.contains(old.getId())
+                    && Objects.equals(old.getName(), item.getName()) && Objects.equals(old.getFileName(), item.getFileName())
+                    && Objects.equals(old.getUrl(), item.getUrl())).findFirst();
+            if (unchanged.isPresent()) {
+                retained.add(unchanged.get().getId());
+                continue;
+            }
+            MdmProcessProcedureSopEntity row = new MdmProcessProcedureSopEntity();
+            row.setTenantId(node.getTenantId());
+            row.setFactoryCode(node.getFactoryCode());
+            row.setRouteCode(node.getRouteCode());
+            row.setRouteNodeCode(node.getRouteNodeCode());
+            row.setProcessCode(node.getProcessCode());
+            row.setName(item.getName());
+            row.setFileName(item.getFileName());
+            row.setUrl(item.getUrl());
+            if (mdmProcessProcedureSopMapper.insert(row) != 1) {
+                throw new CheckedException("SOP保存失败，原配置未变更");
+            }
+        }
+        for (var old : previous) {
+            if (!retained.contains(old.getId())) mdmProcessProcedureSopMapper.deleteById(old.getId());
         }
         return Boolean.TRUE;
     }
@@ -613,16 +807,7 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      */
     @Override
     public List<MdmProcedureSopVO> getSop(Long id) {
-        // 查询工艺路线-工序数据
-        MdmProcessRouteWorkingEntity mdmProcessRouteWorkingEntity = mdmProcessRouteWorkingMapper.selectById(id);
-        return mdmProcessProcedureSopMapper.selectList(new LambdaQueryWrapper<MdmProcessProcedureSopEntity>()
-                .eq(MdmProcessProcedureSopEntity::getRouteCode, mdmProcessRouteWorkingEntity.getRouteCode())
-                .eq(MdmProcessProcedureSopEntity::getProcessCode, mdmProcessRouteWorkingEntity.getProcessCode())).stream().map(item -> {
-            MdmProcedureSopVO mdmProcedureSopVO = new MdmProcedureSopVO();
-            BeanUtils.copyProperties(item, mdmProcedureSopVO);
-            mdmProcedureSopVO.setFileUrl(item.getFileName());
-            return mdmProcedureSopVO;
-        }).collect(Collectors.toList());
+        return sopViews(routeNodeResolver.byId(id, false));
     }
 
     /**
@@ -633,11 +818,8 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      */
     @Override
     public List<MdmProcessProcedureMatEntity> getMat(Long id) {
-        // 查询工艺路线-工序数据
-        MdmProcessRouteWorkingEntity mdmProcessRouteWorkingEntity = mdmProcessRouteWorkingMapper.selectById(id);
-        return mdmProcessProcedureMatMapper.selectList(new LambdaQueryWrapper<MdmProcessProcedureMatEntity>()
-                .eq(MdmProcessProcedureMatEntity::getRouteCode, mdmProcessRouteWorkingEntity.getRouteCode())
-                .eq(MdmProcessProcedureMatEntity::getProcessCode, mdmProcessRouteWorkingEntity.getProcessCode()));
+        return mdmProcessProcedureMatMapper.selectList(matQuery(routeNodeResolver.byId(id, false))
+                .orderByAsc(MdmProcessProcedureMatEntity::getStep));
     }
 
     /**
@@ -647,32 +829,40 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      * @return R
      */
     @Override
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public Boolean saveMat(MdmProcessProcedureMatDTO mdmProcessProcedureMatDTO) {
-        // 查询工艺路线-工序数据
-        MdmProcessRouteWorkingEntity mdmProcessRouteWorkingEntity = mdmProcessRouteWorkingMapper.selectById(mdmProcessProcedureMatDTO.getId());
-        // 删除工艺路线-工序-投料数据
-        mdmProcessProcedureMatMapper.delete(new LambdaQueryWrapper<MdmProcessProcedureMatEntity>()
-                .eq(MdmProcessProcedureMatEntity::getRouteCode, mdmProcessRouteWorkingEntity.getRouteCode())
-                .eq(MdmProcessProcedureMatEntity::getProcessCode, mdmProcessRouteWorkingEntity.getProcessCode()));
-        // 插入工艺路线-工序-投料数据
-        if (!mdmProcessProcedureMatDTO.getMatList().isEmpty()) {
-            mdmProcessProcedureMatDTO.getMatList().stream().map(item -> {
-                MdmProcessProcedureMatEntity mdmProcessProcedureMatEntity = new MdmProcessProcedureMatEntity();
-                BeanUtils.copyProperties(item, mdmProcessProcedureMatEntity);
-                mdmProcessProcedureMatEntity.setId(null);
-                mdmProcessProcedureMatEntity.setRouteCode(mdmProcessRouteWorkingEntity.getRouteCode());
-                mdmProcessProcedureMatEntity.setProcessCode(mdmProcessRouteWorkingEntity.getProcessCode());
-                return mdmProcessProcedureMatEntity;
-            }).forEach(mdmProcessProcedureMatMapper::insert);
+        if (mdmProcessProcedureMatDTO == null || mdmProcessProcedureMatDTO.getMatList() == null
+                || mdmProcessProcedureMatDTO.getMatList().stream().anyMatch(Objects::isNull)) {
+            throw new CheckedException("请提供完整投料列表，清空时提交空列表");
+        }
+        MdmProcessRouteWorkingEntity node = routeNodeResolver.byId(mdmProcessProcedureMatDTO.getId(), true);
+        mdmProcessProcedureMatMapper.delete(matQuery(node));
+        for (var item : mdmProcessProcedureMatDTO.getMatList()) {
+            MdmProcessProcedureMatEntity row = new MdmProcessProcedureMatEntity();
+            row.setTenantId(node.getTenantId());
+            row.setFactoryCode(node.getFactoryCode());
+            row.setRouteCode(node.getRouteCode());
+            row.setRouteNodeCode(node.getRouteNodeCode());
+            row.setProcessCode(node.getProcessCode());
+            row.setMaterialCode(item.getMaterialCode());
+            row.setMaterialName(item.getMaterialName());
+            row.setMaterialSpec(item.getMaterialSpec());
+            row.setUnit(item.getUnit());
+            row.setQuantity(item.getQuantity());
+            row.setStep(item.getStep());
+            if (mdmProcessProcedureMatMapper.insert(row) != 1) {
+                throw new CheckedException("投料保存失败，原配置未变更");
+            }
         }
         return Boolean.TRUE;
     }
 
     /**
-     * 工艺路线树查询
+     * 按产品分组查询工艺路线树，组内默认路线优先。
+     * 未关联产品的历史路线保留在独立展示分组中，不修改其产品归属。
      *
      * @param queryWrapper 查询条件
-     * @return
+     * @return 产品分组及其工艺路线；无数据时返回空列表
      */
     @Override
     public List<MdmProcessRouteTreeVO> tree(QueryWrapper<MdmProcessRouteEntity> queryWrapper) {
@@ -681,10 +871,10 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         // 获取工艺路线列表
         List<MdmProcessRouteEntity> list = this.list(queryWrapper);
 
-        // 按照productCode分组
+        // groupingBy 不接受 null 键；空串仅作展示分组键，不回写路线的产品编码。
         Map<String, List<MdmProcessRouteEntity>> groupedByProduct = list.stream()
                 .collect(Collectors.groupingBy(
-                        MdmProcessRouteEntity::getProductCode,
+                        route -> StrUtil.isBlank(route.getProductCode()) ? "" : route.getProductCode(),
                         LinkedHashMap::new,
                         Collectors.toList()
                 ));
@@ -694,12 +884,20 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
             if (!routes.isEmpty()) {
                 MdmProcessRouteEntity firstRoute = routes.get(0);
                 MdmProcessRouteTreeVO parentNode = new MdmProcessRouteTreeVO();
-                parentNode.setId(productCode);
-                parentNode.setTitle(String.format("%s(%s)", firstRoute.getProductName(), productCode));
-                parentNode.setProductCode(productCode);
-                parentNode.setProductName(firstRoute.getProductName());
-                parentNode.setProductSpec(firstRoute.getProductSpec());
-                parentNode.setProductUnit(firstRoute.getProductUnit());
+                // 树节点使用独立命名空间，避免产品编码、未关联分组与路线主键冲突。
+                if (productCode.isEmpty()) {
+                    parentNode.setId("route-unassigned");
+                    parentNode.setTitle("未关联产品");
+                    // 未关联路线不能共用首条记录的名称、规格或单位，各自信息保留在子节点。
+                } else {
+                    parentNode.setId("route-product:" + productCode);
+                    parentNode.setTitle(StrUtil.isBlank(firstRoute.getProductName()) ? productCode
+                            : String.format("%s(%s)", firstRoute.getProductName(), productCode));
+                    parentNode.setProductCode(productCode);
+                    parentNode.setProductName(firstRoute.getProductName());
+                    parentNode.setProductSpec(firstRoute.getProductSpec());
+                    parentNode.setProductUnit(firstRoute.getProductUnit());
+                }
 
                 // 创建子节点列表
                 List<MdmProcessRouteChildrenVO> children = java.util.stream.Stream.concat(
@@ -731,14 +929,7 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      */
     @Override
     public List<MdmProcedureSopVO> getSopByCode(String routeCode, String processCode) {
-        return mdmProcessProcedureSopMapper.selectList(new LambdaQueryWrapper<MdmProcessProcedureSopEntity>()
-                .eq(MdmProcessProcedureSopEntity::getRouteCode, routeCode)
-                .eq(MdmProcessProcedureSopEntity::getProcessCode, processCode)).stream().map(item -> {
-            MdmProcedureSopVO mdmProcedureSopVO = new MdmProcedureSopVO();
-            BeanUtils.copyProperties(item, mdmProcedureSopVO);
-            mdmProcedureSopVO.setFileUrl(item.getFileName());
-            return mdmProcedureSopVO;
-        }).collect(Collectors.toList());
+        return sopViews(routeNodeResolver.resolve(routeCode, null, processCode, false));
     }
 
     /**
@@ -750,12 +941,12 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      */
     @Override
     public List<MdmProcessProcedureMatEntity> getMatByCode(String routeCode, String processCode) {
-        return mdmProcessProcedureMatMapper.selectList(new LambdaQueryWrapper<MdmProcessProcedureMatEntity>()
-                .eq(MdmProcessProcedureMatEntity::getRouteCode, routeCode)
-                .eq(MdmProcessProcedureMatEntity::getProcessCode, processCode));
+        return mdmProcessProcedureMatMapper.selectList(matQuery(routeNodeResolver.resolve(routeCode, null, processCode, false))
+                .orderByAsc(MdmProcessProcedureMatEntity::getStep));
     }
 
     @Override
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public List<MdmProcessProcedureMatEntity> getMaterialAssignments(MdmRouteMaterialAssignmentQueryDTO query) {
         if (query == null || StrUtil.isBlank(query.getFactoryCode())
                 || CollUtil.isEmpty(query.getRouteCodes()) || CollUtil.isEmpty(query.getMaterialCodes())) {
@@ -764,11 +955,23 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         if (query.getRouteCodes().size() > 200 || query.getMaterialCodes().size() > 500) {
             throw new CheckedException("单次最多查询200条工艺路线和500个物料");
         }
+        if (!Objects.equals(currentRouteFactory(), query.getFactoryCode())) {
+            throw new CheckedException("工序投料查询工厂必须与当前工厂一致");
+        }
+        // 旧PLAN/MRP按主工序聚合投料；拒绝重复图，不能先返回会被合并的节点数据。
+        List<MdmProcessRouteEntity> routes = baseMapper.selectList(new LambdaQueryWrapper<MdmProcessRouteEntity>()
+                .eq(MdmProcessRouteEntity::getFactoryCode, query.getFactoryCode())
+                .in(MdmProcessRouteEntity::getRouteCode, query.getRouteCodes()));
+        if (routes.size() != new HashSet<>(query.getRouteCodes()).size()) {
+            throw new CheckedException("投料查询存在缺失或重复路线，请核对当前组织主数据");
+        }
+        requireLegacyExecutableRoutes(routes);
         return mdmProcessProcedureMatMapper.selectList(new LambdaQueryWrapper<MdmProcessProcedureMatEntity>()
                 .eq(MdmProcessProcedureMatEntity::getFactoryCode, query.getFactoryCode())
                 .in(MdmProcessProcedureMatEntity::getRouteCode, query.getRouteCodes())
                 .in(MdmProcessProcedureMatEntity::getMaterialCode, query.getMaterialCodes())
                 .orderByAsc(MdmProcessProcedureMatEntity::getRouteCode)
+                .orderByAsc(MdmProcessProcedureMatEntity::getRouteNodeCode)
                 .orderByAsc(MdmProcessProcedureMatEntity::getProcessCode)
                 .orderByAsc(MdmProcessProcedureMatEntity::getStep));
     }
@@ -799,9 +1002,15 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      */
     @Override
     public MdmProcessProcedureSettingEntity getSetByCode(String routeCode, String processCode) {
-        return mdmProcessProcedureSettingMapper.selectOne(new LambdaQueryWrapper<MdmProcessProcedureSettingEntity>()
-                .eq(MdmProcessProcedureSettingEntity::getRouteCode, routeCode)
-                .eq(MdmProcessProcedureSettingEntity::getProcessCode, processCode), false);
+        return mdmProcessProcedureSettingMapper.selectOne(settingQuery(
+                routeNodeResolver.resolve(routeCode, null, processCode, false)));
+    }
+
+    /** 新页面精确选择节点；不能回退到主工序再次查询。 */
+    @Override
+    public MdmProcessProcedureSettingEntity getSetByNode(String routeCode, String routeNodeCode) {
+        return mdmProcessProcedureSettingMapper.selectOne(settingQuery(
+                routeNodeResolver.resolve(routeCode, routeNodeCode, null, false)));
     }
 
     /**
@@ -811,11 +1020,115 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
      * @return R
      */
     @Override
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public Boolean saveOrUpdateSet(MdmProcessProcedureSettingEntity mdmProcessProcedureSetting) {
-        if (mdmProcessProcedureSetting.getIsMatWeightConvert() && mdmProcessProcedureSetting.getMatWeightConvert() == null) {
-            throw new CheckedException("请输入产料单位重量");
+        if (mdmProcessProcedureSetting == null) {
+            throw new CheckedException("工序配置不能为空");
         }
-        return mdmProcessProcedureSettingMapper.insertOrUpdate(mdmProcessProcedureSetting);
+        MdmProcessRouteWorkingEntity node = routeNodeResolver.resolve(mdmProcessProcedureSetting.getRouteCode(),
+                mdmProcessProcedureSetting.getRouteNodeCode(), mdmProcessProcedureSetting.getProcessCode(), true);
+        MdmProcessProcedureSettingEntity row = mdmProcessProcedureSettingMapper.selectOne(settingQuery(node));
+        if (mdmProcessProcedureSetting.getId() != null) {
+            if (row == null || !Objects.equals(row.getId(), mdmProcessProcedureSetting.getId())) {
+                throw new CheckedException("工序配置身份已失效或不属于当前节点，请刷新");
+            }
+        } else if (row != null) {
+            throw new CheckedException("当前节点已有配置，请刷新后修改，不可重复创建");
+        }
+        if (Boolean.TRUE.equals(mdmProcessProcedureSetting.getIsMatWeightConvert())
+                && (mdmProcessProcedureSetting.getMatWeightConvert() == null
+                || mdmProcessProcedureSetting.getMatWeightConvert().signum() <= 0)) {
+            throw new CheckedException("产料单位重量必须大于零");
+        }
+        boolean insert = row == null;
+        if (insert) {
+            row = new MdmProcessProcedureSettingEntity();
+            row.setTenantId(node.getTenantId());
+            row.setFactoryCode(node.getFactoryCode());
+            row.setRouteCode(node.getRouteCode());
+            row.setRouteNodeCode(node.getRouteNodeCode());
+            row.setProcessCode(node.getProcessCode());
+        }
+        // 更新只复制业务值，保留真实行身份和创建审计；更新审计交给当前登录人填充。
+        row.setIsMatWeightConvert(mdmProcessProcedureSetting.getIsMatWeightConvert());
+        row.setMatWeightConvert(mdmProcessProcedureSetting.getMatWeightConvert());
+        row.setIsBackFlush(mdmProcessProcedureSetting.getIsBackFlush());
+        row.setIsAutomate(mdmProcessProcedureSetting.getIsAutomate());
+        row.setDefaultReportNum(mdmProcessProcedureSetting.getDefaultReportNum());
+        row.setTimeCheck(mdmProcessProcedureSetting.getTimeCheck());
+        row.setTimeVal(mdmProcessProcedureSetting.getTimeVal());
+        row.setUpdateBy(null);
+        row.setUpdateTime(null);
+        int changed = insert ? mdmProcessProcedureSettingMapper.insert(row) : mdmProcessProcedureSettingMapper.updateById(row);
+        if (changed != 1) {
+            throw new CheckedException("工序配置保存失败，请刷新后核对");
+        }
+        return Boolean.TRUE;
+    }
+
+    /** 明确移除配置依赖，不把所有开关关闭误认为已经解绑。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+    public Boolean removeSetting(Long id) {
+        String factory = currentRouteFactory();
+        MdmProcessProcedureSettingEntity row = mdmProcessProcedureSettingMapper.selectOne(
+                new LambdaQueryWrapper<MdmProcessProcedureSettingEntity>()
+                        .eq(MdmProcessProcedureSettingEntity::getId, id)
+                        .eq(MdmProcessProcedureSettingEntity::getFactoryCode, factory));
+        if (row == null) {
+            throw new CheckedException("配置不存在或不属于当前工厂");
+        }
+        MdmProcessRouteEntity parent = baseMapper.selectOne(new LambdaQueryWrapper<MdmProcessRouteEntity>()
+                .eq(MdmProcessRouteEntity::getFactoryCode, factory)
+                .eq(MdmProcessRouteEntity::getRouteCode, row.getRouteCode()).last("FOR UPDATE"));
+        if (parent == null || mdmProcessProcedureSettingMapper.deleteById(row.getId()) != 1) {
+            throw new CheckedException("配置移除失败，请刷新后核对");
+        }
+        return Boolean.TRUE;
+    }
+
+    /** 所有配置查询同时限定真实组织、路线和节点，不按主工序混合各次配置。 */
+    private LambdaQueryWrapper<MdmProcessProcedureSopEntity> sopQuery(MdmProcessRouteWorkingEntity node) {
+        return new LambdaQueryWrapper<MdmProcessProcedureSopEntity>()
+                .eq(MdmProcessProcedureSopEntity::getTenantId, node.getTenantId())
+                .eq(MdmProcessProcedureSopEntity::getFactoryCode, node.getFactoryCode())
+                .eq(MdmProcessProcedureSopEntity::getRouteCode, node.getRouteCode())
+                .eq(MdmProcessProcedureSopEntity::getRouteNodeCode, node.getRouteNodeCode());
+    }
+
+    private List<MdmProcedureSopVO> sopViews(MdmProcessRouteWorkingEntity node) {
+        return mdmProcessProcedureSopMapper.selectList(sopQuery(node)).stream().map(item -> {
+            MdmProcedureSopVO view = new MdmProcedureSopVO();
+            BeanUtils.copyProperties(item, view);
+            view.setFileUrl(item.getFileName());
+            view.setAttachmentHash(MdmSopWorkspace.legacyHash(item));
+            return view;
+        }).collect(Collectors.toList());
+    }
+
+    private LambdaQueryWrapper<MdmProcessProcedureMatEntity> matQuery(MdmProcessRouteWorkingEntity node) {
+        return new LambdaQueryWrapper<MdmProcessProcedureMatEntity>()
+                .eq(MdmProcessProcedureMatEntity::getTenantId, node.getTenantId())
+                .eq(MdmProcessProcedureMatEntity::getFactoryCode, node.getFactoryCode())
+                .eq(MdmProcessProcedureMatEntity::getRouteCode, node.getRouteCode())
+                .eq(MdmProcessProcedureMatEntity::getRouteNodeCode, node.getRouteNodeCode());
+    }
+
+    private LambdaQueryWrapper<MdmProcessProcedureSettingEntity> settingQuery(MdmProcessRouteWorkingEntity node) {
+        return new LambdaQueryWrapper<MdmProcessProcedureSettingEntity>()
+                .eq(MdmProcessProcedureSettingEntity::getTenantId, node.getTenantId())
+                .eq(MdmProcessProcedureSettingEntity::getFactoryCode, node.getFactoryCode())
+                .eq(MdmProcessProcedureSettingEntity::getRouteCode, node.getRouteCode())
+                .eq(MdmProcessProcedureSettingEntity::getRouteNodeCode, node.getRouteNodeCode());
+    }
+
+    private String currentRouteFactory() {
+        String factory = FactoryContextHolder.getFactoryCode();
+        if (TenantContextHolder.getTenantId() == null || TenantContextHolder.getTenantSkip()
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) || StrUtil.isBlank(factory)) {
+            throw new CheckedException("路线维护需要明确当前租户和工厂");
+        }
+        return factory;
     }
 
 }

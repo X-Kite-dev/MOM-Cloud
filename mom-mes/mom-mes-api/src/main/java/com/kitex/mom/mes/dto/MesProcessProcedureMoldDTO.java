@@ -22,6 +22,12 @@ public class MesProcessProcedureMoldDTO {
     private Long id;
 
     /**
+     * 配置读取时的原父图版本；包含节点与模具绑定修改，不可自动取最新版重试。
+     */
+    @Schema(description = "读取配置时的原路线图版本，必填")
+    private Long expectedGraphRevision;
+
+    /**
      * 工作中心列表
      */
     @Schema(description = "模具列表")

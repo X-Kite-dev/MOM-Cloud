@@ -83,6 +83,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     private final RemoteMaterialService materialService;
     private final MesInspectionRuleService inspectionRuleService;
     private final RemoteProcedureService remoteProcedureService;
+    private final MesQmsInspectionCoordinator qmsInspectionCoordinator;
     private final RemoteQualityStandardService remoteQualityStandardService;
     private final RemoteParamService remoteParamService;
     private final RemoteClassesService remoteClassesService;
@@ -97,6 +98,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     private final MesApsBatchAllocationMapper apsBatchAllocationMapper;
     private final MesApsSourceQuantityEventMapper apsSourceQuantityEventMapper;
     private final MesTaskInWmsReceiptMapper taskInWmsReceiptMapper;
+    private final MesTaskInWmsCommandService taskInWmsCommands;
     private final MesTaskInWmsReceiptDetailMapper taskInWmsReceiptDetailMapper;
     private final MesInboundAllocationService inboundAllocationService;
     private final MesPlanWithdrawalReceiptMapper planWithdrawalReceiptMapper;
@@ -110,7 +112,13 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     private final MesDispatchReturnService dispatchReturnService;
     private final MesActualFactoryAccessService factoryAccess;
     private final MesProcessParameterStandardFreezeService parameterStandardFreezeService;
+    private final MesSopFreezeService sopFreezeService;
     private final MesExecutionTemplateService executionTemplateService;
+    private final MesIdentifierBindingGroupService bindingGroups;
+    private final MesTerminalExecutionGuard terminalExecutionGuard;
+    private final MesEngineeringPackageService engineeringPackages;
+    private final MesFormalPlanReceiptVerifier formalPlanReceiptVerifier;
+    private final MesProductionOrderService productionOrderService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -128,6 +136,10 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                 || command.getReason().trim().length() > 500) {
             throw new CheckedException("MES计划撤回请求号/计划号/证据指纹/原因长度不合法");
         }
+        String actualFactory = factoryAccess.require("write");
+        if (!Objects.equals(actualFactory, command.getFactoryCode().trim())) {
+            throw new CheckedException("计划撤回工厂与实际授权工厂不一致");
+        }
         String requestFingerprint = null;
         if (!Boolean.TRUE.equals(command.getPreview())) {
             requestFingerprint = sha256(String.join("|", String.valueOf(command.getIssueId()),
@@ -137,6 +149,8 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
             planWithdrawalReceiptMapper.lockKey("REQUEST:" + requestId);
             MesPlanWithdrawalReceiptEntity replay = planWithdrawalReceiptMapper.selectOne(
                     new LambdaQueryWrapper<MesPlanWithdrawalReceiptEntity>()
+                            .eq(MesPlanWithdrawalReceiptEntity::getTenantId, com.kitex.common.data.tenant.TenantContextHolder.getTenantId())
+                            .eq(MesPlanWithdrawalReceiptEntity::getFactoryCode, actualFactory)
                             .eq(MesPlanWithdrawalReceiptEntity::getRequestId, requestId));
             if (replay != null) {
                 if (!Objects.equals(replay.getRequestFingerprint(), requestFingerprint)) {
@@ -149,6 +163,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         planWithdrawalReceiptMapper.lockKey("ISSUE:" + command.getFactoryCode().trim() + ':' + command.getIssueId());
         List<MesApsBatchAllocationEntity> sourceRows = apsBatchAllocationMapper.selectList(
                 new LambdaQueryWrapper<MesApsBatchAllocationEntity>()
+                        .eq(MesApsBatchAllocationEntity::getTenantId, com.kitex.common.data.tenant.TenantContextHolder.getTenantId())
                         .eq(MesApsBatchAllocationEntity::getIssueId, command.getIssueId())
                         .eq(MesApsBatchAllocationEntity::getIssueNo, command.getIssueNo().trim())
                         .eq(MesApsBatchAllocationEntity::getFactoryCode, command.getFactoryCode().trim())
@@ -164,9 +179,23 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         }
         List<Long> taskIds = sourceRows.stream().map(MesApsBatchAllocationEntity::getMesTaskId)
                 .filter(Objects::nonNull).distinct().sorted().toList();
+        List<MesTaskEntity> observedTasks = taskIds.isEmpty() ? List.of() : list(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getTenantId, com.kitex.common.data.tenant.TenantContextHolder.getTenantId())
+                .eq(MesTaskEntity::getFactoryCode, actualFactory).in(MesTaskEntity::getId, taskIds));
+        if (observedTasks.size() != taskIds.size()) throw new CheckedException("当前租户工厂的来源工单归属不完整");
+        // 多工单先按编码统一取业务锁，之后才按ID锁行，避免不同入口相反顺序等待。
+        observedTasks.stream().map(MesTaskEntity::getCode).distinct().sorted().forEach(bindingGroups::lockDispatchTask);
         List<MesTaskEntity> tasks = taskIds.isEmpty() ? List.of() : list(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getTenantId, com.kitex.common.data.tenant.TenantContextHolder.getTenantId())
+                .eq(MesTaskEntity::getFactoryCode, actualFactory)
                 .in(MesTaskEntity::getId, taskIds).orderByAsc(MesTaskEntity::getId).last("FOR UPDATE"));
         if (tasks.size() != taskIds.size()) throw new CheckedException("MES来源分配账关联工单缺失，禁止撤回");
+        for (MesTaskEntity locked : tasks) {
+            if (observedTasks.stream().noneMatch(old -> Objects.equals(old.getId(), locked.getId())
+                    && Objects.equals(old.getCode(), locked.getCode()))) {
+                throw new CheckedException("来源工单身份已变化，请原号重核，禁止在持有行锁后改锁目标");
+            }
+        }
         List<String> taskCodes = tasks.stream().map(MesTaskEntity::getCode).sorted().toList();
         List<MesProduceTaskEntity> produceTasks = taskCodes.isEmpty() ? List.of() : produceTaskService.list(
                 new LambdaQueryWrapper<MesProduceTaskEntity>().in(MesProduceTaskEntity::getTaskCode, taskCodes)
@@ -177,6 +206,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                 new LambdaQueryWrapper<MesTaskArrangeEntity>().in(MesTaskArrangeEntity::getTaskCode, taskCodes)
                         .orderByAsc(MesTaskArrangeEntity::getTaskCode).orderByAsc(MesTaskArrangeEntity::getId)
                         .last("FOR UPDATE"));
+        arranges.forEach(terminalExecutionGuard::assertUnoccupied);
         List<MesInspectionGenRecordEntity> genRecords = taskCodes.isEmpty() ? List.of() : genRecordService.list(
                 new LambdaQueryWrapper<MesInspectionGenRecordEntity>().in(MesInspectionGenRecordEntity::getTaskCode, taskCodes)
                         .orderByAsc(MesInspectionGenRecordEntity::getTaskCode)
@@ -744,6 +774,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         if (receive == null) {
             throw new CheckedException("生产计划接收参数不能为空");
         }
+        formalPlanReceiptVerifier.verify(receive);
         String issueRequestId = StrUtil.trim(receive.getSourceRequestId());
         String issueFingerprint = StrUtil.trim(receive.getSourceRequestFingerprint());
         if (StrUtil.isBlank(issueRequestId) || issueRequestId.length() > 100
@@ -811,6 +842,8 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
             receive.setApsBatchNo(batchNo);
             receive.setApsBatchType(receive.getApsBatchType().toUpperCase(Locale.ROOT));
         }
+        // 普通PLAN/APS工单的路线与BOM只能从MDM精确工程版本包生成。
+        MesEngineeringPackageService.FrozenEngineering engineering = engineeringPackages.resolve(receive);
 //        if (Objects.isNull(receive.getPlanNo())) {
 //            throw new CheckedException("计划单号不允许为空，请检查参数！");
 //        }
@@ -821,6 +854,16 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
 //        }
         MesTaskEntity saveTask = new MesTaskEntity();
         BeanUtil.copyProperties(receive, saveTask);
+        saveTask.setEngineeringReleaseId(engineering.source().getReleaseId());
+        saveTask.setEngineeringContentHash(engineering.source().getContentHash());
+        saveTask.setEngineeringVersionNo(engineering.source().getVersionNo());
+        saveTask.setEngineeringBundleSnapshot(engineering.source().getBundleSnapshot());
+        saveTask.setProcessRouteId(engineering.source().getRouteId());
+        saveTask.setProcessRouteCode(engineering.source().getRouteCode());
+        saveTask.setProcessRouteSnapshot(engineering.routeSnapshot());
+        saveTask.setBomId(engineering.source().getBomId());
+        saveTask.setBomVersion(engineering.source().getBomVersion());
+        saveTask.setBomSnapshot(engineering.bomSnapshot());
         // 物料规格型号回填
         if (StrUtil.isNotEmpty(saveTask.getMatCode()) && StrUtil.isEmpty(saveTask.getMatSpec())) {
             MdmMaterialEntity mat = materialService.getDetails(saveTask.getMatCode()).getData();
@@ -833,6 +876,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         if (!this.save(saveTask)) {
             throw new CheckedException("生产工单保存失败");
         }
+        productionOrderService.recordReceivedOrder(receive, saveTask);
         if (apsBatch) {
             int allocationSeq = 1;
             for (MesApsBatchAllocationDTO source : receive.getApsBatchAllocations()) {
@@ -867,6 +911,15 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                 || !Objects.equals(existing.getPlanNo(), incoming.getPlanNo())
                 || !Objects.equals(existing.getMatCode(), incoming.getMatCode())
                 || !Objects.equals(existing.getFactoryCode(), incoming.getFactoryCode())
+                || !Objects.equals(existing.getFormalPlanContractNo(), incoming.getFormalPlanContractNo())
+                || !Objects.equals(existing.getFormalPlanContractVersion(), incoming.getFormalPlanContractVersion())
+                || !Objects.equals(existing.getFormalPlanContractFingerprint(),
+                incoming.getFormalPlanContractFingerprint())
+                || !Objects.equals(existing.getPlanningPolicyId(), incoming.getPlanningPolicyId())
+                || !Objects.equals(existing.getPlanningPolicyVersion(), incoming.getPlanningPolicyVersion())
+                || !Objects.equals(existing.getPlanningPolicyFingerprint(), incoming.getPlanningPolicyFingerprint())
+                || !Objects.equals(existing.getMrpAuthority(), incoming.getMrpAuthority())
+                || !Objects.equals(existing.getProductionOrder(), incoming.getProductionOrder())
                 || !sameDecimal(existing.getNoticeNum(), incoming.getNoticeNum())) {
             throw new CheckedException("生产计划下达请求号已使用，但载荷指纹或核心计划事实不一致");
         }
@@ -919,7 +972,9 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         if (existing != null) {
             if (!Objects.equals(existing.getSourceInspectionType(), receive.getSourceInspectionType())
                     || !Objects.equals(existing.getSourceInspectionTaskId(), receive.getSourceInspectionTaskId())
-                    || !Objects.equals(existing.getSourceHandleRecordId(), receive.getSourceHandleRecordId())) {
+                    || !Objects.equals(existing.getSourceHandleRecordId(), receive.getSourceHandleRecordId())
+                    || StrUtil.isNotBlank(existing.getSourceProduceTaskCode())
+                    && !Objects.equals(existing.getSourceProduceTaskCode(), StrUtil.trim(receive.getSourceProduceTaskCode()))) {
                 throw new CheckedException("返工请求号已被其他质量处置使用");
             }
             return existing.getCode();
@@ -928,7 +983,9 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                 || receive.getNoticeNum().signum() <= 0) {
             throw new CheckedException("返工必须提供原生产工单和大于0的返工数量");
         }
-        if (!Set.of("PROCEDURE", "PRODUCT").contains(receive.getSourceInspectionType().toUpperCase(Locale.ROOT))) {
+        String inspectionType = StrUtil.trim(receive.getSourceInspectionType());
+        inspectionType = inspectionType == null ? null : inspectionType.toUpperCase(Locale.ROOT);
+        if (!Set.of("PROCEDURE", "PRODUCT").contains(inspectionType)) {
             throw new CheckedException("当前仅允许过程检或成品检处置生成MES返工工单");
         }
         MesTaskEntity source = this.getOne(new LambdaQueryWrapper<MesTaskEntity>()
@@ -951,23 +1008,24 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         } catch (Exception exception) {
             throw new CheckedException("原生产工单工艺路线快照损坏，不能生成返工工单");
         }
-        String requestedProcess = StrUtil.trim(receive.getReworkProcessCode());
-        MdmProcessRouteWorkingDTO reworkRoute = sourceRoute.stream()
-                .filter(item -> StrUtil.isNotBlank(requestedProcess)
-                        && requestedProcess.equals(StrUtil.blankToDefault(item.getProcessCode(), item.getRouteCode())))
-                .findFirst()
-                .orElseGet(() -> sourceRoute.stream()
-                        .filter(item -> item.getNextRouteCode() == null || item.getNextRouteCode().length == 0)
-                        .findFirst().orElse(null));
-        if (reworkRoute == null || StrUtil.isNotBlank(requestedProcess)
-                && !requestedProcess.equals(StrUtil.blankToDefault(reworkRoute.getProcessCode(), reworkRoute.getRouteCode()))) {
-            throw new CheckedException("指定返工工序不在原工单冻结路线中：" + requestedProcess);
-        }
+        ReworkRouteSelection selection = selectReworkRoute(source, sourceRoute, receive);
+        MdmProcessRouteWorkingDTO reworkRoute = selection.route();
         String processCode = StrUtil.blankToDefault(reworkRoute.getProcessCode(), reworkRoute.getRouteCode());
         reworkRoute.setPreRouteCode(new String[0]);
         reworkRoute.setNextRouteCode(new String[0]);
+        // 新返工图是独立的单节点图，两套关系必须同时裁剪；已批准的历史图不在下达时修写。
+        reworkRoute.setPreRouteNodeCodes(new String[0]);
+        reworkRoute.setNextRouteNodeCodes(new String[0]);
         reworkRoute.setOrderNum(1);
         reworkRoute.setRouteOrder(1);
+        reworkRoute.setLastRoute(Boolean.TRUE);
+        reworkRoute.setOverlapEnabled(Boolean.FALSE);
+        reworkRoute.setTransferBatchQuantity(null);
+        // 正式返工是QMS批准的独立工单，原正常路线的前序时间规则不能在缺少跨工单来源证据时移植。
+        reworkRoute.setTimeCheck(Boolean.FALSE);
+        reworkRoute.setTimeVal(null);
+        reworkRoute.setTimingRulesJson(null);
+        reworkRoute.setNodeTimingRulesJson(null);
         // 返工完成后由返工协调单生成独立复检，避免普通首/中/末检规则提前把返工工序锁死。
         reworkRoute.setIsInspection("0");
 
@@ -980,14 +1038,27 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         }
         rework.setResourceType("REWORK");
         rework.setReworkMaterialPlanId(null);
+        // 二次返工可继承原生产工程版本和本次选定的原实际节点，
+        // 但不得继承上一张返工单的双岗决策；每张新单都必须重新批准原标识及SOP/参数口径。
+        rework.setReworkIdentifierScopeSnapshot(null);
+        rework.setReworkIdentifierScopeFingerprint(null);
+        rework.setReworkEngineeringMode(null);
+        rework.setReworkEngineeringOverrideId(null);
+        rework.setReworkEngineeringOverrideHash(null);
+        rework.setReworkEngineeringScopeSnapshot(null);
+        rework.setReworkEngineeringScopeFingerprint(null);
         rework.setBomSnapshot(reworkMaterialPlans.originalBom(source));
         rework.setResourceId(String.valueOf(receive.getSourceInspectionTaskId()));
         rework.setReworkRequestId(requestId);
         rework.setSourceTaskCode(source.getCode());
-        rework.setSourceInspectionType(receive.getSourceInspectionType().toUpperCase(Locale.ROOT));
+        rework.setSourceProduceTaskCode(selection.sourceProduceTaskCode());
+        rework.setSourceInspectionType(inspectionType);
         rework.setSourceInspectionTaskId(receive.getSourceInspectionTaskId());
         rework.setSourceHandleRecordId(receive.getSourceHandleRecordId());
         rework.setReworkProcessCode(processCode);
+        rework.setReworkRouteNodeCode(selection.routeNodeCode());
+        // 每张正式返工都必须由新的双岗执行方案明确批准时间口径，不能继承上游返工单的决策。
+        rework.setReworkTimingPolicySnapshot(null);
         rework.setReworkReason(StrUtil.trim(receive.getReworkReason()));
         rework.setReworkCallbackStatus("PENDING");
         rework.setReworkCallbackCount(0);
@@ -997,6 +1068,17 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         rework.setReworkQualifiedNum(BigDecimal.ZERO);
         rework.setReworkRejectedNum(BigDecimal.ZERO);
         rework.setProcessRouteSnapshot(JSONUtil.toJsonStr(List.of(reworkRoute)));
+        if (StrUtil.isNotBlank(selection.routeNodeCode())) {
+            // 返工创建就核原节点正式SOP证据，不让用户完成方案复核后才在下达时发现来源不可用。
+            sopFreezeService.validateReworkSnapshot(rework, List.of(reworkRoute));
+            MesProcessParameterStandardFreezeService.FrozenBundle inheritedParameters =
+                    parameterStandardFreezeService.inheritReworkNode(source, selection.sourceProduceTask(),
+                            rework, reworkRoute);
+            rework.setProcessParameterStandardNo(inheritedParameters.catalog().getStandardNo());
+            rework.setProcessParameterStandardVersion(inheritedParameters.catalog().getVersionNo());
+            rework.setProcessParameterStandardSnapshot(inheritedParameters.snapshot());
+            rework.setProcessParameterSnapshotFingerprint(inheritedParameters.fingerprint());
+        }
         rework.setMaterialReservationSnapshot(null);
         rework.setApsOperationSnapshot(null);
         rework.setApsTaskId(null);
@@ -1018,7 +1100,9 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         rework.setStatus(MesTaskStatusEnum.CREATE.name());
         rework.setPlanStartDate(LocalDateTime.now());
         rework.setPlanEndDate(LocalDateTime.now().plusDays(1));
-        this.save(rework);
+        if (!this.save(rework)) {
+            throw new CheckedException("返工工单保存失败，请保留原返工请求号重试");
+        }
         if (source.getPlanNo() != null || source.getApsBatchNo() != null) {
             sourceQuantityService.record(source, "REWORK-CREATED:" + requestId,
                     MesSourceQuantityKind.REWORK_CREATED, receive.getNoticeNum(), requestId,
@@ -1026,6 +1110,75 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                             + "】，原工单【" + source.getCode() + "】");
         }
         return rework.getCode();
+    }
+
+    /**
+     * 正式返工先锁定原实际工序任务，再解析稳定节点。主工序编码只用于核对和兼容旧唯一路线，
+     * 不能在重复主工序路线里用findFirst猜选某一次加工。
+     */
+    private ReworkRouteSelection selectReworkRoute(MesTaskEntity source,
+                                                    List<MdmProcessRouteWorkingDTO> sourceRoute,
+                                                    MesTaskReceiveDTO receive) {
+        boolean nodeGraph = sourceRoute.stream().anyMatch(route -> StrUtil.isNotBlank(route.getRouteNodeCode()));
+        String requestedProcess = StrUtil.trim(receive.getReworkProcessCode());
+        String sourceProduceTaskCode = StrUtil.trim(receive.getSourceProduceTaskCode());
+        MesProduceTaskEntity sourceProduceTask = null;
+        if (StrUtil.isNotBlank(sourceProduceTaskCode)) {
+            List<MesProduceTaskEntity> matches = produceTaskService.list(
+                    new LambdaQueryWrapper<MesProduceTaskEntity>()
+                            .eq(MesProduceTaskEntity::getTenantId, source.getTenantId())
+                            .eq(MesProduceTaskEntity::getFactoryCode, source.getFactoryCode())
+                            .eq(MesProduceTaskEntity::getTaskCode, source.getCode())
+                            .eq(MesProduceTaskEntity::getCode, sourceProduceTaskCode));
+            if (matches.size() != 1) {
+                throw new CheckedException("返工来源实际工序任务未唯一归属原生产工单：" + sourceProduceTaskCode);
+            }
+            sourceProduceTask = matches.get(0);
+            if (StrUtil.isNotBlank(requestedProcess)
+                    && !requestedProcess.equals(sourceProduceTask.getRouteCode())) {
+                throw new CheckedException("质量处置返工工序与原实际工序任务不一致："
+                        + requestedProcess + "/" + sourceProduceTask.getRouteCode());
+            }
+            requestedProcess = sourceProduceTask.getRouteCode();
+        }
+
+        String requestedNode = sourceProduceTask == null ? null
+                : StrUtil.trim(sourceProduceTask.getSourceRouteNodeCode());
+        if (nodeGraph && StrUtil.isBlank(requestedNode)) {
+            throw new CheckedException("原生产工单使用稳定节点执行，正式返工必须携带原实际工序任务及节点身份");
+        }
+        List<MdmProcessRouteWorkingDTO> candidates;
+        if (StrUtil.isNotBlank(requestedNode)) {
+            String exactNode = requestedNode;
+            candidates = sourceRoute.stream().filter(route -> exactNode.equals(route.getRouteNodeCode())).toList();
+        } else if (StrUtil.isNotBlank(requestedProcess)) {
+            String exactProcess = requestedProcess;
+            candidates = sourceRoute.stream().filter(route -> exactProcess.equals(
+                    StrUtil.blankToDefault(route.getProcessCode(), route.getRouteCode()))).toList();
+        } else {
+            candidates = sourceRoute.stream().filter(route ->
+                    nodeGraph ? route.getNextRouteNodeCodes() != null && route.getNextRouteNodeCodes().length == 0
+                            : route.getNextRouteCode() == null || route.getNextRouteCode().length == 0).toList();
+        }
+        if (candidates.size() != 1) {
+            throw new CheckedException(StrUtil.isNotBlank(requestedNode)
+                    ? "原实际工序任务未唯一匹配冻结路线节点：" + requestedNode
+                    : "返工工序在原冻结路线中缺失或不唯一，必须从具体实际工序任务发起：" + requestedProcess);
+        }
+        MdmProcessRouteWorkingDTO route = candidates.get(0);
+        String process = StrUtil.blankToDefault(route.getProcessCode(), route.getRouteCode());
+        if (sourceProduceTask != null && (!Objects.equals(process, sourceProduceTask.getRouteCode())
+                || (StrUtil.isNotBlank(requestedNode) && !Objects.equals(route.getRouteNodeCode(), requestedNode)))) {
+            throw new CheckedException("返工来源实际工序与原冻结路线节点/主工序不一致");
+        }
+        return new ReworkRouteSelection(route, sourceProduceTask, sourceProduceTaskCode,
+                StrUtil.trim(route.getRouteNodeCode()));
+    }
+
+    private record ReworkRouteSelection(MdmProcessRouteWorkingDTO route,
+                                        MesProduceTaskEntity sourceProduceTask,
+                                        String sourceProduceTaskCode,
+                                        String routeNodeCode) {
     }
 
     @Override
@@ -1062,17 +1215,19 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
             command.setProcessCode(produceTask.getRouteCode());
             command.setProcessName(produceTask.getRouteName());
             R<Long> response = remoteQmsReworkService.mesComplete(command);
-            if (response == null || response.getData() == null) {
+            if (response == null || !response.isOk() || response.getData() == null) {
                 throw new IllegalStateException(response == null ? "QMS未返回复检任务" : response.getMsg());
             }
-            this.update(new LambdaUpdateWrapper<MesTaskEntity>()
+            if (!this.update(new LambdaUpdateWrapper<MesTaskEntity>()
                     .eq(MesTaskEntity::getId, task.getId())
                     .set(MesTaskEntity::getReworkCallbackStatus, "SUCCEEDED")
                     .set(MesTaskEntity::getReworkCallbackMessage, "已创建返工复检任务")
                     .set(MesTaskEntity::getReworkCallbackCount, callbackCount)
                     .set(MesTaskEntity::getReinspectionTaskId, response.getData())
                     .set(MesTaskEntity::getReinspectionStatus, "WAIT")
-                    .set(MesTaskEntity::getReinspectionMessage, "等待QMS返工复检结论"));
+                    .set(MesTaskEntity::getReinspectionMessage, "等待QMS返工复检结论"))) {
+                throw new CheckedException("返工完工回传成功但本地复检事实保存失败");
+            }
             return response.getData();
         } catch (Exception exception) {
             this.update(new LambdaUpdateWrapper<MesTaskEntity>()
@@ -1276,11 +1431,67 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
             mesTask.setApsBatchFingerprint(persisted.getApsBatchFingerprint());
             mesTask.setFactoryCode(persisted.getFactoryCode());
         }
+        if (persisted.getEngineeringReleaseId() != null) {
+            assertEngineeringSourceUnchanged(persisted, mesTask);
+            // 工程版本工单的计划与产品事实只能由上游受控变更，不接受MES通用编辑入口覆盖。
+            mesTask.setPlanNo(persisted.getPlanNo());
+            mesTask.setProductionOrder(persisted.getProductionOrder());
+            mesTask.setType(persisted.getType());
+            mesTask.setMatCode(persisted.getMatCode());
+            mesTask.setMatName(persisted.getMatName());
+            mesTask.setMatSpec(persisted.getMatSpec());
+            mesTask.setNoticeNum(persisted.getNoticeNum());
+            mesTask.setPlanStartDate(persisted.getPlanStartDate());
+            mesTask.setPlanEndDate(persisted.getPlanEndDate());
+            mesTask.setWorkshopCode(persisted.getWorkshopCode());
+            mesTask.setWorkshopName(persisted.getWorkshopName());
+            mesTask.setFactoryCode(persisted.getFactoryCode());
+            mesTask.setEngineeringReleaseId(persisted.getEngineeringReleaseId());
+            mesTask.setEngineeringContentHash(persisted.getEngineeringContentHash());
+            mesTask.setEngineeringVersionNo(persisted.getEngineeringVersionNo());
+            mesTask.setEngineeringBundleSnapshot(persisted.getEngineeringBundleSnapshot());
+            mesTask.setProcessRouteId(persisted.getProcessRouteId());
+            mesTask.setProcessRouteCode(persisted.getProcessRouteCode());
+            mesTask.setProcessRouteSnapshot(persisted.getProcessRouteSnapshot());
+            mesTask.setBomId(persisted.getBomId());
+            mesTask.setBomVersion(persisted.getBomVersion());
+            mesTask.setBomSnapshot(persisted.getBomSnapshot());
+        }
         mesTask.setUnInStockNum(BigDecimal.ZERO);
 //        if (MesTaskTypeEnum.PRODUCT.name().equals(mesTask.getType())) {
 //            mesTask.setUnInStockNum(mesTask.getNoticeNum());
 //        }
-        this.updateById(mesTask);
+        if (!this.updateById(mesTask)) {
+            throw new CheckedException("生产工单保存失败，请刷新后重试");
+        }
+    }
+
+    /**
+     * 工程版本工单拒绝客户端携带的不同源事实，避免“服务端静默覆盖后看似保存成功”。
+     * 对旧客户端未发送的新字段保持兼容，但最终始终回填数据库中的冻结值。
+     */
+    private void assertEngineeringSourceUnchanged(MesTaskEntity persisted, MesTaskEntity incoming) {
+        boolean engineeringChanged = incoming.getEngineeringReleaseId() != null
+                && !Objects.equals(persisted.getEngineeringReleaseId(), incoming.getEngineeringReleaseId());
+        engineeringChanged |= StrUtil.isNotBlank(incoming.getEngineeringContentHash())
+                && !Objects.equals(persisted.getEngineeringContentHash(), incoming.getEngineeringContentHash());
+        engineeringChanged |= incoming.getEngineeringVersionNo() != null
+                && !Objects.equals(persisted.getEngineeringVersionNo(), incoming.getEngineeringVersionNo());
+        boolean productChanged = StrUtil.isNotBlank(incoming.getMatCode())
+                && !Objects.equals(persisted.getMatCode(), incoming.getMatCode());
+        boolean quantityChanged = incoming.getNoticeNum() != null
+                && !sameDecimal(persisted.getNoticeNum(), incoming.getNoticeNum());
+        boolean routeChanged = incoming.getProcessRouteId() != null
+                && !Objects.equals(persisted.getProcessRouteId(), incoming.getProcessRouteId());
+        routeChanged |= StrUtil.isNotBlank(incoming.getProcessRouteCode())
+                && !Objects.equals(persisted.getProcessRouteCode(), incoming.getProcessRouteCode());
+        boolean bomChanged = incoming.getBomId() != null
+                && !Objects.equals(persisted.getBomId(), incoming.getBomId());
+        bomChanged |= StrUtil.isNotBlank(incoming.getBomVersion())
+                && !Objects.equals(persisted.getBomVersion(), incoming.getBomVersion());
+        if (engineeringChanged || productChanged || quantityChanged || routeChanged || bomChanged) {
+            throw new CheckedException("已绑定工程版本的工单禁止在MES修改工程版本、产品、数量、路线或BOM；请从PLAN发起受控变更");
+        }
     }
 
 
@@ -1318,6 +1529,9 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         if (!MesTaskStatusEnum.CREATE.name().equals(mesTask.getStatus())) {
             throw new CheckedException("生产工单已下达或状态已变化，禁止重复下达");
         }
+        // 普通生产下达不重选今日默认路线；正式REWORK仍沿用原批准快照合同。
+        MesEngineeringPackageService.FrozenEngineering engineering = "REWORK".equals(mesTask.getResourceType())
+                ? null : engineeringPackages.verifyBeforeIssue(mesTask);
         reworkMaterialPlans.assertReady(mesTask);
         if (produceTaskService.count(new LambdaQueryWrapper<MesProduceTaskEntity>()
                 .eq(MesProduceTaskEntity::getTaskCode, mesTask.getCode())) > 0) {
@@ -1332,8 +1546,30 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         // 根据工艺路线保存生产工序任务表
         List<MdmProcessRouteWorkingDTO> routeList = JSONUtil.toList(mesTask.getProcessRouteSnapshot(), MdmProcessRouteWorkingDTO.class);
         normalizeRouteGraph(routeList);
-        MesProcessParameterStandardFreezeService.FrozenBundle parameterStandard =
-                parameterStandardFreezeService.freeze(mesTask, routeList);
+        // 新正式返工在QMS派发时已经用原实际工序锁定稳定节点，可冻结单节点执行合同；
+        // 升级前没有节点身份的历史返工继续沿原合同，不能在下达时借当前MDM补造节点。
+        boolean freezeExecutionGraph = !"REWORK".equals(mesTask.getResourceType())
+                || StrUtil.isNotBlank(mesTask.getReworkRouteNodeCode());
+        if (freezeExecutionGraph) {
+            mesTask.setProcessRouteSnapshot(MesRouteExecutionFreeze.prepare(mesTask.getProcessRouteSnapshot(), routeList));
+        }
+        boolean exactNodeRework = "REWORK".equals(mesTask.getResourceType())
+                && StrUtil.isNotBlank(mesTask.getReworkRouteNodeCode());
+        MesProcessParameterStandardFreezeService.FrozenBundle parameterStandard = exactNodeRework
+                ? parameterStandardFreezeService.validateReworkSnapshot(mesTask, routeList)
+                : engineering == null ? parameterStandardFreezeService.freeze(mesTask, routeList)
+                : parameterStandardFreezeService.freezeFromEngineeringSnapshot(mesTask, routeList,
+                engineering.parameterCatalogSnapshot());
+        // 普通生产参数与SOP直接取工程批准包内的精确原版，不再按今日时间重新解析。
+        if (exactNodeRework) {
+            sopFreezeService.validateReworkSnapshot(mesTask, routeList);
+        } else if (engineering == null) {
+            sopFreezeService.freeze(mesTask, routeList);
+        } else {
+            sopFreezeService.freezeFromEngineeringSnapshot(mesTask, routeList,
+                    engineering.sopManifestSnapshot());
+        }
+        mesTask.setProcessRouteSnapshot(sopFreezeService.mergeFrozenSnapshot(mesTask.getProcessRouteSnapshot(), routeList));
         mesTask.setProcessParameterStandardNo(parameterStandard.catalog().getStandardNo());
         mesTask.setProcessParameterStandardVersion(parameterStandard.catalog().getVersionNo());
         mesTask.setProcessParameterStandardSnapshot(parameterStandard.snapshot());
@@ -1346,14 +1582,13 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
             } catch (Exception ex) {
                 throw new CheckedException("APS工序资源快照损坏，禁止下达生产任务");
             }
-            if (CollUtil.isEmpty(apsOperations) || apsOperations.stream().anyMatch(item ->
-                    Boolean.TRUE.equals(item.getHardBlocked()) || !Boolean.TRUE.equals(item.getLockStatus()))) {
+            if (CollUtil.isEmpty(apsOperations) || apsOperations.stream().anyMatch(item -> item == null
+                    || Boolean.TRUE.equals(item.getHardBlocked()) || !Boolean.TRUE.equals(item.getLockStatus()))) {
                 throw new CheckedException("APS工序尚未全部完成有效锁定，禁止下达生产任务");
             }
         }
-        Map<String, List<MesApsOperationSnapshotDTO>> apsByProcess = apsOperations.stream()
-                .filter(item -> StrUtil.isNotBlank(item.getProcessCode()))
-                .collect(Collectors.groupingBy(MesApsOperationSnapshotDTO::getProcessCode));
+        Map<String, MesApsOperationSnapshotDTO> apsByNode = hasApsSnapshot
+                ? MesApsRouteNodeMatcher.matchAll(apsOperations, routeList, mesTask.getProcessRouteCode()) : Map.of();
 
         if (CollUtil.isNotEmpty(routeList)) {
             routeList.forEach(route -> {
@@ -1364,11 +1599,14 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                 saveTask.setMatName(mesTask.getMatName());
                 saveTask.setMatSpec(mesTask.getMatSpec());
                 saveTask.setRouteCode(StrUtil.blankToDefault(route.getProcessCode(), route.getRouteCode()));
+                saveTask.setSourceRouteNodeCode(route.getRouteNodeCode());
                 saveTask.setRouteName(StrUtil.blankToDefault(route.getProcessName(), route.getRouteName()));
                 saveTask.setRouteType(route.getType());
                 saveTask.setRouteOrder(route.getRouteOrder());
-                saveTask.setPredecessorCodes(joinCodes(route.getPreRouteCode()));
-                saveTask.setSuccessorCodes(joinCodes(route.getNextRouteCode()));
+                saveTask.setPredecessorCodes(freezeExecutionGraph
+                        ? String.join(",", route.getPreRouteCode()) : joinCodes(route.getPreRouteCode()));
+                saveTask.setSuccessorCodes(freezeExecutionGraph
+                        ? String.join(",", route.getNextRouteCode()) : joinCodes(route.getNextRouteCode()));
                 saveTask.setOverlapEnabled(Boolean.TRUE.equals(route.getOverlapEnabled()));
                 saveTask.setTransferBatchQuantity(Boolean.TRUE.equals(route.getOverlapEnabled())
                         ? route.getTransferBatchQuantity() : null);
@@ -1385,13 +1623,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
 
                 saveTask.setWorksiteCodes(String.join(",", workCodes));
                 saveTask.setWorksiteNames(String.join(",", workNames));
-                String processCode = StrUtil.blankToDefault(route.getProcessCode(), route.getRouteCode());
-                Integer operationSeq = Optional.ofNullable(route.getOrderNum()).orElse(route.getRouteOrder());
-                List<MesApsOperationSnapshotDTO> candidates = apsByProcess.getOrDefault(processCode, List.of());
-                MesApsOperationSnapshotDTO aps = candidates.stream()
-                        .filter(item -> operationSeq != null && Objects.equals(operationSeq, item.getOperationSeq()))
-                        .findFirst()
-                        .orElse(candidates.size() == 1 ? candidates.get(0) : null);
+                MesApsOperationSnapshotDTO aps = apsByNode.get(MesApsRouteNodeMatcher.routeKey(route));
                 if (hasApsSnapshot && aps == null) {
                     throw new CheckedException(String.format("工序【%s】未匹配到唯一APS锁定结果，禁止下达生产任务", route.getRouteName()));
                 }
@@ -1431,13 +1663,17 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                 }
 
                 saveTask.setLastRoute(splitCodes(saveTask.getSuccessorCodes()).isEmpty());
+                if (freezeExecutionGraph) {
+                    MesRouteExecutionFreeze.apply(route, saveTask);
+                }
                 saveTask.setProcessRouteId(mesTask.getProcessRouteId());
                 saveTask.setProcessRouteSnapshot(mesTask.getProcessRouteSnapshot());
+                saveTask.setTimingRulesJson(route.getTimingRulesJson());
                 saveTask.setProcessRouteCode(mesTask.getProcessRouteCode());
                 MesProcessParameterStandardFreezeService.ProcessSnapshot processParameter =
-                        parameterStandard.processSnapshots().get(processCode);
+                        parameterStandard.nodeSnapshots().get(route.getRouteNodeCode());
                 if (processParameter == null) {
-                    throw new CheckedException("工序【" + processCode + "】缺少参数标准冻结结果，禁止下达生产任务");
+                    throw new CheckedException("路线节点【" + route.getRouteNodeCode() + "】缺少参数标准冻结结果，禁止下达生产任务");
                 }
                 saveTask.setProcessParameterStandardNo(parameterStandard.catalog().getStandardNo());
                 saveTask.setProcessParameterStandardVersion(parameterStandard.catalog().getVersionNo());
@@ -1455,12 +1691,21 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                 saveTaskList.add(saveTask);
             });
         }
-        // 保存工序任务
-        produceTaskService.saveBatch(saveTaskList);
+        // 先只保存原执行图，供子任务核真实父证据；参数目录仍随CREATE→ISSUE一次冻结。
+        // 不提前提交状态或整实体，避免触发参数标准只能在首次下达时写入的数据库守卫。
+        if (freezeExecutionGraph && !this.update(new LambdaUpdateWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getId, mesTask.getId())
+                .eq(MesTaskEntity::getTenantId, mesTask.getTenantId())
+                .eq(MesTaskEntity::getFactoryCode, mesTask.getFactoryCode())
+                .eq(MesTaskEntity::getStatus, MesTaskStatusEnum.CREATE.name())
+                .set(MesTaskEntity::getProcessRouteSnapshot, mesTask.getProcessRouteSnapshot()))) {
+            throw new CheckedException("工单原执行图冻结保存失败");
+        }
+        if (!produceTaskService.saveBatch(saveTaskList)) throw new CheckedException("工序任务冻结保存失败");
 
         // 更新生产工单状态
         mesTask.setStatus(MesTaskStatusEnum.ISSUE.name());
-        this.updateById(mesTask);
+        if (!this.updateById(mesTask)) throw new CheckedException("生产工单下达状态保存失败");
 
         if (StrUtil.isNotEmpty(mesTask.getPlanNo())) {
             planMesStatusUpdate(mesTask);
@@ -1477,11 +1722,19 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         if (CollUtil.isEmpty(routeList)) {
             return;
         }
+        boolean nodeGraph = routeList.stream().anyMatch(route -> StrUtil.isNotBlank(route.getRouteNodeCode())
+                || route.getPreRouteNodeCodes() != null || route.getNextRouteNodeCodes() != null);
         Map<String, MdmProcessRouteWorkingDTO> byCode = new LinkedHashMap<>();
         for (MdmProcessRouteWorkingDTO route : routeList) {
-            String code = StrUtil.blankToDefault(route.getProcessCode(), route.getRouteCode());
-            if (StrUtil.isBlank(code) || byCode.putIfAbsent(code, route) != null) {
-                throw new CheckedException("生产工艺路线快照存在空编码或重复工序：" + code);
+            String process = StrUtil.blankToDefault(route.getProcessCode(), route.getRouteCode());
+            String code = nodeGraph ? route.getRouteNodeCode() : process;
+            if (StrUtil.isBlank(process) || StrUtil.isBlank(code)
+                    || nodeGraph && !code.matches("RN-[1-9][0-9]{0,18}")
+                    || nodeGraph && (route.getPreRouteNodeCodes() == null || route.getNextRouteNodeCodes() == null)
+                    || byCode.putIfAbsent(code, route) != null) {
+                throw new CheckedException(nodeGraph
+                        ? "生产工艺路线节点身份、主工序或节点关系不完整/重复：" + code
+                        : "生产工艺路线快照存在空编码或重复工序：" + code);
             }
         }
         Map<String, LinkedHashSet<String>> predecessors = new LinkedHashMap<>();
@@ -1490,32 +1743,51 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
             predecessors.put(code, new LinkedHashSet<>());
             successors.put(code, new LinkedHashSet<>());
         });
-        boolean hasExplicitRelation = routeList.stream().anyMatch(route ->
+        boolean hasExplicitRelation = !nodeGraph && routeList.stream().anyMatch(route ->
                 route.getPreRouteCode() != null && route.getPreRouteCode().length > 0
                         || route.getNextRouteCode() != null && route.getNextRouteCode().length > 0);
         List<MdmProcessRouteWorkingDTO> legacyOrder = routeList.stream().sorted(Comparator
                 .comparingInt((MdmProcessRouteWorkingDTO route) -> Optional.ofNullable(route.getOrderNum())
                         .orElse(Optional.ofNullable(route.getRouteOrder()).orElse(Integer.MAX_VALUE)))
-                .thenComparing(route -> StrUtil.blankToDefault(route.getProcessCode(), route.getRouteCode()))).toList();
+                .thenComparing(route -> nodeGraph ? route.getRouteNodeCode()
+                        : StrUtil.blankToDefault(route.getProcessCode(), route.getRouteCode()))).toList();
         if (!hasExplicitRelation && legacyOrder.size() > 1) {
-            for (int index = 1; index < legacyOrder.size(); index++) {
-                legacyOrder.get(index).setPreRouteCode(new String[]{StrUtil.blankToDefault(
-                        legacyOrder.get(index - 1).getProcessCode(), legacyOrder.get(index - 1).getRouteCode())});
+            if (!nodeGraph) {
+                for (int index = 1; index < legacyOrder.size(); index++) {
+                    legacyOrder.get(index).setPreRouteCode(new String[]{StrUtil.blankToDefault(
+                            legacyOrder.get(index - 1).getProcessCode(), legacyOrder.get(index - 1).getRouteCode())});
+                }
             }
         }
-        byCode.forEach((code, route) -> splitCodes(joinCodes(route.getPreRouteCode())).forEach(predecessor -> {
+        byCode.forEach((code, route) -> strictRouteCodes(
+                nodeGraph ? route.getPreRouteNodeCodes() : route.getPreRouteCode(),
+                nodeGraph ? "前置路线节点" : "前置工序").forEach(predecessor -> {
             if (!byCode.containsKey(predecessor)) {
-                throw new CheckedException("工序[" + code + "]引用不存在的前置工序[" + predecessor + "]");
+                throw new CheckedException((nodeGraph ? "节点[" : "工序[") + code + "]引用不存在的"
+                        + (nodeGraph ? "前置节点[" : "前置工序[") + predecessor + "]");
             }
             if (code.equals(predecessor)) {
-                throw new CheckedException("工序[" + code + "]存在自环");
+                throw new CheckedException((nodeGraph ? "节点[" : "工序[") + code + "]存在自环");
             }
             predecessors.get(code).add(predecessor);
             successors.get(predecessor).add(code);
         }));
+        if (nodeGraph) {
+            byCode.forEach((code, route) -> {
+                List<String> declared = strictRouteCodes(route.getNextRouteNodeCodes(), "后置路线节点");
+                if (!new LinkedHashSet<>(declared).equals(successors.get(code))) {
+                    throw new CheckedException("路线节点[" + code + "]前后置关系不是相互逆关系");
+                }
+            });
+        }
         long terminalCount = successors.values().stream().filter(Set::isEmpty).count();
         if (terminalCount != 1) {
             throw new CheckedException("生产工艺路线必须且只能有一道最终工序，禁止下达");
+        }
+        String terminalCode = successors.entrySet().stream().filter(entry -> entry.getValue().isEmpty())
+                .map(Map.Entry::getKey).findFirst().orElseThrow();
+        if (Boolean.TRUE.equals(byCode.get(terminalCode).getOverlapEnabled())) {
+            throw new CheckedException("最终路线节点没有后序，不能启用转移批量重叠");
         }
         Map<String, Integer> indegrees = predecessors.entrySet().stream().collect(Collectors.toMap(
                 Map.Entry::getKey, entry -> entry.getValue().size(), (a, b) -> a, LinkedHashMap::new));
@@ -1542,12 +1814,68 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         if (visited != routeList.size()) {
             throw new CheckedException("生产工艺路线快照存在环路，禁止下达");
         }
+        Map<String, String> timingModes = new HashMap<>();
+        byCode.forEach((code, route) -> timingModes.put(code, route.getType()));
+        boolean uniqueProcesses = routeList.stream().map(route -> StrUtil.blankToDefault(
+                        route.getProcessCode(), route.getRouteCode())).distinct().count() == routeList.size();
+        Map<String, String> nodeProcesses = nodeGraph ? byCode.entrySet().stream().collect(Collectors.toMap(
+                Map.Entry::getKey, entry -> StrUtil.blankToDefault(entry.getValue().getProcessCode(),
+                        entry.getValue().getRouteCode()), (left, right) -> left, LinkedHashMap::new)) : Map.of();
         byCode.forEach((code, route) -> {
-            route.setPreRouteCode(predecessors.get(code).toArray(String[]::new));
-            route.setNextRouteCode(successors.get(code).toArray(String[]::new));
+            if (nodeGraph) {
+                route.setPreRouteNodeCodes(predecessors.get(code).toArray(String[]::new));
+                route.setNextRouteNodeCodes(successors.get(code).toArray(String[]::new));
+                route.setPreRouteCode(projectProcesses(predecessors.get(code), nodeProcesses));
+                route.setNextRouteCode(projectProcesses(successors.get(code), nodeProcesses));
+            } else {
+                route.setPreRouteCode(predecessors.get(code).toArray(String[]::new));
+                route.setNextRouteCode(successors.get(code).toArray(String[]::new));
+            }
             route.setOrderNum(levels.get(code));
             route.setRouteOrder(levels.get(code));
+            if (nodeGraph) {
+                route.setNodeTimingRulesJson(com.kitex.mom.mdm.support.MdmRouteNodeTimingPolicy.normalize(
+                        route.getNodeTimingRulesJson(), Map.of(), code,
+                        com.kitex.mom.mdm.support.MdmProcessTimingPolicy.ancestors(code, predecessors), timingModes));
+                route.setTimingRulesJson(uniqueProcesses
+                        ? com.kitex.mom.mdm.support.MdmRouteNodeTimingPolicy.toLegacy(
+                        route.getNodeTimingRulesJson(), nodeProcesses) : null);
+            } else {
+                route.setTimingRulesJson(com.kitex.mom.mdm.support.MdmProcessTimingPolicy
+                        .parse(route.getTimingRulesJson()).normalize(code,
+                                com.kitex.mom.mdm.support.MdmProcessTimingPolicy.ancestors(code, predecessors)));
+                com.kitex.mom.mdm.support.MdmProcessTimingPolicy.parse(route.getTimingRulesJson())
+                        .validateModes(code, timingModes);
+            }
         });
+    }
+
+    private List<String> strictRouteCodes(String[] values, String label) {
+        if (values == null || values.length == 0) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        Set<String> unique = new LinkedHashSet<>();
+        for (String value : values) {
+            String normalized = StrUtil.trim(value);
+            if (StrUtil.isBlank(normalized) || !Objects.equals(value, normalized) || !unique.add(normalized)) {
+                throw new CheckedException(label + "包含空值、首尾空格或重复项");
+            }
+            result.add(normalized);
+        }
+        return result;
+    }
+
+    private String[] projectProcesses(Collection<String> nodes, Map<String, String> nodeProcesses) {
+        List<String> result = new ArrayList<>();
+        for (String node : nodes) {
+            String process = nodeProcesses.get(node);
+            if (StrUtil.isBlank(process)) {
+                throw new CheckedException("路线节点[" + node + "]缺少主工序投影");
+            }
+            result.add(process);
+        }
+        return result.toArray(String[]::new);
     }
 
     private String joinCodes(String[] values) {
@@ -1586,9 +1914,9 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                 // 设置了规则才创建
                 if (Objects.nonNull(inspectionRule) && containsInspectionType(inspectionRule,
                         ProcedureLabelTypeEnum.FIRST)) {
-                    String sourceRequestId = "MES_QMS:" + task.getCode() + ":FIRST";
+                    String sourceRequestId = "MES_QMS_V2:" + task.getCode() + ":FIRST";
                     InspectionProcedureCreateParam createParam = null;
-                    R<Long> procedureResult = null;
+                    Long procedureTaskId = null;
                     String genFlag = "1";
                     String msg = "生成质检任务成功";
                     try {
@@ -1599,10 +1927,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                             throw new CheckedException("未匹配到已发布的工序质检标准");
                         }
                         createParam = buildCreateParam(task, standard, sourceRequestId);
-                        procedureResult = remoteProcedureService.create(createParam);
-                        if (procedureResult == null || procedureResult.getData() == null) {
-                            throw new CheckedException(procedureResult == null ? "QMS未返回结果" : procedureResult.getMsg());
-                        }
+                        procedureTaskId = qmsInspectionCoordinator.create(createParam, task.getFactoryCode());
                     } catch (Exception exception) {
                         genFlag = "0";
                         msg = "生成质检任务失败：" + rootMessage(exception);
@@ -1610,7 +1935,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                     MesInspectionGenRecordEntity record = new MesInspectionGenRecordEntity();
                     record.setTaskCode(task.getTaskCode());
                     record.setProduceTaskCode(task.getCode());
-                    record.setInspectionId(procedureResult == null ? null : procedureResult.getData());
+                    record.setInspectionId(procedureTaskId);
                     record.setSourceRequestId(sourceRequestId);
                     record.setRuleCode(inspectionRule.getCode());
                     record.setRuleName(inspectionRule.getName());
@@ -1810,7 +2135,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
      * @return R
      */
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public Boolean inWms(MesTaskInWmsDTO mesTaskInWmsDTO) {
         String actualFactory = factoryAccess.require("write");
         if (mesTaskInWmsDTO == null || mesTaskInWmsDTO.getId() == null
@@ -1823,13 +2148,16 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         if (requestId.length() > 64) throw new CheckedException("入库幂等号长度不能超过64");
         String fingerprint = inWmsFingerprint(mesTaskInWmsDTO);
         taskInWmsReceiptMapper.lockRequest(requestId);
-        MesTaskInWmsReceiptEntity existing = taskInWmsReceiptMapper.selectOne(
-                new LambdaQueryWrapper<MesTaskInWmsReceiptEntity>()
-                        .eq(MesTaskInWmsReceiptEntity::getRequestId, requestId), false);
-        if (existing != null) {
-            if (!Objects.equals(existing.getRequestFingerprint(), fingerprint)) {
-                throw new CheckedException("入库幂等号已使用且载荷不一致：" + requestId);
+        if (isInWmsV2(mesTaskInWmsDTO)) {
+            MesTaskInWmsCommandEntity original = taskInWmsCommands.original(mesTaskInWmsDTO);
+            if (original == null || "CANCELLED_BEFORE_DISPATCH".equals(original.getStatus())) {
+                throw new CheckedException("原入库命令未登记或已经结束，禁止执行");
             }
+        }
+        MesTaskInWmsReceiptEntity existing = taskInWmsReceiptMapper.permanentRequest(
+                com.kitex.common.data.tenant.TenantContextHolder.getTenantId(), requestId);
+        if (existing != null) {
+            assertInWmsReceipt(existing, mesTaskInWmsDTO, actualFactory, fingerprint);
             return true;
         }
         String expectedSourceFingerprint = StrUtil.trim(mesTaskInWmsDTO.getExpectedSourceFingerprint());
@@ -1873,6 +2201,10 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         }
         // 更新工单信息
         boolean updated = this.updateById(mesTask);
+        if (!updated) {
+            // WMS可能已经提交；不能正常返回false并提交本地部分变更，更不能提示换号重做。
+            throw new CheckedException("工单入库结果未能在MES落账，请保留原请求号核对，不要另号重复提交");
+        }
         if (updated) {
             MesTaskInWmsReceiptEntity receipt = new MesTaskInWmsReceiptEntity()
                     .setRequestId(requestId).setRequestFingerprint(inWmsFingerprint(mesTaskInWmsDTO))
@@ -1913,6 +2245,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                 || command.getInWmsNum().signum() <= 0) {
             throw new CheckedException("请选择生产工单并填写正数入库数量");
         }
+        exactWmsInboundQuantity(command.getInWmsNum());
         MesTaskEntity task = Optional.ofNullable(this.getOne(new LambdaQueryWrapper<MesTaskEntity>()
                         .eq(MesTaskEntity::getId, command.getId())
                         .eq(MesTaskEntity::getFactoryCode, actualFactory), false))
@@ -2080,10 +2413,12 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         MdmMaterialEntity mat = Optional.ofNullable(matService.getDetails(task.getMatCode()).getData())
                 .orElseThrow(() -> new CheckedException("物料信息查询失败"));
         // 主表处理逻辑
-        double inNum = mesTaskInWmsDTO.getInWmsNum().doubleValue();
+        double inNum = exactWmsInboundQuantity(mesTaskInWmsDTO.getInWmsNum());
         WmsInNoticeEntity inNotice = new WmsInNoticeEntity();
         if (StrUtil.isNotBlank(mesTaskInWmsDTO.getRequestId())) {
-            inNotice.setSourceRequestId("MES_TASK_IN_WMS:" + mesTaskInWmsDTO.getRequestId().trim());
+            // 新发送域不混用旧请求，避免把旧远端在途补造为“从未发送”。
+            String prefix = isInWmsV2(mesTaskInWmsDTO) ? "MES_TASK_IN_WMS_V2:" : "MES_TASK_IN_WMS:";
+            inNotice.setSourceRequestId(prefix + mesTaskInWmsDTO.getRequestId().trim());
             inNotice.setSourceRequestFingerprint(inWmsFingerprint(mesTaskInWmsDTO));
         }
         inNotice.setNoticeInNum(inNum);
@@ -2113,7 +2448,15 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         inNoticeDetail.setSourceQualityEvidenceFingerprint(qualityEvidence.fingerprint());
         inNoticeDetail.setSourceQualityEvidenceSnapshot(qualityEvidence.snapshotJson());
         inNotice.setDetailList(Collections.singletonList(inNoticeDetail));
-        inNoticeService.save(inNotice);
+        if (isInWmsV2(mesTaskInWmsDTO)) {
+            // 先独立提交；WMS超时、PLAN失败或MES回滚都不能抹去曾开始发送的事实。
+            taskInWmsCommands.markOutbound(mesTaskInWmsDTO);
+        }
+        R<Boolean> response = inNoticeService.save(inNotice);
+        if (response == null || response.getCode() != 0 || !Boolean.TRUE.equals(response.getData())) {
+            // 只有明确业务成功才继续PLAN回传与MES入库回执；响应失败不证明WMS未执行。
+            throw new CheckedException("WMS未明确确认入库通知成功，请保留原请求号核对，不要另号重复提交");
+        }
     }
 
     /**
@@ -2198,7 +2541,9 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                 }
                 assignedTarget = assignedTarget.add(target);
                 allocation.setInStockQuantity(target);
-                apsBatchAllocationMapper.updateById(allocation);
+                if (apsBatchAllocationMapper.updateById(allocation) != 1) {
+                    throw new CheckedException("APS来源入库数量保存失败，请保留原入库请求号核对");
+                }
                 if (delta.signum() > 0) {
                     callbacks.add(lifeCycleCallback(task, allocation.getIssueNo(), allocation.getIssueId(),
                             "IN_WMS:" + mesTaskInWmsDTO.getRequestId(), null,
@@ -2216,9 +2561,11 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                             task.getCode(), mesTaskInWmsDTO.getInWmsNum(), mesTaskInWmsDTO.getWarehouseCode(),
                             mesTaskInWmsDTO.getWarehouseName(), LocalDate.now())));
         }
-        Boolean statusUpdate = callbacks.isEmpty() || Boolean.TRUE.equals(remotePlnIssueService.edit(callbacks).getData());
-        if (statusUpdate == null || !statusUpdate) {
-            throw new CheckedException(String.format("%s的工单推送生产计划模块失败", task.getCode()));
+        if (!callbacks.isEmpty()) {
+            R<Boolean> response = remotePlnIssueService.edit(callbacks);
+            if (response == null || response.getCode() != 0 || !Boolean.TRUE.equals(response.getData())) {
+                throw new CheckedException(String.format("%s的工单未取得计划模块成功回执，请保留原入库请求号核对", task.getCode()));
+            }
         }
     }
 
@@ -2226,6 +2573,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     @Transactional(rollbackFor = Exception.class)
     public void feedbackPlanCompletion(MesTaskEntity task, BigDecimal completeNum) {
         if (task == null || StrUtil.isBlank(task.getPlanNo())) return;
+        String completionEvent = "COMPLETE_V" + Objects.requireNonNullElse(task.getCompletionVersion(), 0);
         List<MesApsBatchAllocationEntity> allocations = batchAllocations(task, true);
         List<OmsOrderLifeCycleDTO> callbacks = new ArrayList<>();
         if (!allocations.isEmpty()) {
@@ -2243,14 +2591,16 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                         .divide(totalAllocated, 8, RoundingMode.HALF_UP).min(allocation.getAllocatedQuantity());
                 assigned = assigned.add(target);
                 allocation.setCompletedQuantity(target);
-                apsBatchAllocationMapper.updateById(allocation);
+                if (apsBatchAllocationMapper.updateById(allocation) != 1) {
+                    throw new CheckedException("来源计划完工归属量保存失败");
+                }
                 callbacks.add(lifeCycleCallback(task, allocation.getIssueNo(), allocation.getIssueId(),
-                        "COMPLETE", "3", OrderLongStateEnum.SCHEDULE.getCode(), null, LocalDate.now(),
+                        completionEvent, "3", OrderLongStateEnum.SCHEDULE.getCode(), null, LocalDate.now(),
                         String.format("APS批次【%s】MES工单【%s】已完工，批次完成量【%s】，来源归属完成量【%s】，操作时间【%s】",
                                 task.getApsBatchNo(), task.getCode(), completed, target, LocalDate.now())));
             }
         } else {
-            callbacks.add(lifeCycleCallback(task, task.getPlanNo(), null, "COMPLETE", "3",
+            callbacks.add(lifeCycleCallback(task, task.getPlanNo(), null, completionEvent, "3",
                     OrderLongStateEnum.SCHEDULE.getCode(), null, LocalDate.now(),
                     String.format("工单编号【%s】,已完工,总生产数量【%s】,操作时间【%s】",
                             task.getCode(), completeNum, LocalDate.now())));
@@ -2291,6 +2641,70 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         callback.setFinishTime(finishDate);
         callback.setContent(content);
         return callback;
+    }
+
+    /**
+     * 原号核账不重取今日BOM/质量/库存，不触发WMS或PLAN重投。
+     * 独立RC事务避免调用者旧快照漏掉已经提交的回执；缺回执保持UNKNOWN。
+     */
+    @Override
+    @org.springframework.security.access.prepost.PreAuthorize("@pms.hasPermission('mesTask:update')")
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW,
+            isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED, readOnly = true)
+    public MesTaskInWmsReceiptDTO resolveInWms(MesTaskInWmsDTO command) {
+        String factory = factoryAccess.require("write");
+        Long tenant = com.kitex.common.data.tenant.TenantContextHolder.getTenantId();
+        if (tenant == null || tenant <= 0 || command == null || command.getId() == null
+                || command.getId() <= 0 || StrUtil.isBlank(command.getRequestId())
+                || command.getRequestId().trim().length() > 64 || StrUtil.isBlank(command.getWarehouseCode())
+                || command.getInWmsNum() == null || command.getInWmsNum().signum() <= 0) {
+            throw new CheckedException("核账须原请求号、原工单、原仓库和原入库数量");
+        }
+        String requestId = command.getRequestId().trim();
+        MesTaskInWmsCommandEntity original = isInWmsV2(command) ? taskInWmsCommands.original(command) : null;
+        MesTaskInWmsReceiptEntity receipt = taskInWmsReceiptMapper.permanentRequest(tenant, requestId);
+        if (receipt != null) {
+            assertInWmsReceipt(receipt, command, factory, inWmsFingerprint(command));
+        }
+        boolean cancelled = original != null && "CANCELLED_BEFORE_DISPATCH".equals(original.getStatus());
+        if (receipt != null && (cancelled || (isInWmsV2(command)
+                && (original == null || !"OUTBOUND_STARTED".equals(original.getStatus()))))) {
+            throw new CheckedException("入库回执与永久发送边界冲突，请人工核对原号");
+        }
+        String state = receipt != null ? "RECORDED" : cancelled ? "CANCELLED_BEFORE_DISPATCH" : "UNKNOWN";
+        return new MesTaskInWmsReceiptDTO(state, requestId, factory,
+                command.getId().toString(), command.getWarehouseCode(),
+                command.getInWmsNum().stripTrailingZeros().toPlainString(),
+                receipt == null ? null : receipt.getId().toString(),
+                receipt == null ? null : StrUtil.blankToDefault(receipt.getReversalStatus(), "LEGACY_UNSPECIFIED"),
+                original == null ? null : original.getId().toString(), original == null ? null : original.getStatus());
+    }
+
+    /** 保留新协议命名域，即使遗漏版本也不能回退旧发送路径。 */
+    private boolean isInWmsV2(MesTaskInWmsDTO command) {
+        return command.getCommandVersion() != null || StrUtil.startWith(StrUtil.trim(command.getRequestId()), "IW2:");
+    }
+
+    /** 旧V1指纹算法保持不变；另逐项核真实库存身份，不能只依赖拼接指纹或工厂过滤。 */
+    private void assertInWmsReceipt(MesTaskInWmsReceiptEntity receipt, MesTaskInWmsDTO command,
+                                    String factory, String fingerprint) {
+        if (!Objects.equals(receipt.getFactoryCode(), factory)
+                || !Objects.equals(receipt.getMesTaskId(), command.getId())
+                || !Objects.equals(receipt.getWarehouseCode(), command.getWarehouseCode())
+                || !Objects.equals(receipt.getRequestFingerprint(), fingerprint)
+                || receipt.getInStockQuantity() == null
+                || receipt.getInStockQuantity().compareTo(command.getInWmsNum()) != 0) {
+            throw new CheckedException("原入库号的工厂、工单、仓库或完整参数不一致，禁止改参重投");
+        }
+    }
+
+    /** 当前WMS仍为Double接口，预览和实际发送均禁止静默丢失精确数量。 */
+    private double exactWmsInboundQuantity(BigDecimal quantity) {
+        double value = quantity.doubleValue();
+        if (!Double.isFinite(value) || BigDecimal.valueOf(value).compareTo(quantity) != 0) {
+            throw new CheckedException("本次精确入库数量无法由当前WMS数量接口无损接收，未发送；请先完成数量接口升级");
+        }
+        return value;
     }
 
     private String inWmsFingerprint(MesTaskInWmsDTO command) {

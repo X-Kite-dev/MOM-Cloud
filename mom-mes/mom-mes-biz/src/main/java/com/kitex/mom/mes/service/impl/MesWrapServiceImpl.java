@@ -91,7 +91,9 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
         if (mesWrap.getCurrentQuantity() == null) {
             mesWrap.setCurrentQuantity(BigDecimal.ZERO);
         }
-        this.save(mesWrap);
+        if (!this.save(mesWrap)) {
+            throw new IllegalStateException("包装主档必要写失败，整笔装箱回滚");
+        }
         return mesWrapCode;
     }
 
@@ -298,7 +300,9 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
         if (quantity.compareTo(BigDecimal.valueOf(wrap.getWrapCapacity())) > 0) {
             throw new IllegalStateException("报工数量超过包装容量");
         }
-        save(wrap);
+        if (!save(wrap)) {
+            throw new IllegalStateException("数量包装主档必要写失败，整笔报工回滚");
+        }
         MesWrapRecordEntity record = new MesWrapRecordEntity()
                 .setReportId(reportId)
                 .setWrapCode(wrap.getWrapCode())
@@ -310,7 +314,9 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
                 .setAvailableQuantity(BigDecimal.ZERO)
                 .setPackingStatus(MesWrapRecordStatusEnum.PACKED.name())
                 .setFactoryCode(wrap.getFactoryCode());
-        wrapRecordMapper.insert(record);
+        if (wrapRecordMapper.insert(record) != 1) {
+            throw new IllegalStateException("数量包装内容必要写失败，整笔报工回滚");
+        }
     }
 
     private MesWrapOperationEntity findOperation(String requestId) {

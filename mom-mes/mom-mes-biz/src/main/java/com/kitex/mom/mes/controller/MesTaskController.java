@@ -11,6 +11,7 @@ import com.kitex.mom.mes.batch.BatchGeneratorService;
 import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.service.MesTaskService;
+import com.kitex.mom.mes.service.impl.MesTaskInWmsCoordinator;
 import com.kitex.mom.mes.vo.MesTaskReportOmsVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -36,6 +37,7 @@ import java.util.stream.Collectors;
 public class MesTaskController {
 
     private final MesTaskService service;
+    private final MesTaskInWmsCoordinator inWmsCoordinator;
     private final BatchGeneratorService batchGeneratorService;
 
 
@@ -159,7 +161,33 @@ public class MesTaskController {
     @PostMapping("/inWms")
     @PreAuthorize("@pms.hasPermission('mesTask:update')")
     public R<Boolean> inWms(@RequestBody MesTaskInWmsDTO mesTaskInWmsDTO) {
+        // 新协议必须先独立登记发送边界，旧路径不能绕过永久命令账。
+        if (mesTaskInWmsDTO.getCommandVersion() != null
+                || StrUtil.startWith(StrUtil.trim(mesTaskInWmsDTO.getRequestId()), "IW2:")) {
+            throw new com.kitex.common.core.exception.CheckedException("V2入库请使用正式命令入口");
+        }
         return R.ok(service.inWms(mesTaskInWmsDTO));
+    }
+
+    @Operation(summary = "提交或原文重试成品入库", description = "独立登记原号及发送边界，未知不换号")
+    @PostMapping("/inWms/command")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
+    public R<MesTaskInWmsReceiptDTO> submitInWms(@RequestBody MesTaskInWmsDTO command) {
+        return R.ok(inWmsCoordinator.execute(command));
+    }
+
+    @Operation(summary = "安全结束未发送入库请求", description = "只允许永久证明未开始发送的原号结束；不撤销已发通知或库存")
+    @PostMapping("/inWms/command/cancel")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
+    public R<MesTaskInWmsReceiptDTO> cancelUnsentInWms(@RequestBody MesTaskInWmsDTO command) {
+        return R.ok(inWmsCoordinator.cancelUnsent(command));
+    }
+
+    @Operation(summary = "核对成品入库原号", description = "只读MES永久回执；UNKNOWN不证明WMS未执行，禁止换号重投")
+    @PostMapping("/inWms/resolve")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
+    public R<MesTaskInWmsReceiptDTO> resolveInWms(@RequestBody MesTaskInWmsDTO command) {
+        return R.ok(service.resolveInWms(command));
     }
 
     @Operation(summary = "预览成品入库报工来源", description = "按末工序有效报工和质量可用量计算FIFO来源")

@@ -7,10 +7,9 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.tpm.entity.TpmDeviceItemEntity;
-import com.kitex.mom.tpm.entity.TpmDeviceMoldRelaEntity;
 import com.kitex.mom.tpm.mapper.TpmDeviceItemMapper;
-import com.kitex.mom.tpm.mapper.TpmDeviceMoldRelaMapper;
 import com.kitex.mom.tpm.service.TpmDeviceItemService;
+import com.kitex.mom.tpm.service.TpmDeviceMoldRelaService;
 import lombok.AllArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
@@ -28,7 +27,7 @@ import java.util.List;
 @AllArgsConstructor
 public class TpmDeviceItemServiceImpl extends ServiceImpl<TpmDeviceItemMapper, TpmDeviceItemEntity> implements TpmDeviceItemService {
 
-    private final TpmDeviceMoldRelaMapper tpmDeviceMoldRelaMapper;
+    private final TpmDeviceMoldRelaService tpmDeviceMoldRelaService;
 
     @Override
     public Page<TpmDeviceItemEntity> pageList(Page toMpPage, TpmDeviceItemEntity tpmDeviceItem) {
@@ -44,10 +43,9 @@ public class TpmDeviceItemServiceImpl extends ServiceImpl<TpmDeviceItemMapper, T
             }
             return deviceItemByDeviceCode;
         } else {
-            Long aLong = tpmDeviceMoldRelaMapper.selectCount(new LambdaQueryWrapper<TpmDeviceMoldRelaEntity>()
-                    .eq(TpmDeviceMoldRelaEntity::getDeviceCode, deviceCode)
-                    .eq(TpmDeviceMoldRelaEntity::getMoldCode, modeCode));
-            if (aLong.compareTo(0L) > 0) {
+            boolean bound = tpmDeviceMoldRelaService.getListByDeviceCodes(List.of(deviceCode)).stream()
+                    .anyMatch(relation -> modeCode.equals(relation.getMoldCode()));
+            if (bound) {
                 List<TpmDeviceItemEntity> deviceItemByDeviceCode = this.baseMapper.getDeviceItemByDeviceCode(modeCode, type);
                 if (CollUtil.isEmpty(deviceItemByDeviceCode)) {
                     throw new CheckedException("该模具未绑定点/巡检项目配置,请前往“设备台账-编辑-点/巡检项目中进行绑定！”");

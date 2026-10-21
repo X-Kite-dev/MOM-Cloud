@@ -15,6 +15,7 @@ public enum ReportRecordTypeEnum {
 
     REPORT("报工"),
     REVERSE("反报工/冲销"),
+    QUANTITY_CORRECTION("报工数量纠正"),
     WRAP("包装装箱"),
     UNQUALIFIED("不合格品上报"),
     QUALITY_SYNC("质量数量同步"),

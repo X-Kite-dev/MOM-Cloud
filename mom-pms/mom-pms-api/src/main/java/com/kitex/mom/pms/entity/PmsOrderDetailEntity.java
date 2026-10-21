@@ -78,7 +78,9 @@ public class PmsOrderDetailEntity extends BaseEntity<PmsOrderDetailEntity> {
     @Schema(description = "到货数量")
     private Double arrivalNum;
 
-    /** 审批后取消且不再允许收货的数量；原订购量和已到货量均保留为历史事实。 */
+    /**
+     * 审批后取消且不再允许收货的数量；原订购量和已到货量均保留为历史事实。
+     */
     @Schema(description = "已取消未到货数量")
     private Double cancelledNum;
 
