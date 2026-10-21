@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mes.mapper.MesMaterialReconcileIssueMapper">
+    <select id="selectEvidence" resultType="com.kitex.mom.mes.dto.MesMaterialReconcileEvidenceDTO">
+        SELECT reservation_no,
+               requirement_mat_code,
+               actual_mat_code,
+               SUM(requested_num) requested_num,
+               SUM(issued_num) issued_num,
+               SUM(received_num) received_num,
+               SUM(line_stock_num) line_stock_num,
+               SUM(fed_num) fed_num,
+               SUM(used_num) used_num,
+               SUM(pending_return_num) pending_return_num,
+               SUM(approved_return_num) approved_return_num
+        FROM (
+            SELECT d.reservation_no, d.requirement_mat_code, d.mat_code actual_mat_code,
+                   d.mat_num requested_num, 0 issued_num, 0 received_num, 0 line_stock_num,
+                   0 fed_num, 0 used_num, 0 pending_return_num, 0 approved_return_num
+            FROM mes_warehouse_picking_bill_detail d
+            JOIN mes_warehouse_picking_bill b ON b.id = d.bill_id AND b.del_flag = '0'
+            WHERE d.del_flag = '0' AND d.reservation_no IS NOT NULL AND d.reservation_no != ''
+              AND b.status IN ('1', '2', '3')
+            UNION ALL
+            SELECT reservation_no, requirement_mat_code, mat_code,
+                   0, COALESCE(notice_in_num, 0), COALESCE(in_num, 0), 0,
+                   0, 0, 0, 0
+            FROM mes_warehouse_material_in_bill
+            WHERE del_flag = '0' AND reservation_no IS NOT NULL AND reservation_no != ''
+            UNION ALL
+            SELECT reservation_no, requirement_mat_code, mat_code,
+                   0, 0, 0, COALESCE(num, 0), 0, 0, 0, 0
+            FROM mes_warehouse_live_stock
+            WHERE del_flag = '0' AND reservation_no IS NOT NULL AND reservation_no != ''
+            UNION ALL
+            SELECT reservation_no, requirement_mat_code, mat_code,
+                   0, 0, 0, 0, COALESCE(feed_num, 0), COALESCE(used_num, 0), 0, 0
+            FROM mes_warehouse_feed
+            WHERE del_flag = '0' AND reservation_no IS NOT NULL AND reservation_no != ''
+            UNION ALL
+            SELECT reservation_no, requirement_mat_code, mat_code,
+                   0, 0, 0, 0, 0, 0,
+                   CASE WHEN status = '0' THEN COALESCE(num, 0) ELSE 0 END,
+                   CASE WHEN status = '1' THEN COALESCE(num, 0) ELSE 0 END
+            FROM mes_warehouse_stock_feed_judge
+            WHERE del_flag = '0' AND reservation_no IS NOT NULL AND reservation_no != ''
+            UNION ALL
+            SELECT reservation_no, requirement_mat_code, mat_code,
+                   0, 0, 0, 0, 0, 0,
+                   CASE WHEN status = '0' THEN COALESCE(num, 0) ELSE 0 END,
+                   CASE WHEN status = '1' THEN COALESCE(num, 0) ELSE 0 END
+            FROM mes_warehouse_feed_judge
+            WHERE del_flag = '0' AND reservation_no IS NOT NULL AND reservation_no != ''
+        ) evidence
+        GROUP BY reservation_no, requirement_mat_code, actual_mat_code
+        ORDER BY reservation_no, requirement_mat_code, actual_mat_code
+    </select>
+</mapper>

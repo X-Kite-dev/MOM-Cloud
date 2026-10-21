@@ -1,3 +1,13 @@
+# Nacos loader DEBUG includes the complete remote configuration content.
+logging:
+  level:
+    com.alibaba.cloud.nacos.configdata.NacosConfigDataLoader: INFO
+
+mom:
+  bootstrap:
+    nacos:
+      required: true
+
 server:
   port: 35001
 
@@ -6,15 +16,17 @@ spring:
     name: kitex-mom-tpm
   cloud:
     nacos:
-      username: @nacos.username@
-      password: @nacos.password@
+      username: ${MOM_NACOS_USERNAME}
+      password: ${MOM_NACOS_PASSWORD}
       discovery:
-        server-addr: ${NACOS_HOST:kitex-mom-register}:${NACOS_PORT:30808}
-        namespace: @nacos.namespace@
+        group: ${MOM_NACOS_GROUP:DEFAULT_GROUP}
+        server-addr: ${MOM_NACOS_SERVER_ADDR}
+        namespace: ${MOM_NACOS_NAMESPACE}
       config:
+        group: ${MOM_NACOS_GROUP:DEFAULT_GROUP}
         server-addr: ${spring.cloud.nacos.discovery.server-addr}
-        namespace: @nacos.namespace@
+        namespace: ${MOM_NACOS_NAMESPACE}
   config:
     import:
-      - optional:nacos:application-@profiles.active@.yml
-      - optional:nacos:${spring.application.name}-@profiles.active@.yml
+      - nacos:application-${MOM_CONFIG_PROFILE}.yml
+      - nacos:${spring.application.name}-${MOM_CONFIG_PROFILE}.yml

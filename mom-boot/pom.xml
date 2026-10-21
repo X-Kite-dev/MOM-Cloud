@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.kitex</groupId>
+        <artifactId>mom-cloud</artifactId>
+        <version>2.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>mom-boot</artifactId>
+    <packaging>jar</packaging>
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
+    <description>mom 单体版本启动</description>
+
+    <dependencies>
+
+        <!--必备：用户管理模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-admin-biz</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!--选配：代码生成模块 -->
+        <!--        <dependency>-->
+        <!--            <groupId>com.kitex</groupId>-->
+        <!--            <artifactId>mom-codegen</artifactId>-->
+        <!--            <version>${project.version}</version>-->
+        <!--        </dependency>-->
+
+        <!--必备：认证中心模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-auth</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!--        <dependency>-->
+        <!--            <groupId>com.kitex</groupId>-->
+        <!--            <artifactId>mom-flow-engine-biz</artifactId>-->
+        <!--            <version>${project.version}</version>-->
+        <!--        </dependency>-->
+        <!--        <dependency>-->
+        <!--            <groupId>com.kitex</groupId>-->
+        <!--            <artifactId>mom-flow-task-biz</artifactId>-->
+        <!--            <version>${project.version}</version>-->
+        <!--        </dependency>-->
+
+        <!--安全模块-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-security</artifactId>
+        </dependency>
+        <!-- 接口文档UI  -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.springboot</groupId>
+            <artifactId>knife4j-boot-openapi3-ui</artifactId>
+            <version>${knife4j.version}</version>
+        </dependency>
+        <!--接口文档-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-swagger</artifactId>
+        </dependency>
+        <!--undertow容器-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-undertow</artifactId>
+        </dependency>
+        <!--  common 模块  -->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-biz</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--  iot-->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-iot-system</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--  mdm -->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-mdm-biz</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--  mes -->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-mes-biz</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--  plan -->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-plan-biz</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--  qms -->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-qms-biz</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--  tpm -->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-tpm-biz</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--  wms -->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-wms-biz</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!--  pms -->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-pms-biz</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <!-- AI/Agent运行治理 -->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-ai-biz</artifactId>
+            <version>2.0.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>org.wildfly.common</groupId>
+            <artifactId>wildfly-common</artifactId>
+            <version>1.5.2.Final</version> <!-- 使用适合您项目的版本 -->
+        </dependency>
+
+        <!-- 动态数据源 -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>dynamic-datasource-spring-boot3-starter</artifactId>
+            <version>4.3.1</version>
+        </dependency>
+
+        <!-- AOP 支持 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
+        <!--        <dependency>-->
+        <!--            <groupId>com.kitex</groupId>-->
+        <!--            <artifactId>mom-certificate-starter</artifactId>-->
+        <!--            <version>0.0.1-SNAPSHOT</version>-->
+        <!--        </dependency>-->
+
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>io.fabric8</groupId>
+                <artifactId>docker-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

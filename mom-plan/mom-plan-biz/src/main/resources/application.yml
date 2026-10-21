@@ -1,3 +1,20 @@
+# Nacos loader DEBUG includes the complete remote configuration content.
+logging:
+  level:
+    com.alibaba.cloud.nacos.configdata.NacosConfigDataLoader: INFO
+
+mom:
+  bootstrap:
+    nacos:
+      required: true
+  oms-fulfillment-risk-automation:
+    # 默认关闭；执行累计SQL第142节并注册两个XXL-JOB后再显式开启。
+    enabled: ${MOM_OMS_RISK_AUTOMATION_ENABLED:false}
+    scan-interval-minutes: ${MOM_OMS_RISK_SCAN_INTERVAL_MINUTES:15}
+    scan-batch-size: ${MOM_OMS_RISK_SCAN_BATCH_SIZE:50}
+    max-scan-failures: ${MOM_OMS_RISK_MAX_SCAN_FAILURES:5}
+    max-notice-attempts: ${MOM_OMS_RISK_MAX_NOTICE_ATTEMPTS:5}
+
 server:
   port: 6060
 
@@ -6,15 +23,17 @@ spring:
     name: kitex-mom-plan
   cloud:
     nacos:
-      username: @nacos.username@
-      password: @nacos.password@
+      username: ${MOM_NACOS_USERNAME}
+      password: ${MOM_NACOS_PASSWORD}
       discovery:
-        server-addr: ${NACOS_HOST:kitex-mom-register}:${NACOS_PORT:30808}
-        namespace: @nacos.namespace@
+        group: ${MOM_NACOS_GROUP:DEFAULT_GROUP}
+        server-addr: ${MOM_NACOS_SERVER_ADDR}
+        namespace: ${MOM_NACOS_NAMESPACE}
       config:
+        group: ${MOM_NACOS_GROUP:DEFAULT_GROUP}
         server-addr: ${spring.cloud.nacos.discovery.server-addr}
-        namespace: @nacos.namespace@
+        namespace: ${MOM_NACOS_NAMESPACE}
   config:
     import:
-      - optional:nacos:application-@profiles.active@.yml
-      - optional:nacos:${spring.application.name}-@profiles.active@.yml
+      - nacos:application-${MOM_CONFIG_PROFILE}.yml
+      - nacos:${spring.application.name}-${MOM_CONFIG_PROFILE}.yml

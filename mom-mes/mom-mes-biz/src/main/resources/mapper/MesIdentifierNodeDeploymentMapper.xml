@@ -1,0 +1,411 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mes.mapper.MesIdentifierNodeDeploymentMapper">
+  <!-- 只读目录。正文MD5取SQL290最终定义，保留240完整逆向和244DEVICE证据门；不靠函数名或marker放行。 -->
+  <!-- 未调用nextval/业务函数，不读业务行；FK历史NOT VALID不等于新行不受约束，故不要求convalidated。 -->
+  <select id="missingControls" resultType="java.lang.String">
+WITH
+    required_function(name,args,body_md5,language,volatility) AS (VALUES
+      ('mom_identifier_template_nodes_290', 'bigint, text, text', 'bc58eee42d7db8267f835967e074fbd8', 'plpgsql', 's'),
+      ('mom_binding_node_definition_290', 'text', '9f1ae59258ad7d8af7c592cc557e9333', 'plpgsql', 'i'),
+      ('mom_binding_node_graph_290', 'bigint, text, text', 'e527c80179318da4f00b1d45d8be875a', 'plpgsql', 'v'),
+      ('mom_check_binding_node_group_290', 'mom_mes.mes_identifier_binding_group', '164c46425b052e5cf2b8709b29e0bc09', 'plpgsql', 'v'),
+      ('mom_binding_node_downstream_290', 'bigint, text', '51bf84e649493fb01ee04a0320f1d436', 'sql', 's'),
+      ('mom_guard_identifier_template_node_290', '', 'fc2487c016f162e35bfaabe5e2df2871', 'plpgsql', 'v'),
+      ('mom_binding_node_arrange_290', 'mom_mes.mes_task_arrange, bigint', 'c77689a1824464d0d2ddfdcefbade5cc', 'plpgsql', 'v'),
+      ('mom_process_timing_binding_source_v1', 'bigint, text, bigint', '6381af1ff8908326038449ca7d445a22', 'plpgsql', 'v'),
+      ('mom_check_reverse_node_request_288', 'bigint', 'ec5a12bc8193d070baa491aa0c3c3681', 'plpgsql', 'v'),
+      ('mom_execution_node_from_snapshot_v1', 'text, text, text', 'e80188fa4d16210e708c912ad8b3400c', 'plpgsql', 'i'),
+      ('mom_return_execution_graph_289', 'bigint, text, text, text', '9153d54d12a468a3e4bc86a3f2e69403', 'plpgsql', 'v'),
+      ('mom_reverse_execution_graph_288', 'bigint, text, text, text', '150539d71175f56da187f41616300172', 'plpgsql', 'v'),
+      ('mom_guard_reverse_node_submit_288', '', '618541a2ec03d48bc5913dfd9edbbe83', 'plpgsql', 'v'),
+      ('mom_physical_hold_document', 'text, integer', '830cb004038bea492393ef1183461983', 'plpgsql', 'i'),
+      ('mom_guard_produce_execution_node_v1', '', '3567a33f22918950c0f7cf93e43a2f7e', 'plpgsql', 'v'),
+      ('mom_guard_arrange_execution_node_v1', '', '6b0721cb4d317d8ace7c157ffdd60b00', 'plpgsql', 'v'),
+      ('fn_mes_report_quantity_correction_line_immutable', '', 'e77c02627cc01f576add3dabce90d233', 'plpgsql', 'v'),
+      ('fn_mes_report_reverse_operation_immutable', '', '64597a5cbe685bdc90e22d807e92a7f8', 'plpgsql', 'v'),
+      ('fn_mes_report_reverse_request_guard', '', '6b30185633c76bbcada5ad3b5f716a68', 'plpgsql', 'v'),
+      ('fn_mes_report_reverse_scope_guard', '', 'f969c3ab8b7c081d7b3334b8686fef61', 'plpgsql', 'v'),
+      ('mom_auto_capture_operation_allowed', 'bigint, bigint', '242392d7cb61df60993df7af6fcd615f', 'sql', 's'),
+      ('mom_binding_downstream_tasks', 'bigint, text', 'ca05798294426988f6c8ea54f077541a', 'sql', 's'),
+      ('mom_check_auto_capture_commit', '', '1b58d62beb0599ee516e99bdcba72ce4', 'plpgsql', 'v'),
+      ('mom_check_binding_instance_commit', '', '5632b365bfb334bca452e649d8b4538c', 'plpgsql', 'v'),
+      ('mom_check_binding_operation_commit', '', '32f5eb172ab39c6427d701e1685ed1dd', 'plpgsql', 'v'),
+      ('mom_check_report_binding_commit', '', '9a347acbd66d5c2a6b484201a7551800', 'plpgsql', 'v'),
+      ('mom_check_report_request_close_commit', '', '12cd7d74df1b7d39a8a1686c890add7e', 'plpgsql', 'v'),
+      ('mom_check_reverse_binding_approval_commit', '', '37088d273da4fe316202e2349365c51c', 'plpgsql', 'v'),
+      ('mom_guard_accepted_station_pass', '', '13bced5d3f79effdf750ffb8da2d525d', 'plpgsql', 'v'),
+      ('mom_guard_auto_capture_v2', '', '16c7c3ffe88a620e16b17c9f0e25db10', 'plpgsql', 'v'),
+      ('mom_guard_auto_report_facts', '', 'b8f3df624028d5a566cd024ecf901be5', 'plpgsql', 'v'),
+      ('mom_guard_binding_instance', '', '3914cad02f68594b0b14660ad99bed3a', 'plpgsql', 'v'),
+      ('mom_guard_binding_operation', '', 'b0361ce31e38284601f6312916e227c7', 'plpgsql', 'v'),
+      ('mom_guard_identifier_arrange_contract', '', '5bb466f5b009ca355a5124580278e485', 'plpgsql', 'v'),
+      ('mom_guard_identifier_group', '', 'a7d8bc0010bc827f94e64f5fdaf0ba36', 'plpgsql', 'v'),
+      ('mom_guard_identifier_node_template', '', '9e1b5e676d6e009262fd55add12abd06', 'plpgsql', 'v'),
+      ('mom_guard_identifier_task_graph', '', '1246620d3bdf4f01741fa809e5728b6b', 'plpgsql', 'v'),
+      ('mom_guard_identifier_task_source', '', '02f50ef6da0bc29bff2ce24b9e2335da', 'plpgsql', 'v'),
+      ('mom_guard_mes_station_pass_record', '', '6a03219a9f8b976218acbf0c0054af7a', 'plpgsql', 'v'),
+      ('mom_guard_report_binding_identity', '', 'ba592aebdc8db3cc4e499609ab49bf37', 'plpgsql', 'v'),
+      ('mom_guard_report_binding_keys', '', 'd3374663f2ec2ed906f14ba855444609', 'plpgsql', 'v'),
+      ('mom_guard_report_command', '', 'd85526d587d8fa1e5b522a106a50a710', 'plpgsql', 'v'),
+      ('mom_guard_report_command_binding', '', '352698c417d175a495af936271d94f6c', 'plpgsql', 'v'),
+      ('mom_guard_report_command_identity', '', '8c411c41904fc177bcd2d5097261c194', 'plpgsql', 'v'),
+      ('mom_guard_report_request_resolution', '', 'f2608a2e8a42d4cf7485742827d1d835', 'plpgsql', 'v'),
+      ('mom_guard_reverse_request_origin', '', '00be34931aaec62722fdab3591fa7004', 'plpgsql', 'v'),
+      ('mom_guard_static_alias_binding', '', '4d9473d93a34aa0348d1b42ecec9dd64', 'plpgsql', 'v'),
+      ('mom_require_identifier_group_arrange', '', 'f75a880cdcaccc554116d8a262f6593b', 'plpgsql', 'v'),
+      ('mom_try_lock_binding_identifier', 'bigint, text, text', '1a505b032cdc6131131005021d23fe56', 'plpgsql', 'v')),
+    required_trigger(table_name,name,function_name,event_mask,is_deferrable,is_deferred) AS (VALUES
+      ('mes_execution_template', 'trg_mom_identifier_template_node_290', 'mom_guard_identifier_template_node_290', 23, false, false),
+      ('mes_report_reverse_request', 'trg_mom_reverse_node_submit_288', 'mom_guard_reverse_node_submit_288', 5, true, true),
+      ('mes_report_reverse_scope', 'trg_mom_reverse_node_scope_288', 'mom_guard_reverse_node_submit_288', 5, true, true),
+      ('mes_produce_task', 'trg_mom_produce_execution_node_v1', 'mom_guard_produce_execution_node_v1', 23, false, false),
+      ('mes_task_arrange', 'trg_mom_arrange_execution_node_v1', 'mom_guard_arrange_execution_node_v1', 23, false, false),
+      ('mes_auto_report_event', 'trg_mom_auto_capture_commit', 'mom_check_auto_capture_commit', 21, true, true),
+      ('mes_auto_report_event', 'trg_mom_auto_capture_v2', 'mom_guard_auto_capture_v2', 31, false, false),
+      ('mes_auto_report_event', 'trg_mom_auto_report_facts', 'mom_guard_auto_report_facts', 31, false, false),
+      ('mes_execution_template', 'trg_mes_identifier_node_template', 'mom_guard_identifier_node_template', 19, false, false),
+      ('mes_identifier_binding', 'trg_mes_binding_instance_commit', 'mom_check_binding_instance_commit', 21, true, true),
+      ('mes_identifier_binding', 'trg_mes_binding_instance_guard', 'mom_guard_binding_instance', 31, false, false),
+      ('mes_identifier_binding_group', 'trg_mes_identifier_group_arrange_required', 'mom_require_identifier_group_arrange', 5, true, true),
+      ('mes_identifier_binding_group', 'trg_mes_identifier_group_guard', 'mom_guard_identifier_group', 31, false, false),
+      ('mes_identifier_binding_operation', 'trg_mes_binding_operation_commit', 'mom_check_binding_operation_commit', 5, true, true),
+      ('mes_identifier_binding_operation', 'trg_mes_binding_operation_guard', 'mom_guard_binding_operation', 31, false, false),
+      ('mes_identifier_mapping', 'trg_mes_static_alias_binding', 'mom_guard_static_alias_binding', 23, false, false),
+      ('mes_produce_task', 'trg_mes_identifier_task_graph', 'mom_guard_identifier_task_graph', 31, false, false),
+      ('mes_report_command', 'trg_mes_report_command_binding', 'mom_guard_report_command_binding', 7, false, false),
+      ('mes_report_command', 'trg_mes_report_command_guard', 'mom_guard_report_command', 31, false, false),
+      ('mes_report_command', 'trg_mes_report_request_resolution', 'mom_guard_report_request_resolution', 7, false, false),
+      ('mes_report_quantity_correction_line', 'trg_mes_report_quantity_correction_line_immutable', 'fn_mes_report_quantity_correction_line_immutable', 27, false, false),
+      ('mes_report_request_close', 'trg_mes_report_request_close_commit', 'mom_check_report_request_close_commit', 5, true, true),
+      ('mes_report_request_close', 'trg_mes_report_request_close_guard', 'mom_guard_report_request_resolution', 31, false, false),
+      ('mes_report_reverse_operation', 'trg_mes_report_reverse_operation_immutable', 'fn_mes_report_reverse_operation_immutable', 27, false, false),
+      ('mes_report_reverse_request', 'trg_mes_report_reverse_request_guard', 'fn_mes_report_reverse_request_guard', 27, false, false),
+      ('mes_report_reverse_request', 'trg_mes_reverse_binding_approval_commit', 'mom_check_reverse_binding_approval_commit', 21, true, true),
+      ('mes_report_reverse_request', 'trg_mes_reverse_request_origin', 'mom_guard_reverse_request_origin', 7, false, false),
+      ('mes_report_reverse_scope', 'trg_mes_report_reverse_scope_guard', 'fn_mes_report_reverse_scope_guard', 27, false, false),
+      ('mes_station_pass_record', 'trg_mes_accepted_station_pass_immutable', 'mom_guard_accepted_station_pass', 27, false, false),
+      ('mes_station_pass_record', 'trg_mom_mes_station_pass_record', 'mom_guard_mes_station_pass_record', 31, false, false),
+      ('mes_task', 'trg_mes_identifier_task_source', 'mom_guard_identifier_task_source', 27, false, false),
+      ('mes_task_arrange', 'trg_mes_identifier_arrange_contract', 'mom_guard_identifier_arrange_contract', 31, false, false),
+      ('mes_task_report', 'trg_mes_report_binding_commit', 'mom_check_report_binding_commit', 21, true, true),
+      ('mes_task_report', 'trg_mes_report_binding_identity', 'mom_guard_report_binding_identity', 27, false, false),
+      ('mes_task_report', 'trg_mes_report_binding_keys', 'mom_guard_report_binding_keys', 7, false, false),
+      ('mes_task_report', 'trg_mes_report_command_identity', 'mom_guard_report_command_identity', 27, false, false),
+      ('mes_task_report', 'trg_mes_report_request_resolution', 'mom_guard_report_request_resolution', 31, false, false),
+      ('mes_task_report', 'trg_mom_auto_capture_report_commit', 'mom_check_auto_capture_commit', 5, true, true)),
+    required_column(table_name,name,type_name) AS (VALUES
+      ('mes_execution_template', 'process_route_code', 'character varying(100)'),
+      ('mes_execution_template', 'route_node_code', 'character varying(64)'),
+      ('mes_identifier_binding_group', 'policy_schema_version', 'character varying(40)'),
+      ('mes_identifier_binding_group', 'process_route_code', 'character varying(100)'),
+      ('mes_identifier_binding_group', 'bind_route_node_code', 'character varying(64)'),
+      ('mes_identifier_binding_group', 'release_route_node_code', 'character varying(64)'),
+      ('mes_produce_task', 'route_execution_schema_version', 'character varying(30)'),
+      ('mes_produce_task', 'source_route_node_code', 'character varying(64)'),
+      ('mes_produce_task', 'predecessor_node_codes', 'text'),
+      ('mes_produce_task', 'successor_node_codes', 'text'),
+      ('mes_produce_task', 'node_timing_rules_json', 'text'),
+      ('mes_task_arrange', 'route_execution_schema_version', 'character varying(30)'),
+      ('mes_task_arrange', 'source_route_node_code', 'character varying(64)'),
+      ('mes_task_arrange', 'predecessor_node_codes', 'text'),
+      ('mes_task_arrange', 'successor_node_codes', 'text'),
+      ('mes_task_arrange', 'node_timing_rules_json', 'text'),
+      ('mes_auto_report_event', 'capture_actor_code', 'character varying(100)'),
+      ('mes_auto_report_event', 'capture_actor_id', 'bigint'),
+      ('mes_auto_report_event', 'capture_canonical_identifier', 'character varying(200)'),
+      ('mes_auto_report_event', 'capture_fingerprint', 'character varying(64)'),
+      ('mes_auto_report_event', 'capture_policy_snapshot', 'text'),
+      ('mes_auto_report_event', 'capture_rule_id', 'bigint'),
+      ('mes_auto_report_event', 'capture_rule_snapshot', 'text'),
+      ('mes_auto_report_event', 'capture_snapshot', 'text'),
+      ('mes_auto_report_event', 'capture_version', 'character varying(40)'),
+      ('mes_auto_report_event', 'expected_binding_id', 'bigint'),
+      ('mes_auto_report_event', 'expected_binding_version', 'integer'),
+      ('mes_auto_report_event', 'external_identifier', 'character varying(200)'),
+      ('mes_execution_template', 'identifier_node_policy', 'text'),
+      ('mes_identifier_binding', 'bind_report_id', 'bigint'),
+      ('mes_identifier_binding', 'bind_time', 'timestamp without time zone'),
+      ('mes_identifier_binding', 'binding_group_id', 'bigint'),
+      ('mes_identifier_binding', 'canonical_identifier', 'character varying(200)'),
+      ('mes_identifier_binding', 'create_by', 'character varying(100)'),
+      ('mes_identifier_binding', 'create_time', 'timestamp without time zone'),
+      ('mes_identifier_binding', 'del_flag', 'character varying(1)'),
+      ('mes_identifier_binding', 'external_code', 'character varying(200)'),
+      ('mes_identifier_binding', 'external_namespace', 'character varying(100)'),
+      ('mes_identifier_binding', 'factory_code', 'character varying(100)'),
+      ('mes_identifier_binding', 'id', 'bigint'),
+      ('mes_identifier_binding', 'identifier_route_version', 'integer'),
+      ('mes_identifier_binding', 'last_inverse_operation_id', 'bigint'),
+      ('mes_identifier_binding', 'occupation_sequence', 'bigint'),
+      ('mes_identifier_binding', 'release_report_id', 'bigint'),
+      ('mes_identifier_binding', 'release_time', 'timestamp without time zone'),
+      ('mes_identifier_binding', 'status', 'character varying(30)'),
+      ('mes_identifier_binding', 'task_code', 'character varying(100)'),
+      ('mes_identifier_binding', 'task_id', 'bigint'),
+      ('mes_identifier_binding', 'tenant_id', 'bigint'),
+      ('mes_identifier_binding', 'update_by', 'character varying(100)'),
+      ('mes_identifier_binding', 'update_time', 'timestamp without time zone'),
+      ('mes_identifier_binding', 'version_no', 'integer'),
+      ('mes_identifier_binding_group', 'bind_route_code', 'character varying(100)'),
+      ('mes_identifier_binding_group', 'binding_group_code', 'character varying(100)'),
+      ('mes_identifier_binding_group', 'create_by', 'character varying(100)'),
+      ('mes_identifier_binding_group', 'create_time', 'timestamp without time zone'),
+      ('mes_identifier_binding_group', 'definition_fingerprint', 'character varying(64)'),
+      ('mes_identifier_binding_group', 'definition_snapshot', 'text'),
+      ('mes_identifier_binding_group', 'del_flag', 'character varying(1)'),
+      ('mes_identifier_binding_group', 'external_namespace', 'character varying(100)'),
+      ('mes_identifier_binding_group', 'factory_code', 'character varying(100)'),
+      ('mes_identifier_binding_group', 'frozen_by_code', 'character varying(100)'),
+      ('mes_identifier_binding_group', 'frozen_by_id', 'bigint'),
+      ('mes_identifier_binding_group', 'frozen_by_name', 'character varying(200)'),
+      ('mes_identifier_binding_group', 'frozen_time', 'timestamp without time zone'),
+      ('mes_identifier_binding_group', 'graph_fingerprint', 'character varying(64)'),
+      ('mes_identifier_binding_group', 'graph_snapshot', 'text'),
+      ('mes_identifier_binding_group', 'id', 'bigint'),
+      ('mes_identifier_binding_group', 'region_snapshot', 'text'),
+      ('mes_identifier_binding_group', 'release_route_code', 'character varying(100)'),
+      ('mes_identifier_binding_group', 'report_mode', 'character varying(30)'),
+      ('mes_identifier_binding_group', 'source_route_fingerprint', 'character varying(64)'),
+      ('mes_identifier_binding_group', 'source_route_snapshot', 'text'),
+      ('mes_identifier_binding_group', 'status', 'character varying(30)'),
+      ('mes_identifier_binding_group', 'task_code', 'character varying(100)'),
+      ('mes_identifier_binding_group', 'task_id', 'bigint'),
+      ('mes_identifier_binding_group', 'tenant_id', 'bigint'),
+      ('mes_identifier_binding_group', 'update_by', 'character varying(100)'),
+      ('mes_identifier_binding_group', 'update_time', 'timestamp without time zone'),
+      ('mes_identifier_binding_group', 'version_no', 'integer'),
+      ('mes_identifier_binding_operation', 'action', 'character varying(30)'),
+      ('mes_identifier_binding_operation', 'actor_code', 'character varying(100)'),
+      ('mes_identifier_binding_operation', 'actor_id', 'bigint'),
+      ('mes_identifier_binding_operation', 'approval_evidence_fingerprint', 'character varying(64)'),
+      ('mes_identifier_binding_operation', 'arrange_code', 'character varying(100)'),
+      ('mes_identifier_binding_operation', 'binding_group_id', 'bigint'),
+      ('mes_identifier_binding_operation', 'binding_id', 'bigint'),
+      ('mes_identifier_binding_operation', 'command_version', 'character varying(40)'),
+      ('mes_identifier_binding_operation', 'create_by', 'character varying(100)'),
+      ('mes_identifier_binding_operation', 'create_time', 'timestamp without time zone'),
+      ('mes_identifier_binding_operation', 'del_flag', 'character varying(1)'),
+      ('mes_identifier_binding_operation', 'evidence_snapshot', 'text'),
+      ('mes_identifier_binding_operation', 'factory_code', 'character varying(100)'),
+      ('mes_identifier_binding_operation', 'id', 'bigint'),
+      ('mes_identifier_binding_operation', 'inverse_command_fingerprint', 'character varying(64)'),
+      ('mes_identifier_binding_operation', 'inverse_command_snapshot', 'text'),
+      ('mes_identifier_binding_operation', 'operation_time', 'timestamp without time zone'),
+      ('mes_identifier_binding_operation', 'original_operation_id', 'bigint'),
+      ('mes_identifier_binding_operation', 'report_id', 'bigint'),
+      ('mes_identifier_binding_operation', 'request_fingerprint', 'character varying(64)'),
+      ('mes_identifier_binding_operation', 'request_id', 'character varying(64)'),
+      ('mes_identifier_binding_operation', 'reverse_request_id', 'bigint'),
+      ('mes_identifier_binding_operation', 'route_code', 'character varying(100)'),
+      ('mes_identifier_binding_operation', 'tenant_id', 'bigint'),
+      ('mes_identifier_binding_operation', 'update_by', 'character varying(100)'),
+      ('mes_identifier_binding_operation', 'update_time', 'timestamp without time zone'),
+      ('mes_identifier_binding_operation', 'version_after', 'integer'),
+      ('mes_identifier_binding_operation', 'version_before', 'integer'),
+      ('mes_report_command', 'accepted_time', 'timestamp without time zone'),
+      ('mes_report_command', 'actor_code', 'character varying(100)'),
+      ('mes_report_command', 'actor_id', 'bigint'),
+      ('mes_report_command', 'arrange_code', 'character varying(100)'),
+      ('mes_report_command', 'channel', 'character varying(30)'),
+      ('mes_report_command', 'command_snapshot', 'text'),
+      ('mes_report_command', 'command_version', 'character varying(40)'),
+      ('mes_report_command', 'create_by', 'character varying(100)'),
+      ('mes_report_command', 'create_time', 'timestamp without time zone'),
+      ('mes_report_command', 'del_flag', 'character varying(1)'),
+      ('mes_report_command', 'factory_code', 'character varying(100)'),
+      ('mes_report_command', 'id', 'bigint'),
+      ('mes_report_command', 'report_id', 'bigint'),
+      ('mes_report_command', 'request_fingerprint', 'character varying(64)'),
+      ('mes_report_command', 'request_id', 'character varying(64)'),
+      ('mes_report_command', 'result_snapshot', 'text'),
+      ('mes_report_command', 'status', 'character varying(30)'),
+      ('mes_report_command', 'task_code', 'character varying(100)'),
+      ('mes_report_command', 'tenant_id', 'bigint'),
+      ('mes_report_command', 'update_by', 'character varying(100)'),
+      ('mes_report_command', 'update_time', 'timestamp without time zone'),
+      ('mes_report_request_close', 'actor_code', 'character varying(100)'),
+      ('mes_report_request_close', 'actor_id', 'bigint'),
+      ('mes_report_request_close', 'arrange_code', 'character varying(100)'),
+      ('mes_report_request_close', 'channel', 'character varying(30)'),
+      ('mes_report_request_close', 'closed_time', 'timestamp without time zone'),
+      ('mes_report_request_close', 'command_snapshot', 'text'),
+      ('mes_report_request_close', 'command_version', 'character varying(40)'),
+      ('mes_report_request_close', 'create_by', 'character varying(100)'),
+      ('mes_report_request_close', 'create_time', 'timestamp without time zone'),
+      ('mes_report_request_close', 'del_flag', 'character varying(1)'),
+      ('mes_report_request_close', 'factory_code', 'character varying(100)'),
+      ('mes_report_request_close', 'id', 'bigint'),
+      ('mes_report_request_close', 'reason', 'character varying(500)'),
+      ('mes_report_request_close', 'request_fingerprint', 'character varying(64)'),
+      ('mes_report_request_close', 'request_id', 'character varying(64)'),
+      ('mes_report_request_close', 'status', 'character varying(30)'),
+      ('mes_report_request_close', 'tenant_id', 'bigint'),
+      ('mes_report_request_close', 'update_by', 'character varying(100)'),
+      ('mes_report_request_close', 'update_time', 'timestamp without time zone'),
+      ('mes_task_report', 'identifier_binding_id', 'bigint'),
+      ('mes_task_report', 'identifier_binding_snapshot', 'text'),
+      ('mes_task_report', 'identifier_binding_version', 'integer'),
+      ('mes_task_report', 'identifier_node_action', 'character varying(30)')),
+    required_index(table_name,name,keys,predicate) AS (VALUES
+      ('mes_identifier_binding_group', 'uk_mes_identifier_group_scope_id', 'tenant_id,factory_code,id', ''),
+      ('mes_identifier_binding_group', 'uk_mes_identifier_group_identity', 'tenant_id,factory_code,task_id,binding_group_code,external_namespace', ''),
+      ('mes_task_report', 'uk_mes_report_command_report_scope', 'tenant_id,factory_code,id', ''),
+      ('mes_report_command', 'uk_mes_report_command_request', 'tenant_id,request_id', ''),
+      ('mes_report_command', 'uk_mes_report_command_fact', 'tenant_id,factory_code,report_id', ''),
+      ('mes_identifier_binding', 'uk_mes_binding_scope', 'tenant_id,factory_code,id', ''),
+      ('mes_identifier_binding', 'uk_mes_binding_origin', 'tenant_id,factory_code,bind_report_id', ''),
+      ('mes_identifier_binding', 'uk_mes_binding_active_external', 'tenant_id,factory_code,external_namespace,external_code', 'status=''ACTIVE'''),
+      ('mes_identifier_binding', 'uk_mes_binding_active_unit', 'tenant_id,factory_code,binding_group_id,canonical_identifier', 'status=''ACTIVE'''),
+      ('mes_identifier_binding', 'uk_mes_binding_occupation_sequence', 'occupation_sequence', 'occupation_sequence IS NOT NULL'),
+      ('mes_identifier_binding_operation', 'uk_mes_binding_operation_request', 'tenant_id,request_id', ''),
+      ('mes_identifier_binding_operation', 'uk_mes_binding_operation_scope', 'tenant_id,factory_code,id', ''),
+      ('mes_identifier_binding_operation', 'uk_mes_binding_operation_forward_report', 'tenant_id,factory_code,report_id', 'original_operation_id IS NULL'),
+      ('mes_identifier_binding_operation', 'uk_mes_binding_operation_inverse_origin', 'tenant_id,factory_code,original_operation_id', 'original_operation_id IS NOT NULL'),
+      ('mes_report_reverse_request', 'uk_mes_reverse_request_binding_scope', 'tenant_id,factory_code,id', ''),
+      ('mes_report_request_close', 'uk_mes_report_request_close', 'tenant_id,request_id', ''),
+      ('mes_auto_report_event', 'uk_mes_auto_report_event_source', 'COALESCE(tenant_id,-1),source_event_id', 'del_flag=''0'''),
+      ('mes_task_report', 'uk_mes_task_report_request_id', 'tenant_id,request_id', 'del_flag=''0'' AND request_id IS NOT NULL'),
+      ('mes_task_report', 'uk_mes_task_report_source_event', 'COALESCE(tenant_id,-1),source_event_id', 'del_flag=''0'' AND source_event_id IS NOT NULL')),
+    required_fk(table_name,name,keys,target_table,target_keys,is_deferred) AS (VALUES
+      ('mes_identifier_binding_group', 'mes_identifier_binding_group_task_id_fkey', 'task_id', 'mes_task', 'id', false),
+      ('mes_report_command', 'fk_mes_report_command_fact', 'tenant_id,factory_code,report_id', 'mes_task_report', 'tenant_id,factory_code,id', false),
+      ('mes_identifier_binding', 'fk_mes_binding_group', 'tenant_id,factory_code,binding_group_id', 'mes_identifier_binding_group', 'tenant_id,factory_code,id', false),
+      ('mes_identifier_binding', 'fk_mes_binding_bind_report', 'tenant_id,factory_code,bind_report_id', 'mes_task_report', 'tenant_id,factory_code,id', false),
+      ('mes_identifier_binding', 'fk_mes_binding_release_report', 'tenant_id,factory_code,release_report_id', 'mes_task_report', 'tenant_id,factory_code,id', false),
+      ('mes_identifier_binding_operation', 'fk_mes_binding_operation_instance', 'tenant_id,factory_code,binding_id', 'mes_identifier_binding', 'tenant_id,factory_code,id', false),
+      ('mes_identifier_binding_operation', 'fk_mes_binding_operation_group', 'tenant_id,factory_code,binding_group_id', 'mes_identifier_binding_group', 'tenant_id,factory_code,id', false),
+      ('mes_identifier_binding_operation', 'fk_mes_binding_operation_command', 'tenant_id,factory_code,report_id', 'mes_report_command', 'tenant_id,factory_code,report_id', false),
+      ('mes_task_report', 'fk_mes_report_binding_instance', 'tenant_id,factory_code,identifier_binding_id', 'mes_identifier_binding', 'tenant_id,factory_code,id', true),
+      ('mes_identifier_binding_operation', 'fk_mes_binding_inverse_origin', 'tenant_id,factory_code,original_operation_id', 'mes_identifier_binding_operation', 'tenant_id,factory_code,id', false),
+      ('mes_identifier_binding_operation', 'fk_mes_binding_inverse_request', 'tenant_id,factory_code,reverse_request_id', 'mes_report_reverse_request', 'tenant_id,factory_code,id', false),
+      ('mes_identifier_binding', 'fk_mes_binding_last_inverse', 'tenant_id,factory_code,last_inverse_operation_id', 'mes_identifier_binding_operation', 'tenant_id,factory_code,id', true),
+      ('mes_auto_report_event', 'fk_mes_auto_capture_rule', 'capture_rule_id', 'mes_auto_report_rule', 'id', false),
+      ('mes_auto_report_event', 'fk_mes_auto_capture_instance', 'expected_binding_id', 'mes_identifier_binding', 'id', false)),
+    required_table(name,columns) AS (VALUES
+      ('mes_task','id,tenant_id,factory_code,code,process_route_id,process_route_code,process_route_snapshot,resource_type,del_flag'),
+      ('mes_produce_task','id,tenant_id,factory_code,code,task_code,route_code,process_route_id,process_route_code,process_route_snapshot,predecessor_codes,successor_codes,last_route,route_order,timing_rules_json,overlap_enabled,transfer_batch_quantity,transfer_minutes,del_flag'),
+      ('mes_task_arrange','id,tenant_id,factory_code,code,task_code,produce_task_code,route_code,predecessor_codes,successor_codes,last_route,route_order,overlap_enabled,transfer_batch_quantity,transfer_minutes,report_mode,execution_policy_snapshot,status,shift_code,batch_no,notice_num,complete_num,worksite_codes,worksite_types,planned_device_code,del_flag'),
+      ('mes_task_report','id,tenant_id,factory_code,request_id,task_code,arrange_code,produce_task_code,report_mode,report_num,transfer_code,submitted_identifier,status,source_event_id,source_event_time,report_time,type,worker_code,worker_name,del_flag,execution_kind,route_return_id,identifier_route_version,identifier_mapping_id,identifier_type,identifier_resolution_snapshot,extension_evidence_snapshot,carrier_operation_id,carrier_code,correction_permit_id,correction_permit_no,manual_override_reason,effective_report_num,corrected_report_num,reverse_request_id,reverse_reason,reverse_time,reverse_worker_code,quality_quantity_status'),
+      ('mes_execution_template','id,tenant_id,factory_code,status,report_mode,allowed_triggers,station_allowed,mobile_allowed'),
+      ('mes_identifier_binding_group','id,tenant_id,factory_code'),
+      ('mes_identifier_binding','id,tenant_id,factory_code'),
+      ('mes_identifier_binding_operation','id,tenant_id,factory_code'),
+      ('mes_report_command','id,tenant_id,factory_code'),
+      ('mes_report_request_close','id,tenant_id,factory_code'),
+      ('mes_auto_report_event','id,tenant_id,factory_code,source_event_id,device_code,event_identifier,source_event_time,raw_value,requested_arrange_code,transfer_code,raw_payload,status,report_id,rule_id,rule_code,arrange_code,resolved_quantity,conversion_snapshot,del_flag'),
+      ('mes_auto_report_rule','id,tenant_id,factory_code,rule_code,device_code,event_identifier,quantity_mode,quantity_multiplier,pulse_quantity,max_single_quantity,max_event_delay_minutes,route_code,worksite_code,enabled,del_flag'),
+      ('mes_report_reverse_request','id,tenant_id,factory_code,status,approved,correction_mode,create_re_report_permit,evidence_snapshot,evidence_fingerprint,applicant_id,applicant_code,reviewer_id,reviewer_code,review_request_id,review_fingerprint,review_reason,submit_request_id,submit_fingerprint,reviewed_time,handled_time'),
+      ('mes_report_reverse_scope','id,tenant_id,factory_code,reverse_request_id,report_id,sequence_no,active,child_reverse_request_id,evidence_fingerprint'),
+      ('mes_report_reverse_operation','id,tenant_id,factory_code,reverse_request_id,operation_type,request_id,request_fingerprint,operator_id,operator_code,before_status,after_status'),
+      ('mes_report_quantity_correction_line','id,tenant_id,factory_code,reverse_request_id,report_id,operation_request_id,evidence_fingerprint,allocation_type,source_id,correction_quantity,remaining_quantity,del_flag'),
+      ('mes_warehouse_inout','id,tenant_id,factory_code,bill_id,source_report_id,resource_no,biz_type,operate_type,operate_num'),
+      ('mes_station_pass_record','id,tenant_id,factory_code,report_id,request_id,request_fingerprint,result,arrange_code,transfer_code,validation_snapshot'),
+      ('mes_quality_stock_proof','tenant_id,factory_code,source_report_id'),
+      ('mes_inventory_quality_case','tenant_id,factory_code,source_report_id'),
+      ('mes_wip_transfer','tenant_id,factory_code,source_report_id,status,lost_quantity'),
+      ('mes_identifier_mapping','tenant_id,factory_code,alias_code,canonical_code,status,del_flag')),
+    missing(item) AS (
+      SELECT 'DATABASE:expected kitex_mom' WHERE current_database() &lt;&gt; 'kitex_mom'
+      UNION ALL SELECT 'SESSION:replication role must be origin' WHERE current_setting('session_replication_role') &lt;&gt; 'origin'
+      UNION ALL
+      SELECT 'MDM_READ:'||e.name||' missing/SELECT privilege'
+      FROM (VALUES ('mdm_process_route'),('mdm_process_route_working')) e(name)
+      WHERE NOT EXISTS(SELECT 1 FROM pg_class c WHERE c.oid=to_regclass('mom_mdm.'||e.name)
+        AND c.relkind IN ('r','p') AND has_schema_privilege('mom_mdm','USAGE') AND has_table_privilege(c.oid,'SELECT'))
+      UNION ALL
+      SELECT 'MDM_COLUMN:'||e.name||'.'||field.name||' missing'
+      FROM (VALUES ('mdm_process_route','id,tenant_id,factory_code,route_code,del_flag'),
+        ('mdm_process_route_working','id,tenant_id,factory_code,route_code,route_node_code,process_code,del_flag')) e(name,columns)
+      CROSS JOIN LATERAL unnest(string_to_array(e.columns,',')) field(name)
+      WHERE NOT EXISTS(SELECT 1 FROM pg_attribute a WHERE a.attrelid=to_regclass('mom_mdm.'||e.name)
+        AND a.attname=field.name AND a.attnum&gt;0 AND NOT a.attisdropped)
+      UNION ALL
+      SELECT 'TABLE:'||e.name||' missing/role privileges'
+      FROM required_table e
+      WHERE NOT EXISTS (SELECT 1 FROM pg_class c
+        WHERE c.oid=to_regclass('mom_mes.'||e.name) AND c.relkind IN ('r','p')
+          AND has_table_privilege(c.oid,'SELECT')
+          AND (e.name IN ('mes_quality_stock_proof','mes_inventory_quality_case','mes_identifier_mapping') OR has_table_privilege(c.oid,'INSERT'))
+          AND (e.name IN ('mes_identifier_binding_group','mes_identifier_binding_operation','mes_report_command',
+            'mes_report_request_close','mes_report_reverse_operation','mes_report_quantity_correction_line',
+            'mes_warehouse_inout','mes_quality_stock_proof','mes_inventory_quality_case','mes_identifier_mapping') OR has_table_privilege(c.oid,'UPDATE')))
+      UNION ALL
+      SELECT 'SCHEMA:'||e.name||' search_path does not resolve mom_mes'
+      FROM required_table e
+      WHERE to_regclass(e.name) IS DISTINCT FROM to_regclass('mom_mes.'||e.name)
+      UNION ALL
+      SELECT 'BASE_COLUMN:'||e.name||'.'||field.name||' missing'
+      FROM required_table e CROSS JOIN LATERAL unnest(string_to_array(e.columns,',')) field(name)
+      WHERE NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=to_regclass('mom_mes.'||e.name)
+        AND a.attname=field.name AND a.attnum&gt;0 AND NOT a.attisdropped)
+      UNION ALL
+      SELECT 'FUNCTION:'||e.name||' signature/body/language mismatch'
+      FROM required_function e
+      WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang
+        WHERE p.oid=to_regprocedure('mom_mes.'||e.name||'('||e.args||')')
+          AND md5(p.prosrc)=e.body_md5 AND l.lanname=e.language AND p.provolatile::text=e.volatility
+          AND p.prosecdef=false AND p.proconfig IS NULL
+          AND (e.args='' OR has_function_privilege(p.oid,'EXECUTE')))
+      UNION ALL
+      SELECT 'TRIGGER:'||e.table_name||'.'||e.name||' disabled/definition mismatch'
+      FROM required_trigger e
+      WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t
+        WHERE t.tgrelid=to_regclass('mom_mes.'||e.table_name) AND t.tgname=e.name
+          AND t.tgfoid=to_regprocedure('mom_mes.'||e.function_name||'()')
+          AND t.tgtype=e.event_mask AND t.tgenabled IN ('O','A') AND NOT t.tgisinternal
+          AND t.tgdeferrable=e.is_deferrable AND t.tginitdeferred=e.is_deferred
+          AND (NOT e.is_deferrable OR t.tgconstraint &lt;&gt; 0) AND t.tgqual IS NULL
+          AND t.tgattr=''::int2vector AND t.tgnargs=0)
+      UNION ALL
+      SELECT 'COLUMN:'||e.table_name||'.'||e.name||' missing/type mismatch'
+      FROM required_column e
+      WHERE NOT EXISTS (SELECT 1 FROM pg_attribute a
+        WHERE a.attrelid=to_regclass('mom_mes.'||e.table_name) AND a.attname=e.name
+          AND a.attnum&gt;0 AND NOT a.attisdropped AND format_type(a.atttypid,a.atttypmod)=e.type_name)
+      UNION ALL
+      SELECT 'UNIQUE:'||e.table_name||'.'||e.name||' missing/key/predicate/validity mismatch'
+      FROM required_index e
+      WHERE NOT EXISTS (SELECT 1 FROM pg_index i
+        WHERE i.indexrelid=to_regclass('mom_mes.'||e.name) AND i.indrelid=to_regclass('mom_mes.'||e.table_name)
+          AND i.indisunique AND i.indisvalid AND i.indisready AND i.indislive
+          AND i.indnatts=i.indnkeyatts
+          AND regexp_replace(regexp_replace((SELECT string_agg(pg_get_indexdef(i.indexrelid,k,true),',' ORDER BY k) FROM generate_series(1,i.indnkeyatts) k), '::(text|bigint|integer|character varying|bpchar)', '', 'g'), '[()''[:space:]]', '', 'g')=regexp_replace(regexp_replace(e.keys, '::(text|bigint|integer|character varying|bpchar)', '', 'g'), '[()''[:space:]]', '', 'g')
+          AND regexp_replace(regexp_replace(COALESCE(pg_get_expr(i.indpred,i.indrelid),''), '::(text|bigint|integer|character varying|bpchar)', '', 'g'), '[()''[:space:]]', '', 'g')=regexp_replace(regexp_replace(e.predicate, '::(text|bigint|integer|character varying|bpchar)', '', 'g'), '[()''[:space:]]', '', 'g')
+          AND ARRAY(SELECT literal.tokens[1] FROM regexp_matches(COALESCE(pg_get_expr(i.indpred,i.indrelid),''), $node_literal$('(?:[^']|'')*')$node_literal$, 'g') WITH ORDINALITY literal(tokens,ord) ORDER BY literal.ord)
+            = ARRAY(SELECT literal.tokens[1] FROM regexp_matches(e.predicate, $node_literal$('(?:[^']|'')*')$node_literal$, 'g') WITH ORDINALITY literal(tokens,ord) ORDER BY literal.ord))
+      UNION ALL
+      SELECT 'FK:'||e.table_name||'.'||e.name||' missing/keys/target/enforcement mismatch'
+      FROM required_fk e
+      WHERE NOT EXISTS (SELECT 1 FROM pg_constraint c
+        WHERE c.conrelid=to_regclass('mom_mes.'||e.table_name) AND c.conname=e.name AND c.contype='f'
+          AND c.confrelid=to_regclass('mom_mes.'||e.target_table) AND c.condeferrable=e.is_deferred AND c.condeferred=e.is_deferred
+          AND c.confupdtype='a' AND c.confdeltype='a'
+          AND (SELECT string_agg(a.attname,',' ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum,ord) JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum)=e.keys AND (SELECT string_agg(a.attname,',' ORDER BY k.ord) FROM unnest(c.confkey) WITH ORDINALITY k(attnum,ord) JOIN pg_attribute a ON a.attrelid=c.confrelid AND a.attnum=k.attnum)=e.target_keys
+          AND (SELECT count(*) FROM pg_trigger t WHERE t.tgconstraint=c.oid AND t.tgisinternal)=4
+          AND NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgconstraint=c.oid AND t.tgenabled NOT IN ('O','A')))
+      UNION ALL SELECT 'SEQUENCE:occupation sequence missing/type/increment/cache/cycle/usage'
+      WHERE NOT EXISTS (SELECT 1 FROM pg_sequence s
+        WHERE s.seqrelid=to_regclass('mom_mes.mes_binding_occupation_seq') AND s.seqtypid='bigint'::regtype
+          AND s.seqincrement=1 AND s.seqcache=1 AND NOT s.seqcycle
+          AND has_sequence_privilege(s.seqrelid,'USAGE'))
+      UNION ALL
+      SELECT 'CHECK:'||e.table_name||'.'||e.name||' missing/runtime version mismatch'
+      FROM (VALUES
+        ('mes_execution_template','ck_mes_template_node_scope_290','route_node_code'),
+        ('mes_identifier_binding_group','ck_mes_binding_node_group_290','NODE_BINDING_V2'),
+        ('mes_identifier_binding_group','ck_mes_binding_node_hash_290','MES_NODE_GRAPH_V2:'),
+        ('mes_report_command','ck_mes_report_command_versions','MES_REPORT_COMMAND_V2'),
+        ('mes_report_command','ck_mes_report_command_hash','sha256'),
+        ('mes_identifier_binding','ck_mes_binding_lifecycle','REVERSED'),
+        ('mes_identifier_binding_operation','ck_mes_binding_operation_versions','REVERSE_RELEASE'),
+        ('mes_identifier_binding_operation','ck_mes_binding_operation_inverse_fields','original_operation_id'),
+        ('mes_task_report','ck_mes_report_binding_fields','identifier_binding_snapshot'),
+        ('mes_report_request_close','ck_mes_report_request_close_hash','sha256')) e(table_name,name,expected)
+      WHERE NOT EXISTS (SELECT 1 FROM pg_constraint c
+        WHERE c.conrelid=to_regclass('mom_mes.'||e.table_name) AND c.conname=e.name AND c.contype='c'
+          AND strpos(pg_get_constraintdef(c.oid),e.expected)&gt;0)
+    )
+    SELECT COALESCE(jsonb_agg(item ORDER BY item),'[]'::jsonb)::text FROM missing
+  </select>
+</mapper>

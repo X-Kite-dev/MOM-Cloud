@@ -1,0 +1,207 @@
+spring:
+  data:
+    redis:
+      host: kitex-redis
+      port: 6379
+      password: ${MOM_REDIS_PASSWORD}
+      database: 14
+  # 动态多数据源配置
+  datasource:
+    dynamic:
+      primary: master
+      strict: false
+      datasource:
+        master:
+          driver-class-name: org.postgresql.Driver
+          username: ${MYSQL_USER:postgres}
+          password: ${MYSQL_PASSWORD}
+          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=kitex
+          druid:
+            initial-size: 5
+            min-idle: 5
+            max-active: 20
+            max-wait: 60000
+            validation-query: SELECT 1
+            test-on-borrow: false
+            test-while-idle: true
+            time-between-eviction-runs-millis: 60000
+            min-evictable-idle-time-millis: 300000
+        mdm:
+          driver-class-name: org.postgresql.Driver
+          username: ${MYSQL_USER:postgres}
+          password: ${MYSQL_PASSWORD}
+          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_mdm
+          druid:
+            initial-size: 3
+            min-idle: 3
+            max-active: 15
+            max-wait: 60000
+            validation-query: SELECT 1
+            test-on-borrow: false
+            test-while-idle: true
+            time-between-eviction-runs-millis: 60000
+            min-evictable-idle-time-millis: 300000
+        mes:
+          driver-class-name: org.postgresql.Driver
+          username: ${MYSQL_USER:postgres}
+          password: ${MYSQL_PASSWORD}
+          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_mes
+          druid:
+            initial-size: 3
+            min-idle: 3
+            max-active: 15
+            max-wait: 60000
+            validation-query: SELECT 1
+            test-on-borrow: false
+            test-while-idle: true
+            time-between-eviction-runs-millis: 60000
+            min-evictable-idle-time-millis: 300000
+        common:
+          driver-class-name: org.postgresql.Driver
+          username: ${MYSQL_USER:postgres}
+          password: ${MYSQL_PASSWORD}
+          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_common
+          druid:
+            initial-size: 3
+            min-idle: 3
+            max-active: 15
+            max-wait: 60000
+            validation-query: SELECT 1
+            test-on-borrow: false
+            test-while-idle: true
+            time-between-eviction-runs-millis: 60000
+            min-evictable-idle-time-millis: 300000
+        wms:
+          driver-class-name: org.postgresql.Driver
+          username: ${MYSQL_USER:postgres}
+          password: ${MYSQL_PASSWORD}
+          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_wms
+          druid:
+            initial-size: 3
+            min-idle: 3
+            max-active: 15
+            max-wait: 60000
+            validation-query: SELECT 1
+            test-on-borrow: false
+            test-while-idle: true
+            time-between-eviction-runs-millis: 60000
+            min-evictable-idle-time-millis: 300000
+        qms:
+          driver-class-name: org.postgresql.Driver
+          username: ${MYSQL_USER:postgres}
+          password: ${MYSQL_PASSWORD}
+          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_qms
+          druid:
+            initial-size: 3
+            min-idle: 3
+            max-active: 15
+            max-wait: 60000
+            validation-query: SELECT 1
+            test-on-borrow: false
+            test-while-idle: true
+            time-between-eviction-runs-millis: 60000
+            min-evictable-idle-time-millis: 300000
+        tpm:
+          driver-class-name: org.postgresql.Driver
+          username: ${MYSQL_USER:postgres}
+          password: ${MYSQL_PASSWORD}
+          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_tpm
+          druid:
+            initial-size: 3
+            min-idle: 3
+            max-active: 15
+            max-wait: 60000
+            validation-query: SELECT 1
+            test-on-borrow: false
+            test-while-idle: true
+            time-between-eviction-runs-millis: 60000
+            min-evictable-idle-time-millis: 300000
+        plan:
+          driver-class-name: org.postgresql.Driver
+          username: ${MYSQL_USER:postgres}
+          password: ${MYSQL_PASSWORD}
+          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_plan
+          druid:
+            initial-size: 3
+            min-idle: 3
+            max-active: 15
+            max-wait: 60000
+            validation-query: SELECT 1
+            test-on-borrow: false
+            test-while-idle: true
+            time-between-eviction-runs-millis: 60000
+            min-evictable-idle-time-millis: 300000
+        pms:
+          driver-class-name: org.postgresql.Driver
+          username: ${MYSQL_USER:postgres}
+          password: ${MYSQL_PASSWORD}
+          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_pms
+          druid:
+            initial-size: 3
+            min-idle: 3
+            max-active: 15
+            max-wait: 60000
+            validation-query: SELECT 1
+            test-on-borrow: false
+            test-while-idle: true
+            time-between-eviction-runs-millis: 60000
+            min-evictable-idle-time-millis: 300000
+        iot:
+          url: jdbc:mysql://mom-mysql:3306/mom-iot?characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&useJDBCCompliantTimezoneShift=true&useLegacyDatetimeCode=false&serverTimezone=GMT%2B8&allowMultiQueries=true&nullCatalogMeansCurrent=true&allowPublicKeyRetrieval=true
+          username: root
+          password: ${MOM_IOT_DB_PASSWORD}
+          driver-class-name: com.mysql.cj.jdbc.Driver
+          druid:
+            initial-size: 3
+            min-idle: 3
+            max-active: 15
+            max-wait: 60000
+            validation-query: SELECT 1
+            test-on-borrow: false
+            test-while-idle: true
+            time-between-eviction-runs-millis: 60000
+            min-evictable-idle-time-millis: 300000
+      druid:
+        stat-view-servlet:
+          enabled: true
+          url-pattern: /druid/*
+          login-username: admin
+          login-password: ${MOM_DRUID_PASSWORD}
+        web-stat-filter:
+          enabled: true
+          url-pattern: /*
+          exclusions: "*.js,*.gif,*.jpg,*.png,*.css,*.ico,/druid/*"
+
+
+# 文件上传配置
+file:
+  local:
+    enable: true
+    base-path: ${MOM_FILE_UPLOAD_BASE_PATH:/tmp/mom-uploads}
+
+# 验证码配置
+aj:
+  captcha:
+    water-mark: mom-cloud
+
+# 登录报文加密根密钥 ，必须是16位
+security:
+  encodeKey: ${MOM_SECURITY_ENCODE_KEY}
+  oauth2:
+    client:
+      client-id: 'mom-boot'
+      client-secret: ${MOM_BOOT_OAUTH_CLIENT_SECRET}
+
+# 配置文件加密根密码
+jasypt:
+  encryptor:
+    password: ${MOM_JASYPT_PASSWORD}
+
+# swagger token url 配置
+swagger:
+  token-url: ${swagger.gateway}/admin/oauth2/token
+
+# Logger Config
+logging:
+  level:
+    com.kitex.**: debug
