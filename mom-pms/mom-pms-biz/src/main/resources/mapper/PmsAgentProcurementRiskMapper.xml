@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.pms.agent.mapper.PmsAgentProcurementRiskMapper">
+
+    <!--
+      采购风险只读取已审批且尚未收齐的订单行。供应商正式承诺优先于订单内部要货日；
+      承诺后的到货量按承诺时刻先后冲减，防止把已经到货的批次继续报告为逾期。
+    -->
+    <sql id="procurementRiskCte">
+        WITH open_line AS (
+            SELECT o.id AS order_id, d.id AS order_detail_id, o.pms_order_no AS order_no,
+                   o.status AS order_status, o.supplier_code, o.supplier_name,
+                   d.mat_code AS material_code, d.mat_name AS material_name,
+                   d.mat_unit AS material_unit, d.delivery_time AS internal_delivery_date,
+                   COALESCE(d.order_num, 0)::numeric AS order_num,
+                   COALESCE(d.arrival_num, 0)::numeric AS arrival_num,
+                   COALESCE(d.cancelled_num, 0)::numeric AS cancelled_num,
+                   GREATEST(COALESCE(d.order_num, 0)::numeric
+                       - COALESCE(d.arrival_num, 0)::numeric
+                       - COALESCE(d.cancelled_num, 0)::numeric, 0) AS outstanding_num
+            FROM "mom_pms".pms_order o
+            JOIN "mom_pms".pms_order_detail d
+              ON d.pms_order_id = o.id AND d.tenant_id = o.tenant_id
+             AND d.factory_code = o.factory_code AND d.del_flag = '0'
+            WHERE o.tenant_id = #{tenantId} AND o.factory_code = #{factoryCode}
+              AND o.del_flag = '0' AND o.status IN ('2', '3', '4')
+              AND COALESCE(d.order_num, 0) - COALESCE(d.arrival_num, 0)
+                  - COALESCE(d.cancelled_num, 0) &gt; 0
+        ), commitment_source AS (
+            SELECT l.*, c.id AS commitment_id,
+                   GREATEST(l.arrival_num - COALESCE(c.arrival_num_baseline, 0), 0) AS received_since_commitment
+            FROM open_line l
+            LEFT JOIN "mom_pms".pms_delivery_commitment c
+              ON c.order_detail_id = l.order_detail_id AND c.tenant_id = #{tenantId}
+             AND c.factory_code = #{factoryCode} AND c.del_flag = '0' AND c.status = 'ACTIVE'
+        ), item_window AS (
+            SELECT s.order_detail_id, s.commitment_id, s.received_since_commitment,
+                   i.committed_num::numeric AS committed_num,
+                   COALESCE(i.committed_delivery_time,
+                       i.committed_delivery_date::timestamp + INTERVAL '1 day' - INTERVAL '1 microsecond')
+                       AS committed_delivery_time,
+                   COALESCE(SUM(i.committed_num::numeric) OVER (
+                       PARTITION BY i.commitment_id
+                       ORDER BY COALESCE(i.committed_delivery_time,
+                           i.committed_delivery_date::timestamp + INTERVAL '1 day' - INTERVAL '1 microsecond'),
+                           i.sequence_no, i.id
+                       ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS prior_committed_num
+            FROM commitment_source s
+            JOIN "mom_pms".pms_delivery_commitment_item i
+              ON i.commitment_id = s.commitment_id AND i.tenant_id = #{tenantId}
+             AND i.factory_code = #{factoryCode} AND i.del_flag = '0'
+        ), item_remaining AS (
+            SELECT order_detail_id, commitment_id, committed_delivery_time,
+                   GREATEST(committed_num
+                       - LEAST(GREATEST(received_since_commitment - prior_committed_num, 0), committed_num), 0)
+                       AS remaining_num
+            FROM item_window
+        ), commitment_agg AS (
+            SELECT order_detail_id,
+                   SUM(remaining_num) AS committed_remaining_num,
+                   SUM(remaining_num) FILTER (
+                       WHERE committed_delivery_time &lt; #{observedAt}) AS overdue_commitment_num,
+                   SUM(remaining_num) FILTER (
+                       WHERE committed_delivery_time &gt;= #{observedAt}
+                         AND committed_delivery_time &lt;= #{horizonEnd}) AS due_soon_commitment_num,
+                   MIN(committed_delivery_time) FILTER (WHERE remaining_num &gt; 0)
+                       AS next_committed_delivery_time
+            FROM item_remaining
+            GROUP BY order_detail_id
+        ), line_health AS (
+            SELECT l.*,
+                   COALESCE(a.committed_remaining_num, 0) AS committed_remaining_num,
+                   COALESCE(a.overdue_commitment_num, 0) AS overdue_commitment_num,
+                   COALESCE(a.due_soon_commitment_num, 0) AS due_soon_commitment_num,
+                   GREATEST(l.outstanding_num - COALESCE(a.committed_remaining_num, 0), 0)
+                       AS uncommitted_gap_num,
+                   a.next_committed_delivery_time
+            FROM open_line l
+            LEFT JOIN commitment_agg a ON a.order_detail_id = l.order_detail_id
+        )
+    </sql>
+
+    <select id="selectSummary"
+            resultType="com.kitex.mom.pms.agent.model.PmsProcurementRiskRow$Summary">
+        <include refid="procurementRiskCte"/>
+        SELECT COUNT(DISTINCT order_id) AS active_order_count,
+               COUNT(*) AS open_line_count,
+               (SELECT COUNT(*) FROM "mom_pms".pms_order pending
+                 WHERE pending.tenant_id = #{tenantId} AND pending.factory_code = #{factoryCode}
+                   AND pending.del_flag = '0' AND pending.status IN ('0', '1')) AS pending_approval_order_count,
+               COUNT(*) FILTER (WHERE overdue_commitment_num &gt; 0) AS overdue_commitment_line_count,
+               COUNT(*) FILTER (WHERE due_soon_commitment_num &gt; 0) AS due_soon_line_count,
+               COUNT(*) FILTER (WHERE uncommitted_gap_num &gt; 0) AS uncommitted_gap_line_count,
+               COUNT(*) FILTER (WHERE internal_delivery_date IS NOT NULL
+                   AND internal_delivery_date &lt; #{observedAt}::date) AS internal_due_date_passed_line_count,
+               COUNT(*) FILTER (WHERE committed_remaining_num &gt; outstanding_num)
+                   AS commitment_excess_line_count,
+               COUNT(*) FILTER (WHERE NULLIF(BTRIM(COALESCE(material_unit, '')), '') IS NULL)
+                   AS missing_unit_line_count
+        FROM line_health
+    </select>
+
+    <select id="selectRiskLines"
+            resultType="com.kitex.mom.pms.agent.model.PmsProcurementRiskRow$RiskLine">
+        <include refid="procurementRiskCte"/>
+        SELECT order_id, order_detail_id, order_no, order_status, supplier_code, supplier_name,
+               material_code, material_name, material_unit, order_num, arrival_num, cancelled_num,
+               outstanding_num, committed_remaining_num, overdue_commitment_num,
+               due_soon_commitment_num, uncommitted_gap_num, internal_delivery_date,
+               next_committed_delivery_time,
+               CONCAT_WS(',',
+                   CASE WHEN overdue_commitment_num &gt; 0 THEN 'OVERDUE_COMMITMENT' END,
+                   CASE WHEN uncommitted_gap_num &gt; 0 THEN 'UNCOMMITTED_GAP' END,
+                   CASE WHEN due_soon_commitment_num &gt; 0 THEN 'DUE_SOON' END,
+                   CASE WHEN internal_delivery_date IS NOT NULL
+                       AND internal_delivery_date &lt; #{observedAt}::date THEN 'INTERNAL_DUE_DATE_PASSED' END,
+                   CASE WHEN committed_remaining_num &gt; outstanding_num
+                       THEN 'COMMITMENT_EXCEEDS_OUTSTANDING' END,
+                   CASE WHEN NULLIF(BTRIM(COALESCE(material_unit, '')), '') IS NULL
+                       THEN 'MISSING_UNIT' END) AS risk_codes
+        FROM line_health
+        WHERE overdue_commitment_num &gt; 0 OR uncommitted_gap_num &gt; 0
+           OR due_soon_commitment_num &gt; 0
+           OR (internal_delivery_date IS NOT NULL AND internal_delivery_date &lt; #{observedAt}::date)
+           OR committed_remaining_num &gt; outstanding_num
+           OR NULLIF(BTRIM(COALESCE(material_unit, '')), '') IS NULL
+        ORDER BY CASE WHEN overdue_commitment_num &gt; 0 THEN 1
+                      WHEN uncommitted_gap_num &gt; 0 THEN 2
+                      WHEN committed_remaining_num &gt; outstanding_num THEN 3
+                      WHEN due_soon_commitment_num &gt; 0 THEN 4 ELSE 5 END,
+                 next_committed_delivery_time NULLS LAST, internal_delivery_date NULLS LAST,
+                 order_no, order_detail_id
+        LIMIT #{limit}
+    </select>
+</mapper>

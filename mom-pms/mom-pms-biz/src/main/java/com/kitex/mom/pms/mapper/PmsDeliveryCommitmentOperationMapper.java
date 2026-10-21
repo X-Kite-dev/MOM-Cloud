@@ -1,0 +1,9 @@
+package com.kitex.mom.pms.mapper;
+
+import com.kitex.common.data.datascope.MomBaseMapper;
+import com.kitex.mom.pms.entity.PmsDeliveryCommitmentOperationEntity;
+import org.apache.ibatis.annotations.Mapper;
+
+@Mapper
+public interface PmsDeliveryCommitmentOperationMapper extends MomBaseMapper<PmsDeliveryCommitmentOperationEntity> {
+}
