@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mes.mapper.MesDispatchHistoryMapper">
+    <sql id="dateColumn">
+        <choose>
+            <when test="q.dateBasis == 'START'">a.start_time</when>
+            <when test="q.dateBasis == 'FINISH'">a.finish_time</when>
+            <otherwise>a.dispatcher_time</otherwise>
+        </choose>
+    </sql>
+    <sql id="filter">
+        a.tenant_id=#{tenant} AND a.factory_code=#{factory} AND a.del_flag='0'
+        <if test="q.taskCode != null">AND a.task_code=#{q.taskCode}</if>
+        <if test="q.produceTaskCode != null">AND a.produce_task_code=#{q.produceTaskCode}</if>
+        <if test="q.arrangeCode != null">AND a.code=#{q.arrangeCode}</if>
+        <if test="q.arrangeId != null">AND a.id=CAST(#{q.arrangeId} AS BIGINT)</if>
+        <if test="q.workshopCode != null">AND a.workshop_code=#{q.workshopCode}</if>
+        <if test="q.shiftCode != null">AND a.shift_code=#{q.shiftCode}</if>
+        <if test="q.status != null">AND a.status=#{q.status}</if>
+        <if test="q.executionTemplateCode != null">AND a.execution_template_code=#{q.executionTemplateCode}</if>
+        <if test="q.executionTemplateVersion != null">AND a.execution_template_version=#{q.executionTemplateVersion}</if>
+        <if test="q.workerCode != null">
+            AND POSITION(CONCAT(',',#{q.workerCode},',') IN CONCAT(',',REPLACE(a.worker_code,' ',''),',')) &gt; 0
+        </if>
+        <if test="q.worksiteCode != null">
+            AND (a.actual_worksite_code=#{q.worksiteCode}
+            OR POSITION(CONCAT(',',#{q.worksiteCode},',') IN CONCAT(',',REPLACE(a.worksite_codes,' ',''),',')) &gt; 0)
+        </if>
+        <if test="q.startTime != null">AND <include refid="dateColumn"/> &gt;= #{q.startTime}</if>
+        <if test="q.endTime != null">AND <include refid="dateColumn"/> &lt; #{q.endTime}</if>
+    </sql>
+    <select id="page" resultType="com.kitex.mom.mes.entity.MesTaskArrangeEntity" useCache="false">
+        SELECT a.* FROM mom_mes.mes_task_arrange a WHERE <include refid="filter"/>
+        ORDER BY <include refid="dateColumn"/> DESC NULLS LAST,a.id DESC LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="total" resultType="long" useCache="false">
+        SELECT COUNT(*) FROM mom_mes.mes_task_arrange a WHERE <include refid="filter"/>
+    </select>
+</mapper>

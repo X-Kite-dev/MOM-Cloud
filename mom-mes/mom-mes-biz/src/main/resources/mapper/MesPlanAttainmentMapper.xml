@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mes.mapper.MesPlanAttainmentMapper">
+	<!-- 不JOIN父工单：同组织父身份使用标量计数，避免重复来源乘倍或缺失来源丢失。 -->
+	<sql id="base">
+		<choose>
+			<when test="q.objectLevel == 'PROCESS'">
+				SELECT p.id, NULLIF(TRIM(p.code), '') AS object_code, NULLIF(TRIM(p.task_code), '') AS task_code,
+					NULLIF(TRIM(p.workshop_code), '') AS workshop_code, NULLIF(TRIM(p.route_code), '') AS route_code,
+					p.source_route_node_code AS route_node_code, p.status, p.planned_end_time, p.start_time, p.finish_time,
+					(SELECT COUNT(*) FROM mom_mes.mes_produce_task d WHERE NULLIF(TRIM(d.code), '') = NULLIF(TRIM(p.code), '')
+						AND d.tenant_id = #{tenant} AND d.factory_code = #{factory} AND d.del_flag = '0') AS code_count,
+					(SELECT COUNT(*) FROM mom_mes.mes_task t WHERE NULLIF(TRIM(t.code), '') = NULLIF(TRIM(p.task_code), '')
+						AND t.tenant_id = #{tenant} AND t.factory_code = #{factory} AND t.del_flag = '0') AS parent_count
+				FROM mom_mes.mes_produce_task p
+				WHERE p.tenant_id = #{tenant} AND p.factory_code = #{factory} AND p.del_flag = '0'
+				<if test="q.taskCode != null">AND NULLIF(TRIM(p.task_code), '') = #{q.taskCode}</if>
+				<if test="q.routeCode != null">AND NULLIF(TRIM(p.route_code), '') = #{q.routeCode}</if>
+			</when>
+			<otherwise>
+				SELECT t.id, NULLIF(TRIM(t.code), '') AS object_code, NULLIF(TRIM(t.code), '') AS task_code,
+					NULLIF(TRIM(t.workshop_code), '') AS workshop_code, CAST(NULL AS VARCHAR) AS route_code,
+					CAST(NULL AS VARCHAR) AS route_node_code, t.status, t.plan_end_date AS planned_end_time,
+					t.start_time, t.finish_time,
+					(SELECT COUNT(*) FROM mom_mes.mes_task d WHERE NULLIF(TRIM(d.code), '') = NULLIF(TRIM(t.code), '')
+						AND d.tenant_id = #{tenant} AND d.factory_code = #{factory} AND d.del_flag = '0') AS code_count,
+					1 AS parent_count
+				FROM mom_mes.mes_task t
+				WHERE t.tenant_id = #{tenant} AND t.factory_code = #{factory} AND t.del_flag = '0'
+				<if test="q.taskCode != null">AND NULLIF(TRIM(t.code), '') = #{q.taskCode}</if>
+			</otherwise>
+		</choose>
+	</sql>
+
+	<!-- 同一证据及分类片段用于全量聚合、分组和分页明细。 -->
+	<sql id="evidence">
+		SELECT b.*, CASE
+			WHEN object_code IS NULL OR code_count != 1 THEN 'MISSING_OR_DUPLICATE_OBJECT_CODE'
+			WHEN parent_count != 1 OR task_code IS NULL THEN 'MISSING_OR_DUPLICATE_PARENT'
+			<if test="q.objectLevel == 'PROCESS'">WHEN route_code IS NULL THEN 'MISSING_ROUTE_CODE'</if>
+			WHEN status IS NULL OR status NOT IN
+			<choose>
+				<when test="q.objectLevel == 'PROCESS'">('WAIT','UN_RECEIVE','RECEIVE','PRODUCT','PAUSE','FINISH','CLOSE')</when>
+				<otherwise>('CREATE','ISSUE','DISPATCH','PRODUCT','FINISH','CLOSE')</otherwise>
+			</choose>
+				THEN 'UNKNOWN_STATUS'
+			WHEN status = 'FINISH' AND finish_time IS NULL THEN 'MISSING_FINISH_TIME'
+			WHEN status = 'FINISH' AND finish_time &gt; #{observed} THEN 'FUTURE_FINISH_TIME'
+			WHEN status = 'FINISH' AND start_time IS NOT NULL AND finish_time &lt; start_time THEN 'INVERTED_FINISH_TIME'
+			WHEN status != 'FINISH' AND finish_time IS NOT NULL THEN 'CONTRADICTORY_FINISH_TIME'
+			ELSE NULL END AS issue
+		FROM (<include refid="base"/>) b
+	</sql>
+
+	<sql id="classified">
+		SELECT e.*, CASE
+			WHEN issue IS NOT NULL THEN 'UNKNOWN'
+			WHEN status = 'CREATE' THEN 'DRAFT'
+			WHEN status = 'CLOSE' THEN 'CLOSED'
+			WHEN status = 'FINISH' AND finish_time &lt;= planned_end_time THEN 'ON_TIME'
+			WHEN status = 'FINISH' THEN 'LATE'
+			ELSE 'OPEN' END AS category
+		FROM (<include refid="evidence"/>) e
+		WHERE planned_end_time &gt;= #{q.startTime} AND planned_end_time &lt; #{q.endTime}
+		<if test="q.workshopCode != null">AND workshop_code = #{q.workshopCode}</if>
+	</sql>
+
+	<sql id="aggregateColumns">
+		CAST(COUNT(*) AS VARCHAR) AS due_count,
+		CAST(COALESCE(SUM(CASE WHEN category = 'ON_TIME' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS on_time_count,
+		CAST(COALESCE(SUM(CASE WHEN category = 'LATE' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS late_count,
+		CAST(COALESCE(SUM(CASE WHEN category = 'OPEN' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS open_count,
+		CAST(COALESCE(SUM(CASE WHEN category = 'CLOSED' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS closed_count,
+		CAST(COALESCE(SUM(CASE WHEN category = 'DRAFT' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS draft_count,
+		CAST(COALESCE(SUM(CASE WHEN category = 'UNKNOWN' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS unknown_count
+	</sql>
+
+	<sql id="groupColumn">
+		<choose>
+			<when test="q.groupBy == 'TASK'">task_code</when>
+			<when test="q.groupBy == 'ROUTE'">route_code</when>
+			<otherwise>workshop_code</otherwise>
+		</choose>
+	</sql>
+
+	<select id="summary" resultType="com.kitex.mom.mes.dto.MesPlanAttainmentDTO$Aggregate">
+		SELECT <include refid="aggregateColumns"/> FROM (<include refid="classified"/>) c
+	</select>
+
+	<select id="groups" resultType="com.kitex.mom.mes.dto.MesPlanAttainmentDTO$Aggregate">
+		SELECT <include refid="groupColumn"/> AS group_code, <include refid="aggregateColumns"/>
+		FROM (<include refid="classified"/>) c
+		GROUP BY <include refid="groupColumn"/>
+		ORDER BY <include refid="groupColumn"/> NULLS FIRST
+		LIMIT 1001
+	</select>
+
+	<!-- 缺截止对象同样核完整证据，仅排除有效草稿/关闭；未归属到期覆盖不应用车间筛选。 -->
+	<select id="coverage" resultType="com.kitex.mom.mes.dto.MesPlanAttainmentDTO$Coverage">
+		SELECT CAST(COALESCE(SUM(CASE WHEN planned_end_time IS NULL
+			AND (issue IS NOT NULL OR (
+				<choose>
+					<when test="q.objectLevel == 'TASK'">status != 'CREATE'</when>
+					<otherwise>1 = 1</otherwise>
+				</choose>
+				<if test="q.closedPolicy == 'EXCLUDE_CLOSED'">AND status != 'CLOSE'</if>
+			))
+			<if test="q.workshopCode != null">AND workshop_code = #{q.workshopCode}</if>
+			THEN 1 ELSE 0 END), 0) AS VARCHAR) AS missing_due_count,
+			CAST(COALESCE(SUM(CASE WHEN planned_end_time &gt;= #{q.startTime} AND planned_end_time &lt; #{q.endTime}
+				AND workshop_code IS NULL THEN 1 ELSE 0 END), 0) AS VARCHAR) AS unattributed_due_count
+		FROM (<include refid="evidence"/>) e
+	</select>
+
+	<sql id="detailFilter">
+		<where>
+			<if test="q.category != 'ALL'">AND category = #{q.category}</if>
+			<choose>
+				<when test="q.selectedGroupUnattributed">AND <include refid="groupColumn"/> IS NULL</when>
+				<when test="q.selectedGroupCode != null">AND <include refid="groupColumn"/> = #{q.selectedGroupCode}</when>
+			</choose>
+		</where>
+	</sql>
+
+	<select id="detailTotal" resultType="java.lang.String">
+		SELECT CAST(COUNT(*) AS VARCHAR) FROM (<include refid="classified"/>) c
+		<include refid="detailFilter"/>
+	</select>
+
+	<select id="details" resultType="com.kitex.mom.mes.dto.MesPlanAttainmentDTO$Fact">
+		SELECT CAST(id AS VARCHAR) AS object_id, object_code, task_code, workshop_code, route_code, route_node_code,
+			status, planned_end_time, finish_time, category, issue
+		FROM (<include refid="classified"/>) c
+		<include refid="detailFilter"/>
+		ORDER BY planned_end_time, id
+		LIMIT 30 OFFSET #{offset}
+	</select>
+</mapper>

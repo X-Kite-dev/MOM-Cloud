@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mes.mapper.MesWipAgingMapper">
+	<!-- 父工单和工序编码用同组织未删标量身份计数，重复与孤儿都保留一个实际工序任务行。 -->
+	<sql id="base">
+		SELECT p.id, NULLIF(TRIM(p.code), '') AS object_code, NULLIF(TRIM(p.task_code), '') AS task_code,
+			NULLIF(TRIM(p.workshop_code), '') AS workshop_code, NULLIF(TRIM(p.route_code), '') AS route_code,
+			NULLIF(TRIM(p.source_route_node_code), '') AS route_node_code, NULLIF(TRIM(p.mat_code), '') AS mat_code,
+			p.status, p.notice_date AS notice_time, p.start_time, p.finish_time,
+			(SELECT COUNT(*) FROM mom_mes.mes_produce_task d
+				WHERE NULLIF(TRIM(d.code), '') = NULLIF(TRIM(p.code), '')
+				AND d.tenant_id = #{tenant} AND d.factory_code = #{factory} AND d.del_flag = '0') AS code_count,
+			(SELECT COUNT(*) FROM mom_mes.mes_task t WHERE NULLIF(TRIM(t.code), '') = NULLIF(TRIM(p.task_code), '')
+				AND t.tenant_id = #{tenant} AND t.factory_code = #{factory} AND t.del_flag = '0') AS parent_count
+		FROM mom_mes.mes_produce_task p
+		WHERE p.tenant_id = #{tenant} AND p.factory_code = #{factory} AND p.del_flag = '0'
+			AND (p.status IS NULL OR p.status NOT IN ('FINISH', 'CLOSE'))
+		<if test="q.taskCode != null">AND NULLIF(TRIM(p.task_code), '') = #{q.taskCode}</if>
+		<if test="q.routeCode != null">AND NULLIF(TRIM(p.route_code), '') = #{q.routeCode}</if>
+	</sql>
+
+	<sql id="sources">
+		SELECT b.*, CASE
+			WHEN object_code IS NULL OR code_count != 1 THEN 'MISSING_OR_DUPLICATE_OBJECT_CODE'
+			WHEN task_code IS NULL OR parent_count != 1 THEN 'MISSING_OR_DUPLICATE_PARENT'
+			WHEN route_code IS NULL THEN 'MISSING_ROUTE_CODE'
+			ELSE NULL END AS source_issue
+		FROM (<include refid="base"/>) b
+	</sql>
+
+	<!-- 两个历时维度共享身份/状态/finish及未来开工约束，缺下达不自动否定独立有效的首次开工。 -->
+	<sql id="sharedIssue">
+		WHEN source_issue IS NOT NULL THEN source_issue
+		WHEN status IS NULL OR status NOT IN ('WAIT', 'UN_RECEIVE', 'RECEIVE', 'PRODUCT', 'PAUSE') THEN 'UNKNOWN_STATUS'
+		WHEN finish_time IS NOT NULL THEN 'CONTRADICTORY_FINISH_TIME'
+		WHEN start_time &gt; #{observed} THEN 'FUTURE_START_TIME'
+	</sql>
+
+	<sql id="evidence">
+		SELECT s.*, CASE
+			<include refid="sharedIssue"/>
+			WHEN notice_time IS NULL THEN 'MISSING_NOTICE_TIME'
+			WHEN notice_time &gt; #{observed} THEN 'FUTURE_NOTICE_TIME'
+			WHEN notice_time &gt; start_time THEN 'INVERTED_NOTICE_START'
+			ELSE NULL END AS queue_issue,
+			CASE
+			<include refid="sharedIssue"/>
+			WHEN notice_time &gt; start_time THEN 'INVERTED_NOTICE_START'
+			WHEN start_time IS NULL AND status IN ('PRODUCT', 'PAUSE') THEN 'MISSING_START_TIME'
+			ELSE NULL END AS start_issue
+		FROM (<include refid="sources"/>) s
+	</sql>
+
+	<sql id="classified">
+		SELECT e.*, CASE
+			WHEN queue_issue IS NOT NULL THEN 'UNKNOWN'
+			WHEN notice_time &lt; #{cutoff} THEN 'OVER'
+			ELSE 'WITHIN' END AS aging_category
+		FROM (<include refid="evidence"/>) e
+		<where>
+			<if test="q.workshopCode != null">workshop_code = #{q.workshopCode}</if>
+		</where>
+	</sql>
+
+	<sql id="aggregateColumns">
+		CAST(COUNT(*) AS VARCHAR) AS population_count,
+		CAST(COALESCE(SUM(CASE WHEN status = 'WAIT' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS waiting_dispatch_count,
+		CAST(COALESCE(SUM(CASE WHEN status = 'UN_RECEIVE' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS waiting_receive_count,
+		CAST(COALESCE(SUM(CASE WHEN status = 'RECEIVE' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS received_count,
+		CAST(COALESCE(SUM(CASE WHEN status = 'PRODUCT' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS producing_count,
+		CAST(COALESCE(SUM(CASE WHEN status = 'PAUSE' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS paused_count,
+		CAST(COALESCE(SUM(CASE WHEN status IS NULL OR status NOT IN ('WAIT', 'UN_RECEIVE', 'RECEIVE', 'PRODUCT', 'PAUSE')
+			THEN 1 ELSE 0 END), 0) AS VARCHAR) AS unknown_status_count,
+		CAST(COALESCE(SUM(CASE WHEN source_issue IS NOT NULL THEN 1 ELSE 0 END), 0) AS VARCHAR) AS source_issue_count,
+		CAST(COALESCE(SUM(CASE WHEN queue_issue IS NULL THEN 1 ELSE 0 END), 0) AS VARCHAR) AS known_queue_age_count,
+		CAST(COALESCE(SUM(CASE WHEN queue_issue IS NOT NULL THEN 1 ELSE 0 END), 0) AS VARCHAR) AS unknown_queue_age_count,
+		CAST(COALESCE(SUM(CASE WHEN aging_category = 'OVER' THEN 1 ELSE 0 END), 0) AS VARCHAR) AS over_threshold_count,
+		MIN(CASE WHEN queue_issue IS NULL THEN notice_time ELSE NULL END) AS oldest_notice_time
+	</sql>
+
+	<sql id="groupColumn">
+		<choose>
+			<when test="q.groupBy == 'TASK'">task_code</when>
+			<when test="q.groupBy == 'ROUTE'">route_code</when>
+			<otherwise>workshop_code</otherwise>
+		</choose>
+	</sql>
+
+	<select id="summary" resultType="com.kitex.mom.mes.dto.MesWipAgingDTO$Aggregate">
+		SELECT <include refid="aggregateColumns"/> FROM (<include refid="classified"/>) c
+	</select>
+
+	<select id="groups" resultType="com.kitex.mom.mes.dto.MesWipAgingDTO$Aggregate">
+		SELECT <include refid="groupColumn"/> AS group_code, <include refid="aggregateColumns"/>
+		FROM (<include refid="classified"/>) c
+		GROUP BY <include refid="groupColumn"/>
+		ORDER BY <include refid="groupColumn"/> NULLS FIRST
+		LIMIT 1001
+	</select>
+
+	<!-- 基础编码筛选照常应用，未归属覆盖不应用车间筛选；它是任务数，非实物数量。 -->
+	<select id="coverage" resultType="com.kitex.mom.mes.dto.MesWipAgingDTO$Coverage">
+		SELECT CAST(COUNT(*) AS VARCHAR) AS unattributed_count FROM (<include refid="base"/>) b
+		WHERE workshop_code IS NULL
+	</select>
+
+	<sql id="detailFilter">
+		<where>
+			<if test="q.agingCategory != 'ALL'">AND aging_category = #{q.agingCategory}</if>
+			<choose>
+				<when test="q.status == 'UNKNOWN'">
+					AND (status IS NULL OR status NOT IN ('WAIT', 'UN_RECEIVE', 'RECEIVE', 'PRODUCT', 'PAUSE'))
+				</when>
+				<when test="q.status != 'ALL'">AND status = #{q.status}</when>
+			</choose>
+			<choose>
+				<when test="q.selectedGroupUnattributed">AND <include refid="groupColumn"/> IS NULL</when>
+				<when test="q.selectedGroupCode != null">AND <include refid="groupColumn"/> = #{q.selectedGroupCode}</when>
+			</choose>
+		</where>
+	</sql>
+
+	<select id="detailTotal" resultType="java.lang.String">
+		SELECT CAST(COUNT(*) AS VARCHAR) FROM (<include refid="classified"/>) c
+		<include refid="detailFilter"/>
+	</select>
+
+	<select id="details" resultType="com.kitex.mom.mes.dto.MesWipAgingDTO$Fact">
+		SELECT CAST(id AS VARCHAR) AS object_id, object_code, task_code, workshop_code, route_code, route_node_code,
+			mat_code, status, notice_time, start_time, finish_time, source_issue, queue_issue, start_issue, aging_category
+		FROM (<include refid="classified"/>) c
+		<include refid="detailFilter"/>
+		ORDER BY notice_time NULLS FIRST, id
+		LIMIT 30 OFFSET #{offset}
+	</select>
+</mapper>
