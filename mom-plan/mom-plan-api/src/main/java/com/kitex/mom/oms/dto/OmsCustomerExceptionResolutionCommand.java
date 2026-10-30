@@ -6,10 +6,15 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** WMS客户交付异常退款/让步结案到OMS的可靠事件。 */
+/**
+ * WMS客户交付异常退款/让步结案到OMS的可靠事件。
+ */
 public final class OmsCustomerExceptionResolutionCommand {
-    private OmsCustomerExceptionResolutionCommand() { }
-    @Data @Accessors(chain = true)
+    private OmsCustomerExceptionResolutionCommand() {
+    }
+
+    @Data
+    @Accessors(chain = true)
     public static class Command {
         private String requestId;
         private Long resolutionCaseId;
@@ -27,7 +32,9 @@ public final class OmsCustomerExceptionResolutionCommand {
         private LocalDateTime settlementTime;
         private String factoryCode;
     }
-    @Data @Accessors(chain = true)
+
+    @Data
+    @Accessors(chain = true)
     public static class Receipt {
         private String requestId;
         private String requestFingerprint;

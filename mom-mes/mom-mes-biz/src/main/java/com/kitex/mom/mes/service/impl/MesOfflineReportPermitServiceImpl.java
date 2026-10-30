@@ -20,12 +20,7 @@ import com.kitex.mom.mes.enums.MesProduceTaskStatusEnum;
 import com.kitex.mom.mes.enums.MesReportChannelEnum;
 import com.kitex.mom.mes.mapper.MesOfflineReportPermitMapper;
 import com.kitex.mom.mes.mapper.MesOfflineReportReplayMapper;
-import com.kitex.mom.mes.service.MesExecutionTemplateService;
-import com.kitex.mom.mes.service.MesOfflineReportPermitService;
-import com.kitex.mom.mes.service.MesOfflineReportReplayService;
-import com.kitex.mom.mes.service.MesTaskArrangeService;
-import com.kitex.mom.mes.service.MesTaskReportService;
-import com.kitex.mom.mes.service.MesReportCommandService;
+import com.kitex.mom.mes.service.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,15 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Base64;
-import java.util.Collections;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * 移动端弱网报工授权和受控重放。

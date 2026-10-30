@@ -13,7 +13,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-/** 人工产品需求的受控变更申请、冻结证据与正式回执。 */
+/**
+ * 人工产品需求的受控变更申请、冻结证据与正式回执。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -29,7 +31,9 @@ public class PlnProductDemandChangeEntity extends BaseEntity<PlnProductDemandCha
     private String evidenceSnapshot;
     private String beforeSnapshot;
     private String afterSnapshot;
-    /** ACCEPTED_NO_MRP 或 MRP_DRAFT_RECALCULATE。 */
+    /**
+     * ACCEPTED_NO_MRP 或 MRP_DRAFT_RECALCULATE。
+     */
     private String applyMode;
     private BigDecimal targetQuantity;
     private LocalDate targetDemandDate;
@@ -37,7 +41,9 @@ public class PlnProductDemandChangeEntity extends BaseEntity<PlnProductDemandCha
     private String targetWarehouseName;
     private Integer targetMrpPriority;
     private String reason;
-    /** SUBMITTED、APPROVED、REJECTED、CANCELLED、STALE。 */
+    /**
+     * SUBMITTED、APPROVED、REJECTED、CANCELLED、STALE。
+     */
     private String status;
     private String applicantCode;
     private String applicantName;

@@ -18,8 +18,8 @@ import com.kitex.mom.mdm.mapper.*;
 import com.kitex.mom.mdm.service.MdmProcessParameterStandardService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
-import org.springframework.stereotype.Service;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,9 +32,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import static com.kitex.mom.mdm.dto.MdmProcessParameterStandardDTO.LEGACY_PROCESS_V1;
-import static com.kitex.mom.mdm.dto.MdmProcessParameterStandardDTO.NODE_V2;
-import static com.kitex.mom.mdm.dto.MdmProcessParameterStandardDTO.ROUTE_NODE_V2;
+import static com.kitex.mom.mdm.dto.MdmProcessParameterStandardDTO.*;
 
 /**
  * 工艺参数标准版本服务实现。
@@ -379,11 +377,11 @@ public class MdmProcessParameterStandardServiceImpl
                         + "AND r2.factory_code={1} AND r2.del_flag='0' AND r2.route_code=r.route_code AND r2.id<>r.id))",
                 tenant, factory);
         filter.apply("NOT EXISTS (SELECT 1 FROM mdm_process_parameter_standard s2 "
-                        + "WHERE s2.tenant_id={0} AND s2.factory_code={1} AND s2.del_flag='0' "
-                        + "AND s2.status='RELEASED' AND s2.effective_time<={2} "
-                        + "AND s2.id<>mdm_process_parameter_standard.id "
-                        + "AND (s2.process_route_id=mdm_process_parameter_standard.process_route_id "
-                        + "OR s2.route_code=mdm_process_parameter_standard.route_code))", tenant, factory, observedAt);
+                + "WHERE s2.tenant_id={0} AND s2.factory_code={1} AND s2.del_flag='0' "
+                + "AND s2.status='RELEASED' AND s2.effective_time<={2} "
+                + "AND s2.id<>mdm_process_parameter_standard.id "
+                + "AND (s2.process_route_id=mdm_process_parameter_standard.process_route_id "
+                + "OR s2.route_code=mdm_process_parameter_standard.route_code))", tenant, factory, observedAt);
         if (processCode != null) {
             filter.apply("EXISTS (SELECT 1 FROM mdm_process_parameter_item p WHERE p.tenant_id={0} "
                             + "AND p.factory_code={1} AND p.del_flag='0' "
@@ -503,7 +501,9 @@ public class MdmProcessParameterStandardServiceImpl
         return verifiedSource(standard, sourceItems, observedAt);
     }
 
-    /** 显式隔离条件仅用于新增知识读取，不改变原业务查询和发布流程。 */
+    /**
+     * 显式隔离条件仅用于新增知识读取，不改变原业务查询和发布流程。
+     */
     private LambdaQueryWrapper<MdmProcessParameterStandardEntity> activeKnowledgeSources(
             Long tenant, String factory, LocalDateTime observedAt) {
         return new LambdaQueryWrapper<MdmProcessParameterStandardEntity>()
@@ -514,20 +514,22 @@ public class MdmProcessParameterStandardServiceImpl
                 .le(MdmProcessParameterStandardEntity::getEffectiveTime, observedAt);
     }
 
-    /** 固定字段的字面包含检索；参数名/工序名可发现所属标准，但分页不返回参数正文。 */
+    /**
+     * 固定字段的字面包含检索；参数名/工序名可发现所属标准，但分页不返回参数正文。
+     */
     private void sourceKeyword(LambdaQueryWrapper<MdmProcessParameterStandardEntity> filter,
                                String term, Long tenant, String factory) {
         filter.apply("(POSITION(LOWER({0}) IN LOWER(standard_no))>0 "
-                        + "OR POSITION(LOWER({0}) IN LOWER(standard_name))>0 "
-                        + "OR POSITION(LOWER({0}) IN LOWER(route_code))>0 "
-                        + "OR POSITION(LOWER({0}) IN LOWER(route_name))>0 "
-                        + "OR EXISTS (SELECT 1 FROM mdm_process_parameter_item p "
-                        + "WHERE p.tenant_id={1} AND p.factory_code={2} AND p.del_flag='0' "
-                        + "AND p.standard_id=mdm_process_parameter_standard.id "
-                        + "AND (POSITION(LOWER({0}) IN LOWER(p.process_code))>0 "
-                        + "OR POSITION(LOWER({0}) IN LOWER(p.process_name))>0 "
-                        + "OR POSITION(LOWER({0}) IN LOWER(p.identifier))>0 "
-                        + "OR POSITION(LOWER({0}) IN LOWER(p.parameter_name))>0)))", term, tenant, factory);
+                + "OR POSITION(LOWER({0}) IN LOWER(standard_name))>0 "
+                + "OR POSITION(LOWER({0}) IN LOWER(route_code))>0 "
+                + "OR POSITION(LOWER({0}) IN LOWER(route_name))>0 "
+                + "OR EXISTS (SELECT 1 FROM mdm_process_parameter_item p "
+                + "WHERE p.tenant_id={1} AND p.factory_code={2} AND p.del_flag='0' "
+                + "AND p.standard_id=mdm_process_parameter_standard.id "
+                + "AND (POSITION(LOWER({0}) IN LOWER(p.process_code))>0 "
+                + "OR POSITION(LOWER({0}) IN LOWER(p.process_name))>0 "
+                + "OR POSITION(LOWER({0}) IN LOWER(p.identifier))>0 "
+                + "OR POSITION(LOWER({0}) IN LOWER(p.parameter_name))>0)))", term, tenant, factory);
     }
 
     private String sourceFilter(String value) {
@@ -546,7 +548,9 @@ public class MdmProcessParameterStandardServiceImpl
         }
     }
 
-    /** 复用正式版本明细归属/指纹校验，并验证当前路线内工序的唯一身份。 */
+    /**
+     * 复用正式版本明细归属/指纹校验，并验证当前路线内工序的唯一身份。
+     */
     private void validateKnowledgeStructure(MdmProcessParameterStandardEntity standard,
                                             List<MdmProcessParameterItemEntity> sourceItems,
                                             List<MdmProcessRouteWorkingEntity> workings) {
@@ -565,7 +569,7 @@ public class MdmProcessParameterStandardServiceImpl
                             && Objects.equals(item.getTenantId(), standard.getTenantId())
                             && processIndex.containsKey(item.getProcessCode())
                             && (!NODE_V2.equals(contentSchema(standard)) || Objects.equals(item.getRouteNodeCode(),
-                                    processIndex.get(item.getProcessCode()).getRouteNodeCode()))
+                            processIndex.get(item.getProcessCode()).getRouteNodeCode()))
                             && StrUtil.isNotBlank(item.getProcessName())
                             && Objects.equals(item.getProcessName(), processIndex.get(item.getProcessCode()).getProcessName())
                             && StrUtil.isNotBlank(item.getParameterName())
@@ -596,7 +600,9 @@ public class MdmProcessParameterStandardServiceImpl
                 List.of(gap), observedAt);
     }
 
-    /** 只投影核验成功的原数值，toPlainString不经过浮点数。 */
+    /**
+     * 只投影核验成功的原数值，toPlainString不经过浮点数。
+     */
     private MdmProcessKnowledgeDTO.SourceParameter sourceParameter(MdmProcessParameterItemEntity item) {
         return new MdmProcessKnowledgeDTO.SourceParameter(String.valueOf(item.getId()), item.getProcessCode(),
                 item.getProcessName(), item.getIdentifier(), item.getParameterName(), item.getDataType(), item.getUnit(),
@@ -610,10 +616,12 @@ public class MdmProcessParameterStandardServiceImpl
         return value == null ? null : value.toPlainString();
     }
 
-    /** 关系来自已核验的结构，不由模型编造；引用不可跨租户、工厂或标准版本复用。 */
+    /**
+     * 关系来自已核验的结构，不由模型编造；引用不可跨租户、工厂或标准版本复用。
+     */
     private MdmProcessKnowledgeDTO.SourceDetail verifiedSource(MdmProcessParameterStandardEntity standard,
-                                                              List<MdmProcessParameterItemEntity> sourceItems,
-                                                              LocalDateTime observedAt) {
+                                                               List<MdmProcessParameterItemEntity> sourceItems,
+                                                               LocalDateTime observedAt) {
         String reference = "MDM:PROCESS_PARAMETER_STANDARD:tenant/" + standard.getTenantId()
                 + "/factory/" + sourceCode(standard.getFactoryCode()) + "/standard/" + standard.getId()
                 + "/version/" + standard.getVersionNo() + "/fingerprint/" + standard.getContentFingerprint();
@@ -795,7 +803,9 @@ public class MdmProcessParameterStandardServiceImpl
         }
     }
 
-    /** DTO只含业务字段，复制不会沿用历史明细ID、删除标记或审计字段。 */
+    /**
+     * DTO只含业务字段，复制不会沿用历史明细ID、删除标记或审计字段。
+     */
     private MdmProcessParameterStandardDTO.ItemInput itemInput(MdmProcessParameterItemEntity source) {
         MdmProcessParameterStandardDTO.ItemInput result = new MdmProcessParameterStandardDTO.ItemInput();
         BeanUtils.copyProperties(source, result);
@@ -809,7 +819,9 @@ public class MdmProcessParameterStandardServiceImpl
         return schema == null ? LEGACY_PROCESS_V1 : schema;
     }
 
-    /** 发布/新冻结前核实当前节点；已退役原文查看不执行当前路线重绑定。 */
+    /**
+     * 发布/新冻结前核实当前节点；已退役原文查看不执行当前路线重绑定。
+     */
     private void validateCurrentNodes(MdmProcessParameterStandardEntity standard,
                                       List<MdmProcessParameterItemEntity> standardItems) {
         MdmProcessRouteEntity route = requireRoute(standard.getProcessRouteId(), standard.getFactoryCode(), true);
@@ -821,7 +833,9 @@ public class MdmProcessParameterStandardServiceImpl
         }
     }
 
-    /** 调用方已锁真实父路线，一次加载所有节点，避免每项参数独立查询导致窗口不一致。 */
+    /**
+     * 调用方已锁真实父路线，一次加载所有节点，避免每项参数独立查询导致窗口不一致。
+     */
     private List<MdmProcessRouteWorkingEntity> routeNodes(MdmProcessRouteEntity route) {
         List<MdmProcessRouteWorkingEntity> workings = workingMapper.selectList(
                 new LambdaQueryWrapper<MdmProcessRouteWorkingEntity>()
@@ -839,9 +853,11 @@ public class MdmProcessParameterStandardServiceImpl
         return workings;
     }
 
-    /** 精确节点优先；旧process-only必须恰好匹配一项，禁止first-win。 */
+    /**
+     * 精确节点优先；旧process-only必须恰好匹配一项，禁止first-win。
+     */
     private MdmProcessRouteWorkingEntity resolveNode(List<MdmProcessRouteWorkingEntity> workings,
-                                                    String nodeCode, String processCode) {
+                                                     String nodeCode, String processCode) {
         require(StrUtil.isNotBlank(nodeCode) || StrUtil.isNotBlank(processCode), "缺少路线节点或主工序编码");
         List<MdmProcessRouteWorkingEntity> matches = workings.stream().filter(node -> StrUtil.isNotBlank(nodeCode)
                 ? Objects.equals(node.getRouteNodeCode(), nodeCode)
@@ -885,14 +901,16 @@ public class MdmProcessParameterStandardServiceImpl
                         .last(lock ? "LIMIT 2 FOR UPDATE" : "LIMIT 2"));
         require(routes.size() == 1, "当前工厂工艺路线不存在或不唯一");
         require(routeMapper.selectCount(new LambdaQueryWrapper<MdmProcessRouteEntity>()
-                .eq(MdmProcessRouteEntity::getTenantId, TenantContextHolder.getTenantId())
-                .eq(MdmProcessRouteEntity::getFactoryCode, factory)
-                .eq(MdmProcessRouteEntity::getRouteCode, routes.get(0).getRouteCode())) == 1,
+                        .eq(MdmProcessRouteEntity::getTenantId, TenantContextHolder.getTenantId())
+                        .eq(MdmProcessRouteEntity::getFactoryCode, factory)
+                        .eq(MdmProcessRouteEntity::getRouteCode, routes.get(0).getRouteCode())) == 1,
                 "当前工厂路线编码不唯一，不能解析参数节点");
         return routes.get(0);
     }
 
-    /** 所有写操作统一父路线→标准锁顺序，与节点配置/图保存保持一致。 */
+    /**
+     * 所有写操作统一父路线→标准锁顺序，与节点配置/图保存保持一致。
+     */
     private MdmProcessParameterStandardEntity lockedStandard(Long id) {
         MdmProcessParameterStandardEntity before = requireStandard(id, false);
         MdmProcessRouteEntity route = requireRoute(before.getProcessRouteId(), before.getFactoryCode(), true);
@@ -962,7 +980,9 @@ public class MdmProcessParameterStandardServiceImpl
         return sha256(JSONUtil.toJsonStr(envelope));
     }
 
-    /** V1原算法：字段顺序、明细原排序及JSON数值表达不得改变。 */
+    /**
+     * V1原算法：字段顺序、明细原排序及JSON数值表达不得改变。
+     */
     private String legacyContentFingerprint(MdmProcessParameterStandardEntity standard,
                                             List<MdmProcessParameterItemEntity> standardItems) {
         Map<String, Object> header = new LinkedHashMap<>();

@@ -31,7 +31,9 @@ public class MdmProcessProcedureSettingEntity extends BaseEntity<MdmProcessProce
     @Schema(description = "工艺路线编码")
     private String routeCode;
 
-    /** 路线内稳定节点身份；主工序重复出现时各次配置相互独立。 */
+    /**
+     * 路线内稳定节点身份；主工序重复出现时各次配置相互独立。
+     */
     @Schema(description = "工艺路线节点编号，由服务端解析真实节点")
     private String routeNodeCode;
 

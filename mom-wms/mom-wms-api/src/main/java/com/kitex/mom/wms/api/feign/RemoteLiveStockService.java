@@ -1,6 +1,7 @@
 package com.kitex.mom.wms.api.feign;
 
 import com.kitex.common.core.util.R;
+import com.kitex.common.feign.annotation.InternalCall;
 import com.kitex.mom.wms.Constants;
 import com.kitex.mom.wms.dto.*;
 import com.kitex.mom.wms.entity.WmsLiveStockEntity;
@@ -30,6 +31,7 @@ public interface RemoteLiveStockService {
     @GetMapping("/material/wmsLiveStock/getLiveStockList")
     R<List<WmsLiveStockEntity>> getLiveStockList(@SpringQueryMap WmsLiveStockQueryDTO wmsLiveStock);
 
+    @InternalCall
     @PostMapping("/material/wmsLiveStock/quality/status")
     R<WmsQualityStatusResult> applyQualityStatus(@RequestBody WmsQualityStatusCommand command);
 

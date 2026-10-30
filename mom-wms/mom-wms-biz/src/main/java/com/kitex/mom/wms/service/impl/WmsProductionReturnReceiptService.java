@@ -29,8 +29,9 @@ import java.util.Set;
 /**
  * 生产退料实际收货终结与差异处置。
  *
- * <p>实收只来自已记账入库单；PDA部分收货在终结时完成库存记账。短收与溢收必须申报，
- * 且申报人与处置人分离。溢收不会静默增加库存。</p>
+ * <p>
+ * 实收只来自已记账入库单；PDA部分收货在终结时完成库存记账。短收与溢收必须申报， 且申报人与处置人分离。溢收不会静默增加库存。
+ * </p>
  */
 @Service
 @RequiredArgsConstructor
@@ -75,9 +76,10 @@ public class WmsProductionReturnReceiptService {
                     new LambdaQueryWrapper<WmsInBillDetailEntity>()
                             .eq(WmsInBillDetailEntity::getBillId, bill.getId()));
             require(!details.isEmpty(), "PDA收货单没有实收明细");
-            detailMapper.update(new LambdaUpdateWrapper<WmsInBillDetailEntity>()
-                    .set(WmsInBillDetailEntity::getInTime, now)
-                    .in(BaseEntity::getId, details.stream().map(BaseEntity::getId).toList()));
+            require(detailMapper.update(new LambdaUpdateWrapper<WmsInBillDetailEntity>()
+                            .set(WmsInBillDetailEntity::getInTime, now)
+                            .in(BaseEntity::getId, details.stream().map(BaseEntity::getId).toList())) == details.size(),
+                    "PDA生产退料明细终结失败，整笔收货回滚");
             require(billMapper.update(new LambdaUpdateWrapper<WmsInBillEntity>()
                     .set(WmsInBillEntity::getState, InOutBillStateEnum.FINISHED.getCode())
                     .set(WmsInBillEntity::getInTime, now)
@@ -89,6 +91,8 @@ public class WmsProductionReturnReceiptService {
             bill.setInTime(now);
             bill.setDetails(details);
             returnInBillService.afterInStock(bill);
+            // 每张实际入库完成后立即冻结其增量及当时累计，避免多张单都携带最终累计量。
+            returnInBillService.handleDocumentBizWhenAdd(bill);
         }
 
         BigDecimal expected = decimal(notice.getNoticeInNum());
@@ -116,10 +120,8 @@ public class WmsProductionReturnReceiptService {
         require(noticeMapper.updateById(notice) == 1, "生产退料收货终结状态保存失败");
         audit(notice, command.getRequestId(), "FINALIZE", before, after,
                 JSONUtil.toJsonStr(view(notice)), actor, now);
-        for (WmsInBillEntity bill : openBills) returnInBillService.handleDocumentBizWhenAdd(bill);
-        if (openBills.isEmpty() || !"RECEIVED".equals(after)) {
-            outboxService.enqueueNoticeState(notice, command.getRequestId());
-        }
+        // 最终状态独立于实收增量，包含足量完成和无实物的差异终结。
+        outboxService.enqueueNoticeState(notice, command.getRequestId());
         return view(notice);
     }
 
@@ -230,7 +232,9 @@ public class WmsProductionReturnReceiptService {
                         .select(WmsInBillEntity::getId).eq(WmsInBillEntity::getNoticeId, noticeId)
                         .in(WmsInBillEntity::getState, TERMINAL_STATES))
                 .stream().map(WmsInBillEntity::getId).toList();
-        if (billIds.isEmpty()) return BigDecimal.ZERO;
+        if (billIds.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
         return detailMapper.selectList(new LambdaQueryWrapper<WmsInBillDetailEntity>()
                         .select(WmsInBillDetailEntity::getMatNum).in(WmsInBillDetailEntity::getBillId, billIds))
                 .stream().map(d -> decimal(d.getMatNum())).reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -289,6 +293,8 @@ public class WmsProductionReturnReceiptService {
     }
 
     private void require(boolean value, String message) {
-        if (!value) throw new CheckedException(message);
+        if (!value) {
+            throw new CheckedException(message);
+        }
     }
 }

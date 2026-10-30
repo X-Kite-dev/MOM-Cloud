@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 风险催办持久发件箱；结果不明不得自动重发。 */
+/**
+ * 风险催办持久发件箱；结果不明不得自动重发。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

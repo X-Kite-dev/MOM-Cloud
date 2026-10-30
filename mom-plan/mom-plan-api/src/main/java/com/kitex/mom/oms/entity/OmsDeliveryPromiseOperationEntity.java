@@ -13,7 +13,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 交期答复申请、双岗确认、订单变更结果和对客答复的不可变操作账。 */
+/**
+ * 交期答复申请、双岗确认、订单变更结果和对客答复的不可变操作账。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

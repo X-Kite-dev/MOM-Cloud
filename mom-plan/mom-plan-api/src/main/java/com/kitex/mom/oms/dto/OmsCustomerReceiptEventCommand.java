@@ -6,10 +6,15 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** WMS客户实收事件契约；签收事实不重复改写仓库出库数量。 */
+/**
+ * WMS客户实收事件契约；签收事实不重复改写仓库出库数量。
+ */
 public final class OmsCustomerReceiptEventCommand {
-    private OmsCustomerReceiptEventCommand() { }
-    @Data @Accessors(chain = true)
+    private OmsCustomerReceiptEventCommand() {
+    }
+
+    @Data
+    @Accessors(chain = true)
     public static class Command {
         private String requestId;
         private Long custodyId;
@@ -29,7 +34,9 @@ public final class OmsCustomerReceiptEventCommand {
         private LocalDateTime receiptTime;
         private String factoryCode;
     }
-    @Data @Accessors(chain = true)
+
+    @Data
+    @Accessors(chain = true)
     public static class Receipt {
         private String requestId;
         private String requestFingerprint;

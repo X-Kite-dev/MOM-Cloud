@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -19,7 +20,9 @@ public final class PlnApsDecisionDTO {
     private PlnApsDecisionDTO() {
     }
 
-    /** 排产预检或正式求解命令。 */
+    /**
+     * 排产预检或正式求解命令。
+     */
     @Data
     @Schema(description = "智能APS案件求解命令")
     public static class RunCommand {
@@ -27,6 +30,8 @@ public final class PlnApsDecisionDTO {
         private String requestId;
         @Schema(description = "调用方上次读取的案件上下文SHA-256")
         private String expectedCaseFingerprint;
+        @Schema(description = "预检返回的完整来源、配置及规则指纹；新建求解必须携带")
+        private String expectedInputFingerprint;
         @Schema(description = "排产基准日期")
         private LocalDate scheduleDate;
         @Schema(description = "DAY、WEEK、MONTH或TN")
@@ -43,7 +48,9 @@ public final class PlnApsDecisionDTO {
         private String expectedObjectiveTemplateFingerprint;
     }
 
-    /** A2 人工选案命令。 */
+    /**
+     * A2 人工选案命令。
+     */
     @Data
     @Schema(description = "智能APS案件A2选案命令")
     public static class SelectCommand {
@@ -57,7 +64,9 @@ public final class PlnApsDecisionDTO {
         private String reason;
     }
 
-    /** 专业调整命令：从已评估候选派生新版本，不修改父候选或正式计划。 */
+    /**
+     * 专业调整命令：从已评估候选派生新版本，不修改父候选或正式计划。
+     */
     @Data
     @Schema(description = "智能APS专业调整命令")
     public static class DeriveCommand {
@@ -72,7 +81,9 @@ public final class PlnApsDecisionDTO {
         private List<OperationAdjustment> operations;
     }
 
-    /** 同一请求可以同时移动多道工序；资源序号只能指向父候选冻结的可选资源。 */
+    /**
+     * 同一请求可以同时移动多道工序；资源序号只能指向父候选冻结的可选资源。
+     */
     @Data
     @Schema(description = "候选工序调整项")
     public static class OperationAdjustment {
@@ -84,7 +95,9 @@ public final class PlnApsDecisionDTO {
         private Integer resourceChoiceIndex;
     }
 
-    /** A3 异岗审批后的正式发布命令。 */
+    /**
+     * A3 异岗审批后的正式发布命令。
+     */
     @Data
     @Schema(description = "智能APS案件A3发布命令")
     public static class PublishCommand {
@@ -96,7 +109,9 @@ public final class PlnApsDecisionDTO {
         private String approvalId;
     }
 
-    /** A2 选案后的 A3 送审命令。 */
+    /**
+     * A2 选案后的 A3 送审命令。
+     */
     @Data
     @Schema(description = "APS A3 送审命令")
     public static class ApprovalSubmitCommand {
@@ -107,7 +122,9 @@ public final class PlnApsDecisionDTO {
         private String reason;
     }
 
-    /** 异岗审核人对当前冻结方案的决定。 */
+    /**
+     * 异岗审核人对当前冻结方案的决定。
+     */
     @Data
     @Schema(description = "APS A3 审核命令")
     public static class ApprovalDecisionCommand {
@@ -117,7 +134,9 @@ public final class PlnApsDecisionDTO {
         private String reason;
     }
 
-    /** 工作台展示的真实 A3 审批摘要。 */
+    /**
+     * 工作台展示的真实 A3 审批摘要。
+     */
     @Data
     @Accessors(chain = true)
     @Schema(description = "APS A3 审批摘要")
@@ -137,7 +156,9 @@ public final class PlnApsDecisionDTO {
         private LocalDateTime decidedTime;
     }
 
-    /** 案件求解前门禁与现有 APS 预检的组合结果。 */
+    /**
+     * 案件求解前门禁与现有 APS 预检的组合结果。
+     */
     @Data
     @Accessors(chain = true)
     @Schema(description = "智能APS案件求解预检")
@@ -147,9 +168,62 @@ public final class PlnApsDecisionDTO {
         private PlanSchedulingAgentDTO.Readiness solverReadiness;
         private Boolean ready;
         private List<String> blockers;
+        @Schema(description = "本次可确认的完整计算范围；不截断，最多1000个计划")
+        private List<SourcePlan> sourcePlans;
+        @Schema(description = "按APS引擎规范化后的完整输入SHA-256")
+        private String inputFingerprint;
     }
 
-    /** 案件与多候选证据的同屏比较结果。 */
+    /** 同一次采集得到的预检与来源清单，避免分别查询而产生不同范围。 */
+    @Data
+    @Accessors(chain = true)
+    public static class ScopePreview {
+        private PlanSchedulingAgentDTO.Readiness solverReadiness;
+        private List<SourcePlan> sourcePlans;
+        private String inputFingerprint;
+    }
+
+    /** 仅投影业务确认所需字段，不向浏览器暴露完整生产计划实体。 */
+    @Data
+    @Accessors(chain = true)
+    public static class SourcePlan {
+        @Schema(description = "生产计划主键，字符串避免浏览器精度丢失")
+        private String id;
+        @Schema(description = "生产计划编号")
+        private String issueNo;
+        @Schema(description = "产品编码")
+        private String productCode;
+        @Schema(description = "产品名称")
+        private String productName;
+        @Schema(description = "计划生产数量")
+        private BigDecimal num;
+        @Schema(description = "计划需求日期")
+        private LocalDate demandTime;
+    }
+
+    /** 只读核对已提交的原求解，不把暂未观察到记录解释为求解失败。 */
+    @Data
+    @Accessors(chain = true)
+    public static class RequestReceipt {
+        @Schema(description = "所属案件主键")
+        private String caseId;
+        @Schema(description = "原计算永久请求号")
+        private String requestId;
+        @Schema(description = "COMMITTED或NOT_OBSERVED")
+        private String state;
+        @Schema(description = "已提交情景主键；未观察到结果时为空")
+        private String scenarioId;
+        @Schema(description = "已提交情景编号")
+        private String scenarioNo;
+        @Schema(description = "情景当前状态，不冒充创建时状态")
+        private String scenarioStatus;
+        @Schema(description = "回执核对结果说明")
+        private String message;
+    }
+
+    /**
+     * 案件与多候选证据的同屏比较结果。
+     */
     @Data
     @Accessors(chain = true)
     @Schema(description = "智能APS案件候选比较")
@@ -158,7 +232,9 @@ public final class PlnApsDecisionDTO {
         private PlanSchedulingAgentDTO.DecisionContext decisionContext;
     }
 
-    /** 正式发布回执与案件新状态。 */
+    /**
+     * 正式发布回执与案件新状态。
+     */
     @Data
     @Accessors(chain = true)
     @Schema(description = "智能APS案件正式发布回执")

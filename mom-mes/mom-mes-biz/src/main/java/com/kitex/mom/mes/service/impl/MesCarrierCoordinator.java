@@ -11,17 +11,13 @@ import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesCarrierCommand;
 import com.kitex.mom.mes.dto.MesCarrierReportCommand;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
-import com.kitex.mom.mes.entity.MesCarrierEntity;
-import com.kitex.mom.mes.entity.MesCarrierItemEntity;
-import com.kitex.mom.mes.entity.MesCarrierOperationEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.mapper.MesCarrierItemMapper;
 import com.kitex.mom.mes.mapper.MesCarrierMapper;
 import com.kitex.mom.mes.mapper.MesCarrierOperationMapper;
 import com.kitex.mom.mes.mapper.MesTaskReportMapper;
-import com.kitex.mom.mes.service.MesTaskReportService;
 import com.kitex.mom.mes.service.MesReportCommandService;
+import com.kitex.mom.mes.service.MesTaskReportService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,15 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -67,7 +55,9 @@ public class MesCarrierCoordinator {
     private final MesExecutionTaskLock taskLock;
     private final MesReportCommandService reportCommands;
 
-    /** 读取载具、活动成员及由所有成员共同决定的唯一下一工序。 */
+    /**
+     * 读取载具、活动成员及由所有成员共同决定的唯一下一工序。
+     */
     public Map<String, Object> preview(String carrierCode) {
         String factory = factoryAccess.require("read");
         MesCarrierEntity carrier = findCarrier(factory, normalizeCarrierCode(carrierCode), false);
@@ -87,7 +77,9 @@ public class MesCarrierCoordinator {
         return result;
     }
 
-    /** 创建、装载、卸载、锁定以及生命周期操作。 */
+    /**
+     * 创建、装载、卸载、锁定以及生命周期操作。
+     */
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> execute(MesCarrierCommand command) {
         String factory = factoryAccess.require("write");
@@ -119,7 +111,7 @@ public class MesCarrierCoordinator {
             carrier = findCarrier(factory, command.getCarrierCode(), true);
             require(carrier != null, "载具不存在或不在当前工厂");
             require(command.getExpectedVersion() != null
-                    && Objects.equals(command.getExpectedVersion(), carrier.getVersionNo()),
+                            && Objects.equals(command.getExpectedVersion(), carrier.getVersionNo()),
                     "载具状态已被其他人员修改，请刷新后重试");
             beforeStatus = carrier.getStatus();
             beforeVersion = carrier.getVersionNo();
@@ -146,7 +138,9 @@ public class MesCarrierCoordinator {
         return result(carrier, receipt, false);
     }
 
-    /** 将锁定载具的成员逐件送入标准移动端报工事务。 */
+    /**
+     * 将锁定载具的成员逐件送入标准移动端报工事务。
+     */
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> report(MesCarrierReportCommand command) {
         String factory = factoryAccess.require("write");
@@ -237,7 +231,9 @@ public class MesCarrierCoordinator {
         return result(carrier, receipt, false);
     }
 
-    /** 派生号保持既有算法；预取锁和真正展开必须使用同一原号。 */
+    /**
+     * 派生号保持既有算法；预取锁和真正展开必须使用同一原号。
+     */
     private String childRequest(MesCarrierReportCommand command, MesCarrierItemEntity item) {
         return "CAR-" + hash(command.getRequestId() + "|" + item.getIdentifier()).substring(0, 60);
     }
@@ -256,7 +252,7 @@ public class MesCarrierCoordinator {
     public List<MesCarrierOperationEntity> operations(Long carrierId) {
         String factory = factoryAccess.require("read");
         require(carrierMapper.selectCount(new LambdaQueryWrapper<MesCarrierEntity>()
-                .eq(MesCarrierEntity::getFactoryCode, factory).eq(MesCarrierEntity::getId, carrierId)) == 1,
+                        .eq(MesCarrierEntity::getFactoryCode, factory).eq(MesCarrierEntity::getId, carrierId)) == 1,
                 "载具不存在或不在当前工厂");
         return operationMapper.selectList(new LambdaQueryWrapper<MesCarrierOperationEntity>()
                 .eq(MesCarrierOperationEntity::getFactoryCode, factory)
@@ -416,8 +412,8 @@ public class MesCarrierCoordinator {
     }
 
     private MesCarrierOperationEntity receipt(MesCarrierEntity carrier, String requestId, String fingerprint,
-                                               String operation, String beforeStatus, int beforeVersion,
-                                               MomUser actor, String reason, List<MesCarrierItemEntity> items) {
+                                              String operation, String beforeStatus, int beforeVersion,
+                                              MomUser actor, String reason, List<MesCarrierItemEntity> items) {
         return new MesCarrierOperationEntity().setCarrierId(carrier.getId()).setCarrierCode(carrier.getCarrierCode())
                 .setRequestId(requestId).setRequestFingerprint(fingerprint).setOperationType(operation)
                 .setBeforeStatus(beforeStatus).setAfterStatus(carrier.getStatus())

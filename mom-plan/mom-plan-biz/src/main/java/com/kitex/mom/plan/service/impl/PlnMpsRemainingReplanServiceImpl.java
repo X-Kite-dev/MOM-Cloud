@@ -8,18 +8,9 @@ import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.plan.dto.PlanResourceLocalReplanDTO;
-import com.kitex.mom.plan.dto.PlnMpsExecutionDTO;
 import com.kitex.mom.plan.dto.PlnMpsRemainingReplanDTO;
-import com.kitex.mom.plan.entity.PlnIssueEntity;
-import com.kitex.mom.plan.entity.PlnMpsExecutionObservationEntity;
-import com.kitex.mom.plan.entity.PlnMpsRemainingReplanLinkEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingTaskEntity;
-import com.kitex.mom.plan.mapper.PlnIssueMapper;
-import com.kitex.mom.plan.mapper.PlnMpsExecutionObservationMapper;
-import com.kitex.mom.plan.mapper.PlnMpsRemainingReplanLinkMapper;
-import com.kitex.mom.plan.mapper.PlnResourceReplanPolicyMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskMapper;
-import com.kitex.mom.plan.entity.PlnResourceReplanPolicyEntity;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.PlnMpsRemainingReplanService;
 import com.kitex.mom.plan.service.PlnResourceLocalReplanService;
 import lombok.RequiredArgsConstructor;
@@ -29,12 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 已执行MPS来源的剩余未开工工序评估。
@@ -73,8 +59,8 @@ public class PlnMpsRemainingReplanServiceImpl extends ServiceImpl<PlnMpsRemainin
         require(command.getExpectedFingerprint() != null && command.getExpectedFingerprint().matches("[a-f0-9]{64}"), "预览指纹格式无效");
         List<String> selected = command.getSourceRouteNodeCodes() == null ? command.getProcessCodes() : command.getSourceRouteNodeCodes();
         require(selected != null && !selected.isEmpty() && selected.size() <= 1000
-                && selected.stream().allMatch(code -> StrUtil.isNotBlank(code) && code.length() <= 100
-                && code.equals(code.trim())) && new HashSet<>(selected).size() == selected.size(),
+                        && selected.stream().allMatch(code -> StrUtil.isNotBlank(code) && code.length() <= 100
+                        && code.equals(code.trim())) && new HashSet<>(selected).size() == selected.size(),
                 "须明确选择1至1000个不重复直接偏差工序/节点，不允许空范围自动扩围");
         String factory = executionReader.actualFactory();
         Long tenant = TenantContextHolder.getTenantId();
@@ -165,11 +151,13 @@ public class PlnMpsRemainingReplanServiceImpl extends ServiceImpl<PlnMpsRemainin
         require(observation != null && "CONFIRMED".equals(observation.getStatus()), "先完成该MPS原始观察的独立核验");
         List<String> gaps = new ArrayList<>();
         Duration age = Duration.between(observation.getObservedTime(), LocalDateTime.now());
-        if (age.isNegative() || age.compareTo(Duration.ofMinutes(30)) > 0) gaps.add("原观察已超过30分钟有效期，重新采集并独立核验");
+        if (age.isNegative() || age.compareTo(Duration.ofMinutes(30)) > 0)
+            gaps.add("原观察已超过30分钟有效期，重新采集并独立核验");
         var current = executionReader.read(observation.getVersionId(), observation.getToleranceMinutes());
         var bucket = current.getBuckets().stream().filter(row -> Objects.equals(row.getLineId(), lineId.toString())).findFirst()
                 .orElseThrow(() -> new CheckedException("指定桶不属于该观察来源版本"));
-        if (!Objects.equals(current.getFingerprint(), observation.getEvidenceFingerprint())) gaps.add("原观察事实已漂移，重新采集并核验，不覆盖旧观察");
+        if (!Objects.equals(current.getFingerprint(), observation.getEvidenceFingerprint()))
+            gaps.add("原观察事实已漂移，重新采集并核验，不覆盖旧观察");
         if (!Boolean.TRUE.equals(bucket.getActive()) || !Boolean.TRUE.equals(bucket.getStarted()) || Boolean.TRUE.equals(bucket.getCompleted()))
             gaps.add("仅处理当前活动且已进入执行、尚未全量完工的来源；未下达仍走原编制入口");
         gaps.addAll(bucket.getGaps());
@@ -197,10 +185,13 @@ public class PlnMpsRemainingReplanServiceImpl extends ServiceImpl<PlnMpsRemainin
                         preview.setEligibleSourceRouteNodeCodes(proof.operations().stream().filter(row -> Boolean.TRUE.equals(row.getEligible()))
                                 .map(PlnMpsRemainingReplanDTO.Operation::getSourceRouteNodeCode).sorted().toList());
                     }
-                } catch (CheckedException exception) { gaps.add(StrUtil.subPre(exception.getMessage(), 500)); }
+                } catch (CheckedException exception) {
+                    gaps.add(StrUtil.subPre(exception.getMessage(), 500));
+                }
             }
         }
-        if (preview.getEligibleProcessCodes().isEmpty() && (preview.getEligibleSourceRouteNodeCodes() == null || preview.getEligibleSourceRouteNodeCodes().isEmpty())) gaps.add("当前无具备完整来源及前序证明的未开工偏差工序");
+        if (preview.getEligibleProcessCodes().isEmpty() && (preview.getEligibleSourceRouteNodeCodes() == null || preview.getEligibleSourceRouteNodeCodes().isEmpty()))
+            gaps.add("当前无具备完整来源及前序证明的未开工偏差工序");
         LocalDateTime now = LocalDateTime.now();
         var policies = policyMapper.selectList(new LambdaQueryWrapper<PlnResourceReplanPolicyEntity>()
                 .eq(PlnResourceReplanPolicyEntity::getTenantId, tenant).eq(PlnResourceReplanPolicyEntity::getFactoryCode, factory)
@@ -209,7 +200,8 @@ public class PlnMpsRemainingReplanServiceImpl extends ServiceImpl<PlnMpsRemainin
                 .and(q -> q.isNull(PlnResourceReplanPolicyEntity::getEffectiveTo).or().gt(PlnResourceReplanPolicyEntity::getEffectiveTo, now))
                 .orderByAsc(PlnResourceReplanPolicyEntity::getId).last("LIMIT 201"));
         require(policies.size() <= 200, "匹配策略超过200条，请先治理策略范围，禁止截断");
-        if (policies.stream().noneMatch(row -> StrUtil.isBlank(row.getResourceCode()))) gaps.add("当前工厂缺生效EXECUTION/ALL类型通用局部重排策略");
+        if (policies.stream().noneMatch(row -> StrUtil.isBlank(row.getResourceCode())))
+            gaps.add("当前工厂缺生效EXECUTION/ALL类型通用局部重排策略");
         preview.setEligible(gaps.isEmpty());
         String fingerprint = PlnMpsExecutionEvidenceReader.hash(JSONUtil.toJsonStr(Arrays.asList("MPS_REMAINING_PREVIEW_V1",
                 tenant.toString(), factory, observationId.toString(), observation.getEvidenceFingerprint(), lineId.toString(), tolerance,
@@ -226,7 +218,9 @@ public class PlnMpsRemainingReplanServiceImpl extends ServiceImpl<PlnMpsRemainin
                 .eq(PlnMpsRemainingReplanLinkEntity::getFactoryCode, executionReader.actualFactory());
     }
 
-    /** 当前认证用户必须具备实际工厂的直接业务授权，不能由请求参数另选组织。 */
+    /**
+     * 当前认证用户必须具备实际工厂的直接业务授权，不能由请求参数另选组织。
+     */
     private void authorize(String level) {
         mpsService.requireFactoryAccess(executionReader.actualFactory(), level);
     }

@@ -1,11 +1,19 @@
 package com.kitex.mom.plan.entity;
-import com.baomidou.mybatisplus.annotation.*;
+
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableName;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
 import java.time.LocalDateTime;
-@Data @EqualsAndHashCode(callSuper=true) @TenantTable @TableName("pln_scheduling_execution")
+
+@Data
+@EqualsAndHashCode(callSuper = true)
+@TenantTable
+@TableName("pln_scheduling_execution")
 public class PlnSchedulingExecution extends BaseEntity<PlnSchedulingExecution> {
     private String requestId;
     private String commandFingerprint;
@@ -20,12 +28,16 @@ public class PlnSchedulingExecution extends BaseEntity<PlnSchedulingExecution> {
     private Integer timeoutSeconds;
     private Integer attemptCount;
     private Boolean cancelRequested;
-    @TableField(updateStrategy=FieldStrategy.ALWAYS) private String leaseToken;
-    @TableField(updateStrategy=FieldStrategy.ALWAYS) private LocalDateTime leaseUntil;
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String leaseToken;
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private LocalDateTime leaseUntil;
     private LocalDateTime deadline;
     private LocalDateTime startedTime;
-    @TableField(updateStrategy=FieldStrategy.ALWAYS) private LocalDateTime finishedTime;
-    @TableField(updateStrategy=FieldStrategy.ALWAYS) private String lastError;
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private LocalDateTime finishedTime;
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String lastError;
     private Long resultTaskId;
     private String warning;
     private String factoryCode;

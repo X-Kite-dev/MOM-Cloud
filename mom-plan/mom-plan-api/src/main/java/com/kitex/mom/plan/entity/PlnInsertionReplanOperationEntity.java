@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 紧急插单评估、发布和回退的不可变操作履历。 */
+/**
+ * 紧急插单评估、发布和回退的不可变操作履历。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

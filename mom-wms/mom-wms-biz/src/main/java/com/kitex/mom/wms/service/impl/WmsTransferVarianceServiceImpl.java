@@ -65,23 +65,30 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
     private final RemoteWarehouseLocationService remoteWarehouseLocationService;
     private final PermissionService permissionService;
     private final WmsPlanShortageEventOutboxService planShortageEventOutboxService;
+    private final WmsWarehouseBusinessGuard warehouseBusinessGuard;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public WmsTransferReceiptDTO.Result receive(WmsTransferReceiptDTO.Command command) {
         validateReceipt(command);
         String snapshot = receiptSnapshot(command);
-        WmsTransferReceiptEntity duplicate = receiptMapper.selectOne(new LambdaQueryWrapper<WmsTransferReceiptEntity>()
-                .eq(WmsTransferReceiptEntity::getRequestId, command.getRequestId()));
-        if (duplicate != null) {
-            require(Objects.equals(duplicate.getRequestSnapshot(), snapshot), "接收幂等号已被不同请求使用");
-            return receiptResult(duplicate);
-        }
+        String requestId = command.getRequestId().trim();
         WmsAllocationBillEntity bill = lockBill(command.getAllocationBillId());
-        require(Boolean.TRUE.equals(bill.getSourceDeducted()), "历史调拨单仍须使用原全量接收入口");
-        require(OPEN_RECEIPT_STATES.contains(bill.getAllocationState()), "当前调拨状态不允许继续接收");
         requireFactory(bill.getFactoryCode());
         requireWarehousePermission("wms_wmsAllocationReceive_rec", bill.getNewWarehouseCode(), "无权接收至该仓库");
+        WmsTransferReceiptEntity duplicate = receiptMapper.selectOne(new LambdaQueryWrapper<WmsTransferReceiptEntity>()
+                .eq(WmsTransferReceiptEntity::getRequestId, requestId));
+        if (duplicate != null) {
+            require(Objects.equals(duplicate.getRequestSnapshot(), snapshot), "接收幂等号已被不同请求使用");
+            require(Objects.equals(duplicate.getAllocationBillId(), bill.getId())
+                    && Objects.equals(duplicate.getFactoryCode(), bill.getFactoryCode()), "接收幂等号不属于当前调拨单");
+            require(Objects.equals(duplicate.getReceiverCode(), currentUserCode()), "接收幂等号不属于当前操作人");
+            return receiptResult(duplicate);
+        }
+        require(Boolean.TRUE.equals(bill.getSourceDeducted()), "历史调拨单仍须使用原全量接收入口");
+        require(OPEN_RECEIPT_STATES.contains(bill.getAllocationState()), "当前调拨状态不允许继续接收");
+        require(warehouseBusinessGuard.check(bill.getNewWarehouseCode(), "allocation", true),
+                "目标仓未配置调拨接收业务");
 
         List<WmsInoutFlowEntity> issues = issueFlows(bill.getId());
         Map<Long, WmsInoutFlowEntity> issueById = issues.stream()
@@ -109,7 +116,7 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
         MomUser user = SecurityUtils.getUser();
         WmsTransferReceiptEntity receipt = new WmsTransferReceiptEntity()
                 .setReceiptNo("TR-" + IdUtil.getSnowflakeNextIdStr()).setAllocationBillId(bill.getId())
-                .setAllocationBillNo(bill.getBillNo()).setRequestId(command.getRequestId().trim())
+                .setAllocationBillNo(bill.getBillNo()).setRequestId(requestId)
                 .setRequestSnapshot(snapshot).setReceiptSequence(sequence)
                 .setFinalReceipt(Boolean.TRUE.equals(command.getFinalReceipt())).setReceiptStatus("PROCESSING")
                 .setLineCount(requested.size()).setReceiverCode(user.getUsername()).setReceiverName(operatorName(user))
@@ -140,7 +147,7 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
                         site.getLocationCode(), site.getLocationName(), input.getTargetContainerCode());
                 WmsInoutFlowEntity flow = inboundFlow(bill, acceptedSource, issue.getId(),
                         target.getWarehouseCode(), target.getWarehouseName(), site.getLocationCode(),
-                        site.getLocationName(), input.getTargetContainerCode(), "RECEIVE", command.getRequestId());
+                        site.getLocationName(), input.getTargetContainerCode(), "RECEIVE", requestId);
                 flow.setTransferReceiptId(receipt.getId());
                 require(flowMapper.insert(flow) == 1, "调拨分批接收入库流水保存失败");
             }
@@ -170,7 +177,7 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
         } else {
             boolean shortExists = issues.stream().anyMatch(issue -> remaining(issue, receivedAfter).signum() > 0);
             boolean overExists = overThisReceipt.values().stream().anyMatch(value -> value.signum() > 0);
-            bill.setReceiveRequestId(command.getRequestId()).setReceiveRequestSnapshot(snapshot)
+            bill.setReceiveRequestId(requestId).setReceiveRequestSnapshot(snapshot)
                     .setLastReceiptTime(receipt.getReceiptTime()).setFinishTime(receipt.getReceiptTime())
                     .setFinishByName(operatorName(user));
             for (WmsInoutFlowEntity issue : issues) liveStockService.releaseTransferSourceContainer(issue);
@@ -262,8 +269,8 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
         require(command != null && command.getCaseId() != null, "差异单不能为空");
         requireText(command.getRequestId(), "请求号不能为空");
         String snapshot = JSONUtil.toJsonStr(command);
-        if (idempotentOperation(command.getRequestId(), snapshot)) return;
         WmsTransferVarianceCaseEntity entity = lockCase(command.getCaseId());
+        if (idempotentOperation(entity, command.getRequestId(), snapshot)) return;
         require("ACTION_REQUIRED".equals(entity.getStatus()), "仅审核退回的差异单允许重新提交");
         require(Objects.equals(entity.getReporterCode(), currentUserCode()), "仅差异申报人可以补充后重新提交");
         validateVarianceContext(command.getReasonCode(), command.getReasonDescription(), command.getResponsibleType());
@@ -294,8 +301,8 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
         requireText(command.getRequestId(), "处置请求号不能为空");
         requireText(command.getRemark(), "处置说明不能为空");
         String snapshot = dispositionSnapshot(command);
-        if (idempotentOperation(command.getRequestId(), snapshot)) return;
         WmsTransferVarianceCaseEntity entity = lockCase(command.getCaseId());
+        if (idempotentOperation(entity, command.getRequestId(), snapshot)) return;
         require("PENDING_DISPOSITION".equals(entity.getStatus()), "差异单尚未完成全部审核或已处置");
         require(!Objects.equals(entity.getReporterCode(), currentUserCode()), "差异申报人不能执行最终处置");
         WmsAllocationBillEntity bill = lockBill(entity.getAllocationBillId());
@@ -338,8 +345,8 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
         require(Set.of("APPROVE", "REJECT").contains(command.getDecision()), "审核结论必须为APPROVE或REJECT");
         requireText(command.getComment(), "审核意见不能为空");
         String snapshot = reviewSnapshot(command, stage);
-        if (idempotentOperation(command.getRequestId(), snapshot)) return;
         WmsTransferVarianceCaseEntity entity = lockCase(command.getCaseId());
+        if (idempotentOperation(entity, command.getRequestId(), snapshot)) return;
         require(expectedStatus.equals(entity.getStatus()), "当前差异单不在" + stage + "审核阶段");
         String reviewer = currentUserCode();
         require(!Objects.equals(entity.getReporterCode(), reviewer), "差异申报人与审核人必须独立");
@@ -694,12 +701,15 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
         return JSONUtil.toJsonStr(snapshot);
     }
 
-    private boolean idempotentOperation(String requestId, String snapshot) {
+    private boolean idempotentOperation(WmsTransferVarianceCaseEntity entity, String requestId, String snapshot) {
         WmsTransferVarianceOperationEntity existing = operationMapper.selectOne(
                 new LambdaQueryWrapper<WmsTransferVarianceOperationEntity>()
                         .eq(WmsTransferVarianceOperationEntity::getRequestId, requestId));
         if (existing == null) return false;
         require(Objects.equals(existing.getRequestSnapshot(), snapshot), "差异处理幂等号已被不同请求使用");
+        require(Objects.equals(existing.getCaseId(), entity.getId())
+                && Objects.equals(existing.getFactoryCode(), entity.getFactoryCode()), "差异处理幂等号不属于当前差异单");
+        require(Objects.equals(existing.getOperatorCode(), currentUserCode()), "差异处理幂等号不属于当前操作人");
         return true;
     }
 

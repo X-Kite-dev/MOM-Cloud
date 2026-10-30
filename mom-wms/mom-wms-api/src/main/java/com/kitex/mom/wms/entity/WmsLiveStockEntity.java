@@ -28,6 +28,15 @@ import java.time.LocalDateTime;
 @Schema(description = "实时库存")
 public class WmsLiveStockEntity extends BaseEntity<WmsLiveStockEntity> {
 
+    @Schema(description = "库存货权：OWNED/CUSTOMER_SUPPLIED/CONSIGNED")
+    private String stockOwnerType;
+
+    @Schema(description = "客供客户或寄售供应商编码")
+    private String stockOwnerCode;
+
+    @Schema(description = "首次入库来源业务单号")
+    private String sourceBusinessNo;
+
     @Schema(description = "首次形成该库存的WMS入库单ID；库存移动、拆分和受控恢复后保持不变")
     private Long sourceInBillId;
 
@@ -62,10 +71,13 @@ public class WmsLiveStockEntity extends BaseEntity<WmsLiveStockEntity> {
     private String matName;
 
     /**
-     * 物料条码或产品序列号；有值时代表不可拆分的单件身份。
+     * 物料条码或产品序列号；是否为不可拆分单件由serialManaged确定。
      */
     @Schema(description = "物料条码或产品序列号")
     private String matBarcode;
+
+    @Schema(description = "入库时确定的单件序列号管理标记；库存移动和质量处置时保持不变")
+    private Boolean serialManaged;
 
     /**
      * 物料分组
@@ -154,6 +166,14 @@ public class WmsLiveStockEntity extends BaseEntity<WmsLiveStockEntity> {
     @TableField(exist = false)
     @Schema(description = "扣除WMS活动预留后的计划可用数量；供MRP读取，不改变实物数量")
     private BigDecimal planAvailableNum;
+
+    @TableField(exist = false)
+    @Schema(description = "扫码移库或调拨可移动量；逐库存行扣除生产和销售活动预留，不改变实物数量")
+    private BigDecimal operationAvailableNum;
+
+    @TableField(exist = false)
+    @Schema(description = "扫码选中的精确来源库存行ID，以字符串返回以免移动端丢失Long精度")
+    private String sourceStockId;
 
     /**
      * 单位

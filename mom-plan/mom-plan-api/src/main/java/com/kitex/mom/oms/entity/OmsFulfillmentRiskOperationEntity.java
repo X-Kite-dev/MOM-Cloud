@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 履约风险不可变操作履历；caseId为空时表示一次交付行风险同步批次。 */
+/**
+ * 履约风险不可变操作履历；caseId为空时表示一次交付行风险同步批次。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

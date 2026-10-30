@@ -13,7 +13,9 @@ import java.util.Set;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 
-/** 投料独立20文本协议；先核可封存的原结构，首次执行再核业务值。 */
+/**
+ * 投料独立20文本协议；先核可封存的原结构，首次执行再核业务值。
+ */
 @Component
 @RequiredArgsConstructor
 public class MesWarehouseFeedCommandCodec {
@@ -25,7 +27,9 @@ public class MesWarehouseFeedCommandCodec {
             "sourceWarehouseCode", "sourceSiteCode", "receivingWorksiteCode", "reservationNo", "expectedUnit", "reason");
     private final MesPhysicalTransformCodec codec;
 
-    /** 不验证首次业务值，因此填错库位等完整正文仍可永久作废。 */
+    /**
+     * 不验证首次业务值，因此填错库位等完整正文仍可永久作废。
+     */
     public JsonNode original(String raw, String factory) {
         JsonNode value = codec.objectDocument(raw, 64 * 1024);
         require(value.size() == KEYS.size(), "投料原文缺字段或有额外字段");
@@ -33,13 +37,15 @@ public class MesWarehouseFeedCommandCodec {
         require(COMMAND_VERSION.equals(text(value, "version")), "投料命令版本未知");
         requestId(text(value, "requestId"));
         require(Objects.equals(codec.id(text(value, "expectedTenantId")), TenantContextHolder.getTenantId())
-                && Objects.equals(text(value, "expectedFactoryCode"), factory)
-                && Objects.equals(codec.id(text(value, "expectedActorUserId")), SecurityUtils.getUser().getId()),
+                        && Objects.equals(text(value, "expectedFactoryCode"), factory)
+                        && Objects.equals(codec.id(text(value, "expectedActorUserId")), SecurityUtils.getUser().getId()),
                 "只能在当前认证租户工厂以本人原文投料或作废");
         return value;
     }
 
-    /** 源筛选与接收工位是不同字段；名称/替代比例/状态/来源包不能由客户端指定。 */
+    /**
+     * 源筛选与接收工位是不同字段；名称/替代比例/状态/来源包不能由客户端指定。
+     */
     public MesWarehouseFeedEntity feed(JsonNode value) {
         for (String key : Set.of("taskCode", "arrangeCode", "produceTaskCode", "materialCode", "batchNo", "expectedUnit"))
             codec.code(text(value, key), key, 100);
@@ -65,12 +71,16 @@ public class MesWarehouseFeedCommandCodec {
         return feed;
     }
 
-    /** 原号仅作永久请求身份，禁止空号、超长号及路径字符。 */
+    /**
+     * 原号仅作永久请求身份，禁止空号、超长号及路径字符。
+     */
     public void requestId(String value) {
         require(value != null && value.matches("[A-Za-z0-9_-]{8,64}"), "投料原请求号须为8至64位字母数字下划线或横线");
     }
 
-    /** 原文必须保留文本，不能把数值、空值或缺失字段静默转成字符串。 */
+    /**
+     * 原文必须保留文本，不能把数值、空值或缺失字段静默转成字符串。
+     */
     public String text(JsonNode value, String key) {
         require(value.path(key).isTextual(), "投料原文须保留文本字段：" + key);
         return value.get(key).textValue();

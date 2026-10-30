@@ -12,24 +12,12 @@ import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyDTO;
-import com.kitex.mom.plan.dto.PlnErpPlanImportCommand;
-import com.kitex.mom.plan.dto.PlnErpPostingEnvelope;
-import com.kitex.mom.plan.dto.PlnErpProductionOrderReceiptCommand;
-import com.kitex.mom.plan.dto.PlnFormalPlanContractDTO;
-import com.kitex.mom.plan.dto.PlanBomRequirementPathDTO;
-import com.kitex.mom.plan.entity.PlanMatMrpEntity;
-import com.kitex.mom.plan.entity.PlnErpPlanInboxEntity;
-import com.kitex.mom.plan.entity.PlnErpIntegrationOutboxEntity;
-import com.kitex.mom.plan.entity.PlnErpProductionOrderReceiptEntity;
-import com.kitex.mom.plan.entity.PlnFormalPlanContractEntity;
-import com.kitex.mom.plan.entity.PlnProductDemandEntity;
-import com.kitex.mom.plan.mapper.PlanMatMrpMapper;
-import com.kitex.mom.plan.mapper.PlnErpPlanInboxMapper;
-import com.kitex.mom.plan.mapper.PlnErpProductionOrderReceiptMapper;
-import com.kitex.mom.plan.mapper.PlnFormalPlanContractMapper;
-import com.kitex.mom.plan.mapper.PlnProductDemandMapper;
-import com.kitex.mom.plan.service.PlnFactoryPlanningAuthorityService;
+import com.kitex.mom.mdm.enums.ProductionOrderSyncModeEnum;
+import com.kitex.mom.plan.dto.*;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.PlnErpIntegrationOutboxService;
+import com.kitex.mom.plan.service.PlnFactoryPlanningAuthorityService;
 import com.kitex.mom.plan.service.PlnFormalPlanContractService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -40,17 +28,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 正式计划合同领域实现。
@@ -74,6 +52,111 @@ public class PlnFormalPlanContractServiceImpl
     private final PlnFactoryPlanningAuthorityService authorityService;
     private final PlnErpIntegrationOutboxService erpOutboxService;
     private final ObjectMapper objectMapper;
+
+    private static String toContractSupplyType(String sourceType) {
+        return switch (StrUtil.blankToDefault(sourceType, "").toLowerCase()) {
+            case "mes" -> "MAKE";
+            case "pms" -> "BUY";
+            case "out" -> "SUBCONTRACT";
+            default -> throw new CheckedException("MRP供应类型无法映射到正式合同：" + sourceType);
+        };
+    }
+
+    private static boolean sameHeader(PlnFormalPlanContractEntity expected, PlnFormalPlanContractEntity row) {
+        return Objects.equals(expected.getContractNo(), row.getContractNo())
+                && Objects.equals(expected.getContractVersion(), row.getContractVersion())
+                && Objects.equals(expected.getSourceSystemCode(), row.getSourceSystemCode())
+                && Objects.equals(expected.getSourceFactoryCode(), row.getSourceFactoryCode())
+                && Objects.equals(expected.getSourcePlanNo(), row.getSourcePlanNo())
+                && Objects.equals(expected.getSourcePlanVersion(), row.getSourcePlanVersion())
+                && Objects.equals(expected.getPlanningPolicyId(), row.getPlanningPolicyId())
+                && Objects.equals(expected.getPlanningPolicyVersion(), row.getPlanningPolicyVersion())
+                && Objects.equals(expected.getPlanningPolicyFingerprint(), row.getPlanningPolicyFingerprint())
+                && Objects.equals(expected.getSourceContentFingerprint(), row.getSourceContentFingerprint())
+                && Objects.equals(expected.getVerificationStatus(), row.getVerificationStatus())
+                && Objects.equals(expected.getContractStatus(), row.getContractStatus());
+    }
+
+    private static Scope requireScope() {
+        Long tenantId = TenantContextHolder.getTenantId();
+        String factoryCode = StrUtil.trim(FactoryContextHolder.getFactoryCode());
+        require(tenantId != null && tenantId > 0 && !TenantContextHolder.getTenantSkip(),
+                "正式计划合同必须在实际租户上下文执行");
+        require(!Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) && StrUtil.isNotBlank(factoryCode),
+                "正式计划合同必须选择实际工厂");
+        return new Scope(tenantId, factoryCode);
+    }
+
+    private static String requireLength(String value, String label, int maximum) {
+        String normalized = StrUtil.trim(value);
+        require(StrUtil.isNotBlank(normalized) && normalized.length() <= maximum,
+                label + "不能为空且不能超过" + maximum + "个字符");
+        return normalized;
+    }
+
+    private static String optionalLength(String value, String label, int maximum) {
+        String normalized = StrUtil.trim(value);
+        if (StrUtil.isBlank(normalized)) {
+            return null;
+        }
+        require(normalized.length() <= maximum, label + "不能超过" + maximum + "个字符");
+        return normalized;
+    }
+
+    private static BigDecimal normalizeQuantity(BigDecimal value, String lineNo) {
+        require(value != null && value.signum() > 0,
+                "计划行[" + lineNo + "]计划数量必须大于0");
+        require(value.scale() <= 8 && value.precision() - Math.max(value.scale(), 0) <= 16,
+                "计划行[" + lineNo + "]计划数量超过numeric(24,8)范围");
+        return value.stripTrailingZeros();
+    }
+
+    private static String decimal(BigDecimal value) {
+        return value == null ? null : value.stripTrailingZeros().toPlainString();
+    }
+
+    private static String upper(String value) {
+        String normalized = StrUtil.trim(value);
+        return normalized == null ? null : normalized.toUpperCase();
+    }
+
+    private static long parsePositiveLong(String value, String label) {
+        try {
+            long id = Long.parseLong(value);
+            require(id > 0, label + "必须为正整数");
+            return id;
+        } catch (NumberFormatException ex) {
+            throw new CheckedException(label + "格式不合法");
+        }
+    }
+
+    private static boolean isSha256(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static String canonical(Object... values) {
+        StringBuilder result = new StringBuilder();
+        for (Object value : values) {
+            String text = value == null ? "" : String.valueOf(value);
+            result.append(text.length()).append(':').append(text).append('|');
+        }
+        return result.toString();
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new CheckedException("正式计划内容摘要生成失败");
+        }
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new CheckedException(message);
+        }
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -189,6 +272,8 @@ public class PlnFormalPlanContractServiceImpl
         MdmFactoryPlanningPolicyDTO policy = authorityService.requireCurrentPolicy(scope.factoryCode());
         require("MOM_MRP".equals(policy.getMrpAuthority()),
                 "当前工厂不是MOM MRP权威模式，禁止发布本地MRP正式合同");
+        require(ProductionOrderSyncModeEnum.isValid(policy.getProductionOrderSyncMode()),
+                "当前工厂生产订单执行模式不可核验");
         baseMapper.lock("MOM-MRP-CONTRACT|" + scope.tenantId() + "|" + scope.factoryCode() + "|" + runNo);
         List<PlanMatMrpEntity> mrpRows = mrpMapper.selectList(new LambdaQueryWrapper<PlanMatMrpEntity>()
                 .eq(PlanMatMrpEntity::getFactoryCode, scope.factoryCode())
@@ -267,8 +352,8 @@ public class PlnFormalPlanContractServiceImpl
                 "ERP回执系统或工厂与当前工厂计划协同策略不一致");
 
         List<String> lockKeys = List.of(
-                "ERP-ORDER-RECEIPT|" + scope.tenantId() + '|' + scope.factoryCode() + '|' + requestId,
-                "FORMAL-CONTRACT|" + scope.tenantId() + '|' + scope.factoryCode() + '|' + contractNo)
+                        "ERP-ORDER-RECEIPT|" + scope.tenantId() + '|' + scope.factoryCode() + '|' + requestId,
+                        "FORMAL-CONTRACT|" + scope.tenantId() + '|' + scope.factoryCode() + '|' + contractNo)
                 .stream().sorted().toList();
         lockKeys.forEach(baseMapper::lock);
 
@@ -493,6 +578,9 @@ public class PlnFormalPlanContractServiceImpl
     private void enqueueMomContractPosting(PlnFormalPlanContractDTO contract,
                                            MdmFactoryPlanningPolicyDTO policy,
                                            String eventType, String payload) {
+        if (ProductionOrderSyncModeEnum.isLocalOnly(policy.getProductionOrderSyncMode())) {
+            return;
+        }
         PlnErpPostingEnvelope envelope = new PlnErpPostingEnvelope()
                 .setContractVersion("MOM_ERP_POSTING_V1")
                 .setRequestId("PLAN-ERP-" + eventType + '-' + contract.getContractNo() + '-'
@@ -545,7 +633,9 @@ public class PlnFormalPlanContractServiceImpl
         return assemble(rows);
     }
 
-    /** 读取指定不可变合同版本；回执幂等重放时允许读取已经被后续版本替代的历史版本。 */
+    /**
+     * 读取指定不可变合同版本；回执幂等重放时允许读取已经被后续版本替代的历史版本。
+     */
     private List<PlnFormalPlanContractEntity> loadContractVersion(
             Scope scope, String contractNo, Integer contractVersion, boolean requirePublished) {
         LambdaQueryWrapper<PlnFormalPlanContractEntity> query =
@@ -566,7 +656,9 @@ public class PlnFormalPlanContractServiceImpl
         return rows;
     }
 
-    /** 将已有合同事实转换为新版本的规范行，只允许替换自制行 ERP 订单号。 */
+    /**
+     * 将已有合同事实转换为新版本的规范行，只允许替换自制行 ERP 订单号。
+     */
     private PlnErpPlanImportCommand.Line toImportLine(
             PlnFormalPlanContractEntity source, String mappedOrderNo) {
         PlnErpPlanImportCommand.Line line = new PlnErpPlanImportCommand.Line();
@@ -589,7 +681,9 @@ public class PlnFormalPlanContractServiceImpl
         return line;
     }
 
-    /** 创建完整的新合同事实行，避免在旧行上原地补写 ERP 订单号。 */
+    /**
+     * 创建完整的新合同事实行，避免在旧行上原地补写 ERP 订单号。
+     */
     private PlnFormalPlanContractEntity newContractRow(
             ContractIdentity identity, NormalizedImport normalized, PlnErpPlanImportCommand.Line line,
             MdmFactoryPlanningPolicyDTO policy, LocalDateTime now, String actor) {
@@ -686,7 +780,9 @@ public class PlnFormalPlanContractServiceImpl
                 sourcePlanNo, sourcePlanVersion, contentFingerprint, lines);
     }
 
-    /** 把聚合MRP行恢复为可追溯的需求根与BOM路径合同，避免丢失多层父子关系。 */
+    /**
+     * 把聚合MRP行恢复为可追溯的需求根与BOM路径合同，避免丢失多层父子关系。
+     */
     private List<PlnErpPlanImportCommand.Line> momContractLines(List<PlanMatMrpEntity> mrpRows, Scope scope) {
         Set<String> demandNos = new LinkedHashSet<>();
         for (PlanMatMrpEntity row : mrpRows) {
@@ -782,22 +878,14 @@ public class PlnFormalPlanContractServiceImpl
                 "MRP行[" + row.getId() + "]缺少BOM路径快照，不能发布正式合同");
         try {
             List<PlanBomRequirementPathDTO> paths = objectMapper.readValue(row.getBomPathSnapshot(),
-                    new TypeReference<List<PlanBomRequirementPathDTO>>() { });
+                    new TypeReference<List<PlanBomRequirementPathDTO>>() {
+                    });
             require(paths != null && !paths.isEmpty(),
                     "MRP行[" + row.getId() + "]BOM路径快照为空");
             return paths;
         } catch (JsonProcessingException ex) {
             throw new CheckedException("MRP行[" + row.getId() + "]BOM路径快照无法解析");
         }
-    }
-
-    private static String toContractSupplyType(String sourceType) {
-        return switch (StrUtil.blankToDefault(sourceType, "").toLowerCase()) {
-            case "mes" -> "MAKE";
-            case "pms" -> "BUY";
-            case "out" -> "SUBCONTRACT";
-            default -> throw new CheckedException("MRP供应类型无法映射到正式合同：" + sourceType);
-        };
     }
 
     private void validateParentGraph(List<PlnErpPlanImportCommand.Line> lines, Set<String> lineNos) {
@@ -917,21 +1005,6 @@ public class PlnFormalPlanContractServiceImpl
         return line;
     }
 
-    private static boolean sameHeader(PlnFormalPlanContractEntity expected, PlnFormalPlanContractEntity row) {
-        return Objects.equals(expected.getContractNo(), row.getContractNo())
-                && Objects.equals(expected.getContractVersion(), row.getContractVersion())
-                && Objects.equals(expected.getSourceSystemCode(), row.getSourceSystemCode())
-                && Objects.equals(expected.getSourceFactoryCode(), row.getSourceFactoryCode())
-                && Objects.equals(expected.getSourcePlanNo(), row.getSourcePlanNo())
-                && Objects.equals(expected.getSourcePlanVersion(), row.getSourcePlanVersion())
-                && Objects.equals(expected.getPlanningPolicyId(), row.getPlanningPolicyId())
-                && Objects.equals(expected.getPlanningPolicyVersion(), row.getPlanningPolicyVersion())
-                && Objects.equals(expected.getPlanningPolicyFingerprint(), row.getPlanningPolicyFingerprint())
-                && Objects.equals(expected.getSourceContentFingerprint(), row.getSourceContentFingerprint())
-                && Objects.equals(expected.getVerificationStatus(), row.getVerificationStatus())
-                && Objects.equals(expected.getContractStatus(), row.getContractStatus());
-    }
-
     private String lineFingerprint(ContractIdentity identity, NormalizedImport normalized,
                                    PlnErpPlanImportCommand.Line line, MdmFactoryPlanningPolicyDTO policy) {
         return sha256(canonical("FORMAL_PLAN_LINE_V1", identity.contractNo(), identity.contractVersion(),
@@ -970,87 +1043,6 @@ public class PlnFormalPlanContractServiceImpl
                     "lines", normalized.lines()));
         } catch (JsonProcessingException ex) {
             throw new CheckedException("ERP正式计划规范载荷序列化失败");
-        }
-    }
-
-    private static Scope requireScope() {
-        Long tenantId = TenantContextHolder.getTenantId();
-        String factoryCode = StrUtil.trim(FactoryContextHolder.getFactoryCode());
-        require(tenantId != null && tenantId > 0 && !TenantContextHolder.getTenantSkip(),
-                "正式计划合同必须在实际租户上下文执行");
-        require(!Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) && StrUtil.isNotBlank(factoryCode),
-                "正式计划合同必须选择实际工厂");
-        return new Scope(tenantId, factoryCode);
-    }
-
-    private static String requireLength(String value, String label, int maximum) {
-        String normalized = StrUtil.trim(value);
-        require(StrUtil.isNotBlank(normalized) && normalized.length() <= maximum,
-                label + "不能为空且不能超过" + maximum + "个字符");
-        return normalized;
-    }
-
-    private static String optionalLength(String value, String label, int maximum) {
-        String normalized = StrUtil.trim(value);
-        if (StrUtil.isBlank(normalized)) {
-            return null;
-        }
-        require(normalized.length() <= maximum, label + "不能超过" + maximum + "个字符");
-        return normalized;
-    }
-
-    private static BigDecimal normalizeQuantity(BigDecimal value, String lineNo) {
-        require(value != null && value.signum() > 0,
-                "计划行[" + lineNo + "]计划数量必须大于0");
-        require(value.scale() <= 8 && value.precision() - Math.max(value.scale(), 0) <= 16,
-                "计划行[" + lineNo + "]计划数量超过numeric(24,8)范围");
-        return value.stripTrailingZeros();
-    }
-
-    private static String decimal(BigDecimal value) {
-        return value == null ? null : value.stripTrailingZeros().toPlainString();
-    }
-
-    private static String upper(String value) {
-        String normalized = StrUtil.trim(value);
-        return normalized == null ? null : normalized.toUpperCase();
-    }
-
-    private static long parsePositiveLong(String value, String label) {
-        try {
-            long id = Long.parseLong(value);
-            require(id > 0, label + "必须为正整数");
-            return id;
-        } catch (NumberFormatException ex) {
-            throw new CheckedException(label + "格式不合法");
-        }
-    }
-
-    private static boolean isSha256(String value) {
-        return value != null && value.matches("[0-9a-f]{64}");
-    }
-
-    private static String canonical(Object... values) {
-        StringBuilder result = new StringBuilder();
-        for (Object value : values) {
-            String text = value == null ? "" : String.valueOf(value);
-            result.append(text.length()).append(':').append(text).append('|');
-        }
-        return result.toString();
-    }
-
-    private static String sha256(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception ex) {
-            throw new CheckedException("正式计划内容摘要生成失败");
-        }
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new CheckedException(message);
         }
     }
 

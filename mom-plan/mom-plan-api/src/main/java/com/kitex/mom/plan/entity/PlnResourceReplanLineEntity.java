@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 资源异常局部重排的逐工序前后证据。 */
+/**
+ * 资源异常局部重排的逐工序前后证据。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -23,7 +25,9 @@ public class PlnResourceReplanLineEntity extends BaseEntity<PlnResourceReplanLin
     private Long proposalOperationId;
     private Integer operationSeq;
     private String processCode;
-    /** 原正式操作的冻结节点；旧案件保持空，不能按当前主数据补造。 */
+    /**
+     * 原正式操作的冻结节点；旧案件保持空，不能按当前主数据补造。
+     */
     private String sourceRouteNodeCode;
     private String processName;
     private Boolean directAffected;

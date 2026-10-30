@@ -16,17 +16,13 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
-/** 逐标识退回上序申请、双人复核、执行路线和永久审计入口。 */
+/**
+ * 逐标识退回上序申请、双人复核、执行路线和永久审计入口。
+ */
 @Tag(name = "逐标识退回上序", description = "在制品无补料重过站；末工序或质量返工必须走正式返工工单")
 @RestController
 @RequiredArgsConstructor
@@ -49,7 +45,7 @@ public class MesIdentifierRouteReturnController {
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('mesStationPass:view','mesStationPass:routeReturn:apply','mesStationPass:routeReturn:review')")
     public R<IPage<MesIdentifierRouteReturnEntity>> page(Page<MesIdentifierRouteReturnEntity> page,
-                                                          MesIdentifierRouteReturnEntity query) {
+                                                         MesIdentifierRouteReturnEntity query) {
         QueryWrapper<MesIdentifierRouteReturnEntity> wrapper = QueryGenerator.initQueryWrapper(query);
         wrapper.lambda().eq(MesIdentifierRouteReturnEntity::getFactoryCode, factoryAccess.require("read"))
                 .orderByDesc(MesIdentifierRouteReturnEntity::getAppliedTime)
@@ -62,7 +58,7 @@ public class MesIdentifierRouteReturnController {
     @PreAuthorize("@pms.hasPermission(#operation == 'APPLY' || #operation == 'WITHDRAW' "
             + "? 'mesStationPass:routeReturn:apply' : 'mesStationPass:routeReturn:review')")
     public R<Map<String, Object>> execute(@PathVariable String operation,
-                                           @RequestBody MesIdentifierRouteReturnCommand command) {
+                                          @RequestBody MesIdentifierRouteReturnCommand command) {
         command.setOperation(operation);
         return R.ok(coordinator.execute(command));
     }

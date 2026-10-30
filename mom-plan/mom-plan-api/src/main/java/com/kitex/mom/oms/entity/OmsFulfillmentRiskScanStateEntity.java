@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 每个活动OMS交付行一条自动扫描状态；成功证据仍以风险操作账为准。 */
+/**
+ * 每个活动OMS交付行一条自动扫描状态；成功证据仍以风险操作账为准。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

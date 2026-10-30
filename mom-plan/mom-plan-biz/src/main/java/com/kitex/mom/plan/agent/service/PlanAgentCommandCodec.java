@@ -4,24 +4,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.kitex.common.core.exception.CheckedException;
-import com.kitex.mom.plan.dto.PlanAgentPurchaseOrderDTO;
-import com.kitex.mom.plan.dto.PlanAgentSubstituteDecisionDTO;
-import com.kitex.mom.plan.dto.PlanAgentTransferDecisionDTO;
-import com.kitex.mom.plan.dto.PlanResourceLocalReplanDTO;
-import com.kitex.mom.plan.dto.PlanSchedulingAgentDTO;
-import com.kitex.mom.plan.dto.PlanShortageLocalReplanDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingScenarioRunDTO;
+import com.kitex.mom.plan.dto.*;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.ArrayList;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
+import java.util.*;
 
-/** 固定命令白名单及规范化指纹；查询契约与原控制器的实际DTO完全相同。 */
+/**
+ * 固定命令白名单及规范化指纹；查询契约与原控制器的实际DTO完全相同。
+ */
 @Component
 public class PlanAgentCommandCodec {
     private final ObjectMapper mapper;
@@ -30,7 +22,9 @@ public class PlanAgentCommandCodec {
         this.mapper = mapper;
     }
 
-    /** 从业务控制器真实参数冻结完整命令，不使用客户端声明的hash。 */
+    /**
+     * 从业务控制器真实参数冻结完整命令，不使用客户端声明的hash。
+     */
     public Frozen freeze(String code, String variant, Object command) {
         try {
             JsonNode node = mapper.valueToTree(command);
@@ -52,7 +46,9 @@ public class PlanAgentCommandCodec {
         }
     }
 
-    /** 回执核查重建执行器实际发送的固定DTO，包括由平台注入的审批身份。 */
+    /**
+     * 回执核查重建执行器实际发送的固定DTO，包括由平台注入的审批身份。
+     */
     public Frozen fromLookup(LookupQuery query) throws Exception {
         ObjectNode payload = query.commandPayload().deepCopy();
         String rootRequest = payload.path("requestId").asText("");

@@ -8,6 +8,6 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface MdmBomEcnMapper extends MomBaseMapper<MdmBomEcnEntity> {
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(#{key}, 0))")
-    void lockRequest(@Param("key") String key);
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(#{key}, 0))")
+    Integer lockRequest(@Param("key") String key);
 }

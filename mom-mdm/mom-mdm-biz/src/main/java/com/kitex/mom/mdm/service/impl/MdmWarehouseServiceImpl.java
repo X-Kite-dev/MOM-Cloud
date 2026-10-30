@@ -5,13 +5,18 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.lang.Snowflake;
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.ObjUtil;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.admin.api.entity.SysDictItemEntity;
 import com.kitex.admin.api.feign.RemoteDictService;
+import com.kitex.admin.api.feign.RemoteMenuService;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.excel.vo.ErrorMessage;
 import com.kitex.mom.mdm.constant.AvailableStatusEnum;
 import com.kitex.mom.mdm.entity.MdmFactoryModelEntity;
@@ -26,6 +31,9 @@ import com.kitex.mom.mdm.service.MdmWarehouseService;
 import com.kitex.mom.mdm.vo.MdmWarehouseModelTreeVO;
 import com.kitex.mom.mdm.vo.excel.MdmWarehouseExcelVO;
 import com.kitex.mom.mdm.vo.excel.MdmWarehouseModelExcelVO;
+import com.kitex.mom.mes.api.feign.RemoteMesWarehouseLifecycleService;
+import com.kitex.mom.plan.feign.RemotePlnWarehouseLifecycleService;
+import com.kitex.mom.wms.api.feign.RemoteWmsWarehouseLifecycleService;
 import lombok.AllArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
@@ -35,6 +43,7 @@ import org.springframework.validation.BindingResult;
 
 import java.util.*;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -54,20 +63,238 @@ public class MdmWarehouseServiceImpl extends ServiceImpl<MdmWarehouseMapper, Mdm
 
     private final MdmWarehouseLocationService mdmWarehouseLocationService;
 
+    private final RemoteMenuService remoteMenuService;
+
+    private final RemoteWmsWarehouseLifecycleService remoteWmsWarehouseLifecycleService;
+
+    private final RemoteMesWarehouseLifecycleService remoteMesWarehouseLifecycleService;
+
+    private final RemotePlnWarehouseLifecycleService remotePlnWarehouseLifecycleService;
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean updateById(MdmWarehouseEntity warehouse) {
+        requireMutationScope();
+        if (warehouse == null || warehouse.getId() == null) {
+            throw new CheckedException("更新仓库必须提供仓库ID");
+        }
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        List<MdmWarehouseEntity> current = baseMapper.findWarehousesForDeletion(
+                List.of(warehouse.getId()), tenant, factory);
+        if (current == null || current.size() != 1) {
+            throw new CheckedException("仓库不存在或不属于当前租户/工厂");
+        }
+        MdmWarehouseEntity owned = current.get(0);
+        requireStableFields(warehouse, owned);
+        if (baseMapper.update(warehouse, Wrappers.<MdmWarehouseEntity>lambdaUpdate()
+                .eq(MdmWarehouseEntity::getId, owned.getId())
+                .eq(MdmWarehouseEntity::getTenantId, tenant)
+                .eq(MdmWarehouseEntity::getFactoryCode, factory)
+                .eq(MdmWarehouseEntity::getWarehouseCode, owned.getWarehouseCode())) != 1) {
+            throw new CheckedException("仓库更新失败，请刷新后重试");
+        }
+        return true;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean updateWarehouseConfig(MdmWarehouseEntity warehouse) {
+        requireMutationScope();
+        if (warehouse == null || StrUtil.isBlank(warehouse.getWarehouseCode())) {
+            throw new CheckedException("更新仓库配置必须提供仓库编码");
+        }
+        Integer batch = warehouse.getIsBatch();
+        Integer container = warehouse.getIsContainer();
+        if (batch == null && container == null) {
+            throw new CheckedException("至少提供一项仓库配置");
+        }
+        requireConfigurationValues(warehouse);
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        List<MdmWarehouseEntity> current = baseMapper.findWarehousesForConfig(
+                tenant, factory, warehouse.getWarehouseCode());
+        if (current == null || current.size() != 1) {
+            throw new CheckedException("仓库不存在、不唯一或不属于当前租户/工厂");
+        }
+        MdmWarehouseEntity owned = current.get(0);
+        requireStableFields(warehouse, owned);
+        if (warehouse.getId() != null && !Objects.equals(warehouse.getId(), owned.getId())) {
+            throw new CheckedException("仓库ID与编码不一致");
+        }
+        if (baseMapper.update(null, Wrappers.<MdmWarehouseEntity>lambdaUpdate()
+                .set(batch != null, MdmWarehouseEntity::getIsBatch, batch)
+                .set(container != null, MdmWarehouseEntity::getIsContainer, container)
+                .eq(MdmWarehouseEntity::getId, owned.getId())
+                .eq(MdmWarehouseEntity::getTenantId, tenant)
+                .eq(MdmWarehouseEntity::getFactoryCode, factory)
+                .eq(MdmWarehouseEntity::getWarehouseCode, owned.getWarehouseCode())) != 1) {
+            throw new CheckedException("仓库配置更新失败，请刷新后重试");
+        }
+        return true;
+    }
+
+    private void requireMutationScope() {
+        if (TenantContextHolder.getTenantId() == null || Boolean.TRUE.equals(TenantContextHolder.getTenantSkip())
+                || StrUtil.isBlank(FactoryContextHolder.getFactoryCode())
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())) {
+            throw new CheckedException("更新仓库必须处于精确租户/工厂上下文");
+        }
+    }
+
+    private void requireConfigurationValues(MdmWarehouseEntity warehouse) {
+        Integer batch = warehouse.getIsBatch();
+        Integer container = warehouse.getIsContainer();
+        if ((batch != null && batch != 0 && batch != 1)
+                || (container != null && container != 0 && container != 1)) {
+            throw new CheckedException("仓库批次及容器配置值必须为0或1");
+        }
+    }
+
+    private void requireStableFields(MdmWarehouseEntity request, MdmWarehouseEntity current) {
+        requireConfigurationValues(request);
+        if ((request.getWarehouseCode() != null
+                && !Objects.equals(request.getWarehouseCode(), current.getWarehouseCode()))
+                || (request.getFactoryCode() != null
+                && !Objects.equals(request.getFactoryCode(), current.getFactoryCode()))
+                || (request.getTenantId() != null && !Objects.equals(request.getTenantId(), current.getTenantId()))) {
+            throw new CheckedException("仓库编码、所属工厂和租户创建后不可修改");
+        }
+        if (request.getDelFlag() != null && !Objects.equals(request.getDelFlag(), current.getDelFlag())) {
+            throw new CheckedException("请使用受控删除入口删除仓库");
+        }
+    }
+
+    @Override
+    public List<MdmWarehouseEntity> menuConfigurationWarehouses() {
+        requireMutationScope();
+        List<MdmWarehouseEntity> warehouses = baseMapper.findMenuConfigurationWarehouses(
+                TenantContextHolder.getTenantId(), FactoryContextHolder.getFactoryCode());
+        if (warehouses == null) {
+            throw new CheckedException("仓库菜单状态查询结果不确定");
+        }
+        Set<String> seen = new HashSet<>();
+        for (MdmWarehouseEntity warehouse : warehouses) {
+            if (warehouse == null || StrUtil.isBlank(warehouse.getWarehouseCode()) || warehouse.getStatus() == null
+                    || !seen.add(warehouse.getWarehouseCode())
+                    || !Objects.equals(warehouse.getTenantId(), TenantContextHolder.getTenantId())
+                    || !Objects.equals(warehouse.getFactoryCode(), FactoryContextHolder.getFactoryCode())) {
+                throw new CheckedException("仓库菜单状态重复、缺失或组织范围不一致");
+            }
+        }
+        return warehouses;
+    }
+
+    @Override
+    public Map<String, Boolean> menuStates() {
+        Map<String, Boolean> states = new LinkedHashMap<>();
+        for (MdmWarehouseEntity warehouse : menuConfigurationWarehouses()) {
+            states.put(warehouse.getWarehouseCode(), warehouse.getStatus());
+        }
+        return states;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean removeUnusedWarehouses(Collection<Long> ids) {
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        if (tenant == null || Boolean.TRUE.equals(TenantContextHolder.getTenantSkip())
+                || StrUtil.isBlank(factory) || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())) {
+            throw new CheckedException("删除仓库必须处于精确租户/工厂上下文");
+        }
+        if (ids == null || ids.isEmpty() || ids.stream().anyMatch(Objects::isNull)
+                || new HashSet<>(ids).size() != ids.size()) {
+            throw new CheckedException("删除仓库ID不能为空或重复");
+        }
+        List<MdmWarehouseEntity> warehouses = baseMapper.findWarehousesForDeletion(ids, tenant, factory);
+        if (warehouses == null || warehouses.size() != ids.size()) {
+            throw new CheckedException("待删除仓库不存在或不属于当前租户/工厂，请刷新后重试");
+        }
+
+        // 全量核资格后才修改本地数据；远程读检查不构成跨服务原子锁。
+        for (MdmWarehouseEntity warehouse : warehouses) {
+            if (!Boolean.FALSE.equals(warehouse.getStatus()) || StrUtil.isBlank(warehouse.getWarehouseCode())) {
+                throw new CheckedException("仓库" + warehouse.getWarehouseCode() + "必须先停用后才能删除");
+            }
+            String code = warehouse.getWarehouseCode();
+            List<String> localReferences = baseMapper.findLocalReferences(
+                    tenant, factory, code, String.valueOf(warehouse.getId()));
+            if (localReferences == null || localReferences.stream().anyMatch(StrUtil::isBlank)) {
+                throw new CheckedException("MDM仓库依赖查询结果不确定，禁止删除");
+            }
+            List<String> references = new ArrayList<>(localReferences);
+            references.addAll(requireReferenceResult("WMS",
+                    () -> remoteWmsWarehouseLifecycleService.businessReferences(code)));
+            references.addAll(requireReferenceResult("MES",
+                    () -> remoteMesWarehouseLifecycleService.references(code, warehouse.getId())));
+            references
+                    .addAll(requireReferenceResult("PLAN", () -> remotePlnWarehouseLifecycleService.references(code)));
+            if (!references.isEmpty()) {
+                throw new CheckedException("仓库" + code + "存在依赖（" + String.join("、", references)
+                        + "），不能删除；请保留仓库并使用停用状态");
+            }
+        }
+        // 所有仓库先通过业务预检，再触发远程幂等清理。远程事务可能已提交，后续失败保留
+        // 停用主数据用于重试；本地回滚不代表已撤销其他服务的清理。
+        for (MdmWarehouseEntity warehouse : warehouses) {
+            R<Boolean> cleaned;
+            try {
+                cleaned = remoteWmsWarehouseLifecycleService.cleanup(warehouse.getWarehouseCode());
+            } catch (RuntimeException exception) {
+                throw new CheckedException("仓库配置清理失败，主数据保留，请重试删除");
+            }
+            if (cleaned == null || cleaned.getCode() != 0 || !Boolean.TRUE.equals(cleaned.getData())) {
+                throw new CheckedException("仓库配置清理失败或结果不确定，主数据保留，请重试删除");
+            }
+        }
+        for (MdmWarehouseEntity warehouse : warehouses) {
+            if (baseMapper.deleteUnusedWarehouse(warehouse.getId(), tenant, factory,
+                    warehouse.getWarehouseCode()) != 1) {
+                throw new CheckedException("仓库状态已变化，整批删除已回滚，请刷新后重试");
+            }
+        }
+        return true;
+    }
+
+    private List<String> requireReferenceResult(String source, Supplier<R<List<String>>> request) {
+        List<String> references = requireRemoteResult(source, request);
+        if (references.stream().anyMatch(StrUtil::isBlank)) {
+            throw new CheckedException(source + "仓库依赖查询结果不确定，禁止删除");
+        }
+        return references;
+    }
+
+    private <T> List<T> requireRemoteResult(String source, Supplier<R<List<T>>> request) {
+        R<List<T>> response;
+        try {
+            response = request.get();
+        } catch (RuntimeException exception) {
+            throw new CheckedException(source + "仓库依赖查询失败，禁止删除");
+        }
+        if (response == null || response.getCode() != 0 || response.getData() == null
+                || response.getData().stream().anyMatch(Objects::isNull)) {
+            throw new CheckedException(source + "仓库依赖查询失败或结果不确定，禁止删除");
+        }
+        return response.getData();
+    }
+
     /**
      * 获取仓库模树形结构
      */
     @Override
     public List<MdmWarehouseModelTreeVO> getWarehouseModelTree() {
         // 获取产业级别数据
-        List<MdmFactoryModelEntity> industryList = mdmFactoryModelService.list(new LambdaQueryWrapper<MdmFactoryModelEntity>()
-                .eq(MdmFactoryModelEntity::getType, FactoryModelTypeEnum.INDUSTRY.getCode())
-                .orderByAsc(MdmFactoryModelEntity::getSort));
+        List<MdmFactoryModelEntity> industryList = mdmFactoryModelService
+                .list(new LambdaQueryWrapper<MdmFactoryModelEntity>()
+                        .eq(MdmFactoryModelEntity::getType, FactoryModelTypeEnum.INDUSTRY.getCode())
+                        .orderByAsc(MdmFactoryModelEntity::getSort));
 
         // 获取工厂级别数据
-        List<MdmFactoryModelEntity> factoryList = mdmFactoryModelService.list(new LambdaQueryWrapper<MdmFactoryModelEntity>()
-                .eq(MdmFactoryModelEntity::getType, FactoryModelTypeEnum.FACTORY.getCode())
-                .orderByAsc(MdmFactoryModelEntity::getSort));
+        List<MdmFactoryModelEntity> factoryList = mdmFactoryModelService
+                .list(new LambdaQueryWrapper<MdmFactoryModelEntity>()
+                        .eq(MdmFactoryModelEntity::getType, FactoryModelTypeEnum.FACTORY.getCode())
+                        .orderByAsc(MdmFactoryModelEntity::getSort));
         // 跳过工厂验证
         FactoryContextHolder.setFactorySkip();
         // 获取所有仓库
@@ -116,7 +343,8 @@ public class MdmWarehouseServiceImpl extends ServiceImpl<MdmWarehouseMapper, Mdm
                             warehouseNodes.add(warehouseNode);
                             // 构建该仓库下的库位节点
                             List<MdmWarehouseModelTreeVO> locationNodes = new ArrayList<>();
-                            List<MdmWarehouseLocationEntity> warehouseLocations = locationMap.get(warehouse.getWarehouseCode());
+                            List<MdmWarehouseLocationEntity> warehouseLocations = locationMap
+                                    .get(warehouse.getWarehouseCode());
                             if (warehouseLocations != null) {
                                 // 构建库位的树形结构
                                 List<MdmWarehouseModelTreeVO> locationTree = buildLocationTree(warehouseLocations);
@@ -254,8 +482,7 @@ public class MdmWarehouseServiceImpl extends ServiceImpl<MdmWarehouseMapper, Mdm
         nodes.sort((a, b) -> {
             int sortCompare = Integer.compare(
                     a.getSort() != null ? a.getSort() : 0,
-                    b.getSort() != null ? b.getSort() : 0
-            );
+                    b.getSort() != null ? b.getSort() : 0);
             if (sortCompare != 0) {
                 return sortCompare;
             }
@@ -366,7 +593,8 @@ public class MdmWarehouseServiceImpl extends ServiceImpl<MdmWarehouseMapper, Mdm
                 warehouseMap.put(mdmWarehouseEntity.getWarehouseCode(), mdmWarehouseEntity.getWarehouseName());
 
                 // 库位处理逻辑（直接使用校验阶段写入的 parentId 和 locationLevel）
-                MdmWarehouseLocationEntity mdmWarehouseLocationEntity = insertWarehouseLocationExcel(excelVO, mdmWarehouseEntity, snowflake.nextId());
+                MdmWarehouseLocationEntity mdmWarehouseLocationEntity = insertWarehouseLocationExcel(excelVO,
+                        mdmWarehouseEntity, snowflake.nextId());
                 warehouseLocationList.add(mdmWarehouseLocationEntity);
                 locationMap.put(mdmWarehouseLocationEntity.getLocationCode(), mdmWarehouseLocationEntity);
             } else {
@@ -490,7 +718,8 @@ public class MdmWarehouseServiceImpl extends ServiceImpl<MdmWarehouseMapper, Mdm
             exportExcelVOList.add(warehouseRow);
 
             // 该仓库的库位树根：parentId == -1
-            Map<Long, List<MdmWarehouseLocationEntity>> childrenMap = warehouseToChildrenMap.getOrDefault(warehouse.getWarehouseCode(), new HashMap<>());
+            Map<Long, List<MdmWarehouseLocationEntity>> childrenMap = warehouseToChildrenMap
+                    .getOrDefault(warehouse.getWarehouseCode(), new HashMap<>());
             List<MdmWarehouseLocationEntity> roots = childrenMap.getOrDefault(-1L, new ArrayList<>());
             for (MdmWarehouseLocationEntity root : roots) {
                 addLocationAndChildrenRows(root, childrenMap, idToLocation, warehouse, exportExcelVOList);

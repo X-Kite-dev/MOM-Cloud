@@ -5,13 +5,17 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.mdm.dto.MdmFormalSopDTO;
-import com.kitex.mom.mdm.entity.*;
-import com.kitex.mom.mdm.mapper.*;
+import com.kitex.mom.mdm.entity.MdmProcessProcedureSopEntity;
+import com.kitex.mom.mdm.entity.MdmProcessRouteWorkingEntity;
+import com.kitex.mom.mdm.entity.MdmSopOriginEntity;
+import com.kitex.mom.mdm.entity.MdmSopVersionEntity;
+import com.kitex.mom.mdm.mapper.MdmProcessProcedureSopMapper;
+import com.kitex.mom.mdm.mapper.MdmSopOriginMapper;
+import com.kitex.mom.mdm.mapper.MdmSopVersionMapper;
 import com.kitex.mom.mdm.support.MdmRouteNodeResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
@@ -33,10 +37,13 @@ public class MdmSopWorkspace {
     private final MdmSopOriginalStorage storage;
     private final MdmSopOriginalWriter writer;
 
-    /** 出网标识使用字符串，避免浏览器Long精度损失。 */
-    public record NodeContext(String id, String routeCode, String routeNodeCode, String processCode, String processName) { }
-    /** 历史附件列表不返回私有对象路径；旧公开下载URL仍由原附件页面处理。 */
-    public record LegacyItem(String id, String name, String expectedHash) { }
+    /**
+     * 只对业务文件属性计算指纹，审计时间变化不能伪装成文件变化。
+     */
+    public static String legacyHash(MdmProcessProcedureSopEntity row) {
+        return hash("SOP_LEGACY_ATTACHMENT_V1", row.getId(), row.getTenantId(), row.getFactoryCode(),
+                row.getRouteCode(), row.getRouteNodeCode(), row.getName(), row.getFileName(), row.getUrl());
+    }
 
     public NodeContext context(String nodeId) {
         support.access(false);
@@ -45,7 +52,9 @@ public class MdmSopWorkspace {
                 node.getProcessCode(), node.getProcessName());
     }
 
-    /** 节点编制和当前适用分开查询；关联过滤在数据库完成，不能在当前分页上过滤。 */
+    /**
+     * 节点编制和当前适用分开查询；关联过滤在数据库完成，不能在当前分页上过滤。
+     */
     public Page<MdmSopVersionEntity> page(String nodeId, String mode, String keyword, String status, long current, long size) {
         var node = context(nodeId);
         require(Set.of("AUTHORED", "BOUND").contains(mode), "请选择当前适用或本工序编制目录");
@@ -55,8 +64,8 @@ public class MdmSopWorkspace {
                 .eq(MdmSopVersionEntity::getFactoryCode, support.access(false));
         String table = "BOUND".equals(mode) ? "mdm_sop_binding" : "mdm_sop_origin";
         query.apply("EXISTS (SELECT 1 FROM " + table + " src WHERE src.version_id=mdm_sop_version.id"
-                + " AND src.tenant_id={0} AND src.factory_code={1} AND src.route_code={2} AND src.route_node_code={3}"
-                + " AND src.del_flag='0'" + ("BOUND".equals(mode) ? " AND src.status='BOUND'" : "") + ")",
+                        + " AND src.tenant_id={0} AND src.factory_code={1} AND src.route_code={2} AND src.route_node_code={3}"
+                        + " AND src.del_flag='0'" + ("BOUND".equals(mode) ? " AND src.status='BOUND'" : "") + ")",
                 support.tenant(), support.access(false), node.routeCode(), node.routeNodeCode());
         if (keyword != null && !keyword.isBlank()) {
             String term = text(keyword, 100, "关键词", false);
@@ -83,7 +92,9 @@ public class MdmSopWorkspace {
                 .eq(MdmSopOriginEntity::getVersionId, id(versionId, "SOP版本ID")).orderByDesc(MdmSopOriginEntity::getId));
     }
 
-    /** 由版本服务取得族锁后调用；与绑定服务统一为“版本族→路线”的锁顺序。 */
+    /**
+     * 由版本服务取得族锁后调用；与绑定服务统一为“版本族→路线”的锁顺序。
+     */
     public MdmSopOriginEntity prepare(MdmFormalSopDTO.Command command) {
         boolean hasNode = command.getSourceNodeId() != null && !command.getSourceNodeId().isBlank();
         boolean legacy = command.getLegacyAttachmentId() != null && !command.getLegacyAttachmentId().isBlank();
@@ -149,7 +160,9 @@ public class MdmSopWorkspace {
         return origin;
     }
 
-    /** 与新版本同事务落库。来源是永久事实，不随着旧附件编辑或解绑而删除。 */
+    /**
+     * 与新版本同事务落库。来源是永久事实，不随着旧附件编辑或解绑而删除。
+     */
     public void record(MdmSopOriginEntity origin, MdmSopVersionEntity version, Long sourceVersionId) {
         if (origin == null) return;
         origin.setVersionId(version.getId());
@@ -157,12 +170,6 @@ public class MdmSopWorkspace {
         origin.setSourceVersionId(sourceVersionId);
         if (sourceVersionId != null && !"REVISION".equals(origin.getSourceType())) origin.setSourceType("DEDICATED");
         require(origins.insert(origin) == 1, "SOP编制来源保存失败，草稿未提交");
-    }
-
-    /** 只对业务文件属性计算指纹，审计时间变化不能伪装成文件变化。 */
-    public static String legacyHash(MdmProcessProcedureSopEntity row) {
-        return hash("SOP_LEGACY_ATTACHMENT_V1", row.getId(), row.getTenantId(), row.getFactoryCode(),
-                row.getRouteCode(), row.getRouteNodeCode(), row.getName(), row.getFileName(), row.getUrl());
     }
 
     private LambdaQueryWrapper<MdmSopOriginEntity> originScope() {
@@ -175,5 +182,18 @@ public class MdmSopWorkspace {
                 .eq(MdmProcessProcedureSopEntity::getFactoryCode, node.getFactoryCode())
                 .eq(MdmProcessProcedureSopEntity::getRouteCode, node.getRouteCode())
                 .eq(MdmProcessProcedureSopEntity::getRouteNodeCode, node.getRouteNodeCode());
+    }
+
+    /**
+     * 出网标识使用字符串，避免浏览器Long精度损失。
+     */
+    public record NodeContext(String id, String routeCode, String routeNodeCode, String processCode,
+                              String processName) {
+    }
+
+    /**
+     * 历史附件列表不返回私有对象路径；旧公开下载URL仍由原附件页面处理。
+     */
+    public record LegacyItem(String id, String name, String expectedHash) {
     }
 }

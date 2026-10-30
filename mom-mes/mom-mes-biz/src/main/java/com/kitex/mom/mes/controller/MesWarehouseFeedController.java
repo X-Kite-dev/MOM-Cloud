@@ -15,11 +15,11 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.common.query.utils.QueryGenerator;
-import com.kitex.mom.mes.dto.MesWarehouseFeedLeftDTO;
 import com.kitex.mom.mes.dto.MesWarehouseFeedBirthDTO;
+import com.kitex.mom.mes.dto.MesWarehouseFeedLeftDTO;
 import com.kitex.mom.mes.entity.MesWarehouseFeedEntity;
-import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.MesWarehouseFeedBirthService;
+import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.impl.MesStartPreparationDrilldownService;
 import com.kitex.mom.mes.vo.MesWarehouseFeedExcelVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -52,7 +52,9 @@ public class MesWarehouseFeedController {
     private final MesWarehouseFeedBirthService feedBirths;
     private final MesStartPreparationDrilldownService preparationDrilldown;
 
-    /** 原来源只读，所有原库存行均返回；不是按批次查询当前库存冒充出生。 */
+    /**
+     * 原来源只读，所有原库存行均返回；不是按批次查询当前库存冒充出生。
+     */
     @Operation(summary = "查询投料永久出生来源")
     @GetMapping("/{id}/birth")
     @PreAuthorize("@pms.hasPermission('mes_mesWarehouseFeed_view')")

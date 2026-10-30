@@ -8,7 +8,9 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface MesApsScheduleSyncMapper extends MomBaseMapper<MesApsScheduleSyncEntity> {
-    /** 应用、补偿及取证按真实案件串行化；须先锁案件，再锁永久请求。 */
+    /**
+     * 应用、补偿及取证按真实案件串行化；须先锁案件，再锁永久请求。
+     */
     @Select("SELECT pg_advisory_xact_lock(hashtextextended(#{key},0))")
     void lockCase(@Param("key") String key);
 

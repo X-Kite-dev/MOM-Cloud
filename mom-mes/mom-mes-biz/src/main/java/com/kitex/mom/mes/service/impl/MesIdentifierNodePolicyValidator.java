@@ -1,8 +1,8 @@
 package com.kitex.mom.mes.service.impl;
 
 import cn.hutool.core.util.StrUtil;
-import cn.hutool.json.JSONUtil;
 import cn.hutool.json.JSONConfig;
+import cn.hutool.json.JSONUtil;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -21,19 +21,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
-import java.util.TreeSet;
+import java.util.*;
 
 /**
  * 动态换码策略及真实工单区段校验，不读取实时模板猜测在制关系。
@@ -51,12 +39,57 @@ public class MesIdentifierNodePolicyValidator {
             "externalCodeMinLength", "externalCodeMaxLength", "policySchemaVersion", "processRouteCode",
             "bindRouteNodeCode", "useRouteNodeCodes", "releaseRouteNodeCode");
 
-    /** 独立严格解析器，不继承应用全局可能放宽的单引号、重复字段或尾随内容设置。 */
+    /**
+     * 独立严格解析器，不继承应用全局可能放宽的单引号、重复字段或尾随内容设置。
+     */
     private static final ObjectMapper POLICY_JSON = new ObjectMapper()
             .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
-    /** 规范化草稿策略，拒绝客户端注入服务端指纹和工序事实。 */
+    /**
+     * 拒绝混合/未知协议，不能把损坏的新策略当作历史策略执行。
+     */
+    public static boolean nativePolicy(MesIdentifierNodePolicyDTO policy) {
+        require(policy != null, "节点策略缺失");
+        boolean nativeNodes = NODE_BINDING_V2.equals(policy.getPolicySchemaVersion());
+        require(nativeNodes || policy.getPolicySchemaVersion() == null, "未知节点绑定策略协议");
+        if (nativeNodes) {
+            require(policy.getBindRouteCode() == null && policy.getReleaseRouteCode() == null
+                    && (policy.getUseRouteCodes() == null || policy.getUseRouteCodes().isEmpty()), "原生节点策略不能混入旧主工序角色");
+        } else {
+            require(policy.getProcessRouteCode() == null && policy.getBindRouteNodeCode() == null
+                            && policy.getUseRouteNodeCodes() == null && policy.getReleaseRouteNodeCode() == null,
+                    "历史策略不能夹带未声明的节点配置");
+        }
+        return nativeNodes;
+    }
+
+    /**
+     * 当前角色必须按策略原协议定位，实际任务号仍由调用者同时核定。
+     */
+    public static String role(MesIdentifierNodePolicyDTO policy, MesTaskArrangeEntity arrange) {
+        boolean nativeNodes = nativePolicy(policy);
+        return roleAt(policy, nativeNodes ? arrange.getSourceRouteNodeCode() : arrange.getRouteCode());
+    }
+
+    private static String roleAt(MesIdentifierNodePolicyDTO policy, String key) {
+        boolean nativeNodes = nativePolicy(policy);
+        String bind = nativeNodes ? policy.getBindRouteNodeCode() : policy.getBindRouteCode();
+        String release = nativeNodes ? policy.getReleaseRouteNodeCode() : policy.getReleaseRouteCode();
+        List<String> uses = nativeNodes ? policy.getUseRouteNodeCodes() : policy.getUseRouteCodes();
+        require(key != null && bind != null && release != null && uses != null, "区段节点角色依据不完整");
+        return key.equals(bind) ? "BIND" : key.equals(release) ? "RELEASE" : uses.contains(key) ? "USE" : null;
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new CheckedException(message);
+        }
+    }
+
+    /**
+     * 规范化草稿策略，拒绝客户端注入服务端指纹和工序事实。
+     */
     public MesIdentifierNodePolicyDTO normalize(String raw, MesExecutionTemplateEntity template) {
         if (StrUtil.isBlank(raw)) {
             return new MesIdentifierNodePolicyDTO();
@@ -138,12 +171,16 @@ public class MesIdentifierNodePolicyValidator {
                 : result.setBindRouteCode(bind).setUseRouteCodes(uses).setReleaseRouteCode(release);
     }
 
-    /** 仅持久化公开配置；服务端冻结字段不得从复制版本或旧草稿带回保存入口。 */
+    /**
+     * 仅持久化公开配置；服务端冻结字段不得从复制版本或旧草稿带回保存入口。
+     */
     public String configurationJson(MesIdentifierNodePolicyDTO policy) {
         return definitionJson(policy, true);
     }
 
-    /** 发布时核当前工程真实归属；不将该实时目录用于解释任何历史派工。 */
+    /**
+     * 发布时核当前工程真实归属；不将该实时目录用于解释任何历史派工。
+     */
     public void validateTemplateNodes(MesExecutionTemplateEntity template, String rawNodes) {
         JsonNode rows;
         try {
@@ -254,11 +291,6 @@ public class MesIdentifierNodePolicyValidator {
         return new FrozenGroupFacts(source, definitionSnapshot, graphSnapshot, task.getProcessRouteSnapshot());
     }
 
-    /** 完整图和原始来源必须一起交付永久账，不能仅保存区段成员而丢掉全图指纹的依据。 */
-    public record FrozenGroupFacts(MesIdentifierNodePolicyDTO policy, String definitionSnapshot,
-                                   String graphSnapshot, String sourceRouteSnapshot) {
-    }
-
     private Map<String, Object> definition(MesIdentifierNodePolicyDTO policy, boolean includeAction) {
         Map<String, Object> values = new LinkedHashMap<>();
         if (includeAction) {
@@ -287,7 +319,9 @@ public class MesIdentifierNodePolicyValidator {
         return values;
     }
 
-    /** 收集绑定至释放的闭合区段；未声明分支或提前终止路径不得静默忽略。 */
+    /**
+     * 收集绑定至释放的闭合区段；未声明分支或提前终止路径不得静默忽略。
+     */
     private Set<String> regionUntilRelease(String bind, String release, Map<String, Set<String>> successors) {
         Set<String> visited = new TreeSet<>();
         ArrayDeque<String> pending = new ArrayDeque<>();
@@ -304,7 +338,9 @@ public class MesIdentifierNodePolicyValidator {
         return visited;
     }
 
-    /** 全图拓扑校验，防止后续区段遍历把循环误认为可结束流程。 */
+    /**
+     * 全图拓扑校验，防止后续区段遍历把循环误认为可结束流程。
+     */
     private void assertAcyclic(Map<String, Set<String>> predecessors, Map<String, Set<String>> successors) {
         Map<String, Integer> degrees = new TreeMap<>();
         predecessors.forEach((route, before) -> degrees.put(route, before.size()));
@@ -343,42 +379,13 @@ public class MesIdentifierNodePolicyValidator {
                 .setSuccessorNodeCodes(List.copyOf(after.get(key))) : result;
     }
 
-    /** 新协议独立序列化；旧定义的空值和原字段顺序保持既有算法。 */
+    /**
+     * 新协议独立序列化；旧定义的空值和原字段顺序保持既有算法。
+     */
     private String definitionJson(MesIdentifierNodePolicyDTO policy, boolean includeAction) {
         Map<String, Object> values = definition(policy, includeAction);
         return nativePolicy(policy) ? JSONUtil.parse(values, JSONConfig.create().setIgnoreNullValue(false)).toString()
                 : JSONUtil.toJsonStr(values);
-    }
-
-    /** 拒绝混合/未知协议，不能把损坏的新策略当作历史策略执行。 */
-    public static boolean nativePolicy(MesIdentifierNodePolicyDTO policy) {
-        require(policy != null, "节点策略缺失");
-        boolean nativeNodes = NODE_BINDING_V2.equals(policy.getPolicySchemaVersion());
-        require(nativeNodes || policy.getPolicySchemaVersion() == null, "未知节点绑定策略协议");
-        if (nativeNodes) {
-            require(policy.getBindRouteCode() == null && policy.getReleaseRouteCode() == null
-                    && (policy.getUseRouteCodes() == null || policy.getUseRouteCodes().isEmpty()), "原生节点策略不能混入旧主工序角色");
-        } else {
-            require(policy.getProcessRouteCode() == null && policy.getBindRouteNodeCode() == null
-                    && policy.getUseRouteNodeCodes() == null && policy.getReleaseRouteNodeCode() == null,
-                    "历史策略不能夹带未声明的节点配置");
-        }
-        return nativeNodes;
-    }
-
-    /** 当前角色必须按策略原协议定位，实际任务号仍由调用者同时核定。 */
-    public static String role(MesIdentifierNodePolicyDTO policy, MesTaskArrangeEntity arrange) {
-        boolean nativeNodes = nativePolicy(policy);
-        return roleAt(policy, nativeNodes ? arrange.getSourceRouteNodeCode() : arrange.getRouteCode());
-    }
-
-    private static String roleAt(MesIdentifierNodePolicyDTO policy, String key) {
-        boolean nativeNodes = nativePolicy(policy);
-        String bind = nativeNodes ? policy.getBindRouteNodeCode() : policy.getBindRouteCode();
-        String release = nativeNodes ? policy.getReleaseRouteNodeCode() : policy.getReleaseRouteCode();
-        List<String> uses = nativeNodes ? policy.getUseRouteNodeCodes() : policy.getUseRouteCodes();
-        require(key != null && bind != null && release != null && uses != null, "区段节点角色依据不完整");
-        return key.equals(bind) ? "BIND" : key.equals(release) ? "RELEASE" : uses.contains(key) ? "USE" : null;
     }
 
     private String requiredNode(String value) {
@@ -413,7 +420,9 @@ public class MesIdentifierNodePolicyValidator {
         return normalized;
     }
 
-    /** 固定使用JDK必备算法，不为策略指纹引入额外运行依赖。 */
+    /**
+     * 固定使用JDK必备算法，不为策略指纹引入额外运行依赖。
+     */
     private String sha256(String value) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
@@ -423,9 +432,10 @@ public class MesIdentifierNodePolicyValidator {
         }
     }
 
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new CheckedException(message);
-        }
+    /**
+     * 完整图和原始来源必须一起交付永久账，不能仅保存区段成员而丢掉全图指纹的依据。
+     */
+    public record FrozenGroupFacts(MesIdentifierNodePolicyDTO policy, String definitionSnapshot,
+                                   String graphSnapshot, String sourceRouteSnapshot) {
     }
 }

@@ -36,7 +36,9 @@ public class MesReworkEngineeringOverrideService {
     private final MesProcessParameterStandardFreezeService parameters;
     private final MesSopFreezeService sops;
 
-    /** 当前返工原生产版本及节点下的已批准覆盖候选；历史无工程版本时只能继承。 */
+    /**
+     * 当前返工原生产版本及节点下的已批准覆盖候选；历史无工程版本时只能继承。
+     */
     public List<MdmRouteEngineeringDTO.ReworkOverrideCandidate> candidates(MesTaskEntity task) {
         requireReworkNode(task);
         if (task.getEngineeringReleaseId() == null || StrUtil.isBlank(task.getEngineeringContentHash())) {
@@ -52,7 +54,9 @@ public class MesReworkEngineeringOverrideService {
         return rows;
     }
 
-    /** 提案时取得并冻结明确工程口径，同时生成方案作用后的参数与SOP快照。 */
+    /**
+     * 提案时取得并冻结明确工程口径，同时生成方案作用后的参数与SOP快照。
+     */
     public FrozenScope freeze(MesTaskEntity task, MesReworkMaterialCommand.EngineeringOverride command) {
         require(command != null && Set.of(INHERIT_SOURCE, APPROVED_OVERRIDE)
                         .contains(Objects.toString(command.getMode(), "")),
@@ -85,7 +89,9 @@ public class MesReworkEngineeringOverrideService {
         return apply(task, pack);
     }
 
-    /** 审批时重新向MDM精确取同一版本，不允许批准已漂移的SOP/参数来源。 */
+    /**
+     * 审批时重新向MDM精确取同一版本，不允许批准已漂移的SOP/参数来源。
+     */
     public FrozenScope revalidateProposal(MesTaskEntity task, String snapshot, String fingerprint) {
         var body = scope(snapshot, fingerprint);
         String mode = body.getStr("mode");
@@ -108,7 +114,9 @@ public class MesReworkEngineeringOverrideService {
         return current;
     }
 
-    /** 下达边界只核已批准本地冻结证据，不改选“今天版本”。 */
+    /**
+     * 下达边界只核已批准本地冻结证据，不改选“今天版本”。
+     */
     public void validateApproved(MesTaskEntity task) {
         var body = scope(task.getReworkEngineeringScopeSnapshot(),
                 task.getReworkEngineeringScopeFingerprint());
@@ -174,7 +182,7 @@ public class MesReworkEngineeringOverrideService {
     }
 
     private MdmRouteEngineeringDTO.ReworkOverridePackage resolve(MesTaskEntity task, Long releaseId,
-                                                                  String contentHash) {
+                                                                 String contentHash) {
         R<MdmRouteEngineeringDTO.ReworkOverridePackage> response = engineering.resolveForReworkOverride(
                 new MdmRouteEngineeringDTO.ReworkOverrideQuery()
                         .setReleaseId(releaseId).setContentHash(contentHash)
@@ -278,7 +286,9 @@ public class MesReworkEngineeringOverrideService {
         if (!condition) throw new CheckedException(message);
     }
 
-    /** 首轮方案冻结并准备应用的完整结果。 */
+    /**
+     * 首轮方案冻结并准备应用的完整结果。
+     */
     public record FrozenScope(String mode, Long releaseId, String contentHash,
                               String snapshot, String fingerprint, String resultRouteSnapshot,
                               String parameterStandardNo, Integer parameterStandardVersion,

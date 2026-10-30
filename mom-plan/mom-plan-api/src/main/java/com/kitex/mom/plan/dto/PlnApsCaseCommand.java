@@ -12,7 +12,9 @@ public final class PlnApsCaseCommand {
     private PlnApsCaseCommand() {
     }
 
-    /** 创建或幂等复用排产案件。 */
+    /**
+     * 创建或幂等复用排产案件。
+     */
     @Data
     public static class Launch {
         @Schema(description = "案件类型，使用PlnApsCaseTypeEnum代码")
@@ -27,7 +29,9 @@ public final class PlnApsCaseCommand {
         private String requestId;
     }
 
-    /** 案件中心分页条件。 */
+    /**
+     * 案件中心分页条件。
+     */
     @Data
     public static class Query {
         @Schema(description = "案件业务分组：PREPARE、DECISION、EXECUTION或CLOSED")
@@ -40,7 +44,9 @@ public final class PlnApsCaseCommand {
         private String sourceCode;
     }
 
-    /** 通过显式领域动作推进案件，不接受任意目标状态。 */
+    /**
+     * 通过显式领域动作推进案件，不接受任意目标状态。
+     */
     @Data
     public static class Advance {
         @Schema(description = "受控动作代码")
@@ -55,7 +61,9 @@ public final class PlnApsCaseCommand {
         private String reason;
     }
 
-    /** 取消未形成正式发布结果的案件。 */
+    /**
+     * 取消未形成正式发布结果的案件。
+     */
     @Data
     public static class Cancel {
         @Schema(description = "永久幂等请求号")

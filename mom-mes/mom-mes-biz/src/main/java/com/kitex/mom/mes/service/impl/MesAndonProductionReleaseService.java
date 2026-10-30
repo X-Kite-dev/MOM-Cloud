@@ -186,7 +186,9 @@ public class MesAndonProductionReleaseService {
         previewAllowed(arrange, stage);
     }
 
-    /** 只读检查与正式门共用规则，不写审批或通过事务代理标记外层快照回滚。 */
+    /**
+     * 只读检查与正式门共用规则，不写审批或通过事务代理标记外层快照回滚。
+     */
     public void previewAllowed(MesTaskArrangeEntity arrange, String stage) {
         require(TenantContextHolder.getTenantId() != null && !TenantContextHolder.getTenantSkip()
                 && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
@@ -201,7 +203,9 @@ public class MesAndonProductionReleaseService {
         }
     }
 
-    /** 返回本次纯读观察消费的精确安灯/批准摘要，不能用“已查过”替代源证据。 */
+    /**
+     * 返回本次纯读观察消费的精确安灯/批准摘要，不能用“已查过”替代源证据。
+     */
     public java.util.List<Map<String, Object>> previewStartEvidence(MesTaskArrangeEntity arrange) {
         require(Objects.equals(TenantContextHolder.getTenantId(), arrange.getTenantId())
                 && Objects.equals(FactoryContextHolder.getFactoryCode(), arrange.getFactoryCode())

@@ -20,8 +20,8 @@ import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
 import com.kitex.mom.mes.service.MesWrapRecordService;
 import com.kitex.mom.mes.service.MesWrapService;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -137,16 +137,16 @@ public class PackageOneCodeProcessOperation extends AbstractProcessOperation {
      */
     private void bindSealedRecords(MesTaskReportVO params, String wrapCode) {
         List<MesWrapRecordEntity> records = wrapRecordService.list(
-                        new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MesWrapRecordEntity>()
-                                .eq(MesWrapRecordEntity::getArrangeCode, params.getArrangeCode())
-                                .eq(MesWrapRecordEntity::getFactoryCode, params.getFactoryCode())
-                                .eq(MesWrapRecordEntity::getTaskCode, params.getTaskCode())
-                                .eq(MesWrapRecordEntity::getProcedureTaskCode, params.getProduceTaskCode())
-                                .isNotNull(MesWrapRecordEntity::getReportId)
-                                .eq(MesWrapRecordEntity::getPackingStatus, MesWrapRecordStatusEnum.STAGED.name())
-                                .orderByDesc(MesWrapRecordEntity::getCreateTime)
-                                .orderByDesc(MesWrapRecordEntity::getId)
-                                .last("LIMIT " + params.getCapacity()));
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MesWrapRecordEntity>()
+                        .eq(MesWrapRecordEntity::getArrangeCode, params.getArrangeCode())
+                        .eq(MesWrapRecordEntity::getFactoryCode, params.getFactoryCode())
+                        .eq(MesWrapRecordEntity::getTaskCode, params.getTaskCode())
+                        .eq(MesWrapRecordEntity::getProcedureTaskCode, params.getProduceTaskCode())
+                        .isNotNull(MesWrapRecordEntity::getReportId)
+                        .eq(MesWrapRecordEntity::getPackingStatus, MesWrapRecordStatusEnum.STAGED.name())
+                        .orderByDesc(MesWrapRecordEntity::getCreateTime)
+                        .orderByDesc(MesWrapRecordEntity::getId)
+                        .last("LIMIT " + params.getCapacity()));
         if (records.size() != params.getCapacity()) {
             throw new IllegalStateException("待封箱单件数量与包装容量不一致");
         }

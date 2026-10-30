@@ -8,8 +8,8 @@ import com.kitex.mom.mes.entity.MesChangePointHandleEntity;
 import com.kitex.mom.mes.entity.MesChangePointOperationEntity;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
 
-import java.util.List;
 import java.time.LocalDateTime;
+import java.util.List;
 
 
 /**
@@ -63,7 +63,9 @@ public interface MesChangePointHandleService extends IService<MesChangePointHand
 
     List<MesChangePointOperationEntity> operations(Long id);
 
-    /** 当前实际工厂指定时间窗内的变化点暂停与在制损失聚合。 */
+    /**
+     * 当前实际工厂指定时间窗内的变化点暂停与在制损失聚合。
+     */
     MesChangePointLossAnalysisDTO lossAnalysis(LocalDateTime startTime, LocalDateTime endTime);
 
     void assertStartAllowed(MesTaskArrangeEntity arrange);
@@ -72,6 +74,8 @@ public interface MesChangePointHandleService extends IService<MesChangePointHand
 
     void scanSla();
 
-    /** 扫描复产后加严巡检监控，生成或同步QMS中检并推进监控状态。 */
+    /**
+     * 扫描复产后加严巡检监控，生成或同步QMS中检并推进监控状态。
+     */
     void scanIntensifiedInspections();
 }

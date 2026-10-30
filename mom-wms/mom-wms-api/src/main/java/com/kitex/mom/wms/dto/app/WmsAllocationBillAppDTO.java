@@ -14,6 +14,12 @@ import lombok.Data;
 @Data
 public class WmsAllocationBillAppDTO {
 
+    @Schema(description = "扫码选中的精确来源库存行ID；单件序列号调拨必填")
+    private Long sourceStockId;
+
+    @Schema(description = "现场扫描的原始实物条码；单件序列号调拨必填")
+    private String matBarcode;
+
     @Schema(description = "调拨单ID，由服务端保存表头后写入流水")
     private Long allocationBillId;
 

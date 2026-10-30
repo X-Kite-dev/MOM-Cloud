@@ -10,6 +10,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
 import com.kitex.mom.mdm.dto.MdmRouteEngineeringDTO;
@@ -223,7 +224,9 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
         return plnSchedulingEngineService.issueToModule(plnIssueModuleDTO);
     }
 
-    /** 先核计划真实工厂和产品，再通过内部令牌读取MDM已发布候选。 */
+    /**
+     * 先核计划真实工厂和产品，再通过内部令牌读取MDM已发布候选。
+     */
     @Override
     @Transactional(readOnly = true)
     public List<MdmRouteEngineeringDTO.ProductionCandidate> engineeringCandidates(Long issueId) {
@@ -294,7 +297,9 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
         return issue;
     }
 
-    /** 计划读取必须显式核当前工厂，不能只依赖页面传入的ID。 */
+    /**
+     * 计划读取必须显式核当前工厂，不能只依赖页面传入的ID。
+     */
     private PlnIssueEntity requireIssueInCurrentFactory(Long issueId, boolean lock) {
         if (issueId == null || issueId <= 0) {
             throw new CheckedException("请选择有效生产计划");
@@ -315,7 +320,9 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
         return issue;
     }
 
-    /** 任何APS锁、排程明细、批次分配或MES永久号出现后都禁止旧入口换版。 */
+    /**
+     * 任何APS锁、排程明细、批次分配或MES永久号出现后都禁止旧入口换版。
+     */
     private PlnIssueEntity requireEngineeringEditableIssue(Long issueId) {
         PlnIssueEntity issue = requireIssueInCurrentFactory(issueId, true);
         if (!IssueStatusEnum.UNISSUED.getCode().equals(issue.getStatus())
@@ -333,7 +340,9 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
         return issue;
     }
 
-    /** 更新日志保存精确版本对和业务编号，便于人工追溯而不依赖显示版本号。 */
+    /**
+     * 更新日志保存精确版本对和业务编号，便于人工追溯而不依赖显示版本号。
+     */
     private String engineeringBinding(PlnIssueEntity issue) {
         return "issueId=" + issue.getId() + "|issueNo=" + Objects.toString(issue.getIssueNo(), "")
                 + "|releaseId=" + Objects.toString(issue.getEngineeringReleaseId(), "")
@@ -680,14 +689,22 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
         if (omsOrderLifeCycleDtoList == null || omsOrderLifeCycleDtoList.isEmpty()) {
             return true;
         }
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        if (tenant == null || tenant <= 0 || TenantContextHolder.getTenantSkip()
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) || StrUtil.isBlank(factory)) {
+            throw new CheckedException("生产执行回传必须处于实际租户和工厂");
+        }
         for (OmsOrderLifeCycleDTO callback : omsOrderLifeCycleDtoList) {
             if (callback == null || callback.getNo() == null || callback.getNo().isBlank()
                     || callback.getProductCode() == null || callback.getProductCode().isBlank()) {
                 throw new CheckedException("生产执行回传必须包含计划号和产品编码");
             }
         }
-        Map<String, PlnIssueEntity> plnIssueEntityMap = this.list(new LambdaQueryWrapper<PlnIssueEntity>().in(PlnIssueEntity::getIssueNo,
-                        omsOrderLifeCycleDtoList.stream().map(OmsOrderLifeCycleDTO::getNo).collect(Collectors.toList())))
+        Map<String, PlnIssueEntity> plnIssueEntityMap = this.list(new LambdaQueryWrapper<PlnIssueEntity>()
+                        .eq(PlnIssueEntity::getTenantId, tenant).eq(PlnIssueEntity::getFactoryCode, factory)
+                        .in(PlnIssueEntity::getIssueNo,
+                                omsOrderLifeCycleDtoList.stream().map(OmsOrderLifeCycleDTO::getNo).collect(Collectors.toList())))
                 .stream().collect(Collectors.toMap(entity -> entity.getIssueNo() + "_" + entity.getProductCode(), Function.identity(), (v1, v2) -> v1));
         // 生产排产结果
         Map<Long, PlnIssueEntity> updateMap = new LinkedHashMap<>();
@@ -710,17 +727,25 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
                 plnIssueCallbackReceiptMapper.lockRequest(requestId);
                 PlnIssueCallbackReceiptEntity existing = plnIssueCallbackReceiptMapper.selectOne(
                         new LambdaQueryWrapper<PlnIssueCallbackReceiptEntity>()
+                                .eq(PlnIssueCallbackReceiptEntity::getTenantId, tenant)
                                 .eq(PlnIssueCallbackReceiptEntity::getRequestId, requestId), false);
                 if (existing != null) {
-                    if (!Objects.equals(existing.getRequestFingerprint(), requestFingerprint)) {
+                    if (!Objects.equals(existing.getFactoryCode(), factory)
+                            || !Objects.equals(existing.getIssueId(), mappedIssue.getId())
+                            || !Objects.equals(existing.getRequestFingerprint(), requestFingerprint)) {
                         throw new CheckedException("生产执行回传幂等号已使用且载荷不一致：" + requestId);
                     }
                     continue;
                 }
             }
+            if (StrUtil.isNotBlank(omsOrderLifeCycleDTO.getIssueStatus())
+                    && !"2".equals(omsOrderLifeCycleDTO.getIssueStatus())) {
+                throw new CheckedException("计划完工必须通过MES完整来源核验入口处理");
+            }
             PlnIssueEntity issue = updateMap.get(mappedIssue.getId());
             if (issue == null) {
                 issue = baseMapper.selectOne(new LambdaQueryWrapper<PlnIssueEntity>()
+                        .eq(PlnIssueEntity::getTenantId, tenant).eq(PlnIssueEntity::getFactoryCode, factory)
                         .eq(PlnIssueEntity::getId, mappedIssue.getId()).last("FOR UPDATE"));
                 if (issue == null) throw new CheckedException("生产执行回传锁定计划失败：" + mappedIssue.getIssueNo());
                 updateMap.put(issue.getId(), issue);
@@ -742,11 +767,9 @@ public class PlnIssueServiceImpl extends ServiceImpl<PlnIssueMapper, PlnIssueEnt
             if ("mrp".equals(issue.getType()) && omsOrderLifeCycleDTO.getFinishNum() != null) {
                 matMrpList.add(omsOrderLifeCycleDTO);
             }
-            if (omsOrderLifeCycleDTO.getIssueStatus() != null && !omsOrderLifeCycleDTO.getIssueStatus().isBlank()) {
-                issue.setStatus(omsOrderLifeCycleDTO.getIssueStatus());
-            }
-            if (omsOrderLifeCycleDTO.getFinishTime() != null) {
-                issue.setFinishTime(omsOrderLifeCycleDTO.getFinishTime());
+            if ("2".equals(omsOrderLifeCycleDTO.getIssueStatus())
+                    && !List.of("3", "4").contains(issue.getStatus())) {
+                issue.setStatus("2");
             }
             if (requestId != null && !requestId.isBlank()) {
                 receipts.add(new PlnIssueCallbackReceiptEntity()

@@ -11,8 +11,8 @@ import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.dto.MdmFactoryAccessCheck;
 import com.kitex.mom.mdm.feign.RemoteMdmFactoryAccessService;
 import com.kitex.mom.mes.dto.MdmProcessRouteWorkingDTO;
-import com.kitex.mom.mes.dto.MesSopAcknowledgeCommand;
 import com.kitex.mom.mes.dto.MesFormalSopNodeDTO;
+import com.kitex.mom.mes.dto.MesSopAcknowledgeCommand;
 import com.kitex.mom.mes.entity.MesProduceTaskEntity;
 import com.kitex.mom.mes.entity.MesSopExecutionRecord;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
@@ -20,16 +20,18 @@ import com.kitex.mom.mes.mapper.MesProduceTaskMapper;
 import com.kitex.mom.mes.mapper.MesSopExecutionRecordMapper;
 import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.HttpHeaders;
 
 import java.time.LocalDateTime;
 import java.util.*;
 
-/** 原冻结SOP逐项实名签收；正式字节版本与旧附件引用保持不同证据语义。 */
+/**
+ * 原冻结SOP逐项实名签收；正式字节版本与旧附件引用保持不同证据语义。
+ */
 @Service
 @RequiredArgsConstructor
 public class MesSopExecutionService {
@@ -66,14 +68,16 @@ public class MesSopExecutionService {
         require(task != null && task.getId() != null, "开工准备SOP取证须明确真实派工");
         var actual = arrange(task.getId(), false);
         require(Objects.equals(actual.getCode(), task.getCode()) && Objects.equals(actual.getTaskCode(), task.getTaskCode())
-                        && Objects.equals(actual.getProduceTaskCode(), task.getProduceTaskCode()), "开工准备派工身份已变化");
+                && Objects.equals(actual.getProduceTaskCode(), task.getProduceTaskCode()), "开工准备派工身份已变化");
         access(actual, "read");
         var manifest = manifest(actual, false);
         return Map.of("arrangeId", actual.getId().toString(), "manifest", manifest,
                 "acknowledged", acknowledged(actual, manifest), "formalSourceState", sourceState(manifest));
     }
 
-    /** 只代理本执行人可读的原冻结文件key，不接受客户端指定其他版本或自由URL。 */
+    /**
+     * 只代理本执行人可读的原冻结文件key，不接受客户端指定其他版本或自由URL。
+     */
     @PreAuthorize("@pms.hasPermission('mesTaskArrange:show') || @pms.hasPermission('mesProduceTask:start')")
     public ResponseEntity<byte[]> original(Long id, String documentKey) {
         var task = arrange(id, false);
@@ -93,7 +97,9 @@ public class MesSopExecutionService {
         return builder.body(source.getBody());
     }
 
-    /** 网络结果未知时先核原签收账，只读取当前本人、本派工及当前工厂记录。 */
+    /**
+     * 网络结果未知时先核原签收账，只读取当前本人、本派工及当前工厂记录。
+     */
     @PreAuthorize("@pms.hasPermission('mesTaskArrange:show') || @pms.hasPermission('mesProduceTask:start')")
     public MesSopExecutionRecord receipt(Long id, String requestId) {
         var task = arrange(id, false);

@@ -1,5 +1,7 @@
 package com.kitex.mom.qms.agent.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -44,6 +46,8 @@ public final class QmsWorkOrderQualityDTO {
         private LocalDateTime observedAt;
         private Summary summary;
         private List<QualityTask> tasks = new ArrayList<>();
+        private List<Nonconformance> nonconformances = new ArrayList<>();
+        private List<Capa> capas = new ArrayList<>();
         private List<String> dataGaps = new ArrayList<>();
         private List<String> evidenceRefs = new ArrayList<>();
         private Boolean truncated;
@@ -70,6 +74,7 @@ public final class QmsWorkOrderQualityDTO {
     @Accessors(chain = true)
     public static class QualityTask {
         private String inspectionType;
+        @JsonSerialize(using = ToStringSerializer.class)
         private Long taskId;
         private String sourceTaskCode;
         private String workOrderCode;
@@ -87,5 +92,32 @@ public final class QmsWorkOrderQualityDTO {
         private Integer handledQuantity;
         private LocalDateTime lastInspectionTime;
         private LocalDateTime createTime;
+    }
+
+    /** 仅由同工单过程/成品检验任务主键反查的正式 NCR。 */
+    @Data
+    @Accessors(chain = true)
+    public static class Nonconformance {
+        private String ncrId;
+        private String ncrNo;
+        private String sourceType;
+        private String sourceTaskId;
+        private String status;
+        private String materialCode;
+        private String batchNo;
+        private String capaId;
+        private String capaStatus;
+    }
+
+    /** 经 NCR 当前关联主键及来源关系双重核对的 CAPA。 */
+    @Data
+    @Accessors(chain = true)
+    public static class Capa {
+        private String capaId;
+        private String capaNo;
+        private String sourceNcrId;
+        private String status;
+        private String effectivenessResult;
+        private LocalDateTime closedTime;
     }
 }

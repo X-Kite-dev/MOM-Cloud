@@ -3,7 +3,8 @@ package com.kitex.mom.oms.dto;
 import lombok.Data;
 
 public final class OmsFulfillmentRiskAutomationCommand {
-    private OmsFulfillmentRiskAutomationCommand() { }
+    private OmsFulfillmentRiskAutomationCommand() {
+    }
 
     @Data
     public static class NoticeResolve {

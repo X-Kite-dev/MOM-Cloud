@@ -10,13 +10,7 @@ import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesReworkIdentifierCandidateDTO;
 import com.kitex.mom.mes.dto.MesReworkMaterialCommand;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
-import com.kitex.mom.mes.entity.MesIdentifierBindingEntity;
-import com.kitex.mom.mes.entity.MesIdentifierBindingGroupEntity;
-import com.kitex.mom.mes.entity.MesReworkIdentifierUsageEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
-import com.kitex.mom.mes.entity.MesTaskReportUnqualifiedEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.ReportModeEnum;
 import com.kitex.mom.mes.mapper.MesIdentifierBindingGroupMapper;
 import com.kitex.mom.mes.mapper.MesIdentifierBindingMapper;
@@ -33,16 +27,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 正式返工的原动态实例范围、现场识别和永久使用账实现。
@@ -80,7 +65,7 @@ public class MesReworkIdentifierUsageServiceImpl
         String factory = factoryAccess.require("write");
         assertRework(reworkTask, factory);
         require(requested != null && Set.of(MesReworkIdentifierScope.NONE,
-                MesReworkIdentifierScope.SOURCE_BINDINGS).contains(requested.getMode()),
+                        MesReworkIdentifierScope.SOURCE_BINDINGS).contains(requested.getMode()),
                 "首轮返工执行方案须明确原动态实例范围：NONE或SOURCE_BINDINGS");
         var source = sourceTask(reworkTask, factory);
         boolean required = requiresSourceBinding(reworkTask, source);
@@ -122,7 +107,8 @@ public class MesReworkIdentifierUsageServiceImpl
             }
             // 加锁后重新采集原操作/报告，防止批准依据在候选读取与保存之间被受控冲销。
             Map<Long, MesReworkIdentifierCandidateDTO> lockedCandidates = new HashMap<>();
-            for (var candidate : candidates(reworkTask, source)) lockedCandidates.put(candidate.getBindingId(), candidate);
+            for (var candidate : candidates(reworkTask, source))
+                lockedCandidates.put(candidate.getBindingId(), candidate);
             for (Long id : ordered) {
                 var candidate = byId.get(id);
                 require(sameCandidate(candidate, lockedCandidates.get(id)),
@@ -212,7 +198,7 @@ public class MesReworkIdentifierUsageServiceImpl
                 .filter(candidate -> Objects.equals(candidate.getBindingId(), bindingId)).findFirst().orElse(null);
         require(matches(frozen, current), "原动态实例的来源报告或节点操作已被冲销，禁止按旧批准范围报工");
         require(baseMapper.selectCount(usageScope(factory).eq(MesReworkIdentifierUsageEntity::getReworkTaskId, task.getId())
-                .eq(MesReworkIdentifierUsageEntity::getSourceBindingId, bindingId)) == 0,
+                        .eq(MesReworkIdentifierUsageEntity::getSourceBindingId, bindingId)) == 0,
                 "该原动态实例已在本返工工单完成GOOD或NG报工，不能重复使用");
 
         Map<String, Object> resolution = new LinkedHashMap<>();
@@ -297,7 +283,7 @@ public class MesReworkIdentifierUsageServiceImpl
                         Long goodReportId, Long ngReportId) {
         MesReworkIdentifierScope scope = approvedScope(tenantId, factory, taskCode);
         var frozen = scope.getItems().stream().filter(item -> Objects.equals(item.getSourceBindingId(),
-                prepared.sourceBindingId().toString())).findFirst()
+                        prepared.sourceBindingId().toString())).findFirst()
                 .orElseThrow(() -> new CheckedException("返工报告实例已不在批准范围"));
         var usage = new MesReworkIdentifierUsageEntity().setFactoryCode(factory)
                 .setReworkTaskId(Long.valueOf(scope.getReworkTaskId())).setReworkTaskCode(scope.getReworkTaskCode())

@@ -1,22 +1,26 @@
 package com.kitex.mom.plan.dto;
 
-import io.swagger.v3.oas.annotations.media.Schema;
-import lombok.Data;
-import lombok.experimental.Accessors;
-import lombok.EqualsAndHashCode;
 import com.kitex.mom.plan.entity.PlnMpsPolicyEntity;
 import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentEntity;
 import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentLineEntity;
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.experimental.Accessors;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/** 剩余生产完成责任的精确业务契约，不代表物理拆批、入库或客户交付放行。 */
+/**
+ * 剩余生产完成责任的精确业务契约，不代表物理拆批、入库或客户交付放行。
+ */
 public final class PlnMpsRemainingCommitmentDTO {
     private PlnMpsRemainingCommitmentDTO() {
     }
 
-    /** 仅事务代理成功回滚后返回，通用错误或未查到原号不构成此证明。 */
+    /**
+     * 仅事务代理成功回滚后返回，通用错误或未查到原号不构成此证明。
+     */
     @Data
     @Accessors(chain = true)
     public static class Rejection {
@@ -34,7 +38,9 @@ public final class PlnMpsRemainingCommitmentDTO {
         private String message;
     }
 
-    /** 分期预览载荷，只引用原确认观察，不接受客户端自行构造基线或改资源。 */
+    /**
+     * 分期预览载荷，只引用原确认观察，不接受客户端自行构造基线或改资源。
+     */
     @Data
     @Accessors(chain = true)
     public static class PreviewCommand {
@@ -171,7 +177,9 @@ public final class PlnMpsRemainingCommitmentDTO {
         private String remark;
     }
 
-    /** 仅来源/数量准备情况，不等于冻结区、能力或独立审批通过。 */
+    /**
+     * 仅来源/数量准备情况，不等于冻结区、能力或独立审批通过。
+     */
     @Data
     @Accessors(chain = true)
     public static class BaselinePreview {
@@ -193,7 +201,9 @@ public final class PlnMpsRemainingCommitmentDTO {
         private String fingerprint;
     }
 
-    /** 来自已核清原MPS来源的不可变计算基线；确认观察权限由领域服务校验。 */
+    /**
+     * 来自已核清原MPS来源的不可变计算基线；确认观察权限由领域服务校验。
+     */
     @Data
     @Accessors(chain = true)
     public static class Baseline {

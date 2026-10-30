@@ -18,7 +18,15 @@ public class PlnFormalPlanningGate {
 
     private final PlnFactoryPlanningAuthorityService authorityService;
 
-    /** MOM 本地正式 MRP 只允许 MOM_MRP 工厂执行。 */
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new CheckedException(message);
+        }
+    }
+
+    /**
+     * MOM 本地正式 MRP 只允许 MOM_MRP 工厂执行。
+     */
     public MdmFactoryPlanningPolicyDTO requireMomMrp(String factoryCode) {
         MdmFactoryPlanningPolicyDTO policy = authorityService.requireCurrentPolicy(factoryCode);
         require("MOM_MRP".equals(policy.getMrpAuthority()),
@@ -26,7 +34,9 @@ public class PlnFormalPlanningGate {
         return policy;
     }
 
-    /** MOM 正式替代料批准只允许 MOM_APPROVAL 边界。 */
+    /**
+     * MOM 正式替代料批准只允许 MOM_APPROVAL 边界。
+     */
     public MdmFactoryPlanningPolicyDTO requireMomSubstituteApproval(String factoryCode) {
         MdmFactoryPlanningPolicyDTO policy = authorityService.requireCurrentPolicy(factoryCode);
         require("MOM_APPROVAL".equals(policy.getSubstituteGovernanceMode()),
@@ -34,14 +44,10 @@ public class PlnFormalPlanningGate {
         return policy;
     }
 
-    /** 正式写动作提交前重新核对同一策略版本和摘要。 */
+    /**
+     * 正式写动作提交前重新核对同一策略版本和摘要。
+     */
     public void revalidate(MdmFactoryPlanningPolicyDTO expected) {
         authorityService.revalidate(expected);
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new CheckedException(message);
-        }
     }
 }

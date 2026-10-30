@@ -13,17 +13,18 @@ import com.kitex.mom.mdm.agent.service.MdmAgentActualScopeAccess;
 import com.kitex.mom.mdm.dto.MdmRouteEngineeringDTO;
 import com.kitex.mom.mdm.engineering.MdmRouteEngineeringBundleBuilder;
 import com.kitex.mom.mdm.entity.MdmProcessRouteEntity;
-import com.kitex.mom.mdm.entity.MdmRouteEngineeringReleaseEntity;
 import com.kitex.mom.mdm.entity.MdmRouteEngineeringCommandEntity;
+import com.kitex.mom.mdm.entity.MdmRouteEngineeringReleaseEntity;
 import com.kitex.mom.mdm.mapper.MdmProcessRouteMapper;
-import com.kitex.mom.mdm.mapper.MdmRouteEngineeringReleaseMapper;
 import com.kitex.mom.mdm.mapper.MdmRouteEngineeringCommandMapper;
+import com.kitex.mom.mdm.mapper.MdmRouteEngineeringReleaseMapper;
 import com.kitex.mom.mdm.service.MdmRouteEngineeringReleaseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
@@ -32,7 +33,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
-/** 工程版本封存与生命周期，真实组织、父锁和永久回执在同一事务核验。 */
+/**
+ * 工程版本封存与生命周期，真实组织、父锁和永久回执在同一事务核验。
+ */
 @Service
 @RequiredArgsConstructor
 public class MdmRouteEngineeringReleaseServiceImpl
@@ -44,7 +47,95 @@ public class MdmRouteEngineeringReleaseServiceImpl
     private final MdmAgentActualScopeAccess access;
     private final ObjectMapper objectMapper;
 
-    /** 当前授权路线的真实工程上下文。 */
+    private static String normalizedPurpose(String value) {
+        String purpose = value == null || value.isBlank()
+                ? MdmRouteEngineeringDTO.PURPOSE_PRODUCTION : value.trim();
+        require(Set.of(MdmRouteEngineeringDTO.PURPOSE_PRODUCTION,
+                        MdmRouteEngineeringDTO.PURPOSE_REWORK_OVERRIDE).contains(purpose),
+                "工程发布用途只能是生产工程版或返工覆盖版");
+        return purpose;
+    }
+
+    private static String releasePurpose(MdmRouteEngineeringReleaseEntity release) {
+        return release.getReleasePurpose() == null || release.getReleasePurpose().isBlank()
+                ? MdmRouteEngineeringDTO.PURPOSE_PRODUCTION : release.getReleasePurpose();
+    }
+
+    private static List<String> normalizedOverrideCategories(List<String> values) {
+        require(values != null && !values.isEmpty() && values.size() <= 2,
+                "返工覆盖须明确SOP和/或PARAMETER");
+        Set<String> normalized = new java.util.TreeSet<>();
+        for (String value : values) {
+            require(Set.of("SOP", "PARAMETER").contains(value) && normalized.add(value),
+                    "返工覆盖类别只能是唯一的SOP、PARAMETER");
+        }
+        return List.copyOf(normalized);
+    }
+
+    private static boolean validNode(String value) {
+        return value != null && value.matches("RN-[1-9][0-9]{0,18}");
+    }
+
+    /**
+     * 产品编码不允许空值、隐式空白或异常超长值参与版本绑定。
+     */
+    private static String normalizedProduct(String value) {
+        String normalized = value == null ? "" : value.trim();
+        require(!normalized.isEmpty() && normalized.length() <= 100,
+                "产品编码不能为空且不能超过100字符");
+        return normalized;
+    }
+
+    /**
+     * ID、状态、原内容指纹及生命周期版本采用明确分隔形成修订指纹。
+     */
+    public static String revisionHash(MdmRouteEngineeringReleaseEntity release) {
+        return sha256(release.getId() + "|" + release.getStatus() + "|" + release.getContentHash()
+                + "|" + release.getLifecycleRevision() + "|" + releasePurpose(release)
+                + "|" + Objects.toString(release.getBaseReleaseId(), "")
+                + "|" + Objects.toString(release.getBaseContentHash(), "")
+                + "|" + Objects.toString(release.getTargetRouteNodeCode(), "")
+                + "|" + Objects.toString(release.getOverrideCategoriesSnapshot(), ""));
+    }
+
+    /**
+     * 原始UTF-8字节SHA256，不通过JSON重排替代原正文。
+     */
+    private static String sha256(String raw) {
+        require(raw != null, "工程原文缺失，请联系管理员核查");
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception failure) {
+            throw new IllegalStateException("工程原文字节指纹计算失败", failure);
+        }
+    }
+
+    /**
+     * 永久号采用唯一严格格式，不对原号做隐式改写。
+     */
+    private static boolean validRequest(String value) {
+        return value != null && value.matches("[A-Za-z0-9_-]{16,64}");
+    }
+
+    /**
+     * 正式指纹须为64位小写十六进制。
+     */
+    private static boolean validHash(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    /**
+     * 业务检查失败阻断整个事务并提供下一步建议。
+     */
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new CheckedException(message);
+        }
+    }
+
+    /**
+     * 当前授权路线的真实工程上下文。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@pms.hasPermission('mdm_routeEngineering_view')")
@@ -54,7 +145,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return builder.context(routeId);
     }
 
-    /** 锁定真实父路线后完整采集，预检不持久化工程版本。 */
+    /**
+     * 锁定真实父路线后完整采集，预检不持久化工程版本。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@pms.hasPermission('mdm_routeEngineering_view')")
@@ -65,7 +158,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return previewFor(query, scope);
     }
 
-    /** 同组织原号先串行；同人同参重放固定回执，其余执行合法状态迁移。 */
+    /**
+     * 同组织原号先串行；同人同参重放固定回执，其余执行合法状态迁移。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     @PreAuthorize("(#command.action == 'SUBMIT' and @pms.hasPermission('mdm_routeEngineering_submit'))"
@@ -180,12 +275,16 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return receipt;
     }
 
-    /** 实际执行与永久封存必须使用同一锁键，防止两者并发观察为无回执。 */
+    /**
+     * 实际执行与永久封存必须使用同一锁键，防止两者并发观察为无回执。
+     */
     private void lockRequest(Scope scope, String requestId) {
         commands.lockRequest("MDM_ROUTE_ENGINEERING:" + scope.tenant() + "|" + scope.factory() + "|" + requestId);
     }
 
-    /** 返回完整有界版本列表，超过容量明确拒绝。 */
+    /**
+     * 返回完整有界版本列表，超过容量明确拒绝。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@pms.hasPermission('mdm_routeEngineering_view')")
@@ -201,7 +300,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return rows;
     }
 
-    /** 精确版本正文和全部有界审计，不返回其他组织记录。 */
+    /**
+     * 精确版本正文和全部有界审计，不返回其他组织记录。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@pms.hasPermission('mdm_routeEngineering_view')")
@@ -221,7 +322,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return result;
     }
 
-    /** 原用户恢复原号，不能通过菜单读权领取其他用户回执。 */
+    /**
+     * 原用户恢复原号，不能通过菜单读权领取其他用户回执。
+     */
     @Override
     @Transactional(readOnly = true)
     @PreAuthorize("@pms.hasPermission('mdm_routeEngineering_view')")
@@ -326,7 +429,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return productionPackage;
     }
 
-    /** 已批准覆盖候选必须精确属于原生产版本与目标节点。 */
+    /**
+     * 已批准覆盖候选必须精确属于原生产版本与目标节点。
+     */
     @Override
     @Transactional(readOnly = true)
     public List<MdmRouteEngineeringDTO.ReworkOverrideCandidate> reworkOverrideCandidates(
@@ -354,7 +459,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return rows.stream().map(this::reworkCandidate).toList();
     }
 
-    /** 覆盖消费沿用父路线锁、精确版本锁、原文指纹及当前正式来源重采。 */
+    /**
+     * 覆盖消费沿用父路线锁、精确版本锁、原文指纹及当前正式来源重采。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public MdmRouteEngineeringDTO.ReworkOverridePackage resolveForReworkOverride(
@@ -419,7 +526,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return result;
     }
 
-    /** 原冻结包内的租户、工厂、协议及主数据身份必须与版本索引完全一致。 */
+    /**
+     * 原冻结包内的租户、工厂、协议及主数据身份必须与版本索引完全一致。
+     */
     private void verifyFrozenIdentity(MdmRouteEngineeringReleaseEntity release, Scope scope) {
         var bundle = JSONUtil.parseObj(release.getBundleSnapshot());
         var route = bundle.getJSONObject("route");
@@ -436,7 +545,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
                 "工程版本索引与原冻结包身份不一致，请停止生产消费并联系管理员核查");
     }
 
-    /** 统一生产候选映射，避免PLAN和MES分别解释发布表字段。 */
+    /**
+     * 统一生产候选映射，避免PLAN和MES分别解释发布表字段。
+     */
     private MdmRouteEngineeringDTO.ProductionCandidate productionCandidate(MdmRouteEngineeringReleaseEntity row) {
         return new MdmRouteEngineeringDTO.ProductionCandidate()
                 .setReleaseId(row.getId())
@@ -450,7 +561,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
                 .setGraphRevision(row.getGraphRevision());
     }
 
-    /** 返工覆盖轻量候选只暴露其原生产版本、节点和允许覆盖类别。 */
+    /**
+     * 返工覆盖轻量候选只暴露其原生产版本、节点和允许覆盖类别。
+     */
     private MdmRouteEngineeringDTO.ReworkOverrideCandidate reworkCandidate(
             MdmRouteEngineeringReleaseEntity row) {
         return new MdmRouteEngineeringDTO.ReworkOverrideCandidate()
@@ -464,7 +577,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
                 .setReviewedTime(row.getReviewedTime() == null ? null : row.getReviewedTime().toString());
     }
 
-    /** 页面预检按用途分流；返工覆盖永远从原生产版身份开始。 */
+    /**
+     * 页面预检按用途分流；返工覆盖永远从原生产版身份开始。
+     */
     private MdmRouteEngineeringDTO.Preview previewFor(MdmRouteEngineeringDTO.PreviewQuery query, Scope scope) {
         String purpose = normalizedPurpose(query.getReleasePurpose());
         query.setReleasePurpose(purpose);
@@ -493,7 +608,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return builder.buildReworkOverride(query, base);
     }
 
-    /** 由持久化字段重建批准/消费预检请求，禁止从页面载荷补缺。 */
+    /**
+     * 由持久化字段重建批准/消费预检请求，禁止从页面载荷补缺。
+     */
     private MdmRouteEngineeringDTO.PreviewQuery overridePreviewQuery(MdmRouteEngineeringReleaseEntity release) {
         return new MdmRouteEngineeringDTO.PreviewQuery()
                 .setReleasePurpose(MdmRouteEngineeringDTO.PURPOSE_REWORK_OVERRIDE)
@@ -524,44 +641,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return builder.buildReworkOverride(overridePreviewQuery(release), base);
     }
 
-    private static String normalizedPurpose(String value) {
-        String purpose = value == null || value.isBlank()
-                ? MdmRouteEngineeringDTO.PURPOSE_PRODUCTION : value.trim();
-        require(Set.of(MdmRouteEngineeringDTO.PURPOSE_PRODUCTION,
-                MdmRouteEngineeringDTO.PURPOSE_REWORK_OVERRIDE).contains(purpose),
-                "工程发布用途只能是生产工程版或返工覆盖版");
-        return purpose;
-    }
-
-    private static String releasePurpose(MdmRouteEngineeringReleaseEntity release) {
-        return release.getReleasePurpose() == null || release.getReleasePurpose().isBlank()
-                ? MdmRouteEngineeringDTO.PURPOSE_PRODUCTION : release.getReleasePurpose();
-    }
-
-    private static List<String> normalizedOverrideCategories(List<String> values) {
-        require(values != null && !values.isEmpty() && values.size() <= 2,
-                "返工覆盖须明确SOP和/或PARAMETER");
-        Set<String> normalized = new java.util.TreeSet<>();
-        for (String value : values) {
-            require(Set.of("SOP", "PARAMETER").contains(value) && normalized.add(value),
-                    "返工覆盖类别只能是唯一的SOP、PARAMETER");
-        }
-        return List.copyOf(normalized);
-    }
-
-    private static boolean validNode(String value) {
-        return value != null && value.matches("RN-[1-9][0-9]{0,18}");
-    }
-
-    /** 产品编码不允许空值、隐式空白或异常超长值参与版本绑定。 */
-    private static String normalizedProduct(String value) {
-        String normalized = value == null ? "" : value.trim();
-        require(!normalized.isEmpty() && normalized.length() <= 100,
-                "产品编码不能为空且不能超过100字符");
-        return normalized;
-    }
-
-    /** 提交锁内重采与页面预检一致的原文，版本号仅在父路线锁内分配。 */
+    /**
+     * 提交锁内重采与页面预检一致的原文，版本号仅在父路线锁内分配。
+     */
     private MdmRouteEngineeringReleaseEntity submit(MdmRouteEngineeringDTO.Command command, Scope scope) {
         MdmProcessRouteEntity route = lockRoute(command.getRouteId(), scope);
         require(command.getBomId() != null && command.getBomId() > 0
@@ -629,7 +711,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return release;
     }
 
-    /** 仅修改合法生命周期字段，不触碰封存正文或原来源指纹。 */
+    /**
+     * 仅修改合法生命周期字段，不触碰封存正文或原来源指纹。
+     */
     private void transition(MdmRouteEngineeringReleaseEntity release, MdmRouteEngineeringDTO.Command command, Scope scope) {
         String action = command.getAction();
         if ("APPROVE".equals(action) || "REJECT".equals(action)) {
@@ -659,7 +743,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         release.setLifecycleRevision(Math.addExact(release.getLifecycleRevision(), 1L));
     }
 
-    /** 校验真实用户、租户与工厂权限；不接受跳过组织过滤的上下文。 */
+    /**
+     * 校验真实用户、租户与工厂权限；不接受跳过组织过滤的上下文。
+     */
     private Scope scope(boolean write) {
         String factory = FactoryContextHolder.getFactoryCode();
         access.require(factory, write ? "write" : "read");
@@ -670,7 +756,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return new Scope(TenantContextHolder.getTenantId(), factory, actor.getId(), name);
     }
 
-    /** 父路线锁先于版本锁，按原主键与实际组织定位，不以当前编码猜测历史归属。 */
+    /**
+     * 父路线锁先于版本锁，按原主键与实际组织定位，不以当前编码猜测历史归属。
+     */
     private MdmProcessRouteEntity lockRoute(Long id, Scope scope) {
         require(id != null && id > 0, "请选择真实工艺路线");
         List<MdmProcessRouteEntity> found = routes.selectList(new LambdaQueryWrapper<MdmProcessRouteEntity>()
@@ -682,7 +770,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return route;
     }
 
-    /** 精确读取版本，调用方需要修改时已先取得父路线锁。 */
+    /**
+     * 精确读取版本，调用方需要修改时已先取得父路线锁。
+     */
     private MdmRouteEngineeringReleaseEntity releaseRow(Long id, Scope scope, boolean lock) {
         require(id != null && id > 0, "请选择精确工程版本");
         var query = releaseQuery(scope).eq(MdmRouteEngineeringReleaseEntity::getId, id);
@@ -694,36 +784,34 @@ public class MdmRouteEngineeringReleaseServiceImpl
         return row;
     }
 
-    /** 显式限制工程版本租户与工厂。 */
+    /**
+     * 显式限制工程版本租户与工厂。
+     */
     private LambdaQueryWrapper<MdmRouteEngineeringReleaseEntity> releaseQuery(Scope scope) {
         return new LambdaQueryWrapper<MdmRouteEngineeringReleaseEntity>()
                 .eq(MdmRouteEngineeringReleaseEntity::getTenantId, scope.tenant())
                 .eq(MdmRouteEngineeringReleaseEntity::getFactoryCode, scope.factory());
     }
 
-    /** 显式限制永久命令租户与工厂。 */
+    /**
+     * 显式限制永久命令租户与工厂。
+     */
     private LambdaQueryWrapper<MdmRouteEngineeringCommandEntity> commandQuery(Scope scope) {
         return new LambdaQueryWrapper<MdmRouteEngineeringCommandEntity>()
                 .eq(MdmRouteEngineeringCommandEntity::getTenantId, scope.tenant())
                 .eq(MdmRouteEngineeringCommandEntity::getFactoryCode, scope.factory());
     }
 
-    /** 事务请求锁后重读永久账，不依据缓存推断未执行。 */
+    /**
+     * 事务请求锁后重读永久账，不依据缓存推断未执行。
+     */
     private MdmRouteEngineeringCommandEntity commandRow(String requestId, Scope scope) {
         return commands.selectOne(commandQuery(scope).eq(MdmRouteEngineeringCommandEntity::getRequestId, requestId));
     }
 
-    /** ID、状态、原内容指纹及生命周期版本采用明确分隔形成修订指纹。 */
-    public static String revisionHash(MdmRouteEngineeringReleaseEntity release) {
-        return sha256(release.getId() + "|" + release.getStatus() + "|" + release.getContentHash()
-                + "|" + release.getLifecycleRevision() + "|" + releasePurpose(release)
-                + "|" + Objects.toString(release.getBaseReleaseId(), "")
-                + "|" + Objects.toString(release.getBaseContentHash(), "")
-                + "|" + Objects.toString(release.getTargetRouteNodeCode(), "")
-                + "|" + Objects.toString(release.getOverrideCategoriesSnapshot(), ""));
-    }
-
-    /** 执行与永久封存共用应用序列化合同，长ID不成为浏览器不安全整数。 */
+    /**
+     * 执行与永久封存共用应用序列化合同，长ID不成为浏览器不安全整数。
+     */
     private String commandSnapshot(MdmRouteEngineeringDTO.Command command) {
         try {
             return objectMapper.writeValueAsString(command);
@@ -732,33 +820,9 @@ public class MdmRouteEngineeringReleaseServiceImpl
         }
     }
 
-    /** 原始UTF-8字节SHA256，不通过JSON重排替代原正文。 */
-    private static String sha256(String raw) {
-        require(raw != null, "工程原文缺失，请联系管理员核查");
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception failure) {
-            throw new IllegalStateException("工程原文字节指纹计算失败", failure);
-        }
+    /**
+     * 经真实身份与组织授权核验的当前操作范围。
+     */
+    private record Scope(Long tenant, String factory, Long actor, String actorName) {
     }
-
-    /** 永久号采用唯一严格格式，不对原号做隐式改写。 */
-    private static boolean validRequest(String value) {
-        return value != null && value.matches("[A-Za-z0-9_-]{16,64}");
-    }
-
-    /** 正式指纹须为64位小写十六进制。 */
-    private static boolean validHash(String value) {
-        return value != null && value.matches("[0-9a-f]{64}");
-    }
-
-    /** 业务检查失败阻断整个事务并提供下一步建议。 */
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new CheckedException(message);
-        }
-    }
-
-    /** 经真实身份与组织授权核验的当前操作范围。 */
-    private record Scope(Long tenant, String factory, Long actor, String actorName) { }
 }

@@ -5,27 +5,15 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.plan.dto.PlnMpsExecutionDTO;
-import com.kitex.mom.plan.entity.PlnMpsLineEntity;
-import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentEntity;
-import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentHeadEntity;
-import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentLineEntity;
-import com.kitex.mom.plan.entity.PlnMpsVersionEntity;
-import com.kitex.mom.plan.mapper.PlnMpsLineMapper;
-import com.kitex.mom.plan.mapper.PlnMpsRemainingCommitmentHeadMapper;
-import com.kitex.mom.plan.mapper.PlnMpsRemainingCommitmentLineMapper;
-import com.kitex.mom.plan.mapper.PlnMpsRemainingCommitmentMapper;
-import com.kitex.mom.plan.mapper.PlnMpsVersionMapper;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.mapper.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import static com.kitex.mom.plan.service.impl.PlnMpsRemainingSnapshotSupport.*;
@@ -48,7 +36,9 @@ public class PlnMpsEffectiveCommitmentReader {
     private final PlnMpsExecutionSourceReader sourceReader;
     private final PlnMpsRemainingFulfillmentCalculator calculator;
 
-    /** 自身批准预留只按精确version排除；不能排除同需求另一个已批准版本。 */
+    /**
+     * 自身批准预留只按精确version排除；不能排除同需求另一个已批准版本。
+     */
     public Projection read(String factory, Set<Long> replacedDemands, Set<Long> replacedLines, Set<Long> selfVersions) {
         require(Objects.equals(factory, sourceReader.actualFactory()), "粗能力责任只能查询当前实际工厂");
         Long tenant = TenantContextHolder.getTenantId();
@@ -67,7 +57,8 @@ public class PlnMpsEffectiveCommitmentReader {
         List<PlnMpsLineEntity> rows = new ArrayList<>();
         var activeById = active.stream().collect(Collectors.toMap(PlnMpsLineEntity::getId, row -> row));
         for (var head : heads) {
-            if (!activeById.containsKey(head.getMpsLineId())) gaps.add("剩余责任原桶已失活/缺失：" + head.getMpsLineId());
+            if (!activeById.containsKey(head.getMpsLineId()))
+                gaps.add("剩余责任原桶已失活/缺失：" + head.getMpsLineId());
         }
         for (var original : active) {
             if (replacedLines.contains(original.getId())) continue;
@@ -121,13 +112,13 @@ public class PlnMpsEffectiveCommitmentReader {
                 var record = casesById.get(head.getCurrentCommitmentId());
                 try {
                     require(record != null && "PUBLISHED".equals(record.getStatus())
-                                    && Objects.equals(record.getMpsLineId(), head.getMpsLineId())
-                                    && record.getToleranceMinutes() != null, "当前指针缺合法已发布案件");
+                            && Objects.equals(record.getMpsLineId(), head.getMpsLineId())
+                            && record.getToleranceMinutes() != null, "当前指针缺合法已发布案件");
                     var schedules = schedulesById.get(record.getId());
                     require(schedules != null && schedules.stream().allMatch(line ->
                                     Objects.equals(line.getMpsLineId(), record.getMpsLineId())
-                                    && Objects.equals(line.getProductUnit(), record.getProductUnit())
-                                    && Objects.equals(line.getCapacityResourceCode(), record.getCapacityResourceCode())),
+                                            && Objects.equals(line.getProductUnit(), record.getProductUnit())
+                                            && Objects.equals(line.getCapacityResourceCode(), record.getCapacityResourceCode())),
                             "剩余日桶的原桶、单位或资源身份不一致");
                     var result = calculator.evaluate(baseline(record), currentById.get(head.getMpsLineId()),
                             schedules(schedules), LocalDateTime.now(), record.getToleranceMinutes());
@@ -191,13 +182,17 @@ public class PlnMpsEffectiveCommitmentReader {
                 .setCapacityOriginalLineId(original.getId()).setCapacityOriginalDate(original.getPlannedDate());
     }
 
-    /** 当前未完工量必须按现行速率重算，不能比例缩放原全量冻结分钟。 */
+    /**
+     * 当前未完工量必须按现行速率重算，不能比例缩放原全量冻结分钟。
+     */
     private PlnMpsLineEntity currentQuantity(PlnMpsLineEntity row) {
         return row.setCapacityVerified(false).setCapacityDemandMinutes(null).setCapacityEvidenceFingerprint(null)
                 .setCapacityEvidenceSnapshot(null);
     }
 
-    /** 行为虚拟只读投影；数量来源缺口不可被后续日历核查清空。 */
+    /**
+     * 行为虚拟只读投影；数量来源缺口不可被后续日历核查清空。
+     */
     public record Projection(List<PlnMpsLineEntity> rows, List<String> gaps) {
     }
 }

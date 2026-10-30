@@ -13,7 +13,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-/** 聚合报工部分纠正后的差异结案、异岗复核与永久履历入口。 */
+/**
+ * 聚合报工部分纠正后的差异结案、异岗复核与永久履历入口。
+ */
 @Tag(description = "mesReportCorrectionSettlement", name = "聚合报工差异结案")
 @RestController
 @RequiredArgsConstructor

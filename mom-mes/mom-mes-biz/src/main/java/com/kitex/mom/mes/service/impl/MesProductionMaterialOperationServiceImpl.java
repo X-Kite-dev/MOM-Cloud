@@ -4,18 +4,12 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.kitex.admin.api.feign.RemoteParamService;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.dto.MdmMaterialMeasureDTO;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mes.dto.ProcessProcedureDTO;
-import com.kitex.mom.mes.entity.MesProductionMaterialAllocationEntity;
-import com.kitex.mom.mes.entity.MesProductionMaterialOperationEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskReportUnqualifiedEntity;
-import com.kitex.mom.mes.entity.MesWarehouseFeedEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.mapper.MesProductionMaterialAllocationMapper;
 import com.kitex.mom.mes.mapper.MesProductionMaterialOperationMapper;
 import com.kitex.mom.mes.mapper.MesProductionMaterialReversalMapper;
@@ -30,13 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 
@@ -54,7 +42,8 @@ public class MesProductionMaterialOperationServiceImpl
     private final MesProductionMaterialReversalMapper reversalMapper;
     private final MesWarehouseFeedMapper feeds;
     private final RemoteMaterialService materials;
-    private final RemoteParamService parameters;
+    private final MesMaterialConsumptionModeResolver consumptionModes;
+    private final MesStartMaterialBindingReader materialBindings;
     private final MesProductionNgSourceCodec sources;
     private final MesPhysicalTransformCodec codec;
     private final MesActualFactoryAccessService access;
@@ -86,20 +75,18 @@ public class MesProductionMaterialOperationServiceImpl
         var requirements = Objects.requireNonNullElse(route.getMdmProcessProcedureMatList(),
                 List.<ProcessProcedureDTO.ProcessProcedureMatDTO>of());
         require(requirements.size() <= 1000, "工序耗料需求超过1000条，不能截断登记");
-        var parameter = parameters.getByKey("BACK_FLUSH");
-        require(parameter != null && parameter.isOk() && Set.of("0", "1").contains(parameter.getData()),
-                "无法核定实际倒冲配置，不能默认为投料耗用");
-        require(!"1".equals(parameter.getData()) || requirements.isEmpty(),
-                "当前为倒冲消耗，不能选择投料耗用；不良倒冲须使用独立原库存分配协议");
-        var eligible = requirements.isEmpty() ? List.<MesWarehouseFeedEntity>of() : feeds.selectList(
-                new LambdaQueryWrapper<MesWarehouseFeedEntity>()
-                        .eq(MesWarehouseFeedEntity::getTenantId, source.getTenantId())
-                        .eq(MesWarehouseFeedEntity::getFactoryCode, factory)
-                        .eq(MesWarehouseFeedEntity::getArrangeCode, arrange.getCode())
-                        .eq(MesWarehouseFeedEntity::getIsLock, Boolean.FALSE)
-                        .and(w -> w.isNull(MesWarehouseFeedEntity::getMatValidEndDate)
-                                .or().ge(MesWarehouseFeedEntity::getMatValidEndDate, LocalDate.now()))
-                        .orderByAsc(MesWarehouseFeedEntity::getId).last("LIMIT 5001 FOR UPDATE NOWAIT"));
+        require(consumptionModes.resolve(arrange) == MesMaterialConsumptionModeResolver.Mode.FEED,
+                "原派工固定为倒冲消耗，不能选择投料耗用；不良倒冲须使用独立原库存分配协议");
+        var feedQuery = new LambdaQueryWrapper<MesWarehouseFeedEntity>()
+                .eq(MesWarehouseFeedEntity::getTenantId, source.getTenantId())
+                .eq(MesWarehouseFeedEntity::getFactoryCode, factory)
+                .eq(MesWarehouseFeedEntity::getArrangeCode, arrange.getCode())
+                .eq(MesWarehouseFeedEntity::getIsLock, Boolean.FALSE)
+                .and(w -> w.isNull(MesWarehouseFeedEntity::getMatValidEndDate)
+                        .or().ge(MesWarehouseFeedEntity::getMatValidEndDate, LocalDate.now()))
+                .orderByAsc(MesWarehouseFeedEntity::getId);
+        materialBindings.constrain(arrange, feedQuery);
+        var eligible = requirements.isEmpty() ? List.<MesWarehouseFeedEntity>of() : feeds.selectList(feedQuery.last("LIMIT 5001 FOR UPDATE NOWAIT"));
         require(eligible.size() <= 5000, "实际投料超过5000条，不能截断后记耗用");
         String outputKey = source.getId().toString();
         var plan = feedPlanner.plan(new MesProductionFeedAllocationPlanner.Scope(source.getTenantId(), factory,
@@ -108,9 +95,9 @@ public class MesProductionMaterialOperationServiceImpl
                         MesProductionFeedAllocationPlanner.OutputKind.NG, source.getUnqualifiedNum(), source.getReportUnit())),
                 requirements, task.getBomSnapshot(), eligible, this::readMeasure);
         require(plan.processedQuantity().compareTo(source.getUnqualifiedNum()) == 0
-                && plan.attributions().size() == plan.consumptions().size()
-                && plan.attributions().stream().allMatch(edge -> outputKey.equals(edge.outputKey())
-                    && edge.kind() == MesProductionFeedAllocationPlanner.OutputKind.NG),
+                        && plan.attributions().size() == plan.consumptions().size()
+                        && plan.attributions().stream().allMatch(edge -> outputKey.equals(edge.outputKey())
+                        && edge.kind() == MesProductionFeedAllocationPlanner.OutputKind.NG),
                 "原NG路径只能保存本次单NG全部份额，不能借原V1接组合总耗量");
         var lines = new ArrayList<MesProductionMaterialAllocationEntity>();
         for (var consumption : plan.consumptions()) {
@@ -194,9 +181,9 @@ public class MesProductionMaterialOperationServiceImpl
                 .eq(MesProductionMaterialOperationEntity::getSourceUnqualifiedReportId, source.getId()));
         if (result == null) return null;
         require(VERSION.equals(result.getCommandVersion()) && "MATERIAL_RECORDED".equals(result.getStatus())
-                && Objects.equals(result.getRequestId(), source.getRequestId())
-                && Objects.equals(result.getSourceFingerprint(), source.getSourceFingerprint())
-                && Objects.equals(result.getCommandFingerprint(), codec.fingerprint(VERSION, result.getCommandSnapshot())),
+                        && Objects.equals(result.getRequestId(), source.getRequestId())
+                        && Objects.equals(result.getSourceFingerprint(), source.getSourceFingerprint())
+                        && Objects.equals(result.getCommandFingerprint(), codec.fingerprint(VERSION, result.getCommandSnapshot())),
                 "原耗用来源/版本/SHA不一致，不能猜测成功");
         var rows = allocations.selectList(new LambdaQueryWrapper<MesProductionMaterialAllocationEntity>()
                 .eq(MesProductionMaterialAllocationEntity::getTenantId, source.getTenantId())
@@ -209,14 +196,18 @@ public class MesProductionMaterialOperationServiceImpl
         return result;
     }
 
-    /** 原计量观察由真实实名Feign读取；单位/组织/版本由共用分配内核逐来源核验。 */
+    /**
+     * 原计量观察由真实实名Feign读取；单位/组织/版本由共用分配内核逐来源核验。
+     */
     private MdmMaterialMeasureDTO readMeasure(String matCode) {
         var response = materials.productionMeasure(matCode);
         require(response != null && response.isOk() && response.getData() != null, "无法取得实际投料物料计量");
         return response.getData();
     }
 
-    /** 固定字段不反射实体；后续新增字段不会改变原V1语义。 */
+    /**
+     * 固定字段不反射实体；后续新增字段不会改变原V1语义。
+     */
     private Map<String, Object> document(MesProductionMaterialOperationEntity op) {
         var result = new TreeMap<String, Object>();
         result.put("version", VERSION);

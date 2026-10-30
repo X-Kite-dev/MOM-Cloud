@@ -1,10 +1,6 @@
 package com.kitex.mom.plan.dto;
 
-import com.kitex.mom.plan.entity.PlnInsertionReplanCaseEntity;
-import com.kitex.mom.plan.entity.PlnInsertionReplanIssueEntity;
-import com.kitex.mom.plan.entity.PlnInsertionReplanLineEntity;
-import com.kitex.mom.plan.entity.PlnInsertionReplanOperationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingScenarioEntity;
+import com.kitex.mom.plan.entity.*;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;

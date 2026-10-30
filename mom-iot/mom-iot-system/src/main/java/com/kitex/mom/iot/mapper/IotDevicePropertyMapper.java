@@ -33,6 +33,16 @@ public interface IotDevicePropertyMapper extends BaseMapper<IotDevicePropertyEnt
             @Param("startTime") LocalDateTime startTime,
             @Param("endTime") LocalDateTime endTime);
 
+    /** 精确设备、参数和生产时间窗的已核验采样；额外一条用于识别截断。 */
+    List<IotDevicePropertyEntity> selectProcessDeviationSamples(
+            @Param("tenantId") Long tenantId,
+            @Param("factoryCode") String factoryCode,
+            @Param("deviceId") Long deviceId,
+            @Param("identifier") String identifier,
+            @Param("startTime") LocalDateTime startTime,
+            @Param("endTime") LocalDateTime endTime,
+            @Param("limit") int limit);
+
     /**
      * 查询设备元数据
      *

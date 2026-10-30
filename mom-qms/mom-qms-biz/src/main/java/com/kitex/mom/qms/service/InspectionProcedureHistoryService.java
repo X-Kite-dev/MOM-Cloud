@@ -1,6 +1,7 @@
 package com.kitex.mom.qms.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.kitex.mom.qms.dto.QmsFirstInspectionDecisionDTO;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureHistoryEntity;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureTaskEntity;
 
@@ -12,32 +13,22 @@ import java.util.List;
  * @author kitex
  * @date 2022/12/9
  */
-public interface InspectionProcedureHistoryService extends IService<QmsInspectionProcedureHistoryEntity> {
+public interface InspectionProcedureHistoryService
+        extends IService<QmsInspectionProcedureHistoryEntity> {
 
-
-    /**
-     * 创建任务
-     */
+    /** 创建任务 */
     void create(QmsInspectionProcedureTaskEntity task);
 
-    /**
-     * 追加任务
-     */
+    /** 追加任务 */
     void append(QmsInspectionProcedureTaskEntity task, Integer num);
 
-    /**
-     * 质检操作
-     */
+    /** 质检操作 */
     void check(QmsInspectionProcedureTaskEntity task);
 
-    /**
-     * 作废
-     */
+    /** 作废 */
     void canceled(QmsInspectionProcedureTaskEntity task, String reason);
 
-    /**
-     * 免检
-     */
+    /** 免检 */
     void exemption(QmsInspectionProcedureTaskEntity task);
 
     /**
@@ -47,9 +38,15 @@ public interface InspectionProcedureHistoryService extends IService<QmsInspectio
      */
     List<QmsInspectionProcedureHistoryEntity> findAllByTaskId(Long taskId);
 
-    /**
-     * 质检任务历史详情
-     */
+    /** 质检任务历史详情 */
     QmsInspectionProcedureHistoryEntity findById(Long id);
 
+    QmsFirstInspectionDecisionDTO firstDecision(Long taskId);
+
+    /** 已授权正式run事务内记录新的RESULT，明确保留实际执行账号ID。 */
+    com.kitex.mom.qms.entity.QmsInspectionEventEntity checkRevision(
+            com.kitex.mom.qms.entity.QmsInspectionProcedureTaskEntity task,
+            Long requestId,
+            Long executorId,
+            java.util.Date time);
 }

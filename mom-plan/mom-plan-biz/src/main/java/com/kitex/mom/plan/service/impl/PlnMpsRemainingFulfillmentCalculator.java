@@ -10,15 +10,7 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 剩余责任的纯精确数量/日期计算，不访问数据库、不取用户上下文、不发布计划。
@@ -31,9 +23,11 @@ public class PlnMpsRemainingFulfillmentCalculator {
     private static final Set<String> MODES = Set.of("ONE_CODE", "QUANTITY", "TRANSFER_CARD",
             "PACKAGE_ONE_CODE", "PACKAGE_QUANTITY");
 
-    /** 调用方先校验已确认观察的组织、权限、独立核验与新鲜度，本方法不替代这些门禁。 */
+    /**
+     * 调用方先校验已确认观察的组织、权限、独立核验与新鲜度，本方法不替代这些门禁。
+     */
     public PlnMpsRemainingCommitmentDTO.Baseline baseline(PlnMpsExecutionDTO.Bucket bucket,
-                                                        LocalDateTime observedAt) {
+                                                          LocalDateTime observedAt) {
         require(observedAt != null, "基线须使用原观察真实采集时刻");
         var current = current(bucket);
         BigDecimal original = quantity(bucket.getPlanQuantity());
@@ -63,10 +57,12 @@ public class PlnMpsRemainingFulfillmentCalculator {
                         .map(event -> BeanUtil.toBean(event, PlnMpsExecutionDTO.ProductionEvent.class)).toList());
     }
 
-    /** 失效返回明确缺口，不返回旧成功的剩余量；日期和客户交期从不回写原账。 */
+    /**
+     * 失效返回明确缺口，不返回旧成功的剩余量；日期和客户交期从不回写原账。
+     */
     public PlnMpsRemainingCommitmentDTO.Evaluation evaluate(PlnMpsRemainingCommitmentDTO.Baseline baseline,
-            PlnMpsExecutionDTO.Bucket bucket, List<PlnMpsRemainingCommitmentDTO.Schedule> schedules,
-            LocalDateTime now, int toleranceMinutes) {
+                                                            PlnMpsExecutionDTO.Bucket bucket, List<PlnMpsRemainingCommitmentDTO.Schedule> schedules,
+                                                            LocalDateTime now, int toleranceMinutes) {
         require(baseline != null && now != null && toleranceMinutes >= 0 && toleranceMinutes <= 1440,
                 "原基线、计算时刻及0至1440分钟容差必填");
         List<PlnMpsRemainingCommitmentDTO.Schedule> ordered = schedules(schedules, quantity(baseline.getRemainingQuantity()));
@@ -77,9 +73,11 @@ public class PlnMpsRemainingFulfillmentCalculator {
         return progress.evaluation();
     }
 
-    /** 尚未编制新日桶时只核清当前推进，不虚构日期或替用户创建分期。 */
+    /**
+     * 尚未编制新日桶时只核清当前推进，不虚构日期或替用户创建分期。
+     */
     public PlnMpsRemainingCommitmentDTO.Evaluation verifyProgress(PlnMpsRemainingCommitmentDTO.Baseline baseline,
-                                                               PlnMpsExecutionDTO.Bucket bucket, LocalDateTime now) {
+                                                                  PlnMpsExecutionDTO.Bucket bucket, LocalDateTime now) {
         require(baseline != null && now != null, "原基线与核清时刻必填");
         return progress(baseline, bucket, now).evaluation();
     }
@@ -113,7 +111,8 @@ public class PlnMpsRemainingFulfillmentCalculator {
     private Progress progress(PlnMpsRemainingCommitmentDTO.Baseline baseline,
                               PlnMpsExecutionDTO.Bucket bucket, LocalDateTime now) {
         var result = new PlnMpsRemainingCommitmentDTO.Evaluation();
-        if (!sameBucket(baseline, bucket)) return failed(result, "SOURCE_STALE", "原桶、根计划、数量、单位或原交期身份已变化");
+        if (!sameBucket(baseline, bucket))
+            return failed(result, "SOURCE_STALE", "原桶、根计划、数量、单位或原交期身份已变化");
         Current current;
         try {
             current = current(bucket);
@@ -132,7 +131,8 @@ public class PlnMpsRemainingFulfillmentCalculator {
         }
         for (var link : bucket.getLinks()) {
             var frozen = frozenSources.get(sourceKey(link.getTaskId(), link.getAllocationId()));
-            if (!sameSource(frozen, identity(link))) return failed(result, "SOURCE_STALE", "原物理来源或唯一末序映射已变化");
+            if (!sameSource(frozen, identity(link)))
+                return failed(result, "SOURCE_STALE", "原物理来源或唯一末序映射已变化");
         }
         Map<String, PlnMpsExecutionDTO.ProductionEvent> frozenEvents = new HashMap<>();
         BigDecimal frozenTotal = BigDecimal.ZERO;
@@ -176,7 +176,9 @@ public class PlnMpsRemainingFulfillmentCalculator {
         return new Progress(result, fresh);
     }
 
-    /** 完整来源范围、每来源贡献及原量分别核对，合批物理量不参与累计。 */
+    /**
+     * 完整来源范围、每来源贡献及原量分别核对，合批物理量不参与累计。
+     */
     private Current current(PlnMpsExecutionDTO.Bucket bucket) {
         require(bucket != null && Boolean.TRUE.equals(bucket.getActive()) && bucket.getGaps() != null
                         && bucket.getGaps().isEmpty() && bucket.getLinks() != null && !bucket.getLinks().isEmpty()

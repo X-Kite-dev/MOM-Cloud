@@ -5,22 +5,24 @@ import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.admin.api.entity.SysDictItemEntity;
 import com.kitex.admin.api.feign.RemoteDictService;
-import com.kitex.common.core.util.R;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantBroker;
 import com.kitex.common.data.tenant.TenantContextHolder;
-import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.common.excel.vo.ErrorMessage;
+import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.barcode.api.feign.RemotePrintService;
 import com.kitex.mom.common.barcode.dto.req.PreviewObj;
 import com.kitex.mom.common.barcode.dto.req.PrintReq;
-import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.dto.MdmMaterialMeasureDTO;
+import com.kitex.mom.mdm.dto.MdmMaterialWarningConfigDTO;
+import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.entity.MdmMaterialGroupEntity;
 import com.kitex.mom.mdm.mapper.MdmMaterialMapper;
 import com.kitex.mom.mdm.service.MdmMaterialGroupService;
@@ -57,6 +59,35 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
 
     @Override
     @Transactional(readOnly = true)
+    public List<MdmMaterialWarningConfigDTO> warningConfigurations(Long tenantId, String factoryCode) {
+        if (tenantId == null || tenantId <= 0 || StrUtil.isBlank(factoryCode)) {
+            throw new CheckedException("物料预警参数需要明确租户和工厂");
+        }
+        String previousFactory = FactoryContextHolder.getFactoryCode();
+        try {
+            FactoryContextHolder.setFactoryCode(factoryCode);
+            return TenantBroker.applyAs(tenantId, ignored -> list(new LambdaQueryWrapper<MdmMaterialEntity>()
+                    .select(MdmMaterialEntity::getTenantId, MdmMaterialEntity::getFactoryCode,
+                            MdmMaterialEntity::getMaterialCode, MdmMaterialEntity::getMaterialName,
+                            MdmMaterialEntity::getExpiration, MdmMaterialEntity::getExpirationDay,
+                            MdmMaterialEntity::getSlowMaterial, MdmMaterialEntity::getSlowMaterialDay)
+                    .eq(MdmMaterialEntity::getTenantId, tenantId)
+                    .eq(MdmMaterialEntity::getFactoryCode, factoryCode)).stream().map(row -> {
+                if (!Objects.equals(row.getTenantId(), tenantId)
+                        || !Objects.equals(row.getFactoryCode(), factoryCode)) {
+                    throw new CheckedException("预警参数返回了其他租户或工厂物料");
+                }
+                var result = new MdmMaterialWarningConfigDTO();
+                BeanUtils.copyProperties(row, result);
+                return result;
+            }).toList());
+        } finally {
+            FactoryContextHolder.setFactoryCode(previousFactory);
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public MdmMaterialMeasureDTO productionMeasure(String materialCode) {
         Long tenant = TenantContextHolder.getTenantId();
         String factory = FactoryContextHolder.getFactoryCode();
@@ -69,7 +100,8 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
         var rows = list(new LambdaQueryWrapper<MdmMaterialEntity>()
                 .eq(MdmMaterialEntity::getTenantId, tenant).eq(MdmMaterialEntity::getFactoryCode, factory)
                 .eq(MdmMaterialEntity::getMaterialCode, materialCode).last("LIMIT 2"));
-        if (rows.size() != 1 || !Boolean.TRUE.equals(rows.get(0).getStatus()) || StrUtil.isBlank(rows.get(0).getBasicUnit())) {
+        if (rows.size() != 1 || !Boolean.TRUE.equals(rows.get(0).getStatus())
+                || StrUtil.isBlank(rows.get(0).getBasicUnit())) {
             throw new CheckedException("当前租户工厂未找到唯一启用物料及明确基本单位");
         }
         var row = rows.get(0);

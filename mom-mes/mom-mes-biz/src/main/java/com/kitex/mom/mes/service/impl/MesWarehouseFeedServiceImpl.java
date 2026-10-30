@@ -10,7 +10,6 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.kitex.admin.api.feign.RemoteParamService;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
@@ -19,29 +18,15 @@ import com.kitex.mom.mdm.dto.MdmMaterialMeasureDTO;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mdm.feign.RemoteProcessRouteService;
-import com.kitex.mom.mes.dto.MesTaskReportFeedVO;
-import com.kitex.mom.mes.dto.MesWarehouseFeedLeftDTO;
-import com.kitex.mom.mes.dto.MesWarehouseLiveStockInoutDTO;
-import com.kitex.mom.mes.dto.MesWarehouseStockOutReceiptDTO;
-import com.kitex.mom.mes.dto.MesWarehouseUseDTO;
-import com.kitex.mom.mes.dto.ProcessProcedureDTO;
-import com.kitex.mom.mes.entity.MesReportMaterialConsumeEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesWarehouseFeedEntity;
-import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
+import com.kitex.mom.mes.dto.*;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.ReportStatusEnum;
 import com.kitex.mom.mes.enums.WarehouseOutBizTypeEnum;
 import com.kitex.mom.mes.event.FeedRecordSaveEvent;
-import com.kitex.mom.mes.mapper.MesTaskMapper;
-import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
-import com.kitex.mom.mes.mapper.MesTaskReportMapper;
-import com.kitex.mom.mes.mapper.MesProductionMaterialReversalMapper;
-import com.kitex.mom.mes.mapper.MesWarehouseFeedMapper;
+import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.MesReportMaterialConsumeService;
-import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.MesWarehouseFeedBirthService;
+import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
 import com.kitex.mom.mes.service.impl.material.MesProductionFeedAllocationPlanner;
 import com.kitex.mom.mes.util.MesMaterialSubstituteResolver;
@@ -50,18 +35,13 @@ import com.kitex.mom.qms.entity.QmsInspectionPurchaseTaskEntity;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
@@ -84,8 +64,10 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
     private final ApplicationEventPublisher applicationEventPublisher;
     private final RemoteProcessRouteService remoteProcessRouteService;
     private final RemotePurchaseService remotePurchaseService;
-    private final RemoteParamService remoteParamService;
+    private final MesMaterialConsumptionModeResolver consumptionModes;
+    private final MesStartMaterialBindingReader materialBindings;
     private final MesReportMaterialConsumeService reportMaterialConsumeService;
+    private final MesMaterialSourceEligibility sourceEligibility;
     private final MesActualFactoryAccessService factoryAccess;
     private final MesTaskReportMapper reportMapper;
     private final MesExecutionTaskLock executionTaskLock;
@@ -114,13 +96,6 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
         proofCodec.code(feed.getTaskCode(), "投料工单", 100);
         proofCodec.code(feed.getArrangeCode(), "投料派工", 100);
         proofCodec.quantity(proofCodec.amount(feed.getFeedNum()), false, "投料原量");
-        var parameter = remoteParamService.getByKey("BACK_FLUSH");
-        if (parameter == null || !parameter.isOk() || !Set.of("0", "1").contains(parameter.getData()))
-            throw new CheckedException("无法核定实际投料/倒冲配置，禁止默认为投料后扣库");
-        String backFlushFlag = parameter.getData();
-        if ("1".equals(backFlushFlag)) {
-            throw new CheckedException("已配置倒冲，不能再次手工投料扣库");
-        }
         // 1.判断物料是不是bom里面的
         executionLocks.task(tenant, factory, feed.getTaskCode());
         var tasks = mesTaskMapper.selectList(new LambdaQueryWrapper<MesTaskEntity>()
@@ -136,6 +111,8 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
                 .last("LIMIT 2 FOR UPDATE NOWAIT"));
         if (arranges.size() != 1) throw new CheckedException("投料派工未唯一归属当前工单");
         MesTaskArrangeEntity arrange = arranges.get(0);
+        require(consumptionModes.resolve(arrange) == MesMaterialConsumptionModeResolver.Mode.FEED,
+                "原派工固定为倒冲模式，不能再次手工投料扣库");
         terminalGuard.assertUnoccupied(arrange);
         if (!Set.of("DISPATCH", "PRODUCT").contains(mesTask.getStatus())
                 || !Set.of("UN_RECEIVE", "RECEIVE", "PRODUCT", "PAUSE").contains(arrange.getStatus()))
@@ -156,7 +133,7 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
         feed.setSubstituteRatio(binding.ratio());
         feed.setSubstitutePolicySnapshot(JSONUtil.toJsonStr(binding));
         if (mesTask.getReworkMaterialPlanId() != null) assertReworkFeedBudget(mesTask, feed, binding);
-        var lineage = bindLineStockLineage(feed);
+        var lineage = bindLineStockLineage(mesTask, feed);
         // 2.每次实际领料保存独立新记录，不按相同批次合并来源。
         feed.setFeedTime(LocalDateTime.now());
         MomUser user = SecurityUtils.getUser();
@@ -218,7 +195,9 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
         return Boolean.TRUE;
     }
 
-    /** 普通投料和返工投料均核真实持久值，不允许feed先舍入再扣出更大的原实物量。 */
+    /**
+     * 普通投料和返工投料均核真实持久值，不允许feed先舍入再扣出更大的原实物量。
+     */
     private void verifySavedFeed(MesWarehouseFeedEntity expected) {
         var stored = getById(expected.getId());
         if (stored == null || stored.getFeedNum() == null || stored.getFeedNum().compareTo(expected.getFeedNum()) != 0
@@ -242,7 +221,9 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
             throw new CheckedException("实际投料原量、单位或派工归属回读不一致，已回滚");
     }
 
-    /** 只核本次真实OUT全集；不能按批次事后拼来源，也不把该回执冒充完整永久出生账。 */
+    /**
+     * 只核本次真实OUT全集；不能按批次事后拼来源，也不把该回执冒充完整永久出生账。
+     */
     private void verifyFeedOut(MesWarehouseFeedEntity feed, MesWarehouseStockOutReceiptDTO receipt) {
         if (receipt == null || !"STOCK_LINE_V1".equals(receipt.version())
                 || !Objects.equals(receipt.tenantId(), feed.getTenantId())
@@ -313,12 +294,15 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
      * 条码投料不能只按物料/批次扣减，否则同批次下不同正式预留可能串用。
      * 由线边实物库存反查并冻结唯一预留来源；无预留号的历史库存保持兼容。
      */
-    private MesWarehouseStockOutReceiptDTO.Lineage bindLineStockLineage(MesWarehouseFeedEntity feed) {
+    private MesWarehouseStockOutReceiptDTO.Lineage bindLineStockLineage(MesTaskEntity task, MesWarehouseFeedEntity feed) {
         List<MesWarehouseLiveStockEntity> candidates = liveStockService.list(
                 new LambdaQueryWrapper<MesWarehouseLiveStockEntity>()
                         .eq(MesWarehouseLiveStockEntity::getTenantId, feed.getTenantId())
                         .eq(MesWarehouseLiveStockEntity::getFactoryCode, feed.getFactoryCode())
                         .eq(MesWarehouseLiveStockEntity::getMatCode, feed.getMatCode())
+                        .and(process -> process.eq(MesWarehouseLiveStockEntity::getProduceTaskCode, feed.getProduceTaskCode())
+                                .or().isNull(MesWarehouseLiveStockEntity::getProduceTaskCode)
+                                .or().eq(MesWarehouseLiveStockEntity::getProduceTaskCode, ""))
                         .isNull(MesWarehouseLiveStockEntity::getQualityCaseId)
                         .isNull(MesWarehouseLiveStockEntity::getSourceUnqualifiedReportId)
                         .isNull(MesWarehouseLiveStockEntity::getProductionNgCaptureId)
@@ -338,6 +322,8 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
                         .orderByAsc(MesWarehouseLiveStockEntity::getId).last("LIMIT 5001"));
         if (candidates.size() > 5000)
             throw new CheckedException("投料预留谱系候选超过5000行，请收窄范围，不能截断后选择");
+        candidates = candidates.stream().filter(stock -> sourceEligibility.eligible(task, stock,
+                feed.getRequirementMatCode(), feed.getSubstituteRatio())).toList();
         if (CollUtil.isEmpty(candidates)) {
             throw new CheckedException("线边库存中未找到本次投料对应的实物批次");
         }
@@ -415,50 +401,47 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
                 .eq(MesTaskReportEntity::getId, useDTO.getReportId())
                 .eq(MesTaskReportEntity::getTenantId, tenant).eq(MesTaskReportEntity::getFactoryCode, factory));
         require(report != null && ReportStatusEnum.EFFECTIVE.name().equals(report.getStatus())
-                && Objects.equals(report.getRequestId(), useDTO.getReportRequestId())
-                && Objects.equals(report.getArrangeCode(), arrange.getCode())
-                && Objects.equals(report.getTaskCode(), task.getCode())
-                && Objects.equals(report.getProduceTaskCode(), arrange.getProduceTaskCode())
-                && Objects.equals(report.getMatCode(), arrange.getMatCode())
-                && report.getReportNum() != null && report.getReportNum().signum() > 0
-                && sameAmount(report.getReportNum(), useDTO.getReportNum())
-                && sameAmount(report.getEffectiveReportNum(), report.getReportNum())
-                && sameAmount(report.getCorrectedReportNum(), BigDecimal.ZERO)
-                && !"ROUTE_RETURN".equals(report.getExecutionKind())
-                && StrUtil.isNotBlank(report.getReportUnit()),
+                        && Objects.equals(report.getRequestId(), useDTO.getReportRequestId())
+                        && Objects.equals(report.getArrangeCode(), arrange.getCode())
+                        && Objects.equals(report.getTaskCode(), task.getCode())
+                        && Objects.equals(report.getProduceTaskCode(), arrange.getProduceTaskCode())
+                        && Objects.equals(report.getMatCode(), arrange.getMatCode())
+                        && report.getReportNum() != null && report.getReportNum().signum() > 0
+                        && sameAmount(report.getReportNum(), useDTO.getReportNum())
+                        && sameAmount(report.getEffectiveReportNum(), report.getReportNum())
+                        && sameAmount(report.getCorrectedReportNum(), BigDecimal.ZERO)
+                        && !"ROUTE_RETURN".equals(report.getExecutionKind())
+                        && StrUtil.isNotBlank(report.getReportUnit()),
                 "耗料须属于尚未纠正的本次正量GOOD原报告，不允许以总加工量或旧报告代替");
         require(Objects.equals(useDTO.getSnapshot(), task.getProcessRouteSnapshot())
-                && Objects.equals(useDTO.getBomSnapshot(), task.getBomSnapshot())
-                && Objects.equals(useDTO.getRouteCode(), arrange.getRouteCode())
-                && Objects.equals(useDTO.getProcessRouteCode(), task.getProcessRouteCode()),
+                        && Objects.equals(useDTO.getBomSnapshot(), task.getBomSnapshot())
+                        && Objects.equals(useDTO.getRouteCode(), arrange.getRouteCode())
+                        && Objects.equals(useDTO.getProcessRouteCode(), task.getProcessRouteCode()),
                 "耗料参数与实际父工单冻结路线/BOM不同，不能重解释原工程依据");
         require(reportMaterialConsumeService.count(new LambdaQueryWrapper<MesReportMaterialConsumeEntity>()
-                .eq(MesReportMaterialConsumeEntity::getTenantId, tenant)
-                .eq(MesReportMaterialConsumeEntity::getFactoryCode, factory)
-                .eq(MesReportMaterialConsumeEntity::getReportId, report.getId())) == 0,
+                        .eq(MesReportMaterialConsumeEntity::getTenantId, tenant)
+                        .eq(MesReportMaterialConsumeEntity::getFactoryCode, factory)
+                        .eq(MesReportMaterialConsumeEntity::getReportId, report.getId())) == 0,
                 "原GOOD报告已经有耗料分配，禁止再次扣料");
 
         ProcessProcedureDTO route = com.kitex.mom.mes.util.MesTaskUtils.getCurrentProcess(task.getProcessRouteSnapshot(),
                 arrange.getRouteCode(), arrange.getSourceRouteNodeCode());
         var requirements = Objects.requireNonNullElse(route.getMdmProcessProcedureMatList(),
                 List.<ProcessProcedureDTO.ProcessProcedureMatDTO>of());
-        var parameter = remoteParamService.getByKey("BACK_FLUSH");
-        require(parameter != null && parameter.isOk()
-                        && ("0".equals(parameter.getData()) || "1".equals(parameter.getData())),
-                "无法核定实际倒冲配置，不能默认为投料耗用");
-        require(!"1".equals(parameter.getData()) || requirements.isEmpty(),
-                "实际配置已变为倒冲，不能在GOOD投料链继续耗料");
-        var locked = requirements.isEmpty() ? List.<MesWarehouseFeedEntity>of() : list(
-                new LambdaQueryWrapper<MesWarehouseFeedEntity>()
-                        .eq(MesWarehouseFeedEntity::getTenantId, tenant)
-                        .eq(MesWarehouseFeedEntity::getFactoryCode, factory)
-                        .eq(MesWarehouseFeedEntity::getTaskCode, task.getCode())
-                        .eq(MesWarehouseFeedEntity::getProduceTaskCode, arrange.getProduceTaskCode())
-                        .eq(MesWarehouseFeedEntity::getArrangeCode, arrange.getCode())
-                        .eq(MesWarehouseFeedEntity::getIsLock, Boolean.FALSE)
-                        .and(w -> w.isNull(MesWarehouseFeedEntity::getMatValidEndDate)
-                                .or().ge(MesWarehouseFeedEntity::getMatValidEndDate, LocalDate.now()))
-                        .orderByAsc(MesWarehouseFeedEntity::getId).last("LIMIT 5001 FOR UPDATE NOWAIT"));
+        require(consumptionModes.resolve(arrange) == MesMaterialConsumptionModeResolver.Mode.FEED,
+                "原派工固定为倒冲模式，不能在GOOD投料链继续耗料");
+        var feedQuery = new LambdaQueryWrapper<MesWarehouseFeedEntity>()
+                .eq(MesWarehouseFeedEntity::getTenantId, tenant)
+                .eq(MesWarehouseFeedEntity::getFactoryCode, factory)
+                .eq(MesWarehouseFeedEntity::getTaskCode, task.getCode())
+                .eq(MesWarehouseFeedEntity::getProduceTaskCode, arrange.getProduceTaskCode())
+                .eq(MesWarehouseFeedEntity::getArrangeCode, arrange.getCode())
+                .eq(MesWarehouseFeedEntity::getIsLock, Boolean.FALSE)
+                .and(w -> w.isNull(MesWarehouseFeedEntity::getMatValidEndDate)
+                        .or().ge(MesWarehouseFeedEntity::getMatValidEndDate, LocalDate.now()))
+                .orderByAsc(MesWarehouseFeedEntity::getId);
+        materialBindings.constrain(arrange, feedQuery);
+        var locked = requirements.isEmpty() ? List.<MesWarehouseFeedEntity>of() : list(feedQuery.last("LIMIT 5001 FOR UPDATE NOWAIT"));
         require(locked.size() <= 5000, "实际投料超过5000条，须收窄而非截断耗用");
         String outputKey = report.getId().toString();
         var plan = feedAllocationPlanner.plan(
@@ -469,9 +452,9 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
                         report.getReportNum(), report.getReportUnit())),
                 requirements, task.getBomSnapshot(), locked, this::readConsumptionMeasure);
         require(sameAmount(plan.processedQuantity(), report.getReportNum())
-                && plan.attributions().size() == plan.consumptions().size()
-                && plan.attributions().stream().allMatch(edge -> outputKey.equals(edge.outputKey())
-                    && edge.kind() == MesProductionFeedAllocationPlanner.OutputKind.GOOD),
+                        && plan.attributions().size() == plan.consumptions().size()
+                        && plan.attributions().stream().allMatch(edge -> outputKey.equals(edge.outputKey())
+                        && edge.kind() == MesProductionFeedAllocationPlanner.OutputKind.GOOD),
                 "旧GOOD协议只能接当前合格报告份额，组合总料须独立永久协议");
 
         var feedById = locked.stream().collect(Collectors.toMap(MesWarehouseFeedEntity::getId, row -> row));
@@ -524,14 +507,18 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
         verifyConsumptionRows(report, consumes, tenant, factory);
     }
 
-    /** 必须核真实计量观察；不从替代料名称或历史“个”推断原投料单位。 */
+    /**
+     * 必须核真实计量观察；不从替代料名称或历史“个”推断原投料单位。
+     */
     private MdmMaterialMeasureDTO readConsumptionMeasure(String materialCode) {
         var response = remoteMaterialService.productionMeasure(materialCode);
         require(response != null && response.isOk() && response.getData() != null, "无法取得实际投料物料计量");
         return response.getData();
     }
 
-    /** 保存后的完整原分配逐字段回读，捕捉数量列舍入、部分批量失败或错误关联。 */
+    /**
+     * 保存后的完整原分配逐字段回读，捕捉数量列舍入、部分批量失败或错误关联。
+     */
     private void verifyConsumptionRows(MesTaskReportEntity report, List<MesReportMaterialConsumeEntity> expected,
                                        Long tenant, String factory) {
         var rows = reportMaterialConsumeService.list(new LambdaQueryWrapper<MesReportMaterialConsumeEntity>()
@@ -544,21 +531,21 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
         for (var row : expected) {
             var saved = byId.get(row.getId());
             require(saved != null && Objects.equals(saved.getTenantId(), tenant)
-                    && Objects.equals(saved.getFactoryCode(), factory)
-                    && Objects.equals(saved.getReportId(), row.getReportId())
-                    && Objects.equals(saved.getReportRequestId(), row.getReportRequestId())
-                    && Objects.equals(saved.getArrangeCode(), row.getArrangeCode())
-                    && Objects.equals(saved.getFeedId(), row.getFeedId())
-                    && Objects.equals(saved.getRequirementMatCode(), row.getRequirementMatCode())
-                    && Objects.equals(saved.getMatCode(), row.getMatCode())
-                    && Objects.equals(saved.getMatBatch(), row.getMatBatch())
-                    && Objects.equals(saved.getMatBarcode(), row.getMatBarcode())
-                    && Objects.equals(saved.getSubstituteFlag(), row.getSubstituteFlag())
-                    && sameAmount(saved.getConsumeNum(), row.getConsumeNum())
-                    && sameAmount(saved.getRequirementNum(), row.getRequirementNum())
-                    && sameAmount(saved.getSubstituteRatio(), row.getSubstituteRatio())
-                    && Objects.equals(saved.getStatus(), row.getStatus()) && "0".equals(saved.getDelFlag())
-                    && saved.getReverseRequestId() == null && saved.getReverseTime() == null,
+                            && Objects.equals(saved.getFactoryCode(), factory)
+                            && Objects.equals(saved.getReportId(), row.getReportId())
+                            && Objects.equals(saved.getReportRequestId(), row.getReportRequestId())
+                            && Objects.equals(saved.getArrangeCode(), row.getArrangeCode())
+                            && Objects.equals(saved.getFeedId(), row.getFeedId())
+                            && Objects.equals(saved.getRequirementMatCode(), row.getRequirementMatCode())
+                            && Objects.equals(saved.getMatCode(), row.getMatCode())
+                            && Objects.equals(saved.getMatBatch(), row.getMatBatch())
+                            && Objects.equals(saved.getMatBarcode(), row.getMatBarcode())
+                            && Objects.equals(saved.getSubstituteFlag(), row.getSubstituteFlag())
+                            && sameAmount(saved.getConsumeNum(), row.getConsumeNum())
+                            && sameAmount(saved.getRequirementNum(), row.getRequirementNum())
+                            && sameAmount(saved.getSubstituteRatio(), row.getSubstituteRatio())
+                            && Objects.equals(saved.getStatus(), row.getStatus()) && "0".equals(saved.getDelFlag())
+                            && saved.getReverseRequestId() == null && saved.getReverseTime() == null,
                     "GOOD实际耗用关联或精确数量回读不一致，整次报工回滚");
         }
     }

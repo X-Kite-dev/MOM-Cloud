@@ -10,12 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.TreeMap;
+import java.util.*;
 
 import static com.kitex.mom.mes.service.impl.MesChangeoverAttributionFactsReader.*;
 
@@ -96,8 +91,8 @@ public class MesChangeoverAttributionEvidenceReader {
             evidence.setSeconds(Long.toString(trusted.stream().mapToLong(MesChangeoverExecutionEntity::getDurationSeconds).reduce(0, Math::addExact)))
                     .setExecutionCount(trusted.size());
             var effective = arrangements.stream().filter(row -> !("CLOSE".equals(row.getStatus()) && row.getStartTime() == null
-                    && row.getFinishTime() == null && row.getCompleteNum() != null && row.getCompleteNum().signum() == 0
-                    && segments.stream().noneMatch(segment -> Objects.equals(segment.getArrangeId(), row.getId()))))
+                            && row.getFinishTime() == null && row.getCompleteNum() != null && row.getCompleteNum().signum() == 0
+                            && segments.stream().noneMatch(segment -> Objects.equals(segment.getArrangeId(), row.getId()))))
                     .sorted(Comparator.comparing(MesTaskArrangeEntity::getStartTime, Comparator.nullsLast(Comparator.naturalOrder()))
                             .thenComparing(MesTaskArrangeEntity::getId)).toList();
             evidence.setFirstDispatchOnly(trusted.size() == 1 && approved.size() == 1 && !effective.isEmpty()
@@ -109,12 +104,14 @@ public class MesChangeoverAttributionEvidenceReader {
         return new Result(evidence, overlap.overlaps());
     }
 
-    /** 完整扫描每个实际RUN资源相交活动，包括未结束/已取消账；未绑定也不能被忽略。 */
+    /**
+     * 完整扫描每个实际RUN资源相交活动，包括未结束/已取消账；未绑定也不能被忽略。
+     */
     private Overlap overlapEvents(MesProduceTaskEntity produce, List<MesTaskExecutionSegmentEntity> segments) {
         List<Map<String, Object>> records = new ArrayList<>();
         boolean overlaps = false;
         var resources = segments.stream().filter(segment -> segment.getStartTime() != null && segment.getEndTime() != null
-                && segment.getDeviceCode() != null && segment.getStationCode() != null)
+                        && segment.getDeviceCode() != null && segment.getStationCode() != null)
                 .collect(java.util.stream.Collectors.groupingBy(segment -> List.of(segment.getStationCode(), segment.getDeviceCode())));
         for (var resource : resources.entrySet()) {
             LocalDateTime first = resource.getValue().stream().map(MesTaskExecutionSegmentEntity::getStartTime).min(Comparator.naturalOrder()).orElseThrow();
@@ -143,6 +140,10 @@ public class MesChangeoverAttributionEvidenceReader {
         }
         return new Overlap(records, overlaps);
     }
-    public record Result(MesChangeoverAttributionDTO.Evidence evidence, boolean overlapsRun) { }
-    private record Overlap(List<Map<String, Object>> records, boolean overlaps) { }
+
+    public record Result(MesChangeoverAttributionDTO.Evidence evidence, boolean overlapsRun) {
+    }
+
+    private record Overlap(List<Map<String, Object>> records, boolean overlaps) {
+    }
 }

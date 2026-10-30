@@ -35,7 +35,26 @@ public class MesEngineeringPackageService {
 
     private final RemoteMdmRouteEngineeringService engineeringReleases;
 
-    /** 接收PLAN/APS时取回并校验原冻结包。 */
+    private static boolean text(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new IllegalStateException("工程包指纹计算失败", ex);
+        }
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
+    /**
+     * 接收PLAN/APS时取回并校验原冻结包。
+     */
     public FrozenEngineering resolve(MesTaskReceiveDTO receive) {
         require(receive != null, "MES工程版本核验缺少接收命令");
         FrozenEngineering frozen = resolve(receive.getEngineeringReleaseId(), receive.getEngineeringContentHash(),
@@ -49,7 +68,9 @@ public class MesEngineeringPackageService {
         return frozen;
     }
 
-    /** 首次下达前再次复核版本未撤回、当前来源未漂移，且MES未被改写。 */
+    /**
+     * 首次下达前再次复核版本未撤回、当前来源未漂移，且MES未被改写。
+     */
     public FrozenEngineering verifyBeforeIssue(MesTaskEntity task) {
         require(task != null && task.getEngineeringBundleSnapshot() != null,
                 "生产工单缺少MDM工程联合包，请从PLAN重新下达");
@@ -154,28 +175,13 @@ public class MesEngineeringPackageService {
         return result.toString();
     }
 
-    private static boolean text(String value) {
-        return value != null && !value.isBlank();
-    }
-
-    private static String sha256(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception ex) {
-            throw new IllegalStateException("工程包指纹计算失败", ex);
-        }
-    }
-
-    /** MES从原冻结包解析出的可持久路线与BOM快照。 */
+    /**
+     * MES从原冻结包解析出的可持久路线与BOM快照。
+     */
     public record FrozenEngineering(MdmRouteEngineeringDTO.ProductionPackage source,
                                     String routeSnapshot,
                                     String bomSnapshot,
                                     String parameterCatalogSnapshot,
                                     String sopManifestSnapshot) {
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
     }
 }

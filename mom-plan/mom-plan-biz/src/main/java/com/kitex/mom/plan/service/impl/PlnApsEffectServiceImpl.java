@@ -2,6 +2,13 @@ package com.kitex.mom.plan.service.impl;
 
 import cn.hutool.core.util.StrUtil;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
+import com.kitex.common.security.service.MomUser;
+import com.kitex.common.security.util.SecurityUtils;
+import com.kitex.mom.mdm.dto.MdmFactoryAccessCheck;
+import com.kitex.mom.mdm.feign.RemoteMdmFactoryAccessService;
 import com.kitex.mom.plan.dto.PlnApsCaseDTO;
 import com.kitex.mom.plan.dto.PlnApsReplanDTO;
 import com.kitex.mom.plan.entity.PlnSchedulingEffectActionEntity;
@@ -9,24 +16,19 @@ import com.kitex.mom.plan.entity.PlnSchedulingEffectObservationEntity;
 import com.kitex.mom.plan.entity.PlnSchedulingEffectReviewEntity;
 import com.kitex.mom.plan.mapper.PlnSchedulingEffectObservationMapper;
 import com.kitex.mom.plan.mapper.PlnSchedulingEffectReviewMapper;
-import com.kitex.mom.plan.service.PlnApsEffectService;
 import com.kitex.mom.plan.service.PlnApsCaseService;
+import com.kitex.mom.plan.service.PlnApsEffectService;
 import com.kitex.mom.plan.service.PlnApsReplanAdapter;
 import com.kitex.mom.plan.service.PlnSchedulingEffectActionService;
-import com.kitex.common.security.service.MomUser;
-import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.common.core.util.R;
-import com.kitex.common.data.orgFilter.FactoryContextHolder;
-import com.kitex.common.data.tenant.TenantContextHolder;
-import com.kitex.mom.mdm.dto.MdmFactoryAccessCheck;
-import com.kitex.mom.mdm.feign.RemoteMdmFactoryAccessService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Objects;
 
-/** 效果回评偏差转 APS 待确认案件的确定性判定实现。 */
+/**
+ * 效果回评偏差转 APS 待确认案件的确定性判定实现。
+ */
 @Service
 @RequiredArgsConstructor
 public class PlnApsEffectServiceImpl implements PlnApsEffectService {
@@ -37,6 +39,10 @@ public class PlnApsEffectServiceImpl implements PlnApsEffectService {
     private final PlnApsCaseService caseService;
     private final PlnSchedulingEffectActionService actionService;
     private final RemoteMdmFactoryAccessService factoryAccessService;
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -93,12 +99,8 @@ public class PlnApsEffectServiceImpl implements PlnApsEffectService {
     }
 
     private PlnApsReplanDTO.EffectCaseResult result(boolean triggered, String reason, int tolerance,
-                                                     Long reviewId, PlnApsCaseDTO apsCase) {
+                                                    Long reviewId, PlnApsCaseDTO apsCase) {
         return new PlnApsReplanDTO.EffectCaseResult().setTriggered(triggered).setReason(reason)
                 .setToleranceMinutes(tolerance).setEffectReviewId(reviewId.toString()).setApsCase(apsCase);
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
     }
 }

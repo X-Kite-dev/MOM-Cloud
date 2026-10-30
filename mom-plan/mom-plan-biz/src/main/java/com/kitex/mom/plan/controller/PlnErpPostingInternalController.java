@@ -11,7 +11,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** MES向PLAN转交已提交执行事实的内部入口。 */
+/**
+ * MES向PLAN转交已提交执行事实的内部入口。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/erpPosting/internal")

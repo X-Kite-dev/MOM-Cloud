@@ -25,7 +25,9 @@ public class PlnSchedulingAgentController {
     private final PlanResourceReplanAdvisoryQueryService resourceReplanAdvisoryQueryService;
     private final PlanAgentObjectCandidateService objectCandidateService;
 
-    /** 当前实名工厂的真实APS情景候选，不把候选排程任务当情景，也不运行或发布。 */
+    /**
+     * 当前实名工厂的真实APS情景候选，不把候选排程任务当情景，也不运行或发布。
+     */
     @PostMapping("/scenario/candidates")
     @PreAuthorize("@pms.hasPermission('agent:run:view')")
     public R<PlanAgentObjectCandidateDTO.CandidatePage> scenarioCandidates(
@@ -51,7 +53,9 @@ public class PlnSchedulingAgentController {
         return R.ok(service.query(query));
     }
 
-    /** 计划员工作台、Agent解释和效果复盘共同消费的同口径只读决策证据。 */
+    /**
+     * 计划员工作台、Agent解释和效果复盘共同消费的同口径只读决策证据。
+     */
     @PostMapping("/scenario/decision-context")
     @PreAuthorize("@pms.hasPermission('agent:run:view')")
     public R<PlanSchedulingAgentDTO.DecisionContext> decisionContext(

@@ -9,8 +9,8 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.mom.mes.dto.MesChangePointEffectRetestCreateCommand;
 import com.kitex.mom.mes.dto.MesChangePointEffectRetestContextDTO;
+import com.kitex.mom.mes.dto.MesChangePointEffectRetestCreateCommand;
 import com.kitex.mom.mes.dto.MesChangePointEffectRetestProof;
 import com.kitex.mom.mes.dto.MesChangePointEffectRetestReviewCommand;
 import com.kitex.mom.mes.entity.MesChangePointEffectRetestEntity;
@@ -33,12 +33,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 变化点损失改善的关闭后复测闭环。
@@ -64,6 +59,12 @@ public class MesChangePointEffectRetestServiceImpl
     private final MesChangePointImprovementServiceImpl improvementOperations;
     private final MesChangePointImprovementCoordinator improvementCoordinator;
     private final PlatformTransactionManager transactionManager;
+
+    private static void require(boolean valid, String message) {
+        if (!valid) {
+            throw new CheckedException(message);
+        }
+    }
 
     @Override
     public MesChangePointEffectRetestContextDTO context(Long improvementId) {
@@ -193,9 +194,9 @@ public class MesChangePointEffectRetestServiceImpl
             boolean decisionMatches = "REJECT".equals(command.getDecision()) ? "REJECTED".equals(record.getStatus())
                     : Set.of("PASS", "FAIL", "INSUFFICIENT", "STALE").contains(record.getStatus());
             require(Objects.equals(record.getReviewRequestId(), command.getRequestId()) && decisionMatches
-                            && Objects.equals(record.getReviewedBy(), operator)
-                            && Objects.equals(record.getReviewRemark(), command.getRemark().trim())
-                            && Objects.equals(record.getReviewChecks(), checks), "复测已核验或复核请求内容不同");
+                    && Objects.equals(record.getReviewedBy(), operator)
+                    && Objects.equals(record.getReviewRemark(), command.getRemark().trim())
+                    && Objects.equals(record.getReviewChecks(), checks), "复测已核验或复核请求内容不同");
             return record;
         }
         require("PENDING".equals(record.getStatus()), "只有待独立复核的复测可操作");
@@ -319,7 +320,9 @@ public class MesChangePointEffectRetestServiceImpl
                 seconds(start, end), 8, RoundingMode.HALF_UP);
     }
 
-    /** 对同一指标使用精确有理数判定，目标百分比最多两位小数。 */
+    /**
+     * 对同一指标使用精确有理数判定，目标百分比最多两位小数。
+     */
     private boolean reachesTarget(MesChangePointImprovementEntity source, String afterSnapshot,
                                   MesChangePointEffectRetestCreateCommand command) {
         var before = JSONUtil.parseObj(source.getBaselineEventSnapshot());
@@ -383,8 +386,8 @@ public class MesChangePointEffectRetestServiceImpl
         text(command.getRequestId(), 100, "复测请求号");
         require(command.getMetric() != null && METRICS.contains(command.getMetric()), "复测指标无效");
         require(command.getWindowStartTime() != null && command.getWindowEndTime() != null
-                        && command.getWindowEndTime().isAfter(command.getWindowStartTime())
-                        && !command.getWindowEndTime().isAfter(LocalDateTime.now()), "复测须使用已结束且开始早于结束的窗口");
+                && command.getWindowEndTime().isAfter(command.getWindowStartTime())
+                && !command.getWindowEndTime().isAfter(LocalDateTime.now()), "复测须使用已结束且开始早于结束的窗口");
         Duration duration = Duration.between(command.getWindowStartTime(), command.getWindowEndTime());
         require(duration.compareTo(Duration.ofMinutes(1)) >= 0 && duration.compareTo(Duration.ofDays(366)) <= 0,
                 "复测窗口须为1分钟至366天");
@@ -399,11 +402,5 @@ public class MesChangePointEffectRetestServiceImpl
 
     private void text(String value, int length, String label) {
         require(StrUtil.isNotBlank(value) && value.trim().length() <= length, label + "不能为空或长度超限");
-    }
-
-    private static void require(boolean valid, String message) {
-        if (!valid) {
-            throw new CheckedException(message);
-        }
     }
 }

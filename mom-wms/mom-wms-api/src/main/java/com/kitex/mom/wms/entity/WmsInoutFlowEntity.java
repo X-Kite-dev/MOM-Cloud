@@ -25,6 +25,15 @@ import java.time.LocalDateTime;
 @Schema(description = "出入库流水")
 public class WmsInoutFlowEntity extends BaseEntity<WmsInoutFlowEntity> {
 
+    @Schema(description = "库存货权快照：OWNED/CUSTOMER_SUPPLIED/CONSIGNED")
+    private String stockOwnerType;
+
+    @Schema(description = "库存归属方编码快照")
+    private String stockOwnerCode;
+
+    @Schema(description = "首次入库来源业务单号快照")
+    private String sourceBusinessNo;
+
     @Schema(description = "库存首次形成时的WMS入库单ID快照")
     private Long sourceInBillId;
 
@@ -114,6 +123,9 @@ public class WmsInoutFlowEntity extends BaseEntity<WmsInoutFlowEntity> {
      */
     @Schema(description = "物料条码")
     private String matBarcode;
+
+    @Schema(description = "单件序列号管理标记；调拨和发运恢复时继承原库存身份")
+    private Boolean serialManaged;
 
     /**
      * 物料批次

@@ -7,7 +7,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
-/** MPS提交前的RCCP粗能力承诺预览。 */
+/**
+ * MPS提交前的RCCP粗能力承诺预览。
+ */
 public class PlnMpsCapacityDTO {
 
     @Data
@@ -32,9 +34,13 @@ public class PlnMpsCapacityDTO {
         private String resourceCode;
         private String resourceName;
         private String capacityBasis;
-        /** 产品数量对应的纯加工分钟。 */
+        /**
+         * 产品数量对应的纯加工分钟。
+         */
         private BigDecimal processingMinutes;
-        /** 相邻产品族切换占用分钟。 */
+        /**
+         * 相邻产品族切换占用分钟。
+         */
         private BigDecimal changeoverMinutes;
         private String fromFamilyCode;
         private String toFamilyCode;

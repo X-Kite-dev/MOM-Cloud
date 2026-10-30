@@ -9,31 +9,14 @@ import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
 import com.kitex.mom.mes.dto.MesApsLocalScheduleDTO;
 import com.kitex.mom.plan.dto.PlanSchedulingAgentDTO;
 import com.kitex.mom.plan.dto.PlnMpsRemainingReplanDTO;
-import com.kitex.mom.plan.entity.PlnIssueEntity;
-import com.kitex.mom.plan.entity.PlnMpsLineEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingScenarioEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingTaskEntity;
-import com.kitex.mom.plan.mapper.PlnIssueMapper;
-import com.kitex.mom.plan.mapper.PlnMpsLineMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingOperationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingScenarioMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskMapper;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.mapper.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.*;
 
 /**
  * MPS剩余工序的完整业务取证，不采用Agent的重点30条展示作为执行清单。
@@ -56,23 +39,23 @@ public class PlnMpsRemainingEvidenceReader {
     private final RemoteMesTaskService mesService;
     private final PlnMpsExecutionEvidenceReader scopeReader;
 
-    /** 原始工序事实与内部效果契约同时返回，业务端不调用模型或自动改计划。 */
-    public record Proof(PlanSchedulingAgentDTO.EffectEvidence effect,
-                        List<PlnMpsRemainingReplanDTO.Operation> operations,
-                        List<String> gaps, String mesFingerprint, String snapshot) {
-    }
-
-    /** A3及回退复核必须重核实际工厂write授权，不能只依靠按钮权限或工厂请求头。 */
+    /**
+     * A3及回退复核必须重核实际工厂write授权，不能只依靠按钮权限或工厂请求头。
+     */
     void requireWriteAccess() {
         scopeReader.requireBusinessFactoryAccess("write");
     }
 
-    /** 永久回执核对也必须有实际工厂read授权，而不仅是工厂请求头。 */
+    /**
+     * 永久回执核对也必须有实际工厂read授权，而不仅是工厂请求头。
+     */
     void requireReadAccess() {
         scopeReader.requireBusinessFactoryAccess("read");
     }
 
-    /** 读取一张MPS根计划的全部正式工序，任何超限、重复或缺失映射保持不可评估。 */
+    /**
+     * 读取一张MPS根计划的全部正式工序，任何超限、重复或缺失映射保持不可评估。
+     */
     public Proof read(Long issueId, Long sourceScenarioId, int toleranceMinutes) {
         String factory = scopeReader.actualFactory();
         Long tenant = TenantContextHolder.getTenantId();
@@ -82,8 +65,8 @@ public class PlnMpsRemainingEvidenceReader {
                 .eq(PlnIssueEntity::getId, issueId).eq(PlnIssueEntity::getTenantId, tenant)
                 .eq(PlnIssueEntity::getFactoryCode, factory));
         require(issue != null && issue.getMpsLineId() != null && "issue".equals(issue.getType())
-                && Set.of("1", "2").contains(StrUtil.blankToDefault(issue.getStatus(), "UNKNOWN"))
-                && Boolean.TRUE.equals(issue.getLockStatus()) && issue.getLockTaskId() != null,
+                        && Set.of("1", "2").contains(StrUtil.blankToDefault(issue.getStatus(), "UNKNOWN"))
+                        && Boolean.TRUE.equals(issue.getLockStatus()) && issue.getLockTaskId() != null,
                 "当前实际工厂未找到已下达/生产中且正式锁定的MPS根计划");
         PlnMpsLineEntity line = lineMapper.selectOne(new LambdaQueryWrapper<PlnMpsLineEntity>()
                 .eq(PlnMpsLineEntity::getId, issue.getMpsLineId()).eq(PlnMpsLineEntity::getTenantId, tenant)
@@ -100,9 +83,9 @@ public class PlnMpsRemainingEvidenceReader {
                 .eq(PlnSchedulingScenarioEntity::getId, sourceScenarioId).eq(PlnSchedulingScenarioEntity::getTenantId, tenant)
                 .eq(PlnSchedulingScenarioEntity::getFactoryCode, factory));
         require(task != null && "official".equalsIgnoreCase(task.getMode())
-                && Set.of("SUCCESS", "PARTIAL").contains(StrUtil.blankToDefault(task.getTaskStatus(), "UNKNOWN"))
-                && Objects.equals(task.getScenarioId(), sourceScenarioId)
-                && scenario != null && Set.of("PUBLISHED", "PARTIAL").contains(scenario.getScenarioStatus()),
+                        && Set.of("SUCCESS", "PARTIAL").contains(StrUtil.blankToDefault(task.getTaskStatus(), "UNKNOWN"))
+                        && Objects.equals(task.getScenarioId(), sourceScenarioId)
+                        && scenario != null && Set.of("PUBLISHED", "PARTIAL").contains(scenario.getScenarioStatus()),
                 "根计划当前锁定任务与已发布来源情景不一致；旧单方案不能猜测来源情景");
         List<PlnSchedulingOperationEntity> plans = operationMapper.selectList(new LambdaQueryWrapper<PlnSchedulingOperationEntity>()
                 .eq(PlnSchedulingOperationEntity::getTaskId, task.getId()).eq(PlnSchedulingOperationEntity::getIssueId, issueId)
@@ -114,8 +97,8 @@ public class PlnMpsRemainingEvidenceReader {
         require(response != null && response.isOk() && response.getData() != null, "MES实时工序取证不可用");
         MesApsLocalScheduleDTO.StateBundle bundle = response.getData();
         require(Objects.equals(bundle.getFactoryCode(), factory) && Objects.equals(bundle.getPlanNo(), issue.getIssueNo())
-                && Boolean.TRUE.equals(bundle.getMesTaskPresent()) && StrUtil.isNotBlank(bundle.getExecutionFingerprint())
-                && bundle.getOperations() != null && !bundle.getOperations().isEmpty() && bundle.getOperations().size() <= 1000,
+                        && Boolean.TRUE.equals(bundle.getMesTaskPresent()) && StrUtil.isNotBlank(bundle.getExecutionFingerprint())
+                        && bundle.getOperations() != null && !bundle.getOperations().isEmpty() && bundle.getOperations().size() <= 1000,
                 "MES必须完整返回当前精确根计划工序，不能缺工单或截断来源");
 
         List<String> gaps = new ArrayList<>();
@@ -170,7 +153,7 @@ public class PlnMpsRemainingEvidenceReader {
     }
 
     private PlnMpsRemainingReplanDTO.Operation operation(PlnSchedulingOperationEntity plan,
-            MesApsLocalScheduleDTO.OperationState state, LocalDateTime now, int tolerance) {
+                                                         MesApsLocalScheduleDTO.OperationState state, LocalDateTime now, int tolerance) {
         var row = new PlnMpsRemainingReplanDTO.Operation().setOperationId(String.valueOf(plan.getId()))
                 .setProcessCode(plan.getProcessCode()).setProcessName(plan.getProcessName()).setOperationSeq(plan.getOperationSeq())
                 .setSourceRouteNodeCode(plan.getSourceRouteNodeCode()).setPredecessorNodeCodes(plan.getPredecessorNodeCodes())
@@ -199,12 +182,14 @@ public class PlnMpsRemainingEvidenceReader {
                 || Set.of("PRODUCT", "PAUSE", "FINISH").contains(state.getStatus()))) {
             return disposition(row, "DATA_REPAIR_REQUIRED", "工序状态、序号、数量、PLAN/MES计划时刻或实际时刻不可完整核验");
         }
-        if ("PAUSE".equals(state.getStatus())) return disposition(row, "EXECUTION_BLOCKED", "先解除MES现场暂停和生产门，不以重排代替复产");
+        if ("PAUSE".equals(state.getStatus()))
+            return disposition(row, "EXECUTION_BLOCKED", "先解除MES现场暂停和生产门，不以重排代替复产");
         if (state.getActualStartTime() != null || state.getActualFinishTime() != null || state.getCompleteQuantity().signum() > 0
                 || !Set.of("WAIT", "UN_RECEIVE").contains(state.getStatus())) {
             return disposition(row, "EXECUTION_LOCKED_REVIEW", "已接收/执行工序保留原事实，不纳入移动范围");
         }
-        if (!Boolean.TRUE.equals(state.getMovable())) return disposition(row, "EXECUTION_BLOCKED", StrUtil.blankToDefault(state.getBlockedReason(), "MES未证明允许移动"));
+        if (!Boolean.TRUE.equals(state.getMovable()))
+            return disposition(row, "EXECUTION_BLOCKED", StrUtil.blankToDefault(state.getBlockedReason(), "MES未证明允许移动"));
         if (!now.isBefore(plan.getScheduledStartTime().plusMinutes(tolerance))) {
             return row.setEligible(true).setDisposition("LOCAL_REPLAN_CANDIDATE").setReason("未接收/开工且已超开工容差，可评估直接工序及其未执行后序");
         }
@@ -245,7 +230,9 @@ public class PlnMpsRemainingEvidenceReader {
         return true;
     }
 
-    /** 检查全部上游，防止把正在加工的前序的旧预计完工当成当前可靠完工。 */
+    /**
+     * 检查全部上游，防止把正在加工的前序的旧预计完工当成当前可靠完工。
+     */
     private boolean predecessorsSafe(String code, Map<String, PlnMpsRemainingReplanDTO.Operation> operations,
                                      Set<String> visiting, Set<String> affected, LocalDateTime now, int tolerance) {
         if (!visiting.add(code)) return false;
@@ -265,7 +252,8 @@ public class PlnMpsRemainingEvidenceReader {
                     && (parent.getPlannedStart() == null || parent.getPlannedEnd() == null
                     || !LocalDateTime.parse(parent.getPlannedStart()).plusMinutes(tolerance).isAfter(now)
                     || !LocalDateTime.parse(parent.getPlannedEnd()).isAfter(now))
-                    || !predecessorsSafe(predecessor.trim(), operations, visiting, affected, now, tolerance)) return false;
+                    || !predecessorsSafe(predecessor.trim(), operations, visiting, affected, now, tolerance))
+                return false;
         }
         visiting.remove(code);
         return true;
@@ -283,7 +271,9 @@ public class PlnMpsRemainingEvidenceReader {
         return StrUtil.isNotBlank(row.getSourceRouteNodeCode()) ? row.getPredecessorNodeCodes() : row.getPredecessorCodes();
     }
 
-    /** Existing V1 state positions remain byte-compatible; NODE_V2 appends only the node identity. */
+    /**
+     * Existing V1 state positions remain byte-compatible; NODE_V2 appends only the node identity.
+     */
     private List<Object> stateSnapshot(MesApsLocalScheduleDTO.OperationState state, boolean nodeContract) {
         List<Object> result = new ArrayList<>(Arrays.asList(state.getProduceTaskId() == null ? null : state.getProduceTaskId().toString(),
                 state.getProduceTaskCode(), state.getTaskCode(), state.getRouteCode(), state.getRouteOrder(), state.getStatus(),
@@ -303,5 +293,13 @@ public class PlnMpsRemainingEvidenceReader {
 
     private void require(boolean valid, String message) {
         if (!valid) throw new CheckedException(message);
+    }
+
+    /**
+     * 原始工序事实与内部效果契约同时返回，业务端不调用模型或自动改计划。
+     */
+    public record Proof(PlanSchedulingAgentDTO.EffectEvidence effect,
+                        List<PlnMpsRemainingReplanDTO.Operation> operations,
+                        List<String> gaps, String mesFingerprint, String snapshot) {
     }
 }

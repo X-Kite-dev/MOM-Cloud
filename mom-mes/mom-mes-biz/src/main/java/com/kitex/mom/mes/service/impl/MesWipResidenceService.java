@@ -80,7 +80,8 @@ public class MesWipResidenceService {
                 return g;
             });
             // 多实际任务或新旧合同汇总后，不把首行身份当成整个分组的身份。
-            if (!Objects.equals(group.get("produceTaskCode"), row.get("produceTaskCode"))) group.put("produceTaskCode", null);
+            if (!Objects.equals(group.get("produceTaskCode"), row.get("produceTaskCode")))
+                group.put("produceTaskCode", null);
             if (!Objects.equals(group.get("nodeState"), row.get("nodeState"))) group.put("nodeState", null);
             group.put("stockLines", number(group, "stockLines") + 1);
             if (group.get("quantity") != null)
@@ -156,7 +157,9 @@ public class MesWipResidenceService {
         return s.trim();
     }
 
-    /** 旧NULL执行协议可核实实际任务来源，但不能据参数节点冒充原生执行节点。 */
+    /**
+     * 旧NULL执行协议可核实实际任务来源，但不能据参数节点冒充原生执行节点。
+     */
     private boolean verifiedNodeSource(Map<String, Object> row) {
         return "MATCHED".equals(row.get("nodeState")) || "LEGACY".equals(row.get("nodeState"));
     }

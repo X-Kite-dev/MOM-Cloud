@@ -4,21 +4,9 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
 import com.kitex.common.log.annotation.SysLog;
-import com.kitex.mom.plan.dto.PlnApsCaseCommand;
-import com.kitex.mom.plan.dto.PlnApsCaseDTO;
-import com.kitex.mom.plan.dto.PlnApsDecisionDTO;
-import com.kitex.mom.plan.dto.PlnApsResourceDTO;
-import com.kitex.mom.plan.dto.PlnApsReplanDTO;
-import com.kitex.mom.plan.dto.PlanSchedulingAgentDTO;
-import com.kitex.mom.plan.service.PlnApsCaseService;
-import com.kitex.mom.plan.service.PlnApsA3ApprovalService;
-import com.kitex.mom.plan.service.PlnApsDecisionService;
-import com.kitex.mom.plan.service.PlnApsEffectService;
-import com.kitex.mom.plan.service.PlnApsReadinessService;
-import com.kitex.mom.plan.service.PlnApsReplanAdapter;
-import com.kitex.mom.plan.service.PlnApsResourceSnapshotService;
-import com.kitex.mom.plan.service.PlnApsSolverFacade;
+import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
+import com.kitex.mom.plan.service.*;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -42,6 +30,8 @@ public class PlnApsCaseController {
     private final PlnApsResourceSnapshotService resourceSnapshotService;
     private final PlnApsReadinessService readinessService;
     private final PlnApsSolverFacade solverFacade;
+    private final PlnApsLocalReplanWorkbenchService localReplanWorkbenchService;
+    private final PlnApsLocalExecutionService localExecutionService;
     private final PlnApsDecisionService decisionService;
     private final PlnApsA3ApprovalService approvalService;
     private final PlnApsReplanAdapter replanAdapter;
@@ -118,7 +108,7 @@ public class PlnApsCaseController {
     @SysLog("采集智能APS资源证据")
     @PreAuthorize("@pms.hasPermission('plan_apsResource_capture')")
     public R<PlnApsResourceDTO.Snapshot> capture(@PathVariable Long caseId,
-                                                  @RequestBody PlnApsResourceDTO.CaptureCommand command) {
+                                                 @RequestBody PlnApsResourceDTO.CaptureCommand command) {
         return R.ok(resourceSnapshotService.capture(caseId, command.getRequestId(),
                 command.getExpectedCaseFingerprint()));
     }
@@ -127,7 +117,7 @@ public class PlnApsCaseController {
     @Operation(summary = "查询资源快照和结构化预检问题")
     @PreAuthorize("@pms.hasPermission('plan_plnSchedulingRule_view')")
     public R<PlnApsResourceDTO.Snapshot> resourceSnapshot(@PathVariable Long caseId,
-                                                           @PathVariable Long snapshotId) {
+                                                          @PathVariable Long snapshotId) {
         return R.ok(resourceSnapshotService.detail(caseId, snapshotId));
     }
 
@@ -153,8 +143,41 @@ public class PlnApsCaseController {
     @SysLog("运行智能APS多候选求解")
     @PreAuthorize("@pms.hasPermission('plan_apsScenario_run')")
     public R<PlanSchedulingAgentDTO.ScenarioEvidence> run(@PathVariable Long caseId,
-                                                           @RequestBody PlnApsDecisionDTO.RunCommand command) {
+                                                          @RequestBody PlnApsDecisionDTO.RunCommand command) {
         return R.ok(solverFacade.run(caseId, command));
+    }
+
+    @GetMapping("/{caseId}/solver/request")
+    @Operation(summary = "只读核对当前案件原计算请求回执")
+    @PreAuthorize("@pms.hasPermission('plan_plnSchedulingRule_view')")
+    public R<PlnApsDecisionDTO.RequestReceipt> solverRequest(@PathVariable Long caseId,
+                                                           @RequestParam String requestId) {
+        return R.ok(solverFacade.lookupRequest(caseId, requestId));
+    }
+
+    @GetMapping("/{caseId}/replan/workbench")
+    @Operation(summary = "读取原业务局部重排候选及完整工序差异")
+    @PreAuthorize("@pms.hasPermission('plan_plnSchedulingRule_view')")
+    public R<PlnApsLocalReplanDTO.Workbench> localReplanWorkbench(@PathVariable Long caseId) {
+        return R.ok(localReplanWorkbenchService.detail(caseId));
+    }
+
+    @GetMapping("/{caseId}/replan/candidates/{candidateId}/execution")
+    @Operation(summary = "只读核对原MES应用回执、当前计划时刻和实际执行，逐计划分页")
+    @PreAuthorize("@pms.hasPermission('plan_plnSchedulingRule_view') and @pms.hasPermission('mesTask:show')")
+    public R<PlnApsLocalExecutionDTO.Page> localExecution(@PathVariable Long caseId,
+            @PathVariable String candidateId, @RequestParam(defaultValue = "1") int current,
+            @RequestParam(required = false) String pendingRequestId) {
+        return R.ok(localExecutionService.page(caseId, candidateId, current, pendingRequestId));
+    }
+
+    @PostMapping("/{caseId}/replan/effect-assess")
+    @Operation(summary = "按原执行偏差领域生成候选并进入对应统一案件")
+    @SysLog("从APS执行效果生成局部重排候选")
+    @PreAuthorize("@pms.hasPermission('agent:action:propose') and @pms.hasPermission('plan_apsCase_create')")
+    public R<PlnApsCaseDTO> assessEffectReplan(@PathVariable Long caseId,
+            @RequestBody PlnApsLocalReplanDTO.EffectAssessCommand command) {
+        return R.ok(localReplanWorkbenchService.assessEffect(caseId, command));
     }
 
     @GetMapping("/{caseId}/decision/compare")

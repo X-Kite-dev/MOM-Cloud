@@ -28,17 +28,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
-/** MPS确定性来源批量读取器；仅Mapper和MES证据依赖，不调用MpsService或RCCP。 */
+/**
+ * MPS确定性来源批量读取器；仅Mapper和MES证据依赖，不调用MpsService或RCCP。
+ */
 @Component
 @RequiredArgsConstructor
 public class PlnMpsExecutionSourceReader {
@@ -48,7 +43,9 @@ public class PlnMpsExecutionSourceReader {
     private final PlnProductDemandMapper demandMapper;
     private final RemoteMesPlanExecutionService mesService;
 
-    /** PLAN调用方使用只读一致性事务；MES在其自己的同一快照内采集，非跨库分布式快照。 */
+    /**
+     * PLAN调用方使用只读一致性事务；MES在其自己的同一快照内采集，非跨库分布式快照。
+     */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, propagation = Propagation.REQUIRES_NEW)
     public PlnMpsExecutionDTO.Evidence read(Long versionId, int tolerance) {
         String factory = actualFactory();
@@ -71,7 +68,9 @@ public class PlnMpsExecutionSourceReader {
                 .setToleranceMinutes(tolerance).setResult(result(buckets)).setBuckets(buckets);
     }
 
-    /** RCCP精确来源批量取证，共用原兑现算法且不依赖MpsService，防止读侧构造循环。 */
+    /**
+     * RCCP精确来源批量取证，共用原兑现算法且不依赖MpsService，防止读侧构造循环。
+     */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, propagation = Propagation.REQUIRES_NEW)
     public List<PlnMpsExecutionDTO.Bucket> readBuckets(List<Long> lineIds, int tolerance) {
         String factory = actualFactory();
@@ -95,7 +94,7 @@ public class PlnMpsExecutionSourceReader {
     }
 
     private List<PlnMpsExecutionDTO.Bucket> collect(List<PlnMpsLineEntity> lines,
-                                                   Map<Long, PlnMpsVersionEntity> versions, int tolerance) {
+                                                    Map<Long, PlnMpsVersionEntity> versions, int tolerance) {
         String factory = actualFactory();
         Long tenant = TenantContextHolder.getTenantId();
         List<PlnIssueEntity> roots = issueMapper.selectList(new LambdaQueryWrapper<PlnIssueEntity>()
@@ -156,8 +155,8 @@ public class PlnMpsExecutionSourceReader {
     }
 
     private PlnMpsExecutionDTO.Bucket bucket(PlnMpsVersionEntity version, PlnMpsLineEntity line,
-            List<PlnIssueEntity> roots, Map<String, MesPlanExecutionEvidenceDTO.Plan> mes, String remoteGap,
-            LocalDateTime now, int tolerance) {
+                                             List<PlnIssueEntity> roots, Map<String, MesPlanExecutionEvidenceDTO.Plan> mes, String remoteGap,
+                                             LocalDateTime now, int tolerance) {
         List<String> gaps = new ArrayList<>();
         List<String> quantityGaps = new ArrayList<>();
         var row = new PlnMpsExecutionDTO.Bucket().setLineId(String.valueOf(line.getId())).setBucketKey(line.getBucketKey())
@@ -171,7 +170,7 @@ public class PlnMpsExecutionSourceReader {
                 line.getBucketKey(), line.getActive(), decimal(line.getPlanQuantity()), line.getPlannedDate(), line.getSourceDueDate(),
                 line.getCapacityEvidenceFingerprint(), line.getCapacityEvidenceSnapshot(), line.getLotPolicyEvidenceFingerprint(),
                 roots.stream().map(root -> Arrays.asList(String.valueOf(root.getId()), root.getIssueNo(), root.getMpsLineId() == null
-                        ? null : root.getMpsLineId().toString(), root.getPlanningSourceKey(), root.getProductCode(), decimal(root.getNum()),
+                                ? null : root.getMpsLineId().toString(), root.getPlanningSourceKey(), root.getProductCode(), decimal(root.getNum()),
                         root.getStatus(), decimal(root.getFinishNum()), root.getFinishTime(), root.getScheduledDate(), root.getScheduledEndDate(),
                         decimal(root.getUnqualifiedNum()), decimal(root.getQualityIsolatedNum()), decimal(root.getQualityReleasedNum()),
                         decimal(root.getQualityRejectedNum()), decimal(root.getScrapNum()), decimal(root.getReworkNum()),
@@ -309,7 +308,7 @@ public class PlnMpsExecutionSourceReader {
             boolean movable = !row.getLinks().isEmpty() && row.getLinks().stream()
                     .allMatch(link -> Boolean.TRUE.equals(link.getAllOperationsMovable()));
             return row.setRoute(Boolean.TRUE.equals(row.getStarted()) ? "STARTED_REPLAN_REVIEW"
-                    : movable ? "PRESTART_REPLAN_REVIEW" : "DISPATCH_REVIEW")
+                            : movable ? "PRESTART_REPLAN_REVIEW" : "DISPATCH_REVIEW")
                     .setNextStep(Boolean.TRUE.equals(row.getStarted())
                             ? "已执行工序保持锁定；从APS正式排程/效果回评核查剩余未开工偏差，另走既有局部案件。本观察不生成候选，不支持已开工MPS全量替换"
                             : movable ? "从APS评估可移动工序，或在MPS原受控入口复核冻结区和下游撤回，仍须异岗发布"
@@ -319,7 +318,9 @@ public class PlnMpsExecutionSourceReader {
                 .setNextStep("继续按当前正式生产计划执行，后续报工/冲销/入库后重新采集兑现观察");
     }
 
-    /** 泛型集合显式投影，避免Bean复制把MES事件对象直接塞入PLAN边界。 */
+    /**
+     * 泛型集合显式投影，避免Bean复制把MES事件对象直接塞入PLAN边界。
+     */
     private PlnMpsExecutionDTO.SourceLink sourceLink(MesPlanExecutionEvidenceDTO.Link source) {
         var result = BeanUtil.toBean(source, PlnMpsExecutionDTO.SourceLink.class);
         result.setProductionEvents(source.getProductionEvents() == null ? null : source.getProductionEvents().stream()
@@ -347,7 +348,7 @@ public class PlnMpsExecutionSourceReader {
     String actualFactory() {
         String factory = FactoryContextHolder.getFactoryCode();
         require(TenantContextHolder.getTenantId() != null && !TenantContextHolder.getTenantSkip()
-                && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) && StrUtil.isNotBlank(factory),
+                        && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) && StrUtil.isNotBlank(factory),
                 "MPS执行回评须选择实际租户、工厂，禁止跳过隔离");
         require(SecurityUtils.getUser() != null && StrUtil.isNotBlank(SecurityUtils.getUser().getUsername()),
                 "执行来源取证须实际实名账号");

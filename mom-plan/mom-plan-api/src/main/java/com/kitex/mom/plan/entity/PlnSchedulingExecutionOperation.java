@@ -1,10 +1,15 @@
 package com.kitex.mom.plan.entity;
+
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
-@Data @EqualsAndHashCode(callSuper=true) @TenantTable @TableName("pln_scheduling_execution_operation")
+
+@Data
+@EqualsAndHashCode(callSuper = true)
+@TenantTable
+@TableName("pln_scheduling_execution_operation")
 public class PlnSchedulingExecutionOperation extends BaseEntity<PlnSchedulingExecutionOperation> {
     private Long executionId;
     private String requestId;

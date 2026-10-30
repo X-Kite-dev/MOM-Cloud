@@ -103,13 +103,19 @@ public interface MdmProcessRouteService extends IService<MdmProcessRouteEntity> 
      */
     Boolean saveProcessWorking(MdmProcessRouteProcedureDTO mdmProcessRouteProcedureDTO);
 
-    /** 仅复制空目标路线的图结构与节点配置，不复制工程附件和历史。 */
+    /**
+     * 仅复制空目标路线的图结构与节点配置，不复制工程附件和历史。
+     */
     Boolean copyGraph(MdmRouteGraphCopyDTO command);
 
-    /** 旧生产选路必须能无损投影为唯一主工序图，不允许静默忽略重复节点。 */
+    /**
+     * 旧生产选路必须能无损投影为唯一主工序图，不允许静默忽略重复节点。
+     */
     void requireLegacyExecutableRoutes(List<MdmProcessRouteEntity> routes);
 
-    /** 工程表头编辑不读取旧生产投影，重复图仍可修改名称等非图属性。 */
+    /**
+     * 工程表头编辑不读取旧生产投影，重复图仍可修改名称等非图属性。
+     */
     MdmProcessRouteEntity getEngineeringHeader(Long id);
 
     /**
@@ -200,7 +206,9 @@ public interface MdmProcessRouteService extends IService<MdmProcessRouteEntity> 
      */
     MdmProcessProcedureSettingEntity getSetByCode(String routeCode, String processCode);
 
-    /** 按当前工厂的稳定路线节点查询配置；旧工序编码入口仅作唯一桥接。 */
+    /**
+     * 按当前工厂的稳定路线节点查询配置；旧工序编码入口仅作唯一桥接。
+     */
     MdmProcessProcedureSettingEntity getSetByNode(String routeCode, String routeNodeCode);
 
     /**
@@ -211,6 +219,8 @@ public interface MdmProcessRouteService extends IService<MdmProcessRouteEntity> 
      */
     Boolean saveOrUpdateSet(MdmProcessProcedureSettingEntity mdmProcessProcedureSetting);
 
-    /** 按当前组织明确移除一个工序配置依赖，不修改已冻结的生产工单。 */
+    /**
+     * 按当前组织明确移除一个工序配置依赖，不修改已冻结的生产工单。
+     */
     Boolean removeSetting(Long id);
 }

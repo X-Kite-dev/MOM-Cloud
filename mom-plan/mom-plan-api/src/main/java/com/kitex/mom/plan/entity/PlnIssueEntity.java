@@ -3,8 +3,8 @@ package com.kitex.mom.plan.entity;
 import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.github.yulichang.annotation.EntityMapping;
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.github.yulichang.annotation.EntityMapping;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -28,8 +28,10 @@ import java.util.List;
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "计划下达表")
 public class PlnIssueEntity extends BaseEntity<PlnIssueEntity> {
-    /** 仅本次引擎内传递，结果持久化时单独保存，不写来源计划或远端业务实体。 */
-    @com.baomidou.mybatisplus.annotation.TableField(exist=false)
+    /**
+     * 仅本次引擎内传递，结果持久化时单独保存，不写来源计划或远端业务实体。
+     */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
     @com.fasterxml.jackson.annotation.JsonIgnore
     private String sequenceEvidenceJson;
 
@@ -183,42 +185,60 @@ public class PlnIssueEntity extends BaseEntity<PlnIssueEntity> {
     @Schema(description = "MES首次接收生产计划时间")
     private LocalDateTime mesIssueTime;
 
-    /** 生产计划精确绑定的已发布工程版本ID。 */
+    /**
+     * 生产计划精确绑定的已发布工程版本ID。
+     */
     @Schema(description = "精确工程版本ID")
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long engineeringReleaseId;
 
-    /** 与工程版本ID共同组成生产消费版本对的冻结原文SHA256。 */
+    /**
+     * 与工程版本ID共同组成生产消费版本对的冻结原文SHA256。
+     */
     @Schema(description = "工程版本冻结原文SHA256")
     private String engineeringContentHash;
 
-    /** 路线内工程版本号，仅用于人员识别，不替代ID与指纹。 */
+    /**
+     * 路线内工程版本号，仅用于人员识别，不替代ID与指纹。
+     */
     @Schema(description = "工程版本号")
     private Integer engineeringVersionNo;
 
-    /** 工程版本固定的路线ID。 */
+    /**
+     * 工程版本固定的路线ID。
+     */
     @Schema(description = "工程版本路线ID")
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long engineeringRouteId;
 
-    /** 工程版本固定的路线编码。 */
+    /**
+     * 工程版本固定的路线编码。
+     */
     @Schema(description = "工程版本路线编码")
     private String engineeringRouteCode;
 
-    /** 工程版本固定的BOM ID。 */
+    /**
+     * 工程版本固定的BOM ID。
+     */
     @Schema(description = "工程版本BOM ID")
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long engineeringBomId;
 
-    /** 工程版本固定的BOM业务版本。 */
+    /**
+     * 工程版本固定的BOM业务版本。
+     */
     @Schema(description = "工程版本BOM版本")
     private String engineeringBomVersion;
 
-    /** 最近一次工程版本绑定实名用户。 */
+    /**
+     * 最近一次工程版本绑定实名用户。
+     */
     @Schema(description = "工程版本绑定人")
     private String engineeringBoundBy;
 
-    /** 最近一次工程版本绑定时间。 */
+    /**
+     * 最近一次工程版本绑定时间。
+     */
     @Schema(description = "工程版本绑定时间")
     private LocalDateTime engineeringBoundTime;
 

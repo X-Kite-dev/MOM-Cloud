@@ -1,6 +1,7 @@
 package com.kitex.mom.plan.feign;
 
 import com.kitex.common.core.util.R;
+import com.kitex.common.feign.annotation.InternalCall;
 import com.kitex.mom.Constants;
 import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
 import com.kitex.mom.plan.entity.PlnIssueEntity;
@@ -20,6 +21,7 @@ public interface RemotePlnIssueService {
      * @param omsOrderLifeCycleDtoList 订单生命周期DTO
      * @return R
      */
+    @InternalCall
     @PutMapping("/plnIssue/edit")
     R<Boolean> edit(@RequestBody List<OmsOrderLifeCycleDTO> omsOrderLifeCycleDtoList);
 

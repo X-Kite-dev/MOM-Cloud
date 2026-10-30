@@ -28,6 +28,27 @@ public class WmsInoutFlowQueryDTO {
     @Schema(description = "物料编码")
     private String matCode;
 
+    @Schema(description = "物料批次，精确匹配")
+    private String matBatch;
+
+    @Schema(description = "条码或序列号，精确匹配")
+    private String matBarcode;
+
+    @Schema(description = "首次入库单明细ID")
+    private Long sourceInBillDetailId;
+
+    @Schema(description = "实际扣减或形成的库存行ID")
+    private Long sourceStockId;
+
+    @Schema(description = "库存货权")
+    private String stockOwnerType;
+
+    @Schema(description = "库存归属方编码")
+    private String stockOwnerCode;
+
+    @Schema(description = "首次入库来源业务单号")
+    private String sourceBusinessNo;
+
     /**
      * 物料名称
      */

@@ -32,7 +32,9 @@ public class PlnMpsRemainingCommitmentEvidenceReader {
     private final PlnMpsExecutionEvidenceReader executionReader;
     private final PlnMpsRemainingFulfillmentCalculator calculator;
 
-    /** 新编制引用30分钟内的独立确认观察；过期不能用新采集时间覆盖原观察时间。 */
+    /**
+     * 新编制引用30分钟内的独立确认观察；过期不能用新采集时间覆盖原观察时间。
+     */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Reference read(Long observationId, Long lineId) {
         require(observationId != null && lineId != null, "原确认观察及精确MPS桶必填");
@@ -87,7 +89,9 @@ public class PlnMpsRemainingCommitmentEvidenceReader {
         return new Reference(record, baseline, current.get(0), progress);
     }
 
-    /** 展示数量准备情况，不虚构新分期、不提供正式发布写入口。 */
+    /**
+     * 展示数量准备情况，不虚构新分期、不提供正式发布写入口。
+     */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public PlnMpsRemainingCommitmentDTO.BaselinePreview preview(Long observationId, Long lineId) {
         // read()没有写入；在此调用仍共享本方法开启的只读一致性事务。
@@ -108,7 +112,9 @@ public class PlnMpsRemainingCommitmentEvidenceReader {
         if (!condition) throw new CheckedException(message);
     }
 
-    /** 仅领域内部使用，不把数据库观察行当可由客户端修改的提交载荷。 */
+    /**
+     * 仅领域内部使用，不把数据库观察行当可由客户端修改的提交载荷。
+     */
     public record Reference(PlnMpsExecutionObservationEntity observation,
                             PlnMpsRemainingCommitmentDTO.Baseline baseline,
                             PlnMpsExecutionDTO.Bucket current,

@@ -13,6 +13,7 @@ import com.kitex.common.security.component.PermissionService;
 import com.kitex.mom.wms.dto.WmsAllocationBillAddDTO;
 import com.kitex.mom.wms.dto.WmsAllocationBillQueryDTO;
 import com.kitex.mom.wms.dto.WmsAllocationCancelDTO;
+import com.kitex.mom.wms.dto.WmsAllocationReturnDTO;
 import com.kitex.mom.wms.dto.WmsCrossWarehouseTransferDTO;
 import com.kitex.mom.wms.dto.app.WmsAllocationBillAppDTO;
 import com.kitex.mom.wms.entity.WmsAllocationBillEntity;
@@ -133,12 +134,20 @@ public class WmsAllocationBillController {
         return R.ok(wmsAllocationBillService.updateAllocationBill(wmsAllocationBillAdd));
     }
 
-    @Operation(summary = "取消在途调拨", description = "将新模式调拨的在途库存按原批次和质量属性返还源仓")
+    @Operation(summary = "申请取消在途调拨", description = "停止目标仓预计到货，实物确认退回前不恢复源仓库存")
     @SysLog("取消在途调拨")
     @PostMapping("/cancel")
     @PreAuthorize("@pms.hasPermission('wms_wmsAllocationBill_cancel_*','wms_wmsAllocationBill_cancel')")
     public R<Boolean> cancel(@RequestBody WmsAllocationCancelDTO command) {
         return R.ok(wmsAllocationBillService.cancel(command));
+    }
+
+    @Operation(summary = "确认调拨实物退回", description = "分批核对实际回到源仓原库位的数量，仅恢复本次实物库存")
+    @SysLog("确认调拨实物退回")
+    @PostMapping("/confirm-return")
+    @PreAuthorize("@pms.hasPermission('wms_wmsAllocationBill_cancel_*','wms_wmsAllocationBill_cancel')")
+    public R<Boolean> confirmReturn(@RequestBody WmsAllocationReturnDTO command) {
+        return R.ok(wmsAllocationBillService.confirmReturn(command));
     }
 
     @Operation(summary = "Agent跨仓调拨建议", description = "按安全库存、活动预留、质量效期和目标仓在途计算可执行建议")

@@ -2,22 +2,14 @@ package com.kitex.mom.mes.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
-import cn.hutool.json.JSONUtil;
 import cn.hutool.json.JSONConfig;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.mes.dto.MesChangeoverAttributionDTO;
-import com.kitex.mom.mes.entity.MesChangeoverExecutionEntity;
-import com.kitex.mom.mes.entity.MesProduceTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskDeviceRecordEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.mapper.MesChangeoverExecutionMapper;
-import com.kitex.mom.mes.mapper.MesProduceTaskMapper;
-import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
-import com.kitex.mom.mes.mapper.MesTaskDeviceRecordMapper;
-import com.kitex.mom.mes.mapper.MesTaskMapper;
+import com.kitex.mom.mes.entity.*;
+import com.kitex.mom.mes.mapper.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -26,13 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.TreeMap;
+import java.util.*;
 
 /**
  * 换型归属的本地权威事实读取器，不调用实物命令、不按时间邻近猜派工。
@@ -47,7 +33,73 @@ public class MesChangeoverAttributionFactsReader {
     private final MesProduceTaskMapper produceMapper;
     private final MesTaskMapper taskMapper;
 
-    /** 写侧仅非阻塞行锁；遇到旧执行链持锁，完整原号保留重试。 */
+    public static String station(MesTaskArrangeEntity row) {
+        return StrUtil.isNotBlank(row.getActualWorksiteCode()) ? row.getActualWorksiteCode() : row.getPlannedWorksiteCode();
+    }
+
+    public static Long id(String text) {
+        require(text != null && text.matches("[1-9][0-9]{0,18}"), "须指定未损失精度的正整数ID文本");
+        try {
+            return Long.valueOf(text);
+        } catch (NumberFormatException exception) {
+            throw new CheckedException("ID超出数据库范围");
+        }
+    }
+
+    /**
+     * Long、原时间和数量递归转文本；保留null及源亚秒，不受全局JSON日期格式影响。
+     */
+    @SuppressWarnings("unchecked")
+    public static Object exact(Object value) {
+        if (value == null || value instanceof String || value instanceof Boolean || value instanceof Integer)
+            return value;
+        if (value instanceof Long || value instanceof LocalDateTime) return value.toString();
+        if (value instanceof BigDecimal decimal) return decimal.toPlainString();
+        if (value instanceof Number) return value;
+        if (value instanceof Enum<?> item) return item.name();
+        if (value instanceof java.time.temporal.TemporalAccessor) return value.toString();
+        if (value instanceof Collection<?> list)
+            return list.stream().map(MesChangeoverAttributionFactsReader::exact).toList();
+        Map<String, Object> map = value instanceof Map<?, ?> ? (Map<String, Object>) value : BeanUtil.beanToMap(value);
+        Map<String, Object> result = new TreeMap<>();
+        map.forEach((key, item) -> result.put(key, exact(item)));
+        return result;
+    }
+
+    private static Map<String, Object> select(Object value, String... keys) {
+        var all = BeanUtil.beanToMap(value);
+        Map<String, Object> selected = new TreeMap<>();
+        for (String key : keys) selected.put(key, exact(all.get(key)));
+        return selected;
+    }
+
+    public static String json(Object value) {
+        return JSONUtil.toJsonStr(exact(value), JSONConfig.create().setIgnoreNullValue(false));
+    }
+
+    public static int bytes(String value) {
+        return value.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    public static String hash(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("JDK SHA-256不可用", exception);
+        }
+    }
+
+    public static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
+    private static boolean positive(BigDecimal value) {
+        return value != null && value.signum() > 0;
+    }
+
+    /**
+     * 写侧仅非阻塞行锁；遇到旧执行链持锁，完整原号保留重试。
+     */
     public Facts read(Long executionId, Long arrangeId, String factory, boolean lock) {
         Long tenant = TenantContextHolder.getTenantId();
         String tail = lock ? "LIMIT 2 FOR UPDATE NOWAIT" : "LIMIT 2";
@@ -134,7 +186,9 @@ public class MesChangeoverAttributionFactsReader {
         return new Facts(source, arrange, preview);
     }
 
-    /** 对已完成本地账重新核查时间、原点检和唯一设备记录，人工勾选不能替代这些事实。 */
+    /**
+     * 对已完成本地账重新核查时间、原点检和唯一设备记录，人工勾选不能替代这些事实。
+     */
     private List<String> sourceGaps(MesChangeoverExecutionEntity source, List<MesTaskDeviceRecordEntity> records) {
         List<String> gaps = new ArrayList<>();
         if (!"COMPLETED".equals(source.getStatus()) || !Boolean.TRUE.equals(source.getSampleEligible()))
@@ -144,7 +198,8 @@ public class MesChangeoverAttributionFactsReader {
                 && !source.getCompletedTime().isAfter(LocalDateTime.now());
         if (!interval || source.getDurationSeconds() == null || source.getDurationSeconds() <= 0
                 || source.getDurationSeconds() > 86400 || source.getDurationSeconds() != Duration.between(
-                source.getStartedTime(), source.getCompletedTime()).getSeconds()) gaps.add("原开始/完成/整秒缺失、倒置、未来或不守恒");
+                source.getStartedTime(), source.getCompletedTime()).getSeconds())
+            gaps.add("原开始/完成/整秒缺失、倒置、未来或不守恒");
         if (StrUtil.isBlank(source.getWorksiteCode()) || StrUtil.isBlank(source.getDeviceCode())
                 || StrUtil.isBlank(source.getFromToolingCode()) || StrUtil.isBlank(source.getToToolingCode())
                 || Objects.equals(source.getFromToolingCode(), source.getToToolingCode())
@@ -153,7 +208,9 @@ public class MesChangeoverAttributionFactsReader {
         try {
             require(StrUtil.isNotBlank(source.getInspectionSnapshot()), "缺原点检正文");
             JSONUtil.parseArray(source.getInspectionSnapshot());
-        } catch (RuntimeException exception) { gaps.add("原点检JSON不可核验"); }
+        } catch (RuntimeException exception) {
+            gaps.add("原点检JSON不可核验");
+        }
         if (records.size() != 1) gaps.add("原设备操作记录缺失或不唯一");
         else {
             var record = records.get(0);
@@ -166,47 +223,7 @@ public class MesChangeoverAttributionFactsReader {
         return gaps;
     }
 
-    public static String station(MesTaskArrangeEntity row) {
-        return StrUtil.isNotBlank(row.getActualWorksiteCode()) ? row.getActualWorksiteCode() : row.getPlannedWorksiteCode();
+    public record Facts(MesChangeoverExecutionEntity source, MesTaskArrangeEntity arrange,
+                        MesChangeoverAttributionDTO.Preview preview) {
     }
-
-    public static Long id(String text) {
-        require(text != null && text.matches("[1-9][0-9]{0,18}"), "须指定未损失精度的正整数ID文本");
-        try { return Long.valueOf(text); } catch (NumberFormatException exception) { throw new CheckedException("ID超出数据库范围"); }
-    }
-
-    /** Long、原时间和数量递归转文本；保留null及源亚秒，不受全局JSON日期格式影响。 */
-    @SuppressWarnings("unchecked")
-    public static Object exact(Object value) {
-        if (value == null || value instanceof String || value instanceof Boolean || value instanceof Integer) return value;
-        if (value instanceof Long || value instanceof LocalDateTime) return value.toString();
-        if (value instanceof BigDecimal decimal) return decimal.toPlainString();
-        if (value instanceof Number) return value;
-        if (value instanceof Enum<?> item) return item.name();
-        if (value instanceof java.time.temporal.TemporalAccessor) return value.toString();
-        if (value instanceof Collection<?> list) return list.stream().map(MesChangeoverAttributionFactsReader::exact).toList();
-        Map<String, Object> map = value instanceof Map<?, ?> ? (Map<String, Object>) value : BeanUtil.beanToMap(value);
-        Map<String, Object> result = new TreeMap<>();
-        map.forEach((key, item) -> result.put(key, exact(item)));
-        return result;
-    }
-
-    private static Map<String, Object> select(Object value, String... keys) {
-        var all = BeanUtil.beanToMap(value);
-        Map<String, Object> selected = new TreeMap<>();
-        for (String key : keys) selected.put(key, exact(all.get(key)));
-        return selected;
-    }
-
-    public static String json(Object value) {
-        return JSONUtil.toJsonStr(exact(value), JSONConfig.create().setIgnoreNullValue(false));
-    }
-    public static int bytes(String value) { return value.getBytes(StandardCharsets.UTF_8).length; }
-    public static String hash(String value) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
-        catch (java.security.NoSuchAlgorithmException exception) { throw new IllegalStateException("JDK SHA-256不可用", exception); }
-    }
-    public static void require(boolean condition, String message) { if (!condition) throw new CheckedException(message); }
-    private static boolean positive(BigDecimal value) { return value != null && value.signum() > 0; }
-    public record Facts(MesChangeoverExecutionEntity source, MesTaskArrangeEntity arrange, MesChangeoverAttributionDTO.Preview preview) { }
 }

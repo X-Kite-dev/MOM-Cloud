@@ -1,18 +1,12 @@
 package com.kitex.mom.mdm.support;
 
-import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.exception.CheckedException;
 
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.Map;
-import java.util.Collection;
-import java.util.ArrayDeque;
-import java.util.Locale;
+import java.util.*;
 
 /**
  * 工序报工时间窗口契约。规则挂在目标工序上，来源可以是任意上游工序。
@@ -31,28 +25,8 @@ public record MdmProcessTimingPolicy(String version, List<Rule> rules) {
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
     /**
-     * @param code 目标工序内唯一规则编码
-     * @param name 现场提示使用的规则名称
-     * @param sourceProcessCode 真实来源工序编码（不是工艺路线编码）
-     * @param scope WORK_ORDER工单范围或IDENTIFIER同规范标识
-     * @param sourceEvent START/FINISH或ACCEPTED_REPORT
-     * @param minSeconds 最少等待秒数，含端点
-     * @param maxSeconds 最多允许秒数，含端点
-     * @param lateExceptionSeconds 允许独立审批的最大额外秒数，空表示禁止例外；不影响最短等待
-     * @param clockMode 空/ELAPSED自然时间；TARGET_ARRANGE_ACTIVE只扣本次目标派工的明确业务暂停
-     * @param sourceVisit 空保持首轮限制；ORIGINAL沿首轮来源，EFFECTIVE_VISIT按批准路线版本解析有效来源轮次
+     * 严格解码。旧路线空字段表示未配置，不为旧工单推断新政策。
      */
-    public record Rule(String code, String name, String sourceProcessCode, String scope,
-                       String sourceEvent, String minSeconds, String maxSeconds,
-                       @JsonInclude(JsonInclude.Include.NON_NULL) String lateExceptionSeconds,
-                       @JsonInclude(JsonInclude.Include.NON_NULL) String clockMode,
-                       @JsonInclude(JsonInclude.Include.NON_NULL) String sourceVisit) {
-        public Long minimum() { return minSeconds == null ? null : Long.valueOf(minSeconds); }
-        public Long maximum() { return maxSeconds == null ? null : Long.valueOf(maxSeconds); }
-        public boolean deductTargetPause() { return "TARGET_ARRANGE_ACTIVE".equals(clockMode); }
-    }
-
-    /** 严格解码。旧路线空字段表示未配置，不为旧工单推断新政策。 */
     public static MdmProcessTimingPolicy parse(String raw) {
         if (raw == null || raw.isBlank()) return new MdmProcessTimingPolicy(VERSION, List.of());
         if (raw.length() > 32_768) throw new CheckedException("工序时间规则超出32Ki字符限制");
@@ -106,33 +80,14 @@ public record MdmProcessTimingPolicy(String version, List<Rule> rules) {
         }
     }
 
-    /** 检查真实节点与上游关系，不新增顺序边，也不允许下游事件造成永久死锁。 */
-    public String normalize(String targetProcessCode, Set<String> upstreamProcessCodes) {
-        for (Rule rule : rules) {
-            require(!targetProcessCode.equals(rule.sourceProcessCode()) && upstreamProcessCodes.contains(rule.sourceProcessCode()),
-                    "时间规则【" + rule.name() + "】来源必须是目标工序的上游节点，可不相邻");
-        }
-        try {
-            return rules.isEmpty() ? null : JSON.writeValueAsString(this);
-        } catch (Exception exception) {
-            throw new CheckedException("时间规则序列化失败");
-        }
-    }
-
-    /** 以同一JSON映射器保存record规则及证据，避免不同JSON库丢失record字段。 */
+    /**
+     * 以同一JSON映射器保存record规则及证据，避免不同JSON库丢失record字段。
+     */
     public static String encodeEvidence(Object value) {
-        try { return JSON.writeValueAsString(value); }
-        catch (Exception exception) { throw new CheckedException("时间校验证据序列化失败"); }
-    }
-
-    /** 编制/下达即拦截不具备同对象语义的组合，不等生产现场才发现数量模式缺标识。 */
-    public void validateModes(String target, Map<String, String> processModes) {
-        for (Rule rule : rules) {
-            if (!"IDENTIFIER".equals(rule.scope())) continue;
-            String targetMode = identifierKind(processModes.get(target));
-            String sourceMode = identifierKind(processModes.get(rule.sourceProcessCode()));
-            require(targetMode != null && targetMode.equals(sourceMode), "时间规则【" + rule.name()
-                    + "】来源和目标须同为单件类或同为流转卡；数量模式请选择工单范围");
+        try {
+            return JSON.writeValueAsString(value);
+        } catch (Exception exception) {
+            throw new CheckedException("时间校验证据序列化失败");
         }
     }
 
@@ -149,7 +104,9 @@ public record MdmProcessTimingPolicy(String version, List<Rule> rules) {
                 "时间边界须为0—315360000整数秒，不接受小数或指数");
     }
 
-    /** 获取已通过DAG校验的全部祖先，支持跨过中间工序。 */
+    /**
+     * 获取已通过DAG校验的全部祖先，支持跨过中间工序。
+     */
     public static Set<String> ancestors(String target, Map<String, ? extends Collection<String>> predecessors) {
         Set<String> result = new HashSet<>();
         ArrayDeque<String> queue = new ArrayDeque<>();
@@ -163,5 +120,63 @@ public record MdmProcessTimingPolicy(String version, List<Rule> rules) {
 
     private static void require(boolean condition, String message) {
         if (!condition) throw new CheckedException(message);
+    }
+
+    /**
+     * 检查真实节点与上游关系，不新增顺序边，也不允许下游事件造成永久死锁。
+     */
+    public String normalize(String targetProcessCode, Set<String> upstreamProcessCodes) {
+        for (Rule rule : rules) {
+            require(!targetProcessCode.equals(rule.sourceProcessCode()) && upstreamProcessCodes.contains(rule.sourceProcessCode()),
+                    "时间规则【" + rule.name() + "】来源必须是目标工序的上游节点，可不相邻");
+        }
+        try {
+            return rules.isEmpty() ? null : JSON.writeValueAsString(this);
+        } catch (Exception exception) {
+            throw new CheckedException("时间规则序列化失败");
+        }
+    }
+
+    /**
+     * 编制/下达即拦截不具备同对象语义的组合，不等生产现场才发现数量模式缺标识。
+     */
+    public void validateModes(String target, Map<String, String> processModes) {
+        for (Rule rule : rules) {
+            if (!"IDENTIFIER".equals(rule.scope())) continue;
+            String targetMode = identifierKind(processModes.get(target));
+            String sourceMode = identifierKind(processModes.get(rule.sourceProcessCode()));
+            require(targetMode != null && targetMode.equals(sourceMode), "时间规则【" + rule.name()
+                    + "】来源和目标须同为单件类或同为流转卡；数量模式请选择工单范围");
+        }
+    }
+
+    /**
+     * @param code                 目标工序内唯一规则编码
+     * @param name                 现场提示使用的规则名称
+     * @param sourceProcessCode    真实来源工序编码（不是工艺路线编码）
+     * @param scope                WORK_ORDER工单范围或IDENTIFIER同规范标识
+     * @param sourceEvent          START/FINISH或ACCEPTED_REPORT
+     * @param minSeconds           最少等待秒数，含端点
+     * @param maxSeconds           最多允许秒数，含端点
+     * @param lateExceptionSeconds 允许独立审批的最大额外秒数，空表示禁止例外；不影响最短等待
+     * @param clockMode            空/ELAPSED自然时间；TARGET_ARRANGE_ACTIVE只扣本次目标派工的明确业务暂停
+     * @param sourceVisit          空保持首轮限制；ORIGINAL沿首轮来源，EFFECTIVE_VISIT按批准路线版本解析有效来源轮次
+     */
+    public record Rule(String code, String name, String sourceProcessCode, String scope,
+                       String sourceEvent, String minSeconds, String maxSeconds,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) String lateExceptionSeconds,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) String clockMode,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) String sourceVisit) {
+        public Long minimum() {
+            return minSeconds == null ? null : Long.valueOf(minSeconds);
+        }
+
+        public Long maximum() {
+            return maxSeconds == null ? null : Long.valueOf(maxSeconds);
+        }
+
+        public boolean deductTargetPause() {
+            return "TARGET_ARRANGE_ACTIVE".equals(clockMode);
+        }
     }
 }

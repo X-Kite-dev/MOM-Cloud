@@ -25,9 +25,12 @@ import com.kitex.mom.qms.service.InspectionProcedureHandleRecordService;
 import com.kitex.mom.qms.service.InspectionProcedureHistoryService;
 import com.kitex.mom.qms.service.InspectionProcedureTaskService;
 import com.kitex.mom.qms.service.QmsReworkOrderService;
+import com.kitex.mom.qms.service.impl.QmsInspectionEventService;
+import com.kitex.mom.qms.entity.QmsInspectionEventEntity;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import com.kitex.mom.qms.dto.QmsFirstInspectionDecisionDTO;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -55,6 +58,7 @@ public class InspectionProcedureTaskController {
 
     private final InspectionProcedureHandleRecordService handleRecordService;
     private final QmsReworkOrderService reworkOrderService;
+    private final QmsInspectionEventService inspectionEvents;
 
     @Operation(summary = "判断是否已经有同类型任务", description = "判断是否已经有同类型任务")
     @GetMapping("/existTask")
@@ -243,10 +247,25 @@ public class InspectionProcedureTaskController {
 
     @Operation(summary = "质检任务详情历史信息", description = "质检任务详情历史信息")
     @GetMapping("/history/findTaskDetailHistoryById")
+    @PreAuthorize("@pms.hasPermission('procedureTask:history')")
     public R<QmsInspectionProcedureHistoryEntity> findTaskHistoryById(Long id) {
         return R.ok(historyService.findById(id));
     }
 
+
+    @GetMapping("/history/events")
+    @Operation(summary = "查询不可变检验事件原件")
+    @PreAuthorize("@pms.hasPermission('procedureTask:history')")
+    public R<List<QmsInspectionEventEntity>> events(@RequestParam Long taskId) {
+        return R.ok(inspectionEvents.events("PROCEDURE", taskId));
+    }
+
+    @GetMapping("/history/firstDecision")
+    @Operation(summary = "查询首次检验判定依据")
+    @PreAuthorize("@pms.hasPermission('procedureTask:history')")
+    public R<QmsFirstInspectionDecisionDTO> firstDecision(@RequestParam Long taskId) {
+        return R.ok(historyService.firstDecision(taskId));
+    }
 
     @Operation(summary = "处置明细", description = "处置明细")
     @GetMapping("/handleRecord/queryByTaskId")

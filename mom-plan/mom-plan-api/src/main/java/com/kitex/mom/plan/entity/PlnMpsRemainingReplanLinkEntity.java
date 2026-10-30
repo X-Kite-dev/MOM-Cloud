@@ -8,7 +8,9 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
-/** MPS执行观察到剩余工序重排的不可变来源绑定，状态由权威局部案件决定。 */
+/**
+ * MPS执行观察到剩余工序重排的不可变来源绑定，状态由权威局部案件决定。
+ */
 @Data
 @Accessors(chain = true)
 @EqualsAndHashCode(callSuper = true)

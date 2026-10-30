@@ -8,24 +8,8 @@ import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesPhysicalTransformCommandDTO;
 import com.kitex.mom.mes.dto.MesPhysicalTransformDTO;
 import com.kitex.mom.mes.dto.MesPhysicalTransformExecutionDTO;
-import com.kitex.mom.mes.entity.MesPhysicalPositionSurveyEntity;
-import com.kitex.mom.mes.entity.MesPhysicalTransformAllocationEntity;
-import com.kitex.mom.mes.entity.MesPhysicalTransformCommandEntity;
-import com.kitex.mom.mes.entity.MesPhysicalTransformExecutionEntity;
-import com.kitex.mom.mes.entity.MesPhysicalTransformInputEntity;
-import com.kitex.mom.mes.entity.MesPhysicalTransformOutputEntity;
-import com.kitex.mom.mes.entity.MesPhysicalTransformSourceHoldEntity;
-import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
-import com.kitex.mom.mes.mapper.MesPhysicalPositionConsumptionMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalPositionSurveyMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalTransformAllocationMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalTransformCommandMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalTransformExecutionMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalTransformInputMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalTransformOutputMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalTransformSourceClaimMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalTransformSourceHoldMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalTransformSourceLockMapper;
+import com.kitex.mom.mes.entity.*;
+import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.MesPhysicalTransformExecutionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -37,15 +21,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -108,7 +84,7 @@ public class MesPhysicalTransformExecutionServiceImpl
     }
 
     private MesPhysicalTransformExecutionDTO.Receipt execute(String requestId, String rawJson, String applyFingerprint,
-                                                              MesPhysicalTransformExecutionDTO.Apply apply, Identity owner) {
+                                                             MesPhysicalTransformExecutionDTO.Apply apply, Identity owner) {
         requireReady();
         requestLock(owner, requestId);
         var command = commands.locked(owner.tenantId(), requestId);
@@ -214,9 +190,9 @@ public class MesPhysicalTransformExecutionServiceImpl
     }
 
     private MesPhysicalPositionSurveyEntity validateSurvey(MesPhysicalTransformDTO.Policy policy,
-            MesPhysicalTransformCommandDTO.Body body,
-            com.kitex.mom.mes.dto.MesPhysicalTransformSourceBundleDTO bundle,
-            MesPhysicalTransformExecutionDTO.Apply apply, Identity owner) {
+                                                           MesPhysicalTransformCommandDTO.Body body,
+                                                           com.kitex.mom.mes.dto.MesPhysicalTransformSourceBundleDTO bundle,
+                                                           MesPhysicalTransformExecutionDTO.Apply apply, Identity owner) {
         if (!"DEPANEL".equals(policy.getOperationType())) {
             require(apply.getPositionSurveyId().isEmpty() && apply.getPositionSurveyFingerprint().isEmpty(),
                     "非拆板转换不能附带位置原账，避免把不相关观察当执行依据");
@@ -226,8 +202,8 @@ public class MesPhysicalTransformExecutionServiceImpl
                 "拆板正式执行必须明确已确认位置原账及原采集SHA");
         var survey = surveys.lockedById(owner.tenantId(), owner.factoryCode(), codec.id(apply.getPositionSurveyId()));
         require(survey != null && "CONFIRMED".equals(survey.getStatus())
-                && apply.getPositionSurveyFingerprint().equals(survey.getSurveyFingerprint())
-                && owner.actorId().equals(survey.getActorId()) && owner.actorCode().equals(survey.getActorCode()),
+                        && apply.getPositionSurveyFingerprint().equals(survey.getSurveyFingerprint())
+                        && owner.actorId().equals(survey.getActorId()) && owner.actorCode().equals(survey.getActorCode()),
                 "位置原账不存在、未异人确认、原SHA不一致或不是原执行本人采集");
         Set<String> standards = bundle.getSources().stream().map(e -> e.getStandardFingerprint()).collect(Collectors.toSet());
         require(standards.size() == 1 && standards.contains(survey.getStandardFingerprint()),
@@ -236,13 +212,15 @@ public class MesPhysicalTransformExecutionServiceImpl
         Map<String, JsonNode> slots = new HashMap<>();
         for (var node : ledger.path("positions")) slots.put(node.path("position_code").textValue(), node);
         Map<String, Map<String, BigDecimal>> positionAllocations = new HashMap<>();
-        for (var node : ledger.path("allocations")) positionAllocations
-                .computeIfAbsent(node.path("position_code").textValue(), ignored -> new HashMap<>())
-                .put(node.path("stock_id").asText(), codec.quantity(node.path("equivalent_quantity").asText(), false, "位置原分配"));
+        for (var node : ledger.path("allocations"))
+            positionAllocations
+                    .computeIfAbsent(node.path("position_code").textValue(), ignored -> new HashMap<>())
+                    .put(node.path("stock_id").asText(), codec.quantity(node.path("equivalent_quantity").asText(), false, "位置原分配"));
         Map<String, Map<String, BigDecimal>> commandAllocations = new HashMap<>();
-        for (var edge : body.getAllocations()) commandAllocations
-                .computeIfAbsent(edge.getOutputKey(), ignored -> new HashMap<>())
-                .put(edge.getStockId(), codec.quantity(edge.getQuantity(), false, "执行分配"));
+        for (var edge : body.getAllocations())
+            commandAllocations
+                    .computeIfAbsent(edge.getOutputKey(), ignored -> new HashMap<>())
+                    .put(edge.getStockId(), codec.quantity(edge.getQuantity(), false, "执行分配"));
         for (var output : body.getOutputs()) {
             JsonNode slot = slots.get(output.getPositionCode());
             require(slot != null, "执行输出位置不属于原确认完整布局：" + output.getPositionCode());
@@ -285,12 +263,12 @@ public class MesPhysicalTransformExecutionServiceImpl
     }
 
     private PreparedRows prepareRows(Long executionId, String requestId, MesPhysicalTransformCommandEntity command,
-            MesPhysicalTransformSourceHoldEntity hold, MesPhysicalPositionSurveyEntity survey,
-            MesPhysicalTransformCommandDTO.Body body,
-            com.kitex.mom.mes.dto.MesPhysicalTransformSourceBundleDTO bundle,
-            MesPhysicalTransformDTO.Calculation calculation, String applySnapshot, String applyFingerprint,
-            String calculationSnapshot, String calculationFingerprint, Identity owner,
-            Map<Long, MesWarehouseLiveStockEntity> stockRows, LocalDateTime now) {
+                                     MesPhysicalTransformSourceHoldEntity hold, MesPhysicalPositionSurveyEntity survey,
+                                     MesPhysicalTransformCommandDTO.Body body,
+                                     com.kitex.mom.mes.dto.MesPhysicalTransformSourceBundleDTO bundle,
+                                     MesPhysicalTransformDTO.Calculation calculation, String applySnapshot, String applyFingerprint,
+                                     String calculationSnapshot, String calculationFingerprint, Identity owner,
+                                     Map<Long, MesWarehouseLiveStockEntity> stockRows, LocalDateTime now) {
         var sourceById = bundle.getSources().stream().collect(Collectors.toMap(e -> e.getStockId(), Function.identity()));
         var inputIds = new HashMap<String, Long>();
         var outputIds = new HashMap<String, Long>();
@@ -427,15 +405,15 @@ public class MesPhysicalTransformExecutionServiceImpl
     }
 
     private MesPhysicalTransformExecutionDTO.Receipt receiptOf(MesPhysicalTransformCommandEntity command,
-            MesPhysicalTransformExecutionEntity execution, Identity owner) {
+                                                               MesPhysicalTransformExecutionEntity execution, Identity owner) {
         require(Objects.equals(execution.getTenantId(), owner.tenantId()) && Objects.equals(execution.getFactoryCode(), owner.factoryCode())
-                && Objects.equals(execution.getCommandId(), command.getId()) && Objects.equals(execution.getCommandFingerprint(), command.getRequestFingerprint())
-                && Objects.equals(execution.getActorId(), owner.actorId()) && Objects.equals(execution.getActorCode(), owner.actorCode())
-                && "APPLIED".equals(execution.getStatus()) && MesPhysicalTransformExecutionCodec.EXECUTION_VERSION.equals(execution.getExecutionVersion())
-                && Objects.equals(execution.getApplyFingerprint(), codec.fingerprint(MesPhysicalTransformExecutionCodec.VERSION, execution.getApplySnapshot()))
-                && Objects.equals(execution.getCalculationFingerprint(), codec.fingerprint(MesPhysicalTransformExecutionCodec.CALCULATION_VERSION,
-                execution.getCalculationSnapshot())) && Objects.equals(execution.getReceiptFingerprint(),
-                codec.fingerprint(MesPhysicalTransformExecutionCodec.RECEIPT_VERSION, execution.getReceiptSnapshot())),
+                        && Objects.equals(execution.getCommandId(), command.getId()) && Objects.equals(execution.getCommandFingerprint(), command.getRequestFingerprint())
+                        && Objects.equals(execution.getActorId(), owner.actorId()) && Objects.equals(execution.getActorCode(), owner.actorCode())
+                        && "APPLIED".equals(execution.getStatus()) && MesPhysicalTransformExecutionCodec.EXECUTION_VERSION.equals(execution.getExecutionVersion())
+                        && Objects.equals(execution.getApplyFingerprint(), codec.fingerprint(MesPhysicalTransformExecutionCodec.VERSION, execution.getApplySnapshot()))
+                        && Objects.equals(execution.getCalculationFingerprint(), codec.fingerprint(MesPhysicalTransformExecutionCodec.CALCULATION_VERSION,
+                        execution.getCalculationSnapshot())) && Objects.equals(execution.getReceiptFingerprint(),
+                        codec.fingerprint(MesPhysicalTransformExecutionCodec.RECEIPT_VERSION, execution.getReceiptSnapshot())),
                 "正式转换永久主账归属、版本或原SHA损坏");
         var inputRows = inputs.permanentRows(owner.tenantId(), execution.getId());
         var outputRows = outputs.permanentRows(owner.tenantId(), execution.getId());
@@ -530,16 +508,16 @@ public class MesPhysicalTransformExecutionServiceImpl
 
     private void assertExpected(MesPhysicalTransformExecutionDTO.Apply apply, Identity owner) {
         require(owner.tenantId().toString().equals(apply.getExpectedTenantId())
-                && owner.factoryCode().equals(apply.getExpectedFactoryCode())
-                && owner.actorId().toString().equals(apply.getExpectedActorUserId()),
+                        && owner.factoryCode().equals(apply.getExpectedFactoryCode())
+                        && owner.actorId().toString().equals(apply.getExpectedActorUserId()),
                 "登录租户/工厂/实名已变化，不能执行旧页面确认");
     }
 
     private void assertCommand(MesPhysicalTransformCommandEntity row, Identity owner) {
         require(row != null && Objects.equals(row.getTenantId(), owner.tenantId())
-                && Objects.equals(row.getFactoryCode(), owner.factoryCode()) && Objects.equals(row.getActorId(), owner.actorId())
-                && Objects.equals(row.getActorCode(), owner.actorCode()) && "0".equals(row.getDelFlag())
-                && Objects.equals(row.getRequestFingerprint(), codec.fingerprint(row.getCommandVersion(), row.getCommandSnapshot())),
+                        && Objects.equals(row.getFactoryCode(), owner.factoryCode()) && Objects.equals(row.getActorId(), owner.actorId())
+                        && Objects.equals(row.getActorCode(), owner.actorCode()) && "0".equals(row.getDelFlag())
+                        && Objects.equals(row.getRequestFingerprint(), codec.fingerprint(row.getCommandVersion(), row.getCommandSnapshot())),
                 "永久原命令不属于当前实际租户/工厂/实名，或原SHA损坏");
     }
 
@@ -621,8 +599,8 @@ public class MesPhysicalTransformExecutionServiceImpl
     }
 
     private Map<String, Object> flow(Long id, Long executionId, Long outputId, MesWarehouseLiveStockEntity stock,
-            Long sourceStockId, Long sourceReportId, String requestId, BigDecimal quantity, String operation,
-            String bizType, BigDecimal before, BigDecimal after, Identity owner, LocalDateTime now) {
+                                     Long sourceStockId, Long sourceReportId, String requestId, BigDecimal quantity, String operation,
+                                     String bizType, BigDecimal before, BigDecimal after, Identity owner, LocalDateTime now) {
         return map("id", id, "tenant_id", owner.tenantId(), "factory_code", owner.factoryCode(),
                 "execution_id", executionId, "output_id", outputId, "source_stock_id", sourceStockId,
                 "source_report_id", sourceReportId, "bill_no", requestId, "resource_no", requestId,
@@ -653,12 +631,12 @@ public class MesPhysicalTransformExecutionServiceImpl
     }
 
     private record PreparedRows(MesPhysicalTransformExecutionEntity execution,
-            List<MesPhysicalTransformInputEntity> inputEntities,
-            List<MesPhysicalTransformOutputEntity> outputEntities,
-            List<MesPhysicalTransformAllocationEntity> allocationEntities,
-            List<Map<String, Object>> stockUpdates, List<Map<String, Object>> outputStocks,
-            List<Map<String, Object>> flowRows, List<Map<String, Object>> inputRows,
-            List<Map<String, Object>> outputRows, List<Map<String, Object>> allocationRows,
-            List<Map<String, Object>> positionRows) {
+                                List<MesPhysicalTransformInputEntity> inputEntities,
+                                List<MesPhysicalTransformOutputEntity> outputEntities,
+                                List<MesPhysicalTransformAllocationEntity> allocationEntities,
+                                List<Map<String, Object>> stockUpdates, List<Map<String, Object>> outputStocks,
+                                List<Map<String, Object>> flowRows, List<Map<String, Object>> inputRows,
+                                List<Map<String, Object>> outputRows, List<Map<String, Object>> allocationRows,
+                                List<Map<String, Object>> positionRows) {
     }
 }

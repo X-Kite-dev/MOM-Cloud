@@ -23,7 +23,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 
-/** 到点激活预约计划协同策略；每个工厂独立事务，失败不替换旧生效版本。 */
+/**
+ * 到点激活预约计划协同策略；每个工厂独立事务，失败不替换旧生效版本。
+ */
 @Service
 @RequiredArgsConstructor
 public class MdmFactoryPlanningPolicyActivationWorker {
@@ -31,7 +33,22 @@ public class MdmFactoryPlanningPolicyActivationWorker {
     private final MdmFactoryPlanningPolicyMapper policyMapper;
     private final FactoryPlanningPolicyImpactInspector impactInspector;
 
-    /** 跨租户扫描已到生效时间的预约版本，仅返回身份，不在跳过隔离时做业务更新。 */
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    private static String value(Object value) {
+        return value == null ? "" : value.toString();
+    }
+
+    /**
+     * 跨租户扫描已到生效时间的预约版本，仅返回身份，不在跳过隔离时做业务更新。
+     */
     public List<MdmFactoryPlanningPolicyEntity> discoverDue(int limit) {
         int size = Math.max(1, Math.min(limit, 200));
         return withSkippedScope(() -> policyMapper.selectList(new LambdaQueryWrapper<MdmFactoryPlanningPolicyEntity>()
@@ -42,7 +59,9 @@ public class MdmFactoryPlanningPolicyActivationWorker {
                 .last("LIMIT " + size)));
     }
 
-    /** 在真实租户与工厂上下文中重新检查事实并原子切换。 */
+    /**
+     * 在真实租户与工厂上下文中重新检查事实并原子切换。
+     */
     @Transactional(rollbackFor = Exception.class, propagation = Propagation.REQUIRES_NEW)
     public boolean activateOne(Long policyId, Long tenantId, String factoryCode) {
         return inScope(tenantId, factoryCode, () -> {
@@ -151,18 +170,5 @@ public class MdmFactoryPlanningPolicyActivationWorker {
                 value(row.getErpSystemCode()), value(row.getExternalFactoryCode()),
                 value(row.getProductionOrderSyncMode()), value(row.getSubstituteGovernanceMode()),
                 value(row.getEffectiveFrom())));
-    }
-
-    private static String sha256(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException(ex);
-        }
-    }
-
-    private static String value(Object value) {
-        return value == null ? "" : value.toString();
     }
 }

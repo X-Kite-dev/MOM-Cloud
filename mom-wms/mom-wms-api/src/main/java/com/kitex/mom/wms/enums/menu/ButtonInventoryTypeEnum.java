@@ -40,7 +40,10 @@ public enum ButtonInventoryTypeEnum {
     /**
      * 导入导出
      */
-    EXPORT("wms_wmsInsideInventoryPlan_export", "导入导出", 6);
+    EXPORT("wms_wmsInsideInventoryPlan_export", "导入导出", 6),
+
+    /** 保留原盘点记录后作废。 */
+    CANCEL("wms_wmsInsideInventoryPlan_cancel", "作废", 7);
 
     private final String code;
     private final String name;

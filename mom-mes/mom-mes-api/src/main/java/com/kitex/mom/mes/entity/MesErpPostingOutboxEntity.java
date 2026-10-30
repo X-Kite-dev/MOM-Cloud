@@ -13,7 +13,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** MES 已提交执行事实向 PLAN/ERP 转交的本地事务 Outbox。 */
+/**
+ * MES 已提交执行事实向 PLAN/ERP 转交的本地事务 Outbox。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

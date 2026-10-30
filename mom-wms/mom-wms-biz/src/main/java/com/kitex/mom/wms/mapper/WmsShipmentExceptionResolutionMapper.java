@@ -7,6 +7,6 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface WmsShipmentExceptionResolutionMapper extends BaseMapper<WmsShipmentExceptionResolutionEntity> {
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(#{key}, 0))")
-    void lockKey(String key);
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(#{key}, 0))")
+    int lockKey(String key);
 }

@@ -8,6 +8,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.entity.MdmMaterialAuthorizationEntity;
@@ -25,8 +27,10 @@ import com.kitex.mom.wms.enums.DocumentEnum;
 import com.kitex.mom.wms.enums.InOutBillStateEnum;
 import com.kitex.mom.wms.mapper.*;
 import com.kitex.mom.wms.service.WmsMaterialReservationService;
+import com.kitex.mom.wms.service.WmsReservationMovementPolicyService;
 import com.kitex.mom.wms.service.WmsSalesStockReservationService;
 import com.kitex.mom.wms.util.WmsStockAvailability;
+import com.kitex.mom.wms.util.WmsSerialStockGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -66,6 +70,16 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
     private final WmsOutNoticeMapper outNoticeMapper;
     private final RemoteWarehousePickingBillService remoteWarehousePickingBillService;
     private final WmsSalesStockReservationService salesStockReservationService;
+    private final WmsReservationMovementPolicyService reservationMovementPolicyService;
+
+    private void requireScopedOrganization() {
+        if (TenantContextHolder.getTenantId() == null
+                || StrUtil.isBlank(FactoryContextHolder.getFactoryCode())
+                || Boolean.TRUE.equals(TenantContextHolder.getTenantSkip())
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())) {
+            throw new CheckedException("物料预留必须具有明确的租户和工厂上下文");
+        }
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -82,13 +96,20 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
         WmsMaterialReservationEntity existing = reservationMapper.selectOne(
                 new LambdaQueryWrapper<WmsMaterialReservationEntity>()
                         .eq(WmsMaterialReservationEntity::getSourceType, command.getSourceType())
-                        .eq(WmsMaterialReservationEntity::getSourceId, command.getSourceId()), false);
+                        .eq(WmsMaterialReservationEntity::getSourceId, command.getSourceId()),
+                false);
         if (existing != null) {
-            if (ACTIVE.equals(existing.getStatus()) && Objects.equals(snapshot, existing.getAllocationSnapshot())) {
+            if (ACTIVE.equals(existing.getStatus()) && Objects.equals(snapshot, existing.getAllocationSnapshot())
+                    && Objects.equals(command.getFactoryCode(), existing.getFactoryCode())
+                    && Objects.equals(command.getCustomerCode(), existing.getCustomerCode())
+                    && Objects.equals(command.getRequiredDate(), existing.getRequiredDate())) {
                 return result(existing, allocations);
             }
             throw new CheckedException("来源记录已存在状态为[" + existing.getStatus() + "]的物料预留，不能重复或变更预留方案");
         }
+
+        // 已存在预留的幂等重放和后续消耗不受新配置影响；只拦截新建。
+        reservationMovementPolicyService.ensureProductionReservable(command.getSourceType());
 
         WmsMaterialReservationEntity reservation = new WmsMaterialReservationEntity();
         reservation.setReservationNo(reservationNo(command));
@@ -103,7 +124,9 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
         reservation.setStatus(ACTIVE);
         reservation.setAllocationSnapshot(snapshot);
         reservation.setFactoryCode(command.getFactoryCode());
-        reservationMapper.insert(reservation);
+        if (reservationMapper.insert(reservation) != 1) {
+            throw new CheckedException("物料预留主单保存失败，整笔预留回滚");
+        }
 
         for (WmsMaterialReservationAllocationDTO allocation : allocations) {
             reserveAllocation(reservation, allocation);
@@ -125,15 +148,23 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
     }
 
     private MdmWarehouseEntity validateWarehouse(WmsMaterialReservationCreateDTO command) {
+        requireScopedOrganization();
+        Long tenantId = TenantContextHolder.getTenantId();
+        String factoryCode = FactoryContextHolder.getFactoryCode();
+        if (!Objects.equals(factoryCode, command.getFactoryCode())) {
+            throw new CheckedException("物料预留必须具有一致的租户和工厂上下文");
+        }
         R<MdmWarehouseEntity> response = remoteWarehouseService.getByCode(command.getWarehouseCode().trim());
         MdmWarehouseEntity warehouse = response == null || !response.isOk() ? null : response.getData();
         if (warehouse == null || !Boolean.TRUE.equals(warehouse.getStatus())) {
             throw new CheckedException("预留仓库[" + command.getWarehouseCode() + "]不存在或未启用");
         }
-        if (StrUtil.isNotBlank(warehouse.getFactoryCode())
-                && !Objects.equals(command.getFactoryCode(), warehouse.getFactoryCode())) {
+        if (!Objects.equals(tenantId, warehouse.getTenantId())) {
+            throw new CheckedException("预留仓库[" + warehouse.getWarehouseCode() + "]不属于当前租户");
+        }
+        if (!Objects.equals(factoryCode, warehouse.getFactoryCode())) {
             throw new CheckedException("预留仓库[" + warehouse.getWarehouseCode() + "]不属于工厂["
-                    + command.getFactoryCode() + "]");
+                    + factoryCode + "]");
         }
         return warehouse;
     }
@@ -151,7 +182,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
     private List<WmsMaterialReservationAllocationDTO> normalize(List<WmsMaterialReservationAllocationDTO> source) {
         Map<String, WmsMaterialReservationAllocationDTO> grouped = new TreeMap<>();
         for (WmsMaterialReservationAllocationDTO item : source) {
-            if (item == null || StrUtil.isBlank(item.getActualMatCode()) || StrUtil.isBlank(item.getRequirementMatCode())
+            if (item == null || StrUtil.isBlank(item.getActualMatCode())
+                    || StrUtil.isBlank(item.getRequirementMatCode())
                     || item.getActualNum() == null || item.getActualNum().compareTo(BigDecimal.ZERO) <= 0
                     || item.getRequirementNum() == null || item.getRequirementNum().compareTo(BigDecimal.ZERO) <= 0
                     || item.getSubstituteRatio() == null || item.getSubstituteRatio().compareTo(BigDecimal.ZERO) <= 0) {
@@ -160,34 +192,36 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
             normalizeCompliance(item);
             String key = item.getRequirementMatCode() + "#" + item.getActualMatCode() + "#"
                     + item.getSubstituteRatio().stripTrailingZeros().toPlainString() + "#" + JSONUtil.toJsonStr(Map.of(
-                    "customers", item.getApplicableCustomerCodes(), "suppliers", item.getCertifiedSupplierCodes(),
+                    "customers", item.getApplicableCustomerCodes(), "suppliers",
+                    item.getCertifiedSupplierCodes(),
                     "quality", item.getAllowedQualityResults(), "mode", item.getComplianceMode(),
                     "certificate", StrUtil.nullToEmpty(item.getSupplierCertificateRef()),
                     "certificateEnd", Objects.toString(item.getSupplierCertificateValidEnd(), ""),
                     "permit", StrUtil.nullToEmpty(item.getDeviationPermitNo()),
                     "permitEnd", Objects.toString(item.getDeviationValidEnd(), "")));
-            WmsMaterialReservationAllocationDTO target = grouped.computeIfAbsent(key, ignored -> new WmsMaterialReservationAllocationDTO()
-                    .setRequirementMatCode(item.getRequirementMatCode())
-                    .setRequirementMatName(item.getRequirementMatName())
-                    .setActualMatCode(item.getActualMatCode())
-                    .setActualMatName(item.getActualMatName())
-                    .setActualMatUnit(item.getActualMatUnit())
-                    .setSubstituteRatio(item.getSubstituteRatio())
-                    .setApplicableCustomerCodes(item.getApplicableCustomerCodes())
-                    .setCertifiedSupplierCodes(item.getCertifiedSupplierCodes())
-                    .setSupplierCertificateRef(item.getSupplierCertificateRef())
-                    .setSupplierCertificateValidEnd(item.getSupplierCertificateValidEnd())
-                    .setInspectionLevel(item.getInspectionLevel())
-                    .setReferenceUnitPrice(item.getReferenceUnitPrice())
-                    .setCurrency(item.getCurrency())
-                    .setAllowedQualityResults(item.getAllowedQualityResults())
-                    .setComplianceMode(item.getComplianceMode())
-                    .setDeviationPermitNo(item.getDeviationPermitNo())
-                    .setDeviationReason(item.getDeviationReason())
-                    .setDeviationValidEnd(item.getDeviationValidEnd())
-                    .setStockAllocations(new ArrayList<>())
-                    .setRequirementNum(BigDecimal.ZERO)
-                    .setActualNum(BigDecimal.ZERO));
+            WmsMaterialReservationAllocationDTO target = grouped.computeIfAbsent(key,
+                    ignored -> new WmsMaterialReservationAllocationDTO()
+                            .setRequirementMatCode(item.getRequirementMatCode())
+                            .setRequirementMatName(item.getRequirementMatName())
+                            .setActualMatCode(item.getActualMatCode())
+                            .setActualMatName(item.getActualMatName())
+                            .setActualMatUnit(item.getActualMatUnit())
+                            .setSubstituteRatio(item.getSubstituteRatio())
+                            .setApplicableCustomerCodes(item.getApplicableCustomerCodes())
+                            .setCertifiedSupplierCodes(item.getCertifiedSupplierCodes())
+                            .setSupplierCertificateRef(item.getSupplierCertificateRef())
+                            .setSupplierCertificateValidEnd(item.getSupplierCertificateValidEnd())
+                            .setInspectionLevel(item.getInspectionLevel())
+                            .setReferenceUnitPrice(item.getReferenceUnitPrice())
+                            .setCurrency(item.getCurrency())
+                            .setAllowedQualityResults(item.getAllowedQualityResults())
+                            .setComplianceMode(item.getComplianceMode())
+                            .setDeviationPermitNo(item.getDeviationPermitNo())
+                            .setDeviationReason(item.getDeviationReason())
+                            .setDeviationValidEnd(item.getDeviationValidEnd())
+                            .setStockAllocations(new ArrayList<>())
+                            .setRequirementNum(BigDecimal.ZERO)
+                            .setActualNum(BigDecimal.ZERO));
             target.setRequirementNum(target.getRequirementNum().add(item.getRequirementNum()));
             target.setActualNum(target.getActualNum().add(item.getActualNum()));
             mergeStockAllocations(target, item);
@@ -198,7 +232,9 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
 
     private void mergeStockAllocations(WmsMaterialReservationAllocationDTO target,
                                        WmsMaterialReservationAllocationDTO source) {
-        if (CollUtil.isEmpty(source.getStockAllocations())) return;
+        if (CollUtil.isEmpty(source.getStockAllocations())) {
+            return;
+        }
         Map<Long, WmsMaterialReservationStockAllocationDTO> merged = target.getStockAllocations().stream()
                 .collect(java.util.stream.Collectors.toMap(WmsMaterialReservationStockAllocationDTO::getStockId,
                         item -> item, (left, right) -> left, LinkedHashMap::new));
@@ -227,7 +263,9 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
     }
 
     private void validateStockAllocations(WmsMaterialReservationAllocationDTO allocation, BigDecimal expected) {
-        if (CollUtil.isEmpty(allocation.getStockAllocations())) return;
+        if (CollUtil.isEmpty(allocation.getStockAllocations())) {
+            return;
+        }
         BigDecimal total = allocation.getStockAllocations().stream()
                 .map(WmsMaterialReservationStockAllocationDTO::getAllocatedNum)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -250,7 +288,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
         validateAllocationCompliance(reservation, allocation);
         List<WmsLiveStockEntity> allStocks = liveStockMapper.selectList(new LambdaQueryWrapper<WmsLiveStockEntity>()
                 .eq(WmsLiveStockEntity::getMatCode, allocation.getActualMatCode())
-                .eq(StrUtil.isNotBlank(reservation.getFactoryCode()), WmsLiveStockEntity::getFactoryCode, reservation.getFactoryCode())
+                .eq(StrUtil.isNotBlank(reservation.getFactoryCode()), WmsLiveStockEntity::getFactoryCode,
+                        reservation.getFactoryCode())
                 .eq(WmsLiveStockEntity::getWarehouseCode, reservation.getWarehouseCode())
                 .eq(WmsLiveStockEntity::getStatus, 0)
                 .gt(WmsLiveStockEntity::getMatNum, 0)
@@ -264,9 +303,11 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
         Map<Long, BigDecimal> preferred = CollUtil.isEmpty(allocation.getStockAllocations()) ? Map.of()
                 : allocation.getStockAllocations().stream().collect(java.util.stream.Collectors.toMap(
                 WmsMaterialReservationStockAllocationDTO::getStockId,
-                WmsMaterialReservationStockAllocationDTO::getAllocatedNum, BigDecimal::add, LinkedHashMap::new));
+                WmsMaterialReservationStockAllocationDTO::getAllocatedNum, BigDecimal::add,
+                LinkedHashMap::new));
         if (!preferred.isEmpty()) {
-            Set<Long> eligibleIds = stocks.stream().map(WmsLiveStockEntity::getId).collect(java.util.stream.Collectors.toSet());
+            Set<Long> eligibleIds = stocks.stream().map(WmsLiveStockEntity::getId)
+                    .collect(java.util.stream.Collectors.toSet());
             List<Long> invalid = preferred.keySet().stream().filter(id -> !eligibleIds.contains(id)).toList();
             if (!invalid.isEmpty()) {
                 throw new CheckedException("物料[" + allocation.getActualMatCode()
@@ -279,7 +320,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
         BigDecimal physical = allStocks.stream().map(this::stockNum).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal compliantPhysical = stocks.stream().map(this::stockNum).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal safety = safetyStock(allocation.getActualMatCode());
-        Set<Long> stockIds = allStocks.stream().map(WmsLiveStockEntity::getId).collect(java.util.stream.Collectors.toSet());
+        Set<Long> stockIds = allStocks.stream().map(WmsLiveStockEntity::getId)
+                .collect(java.util.stream.Collectors.toSet());
         Map<Long, BigDecimal> salesReserved = salesStockReservationService.activeReservedNums(stockIds);
         BigDecimal activeReserved = allStocks.stream().map(stock -> activeReservedNum(stock.getId()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add).add(salesReserved.values().stream()
@@ -292,7 +334,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                 .min(compliantPhysical.subtract(compliantReserved).max(BigDecimal.ZERO));
         if (usable.compareTo(allocation.getActualNum()) < 0) {
             throw new CheckedException("物料[" + allocation.getActualMatCode() + "]扣除安全库存和已有预留后仅可预留"
-                    + usable.stripTrailingZeros().toPlainString() + "，本次需要" + allocation.getActualNum().stripTrailingZeros().toPlainString());
+                    + usable.stripTrailingZeros().toPlainString() + "，本次需要"
+                    + allocation.getActualNum().stripTrailingZeros().toPlainString());
         }
 
         BigDecimal remaining = allocation.getActualNum();
@@ -313,6 +356,7 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
             if (take.compareTo(BigDecimal.ZERO) <= 0) {
                 continue;
             }
+            WmsSerialStockGuard.requireWhole(stock, take);
             WmsMaterialReservationDetailEntity detail = new WmsMaterialReservationDetailEntity();
             detail.setReservationId(reservation.getId());
             detail.setReservationNo(reservation.getReservationNo());
@@ -339,13 +383,17 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
             detail.setQualityResult(stock.getQualityResult());
             detail.setComplianceMode(allocation.getComplianceMode());
             detail.setComplianceReferenceNo("DEVIATION".equals(allocation.getComplianceMode())
-                    ? allocation.getDeviationPermitNo() : allocation.getSupplierCertificateRef());
+                    ? allocation.getDeviationPermitNo()
+                    : allocation.getSupplierCertificateRef());
             detail.setComplianceValidEnd("DEVIATION".equals(allocation.getComplianceMode())
-                    ? allocation.getDeviationValidEnd() : allocation.getSupplierCertificateValidEnd());
+                    ? allocation.getDeviationValidEnd()
+                    : allocation.getSupplierCertificateValidEnd());
             detail.setComplianceSnapshot(JSONUtil.toJsonStr(allocation));
             detail.setStatus(ACTIVE);
             detail.setFactoryCode(reservation.getFactoryCode());
-            detailMapper.insert(detail);
+            if (detailMapper.insert(detail) != 1) {
+                throw new CheckedException("物料预留分配明细保存失败，整笔预留回滚");
+            }
             created.add(detail);
             remaining = remaining.subtract(take);
         }
@@ -394,7 +442,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
             throw new CheckedException("替代料[" + allocation.getActualMatCode() + "]供应商认证缺失或在使用日期前失效");
         }
         if ("DEVIATION".equals(allocation.getComplianceMode())
-                && (StrUtil.isBlank(allocation.getDeviationPermitNo()) || StrUtil.isBlank(allocation.getDeviationReason())
+                && (StrUtil.isBlank(allocation.getDeviationPermitNo())
+                || StrUtil.isBlank(allocation.getDeviationReason())
                 || allocation.getDeviationValidEnd() == null
                 || validationDate.isAfter(allocation.getDeviationValidEnd()))) {
             throw new CheckedException("替代料[" + allocation.getActualMatCode() + "]偏离许可缺失或在使用日期前失效");
@@ -427,6 +476,7 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean release(WmsMaterialReservationReleaseDTO command) {
+        requireScopedOrganization();
         if (command == null || StrUtil.isBlank(command.getRequestId()) || StrUtil.isBlank(command.getSourceType())
                 || command.getSourceId() == null || StrUtil.isBlank(command.getReason())) {
             throw new CheckedException("释放预留缺少请求号、来源或原因");
@@ -439,15 +489,30 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                 new LambdaQueryWrapper<WmsMaterialReservationEntity>()
                         .eq(WmsMaterialReservationEntity::getSourceType, command.getSourceType())
                         .eq(WmsMaterialReservationEntity::getSourceId, command.getSourceId())
-                        .last("FOR UPDATE"), false);
+                        .last("FOR UPDATE"),
+                false);
         if (reservation == null) {
             return Boolean.TRUE;
         }
-        if (Objects.equals(command.getRequestId(), reservation.getReleaseRequestId()) || RELEASED.equals(reservation.getStatus())) {
+        if (RELEASED.equals(reservation.getStatus())) {
+            // 历史零行写入可能留下已释放主单和活动明细，不能只凭主状态返回释放成功。
+            Long activeDetails = detailMapper.selectCount(new LambdaQueryWrapper<WmsMaterialReservationDetailEntity>()
+                    .eq(WmsMaterialReservationDetailEntity::getReservationId, reservation.getId())
+                    .eq(WmsMaterialReservationDetailEntity::getStatus, ACTIVE));
+            if (!Long.valueOf(0).equals(activeDetails)) {
+                throw new CheckedException("已释放预留仍有活动明细或明细状态不明，请先核对预留账务");
+            }
+            if (!Objects.equals(reservation.getReleaseRequestId(), command.getRequestId())
+                    || !Objects.equals(reservation.getReleaseReason(), command.getReason())) {
+                throw new CheckedException("已释放预留的原请求号或原因不一致，请核对原释放记录");
+            }
             return Boolean.TRUE;
         }
         if (CONSUMED.equals(reservation.getStatus())) {
             throw new CheckedException("预留[" + reservation.getReservationNo() + "]已全部出库，不能释放");
+        }
+        if (!ACTIVE.equals(reservation.getStatus())) {
+            throw new CheckedException("预留[" + reservation.getReservationNo() + "]状态无效，不能释放");
         }
         List<WmsMaterialReservationDetailEntity> details = detailMapper.selectList(
                 new LambdaQueryWrapper<WmsMaterialReservationDetailEntity>()
@@ -455,43 +520,51 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                         .eq(WmsMaterialReservationDetailEntity::getStatus, ACTIVE));
         for (WmsMaterialReservationDetailEntity detail : details) {
             BigDecimal remaining = remaining(detail);
-            detailMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationDetailEntity>()
+            if (detailMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationDetailEntity>()
                     .eq(WmsMaterialReservationDetailEntity::getId, detail.getId())
                     .eq(WmsMaterialReservationDetailEntity::getStatus, ACTIVE)
                     .set(WmsMaterialReservationDetailEntity::getReleasedNum,
                             optional(detail.getReleasedNum()).add(remaining))
-                    .set(WmsMaterialReservationDetailEntity::getStatus, RELEASED));
+                    .set(WmsMaterialReservationDetailEntity::getStatus, RELEASED)) != 1) {
+                throw new CheckedException("物料预留明细释放失败，整笔释放回滚");
+            }
         }
         MomUser user = SecurityUtils.getUser();
-        reservationMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationEntity>()
+        if (reservationMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationEntity>()
                 .eq(WmsMaterialReservationEntity::getId, reservation.getId())
                 .eq(WmsMaterialReservationEntity::getStatus, ACTIVE)
                 .set(WmsMaterialReservationEntity::getStatus, RELEASED)
                 .set(WmsMaterialReservationEntity::getReleaseRequestId, command.getRequestId())
                 .set(WmsMaterialReservationEntity::getReleaseReason, command.getReason())
                 .set(WmsMaterialReservationEntity::getReleaseBy, user == null ? "SYSTEM" : user.getUsername())
-                .set(WmsMaterialReservationEntity::getReleaseTime, LocalDateTime.now()));
+                .set(WmsMaterialReservationEntity::getReleaseTime, LocalDateTime.now())) != 1) {
+            throw new CheckedException("物料预留主单释放失败，整笔释放回滚");
+        }
         return Boolean.TRUE;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean reallocate(WmsMaterialReservationReallocateDTO command) {
+        requireScopedOrganization();
         validateReallocate(command);
         WmsMaterialReservationEntity reservation = reservationMapper.selectOne(
                 new LambdaQueryWrapper<WmsMaterialReservationEntity>()
                         .eq(WmsMaterialReservationEntity::getSourceType, command.getSourceType())
                         .eq(WmsMaterialReservationEntity::getSourceId, command.getSourceId())
-                        .last("FOR UPDATE"), false);
+                        .last("FOR UPDATE"),
+                false);
         if (reservation == null || !ACTIVE.equals(reservation.getStatus())) {
             throw new CheckedException("来源记录没有有效的WMS物料预留，不能重配批次");
         }
         WmsMaterialReservationAdjustmentEntity existing = adjustmentMapper.selectOne(
                 new LambdaQueryWrapper<WmsMaterialReservationAdjustmentEntity>()
-                        .eq(WmsMaterialReservationAdjustmentEntity::getRequestId, command.getRequestId()), false);
+                        .eq(WmsMaterialReservationAdjustmentEntity::getRequestId, command.getRequestId()),
+                false);
         if (existing != null) {
             if (Objects.equals(existing.getReservationId(), reservation.getId())
-                    && "SUCCEEDED".equals(existing.getStatus())) {
+                    && "SUCCEEDED".equals(existing.getStatus())
+                    && Objects.equals(existing.getReason(), command.getReason())) {
                 return Boolean.TRUE;
             }
             throw new CheckedException("批次重配请求号已被使用，请刷新后重试");
@@ -596,16 +669,20 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
         adjustment.setOperatedByName(user == null ? "系统" : user.getName());
         adjustment.setOperatedTime(LocalDateTime.now());
         adjustment.setFactoryCode(reservation.getFactoryCode());
-        adjustmentMapper.insert(adjustment);
+        if (adjustmentMapper.insert(adjustment) != 1) {
+            throw new CheckedException("物料预留重配记录保存失败，整笔重配回滚");
+        }
 
         for (WmsMaterialReservationDetailEntity detail : riskyDetails) {
             BigDecimal quantity = remaining(detail);
-            detailMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationDetailEntity>()
+            if (detailMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationDetailEntity>()
                     .eq(WmsMaterialReservationDetailEntity::getId, detail.getId())
                     .eq(WmsMaterialReservationDetailEntity::getStatus, ACTIVE)
                     .set(WmsMaterialReservationDetailEntity::getReleasedNum,
                             optional(detail.getReleasedNum()).add(quantity))
-                    .set(WmsMaterialReservationDetailEntity::getStatus, RELEASED));
+                    .set(WmsMaterialReservationDetailEntity::getStatus, RELEASED)) != 1) {
+                throw new CheckedException("物料预留重配原明细释放失败，整笔重配回滚");
+            }
         }
         List<WmsMaterialReservationDetailEntity> created = new ArrayList<>();
         for (WmsMaterialReservationAllocationDTO allocation : reallocationGroups.values()) {
@@ -614,12 +691,14 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
         }
         List<Map<String, Object>> resultSnapshot = created.stream()
                 .map(item -> reallocationSnapshot(item, List.of())).toList();
-        adjustmentMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationAdjustmentEntity>()
+        if (adjustmentMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationAdjustmentEntity>()
                 .eq(WmsMaterialReservationAdjustmentEntity::getId, adjustment.getId())
                 .eq(WmsMaterialReservationAdjustmentEntity::getStatus, "EXECUTING")
                 .set(WmsMaterialReservationAdjustmentEntity::getStatus, "SUCCEEDED")
                 .set(WmsMaterialReservationAdjustmentEntity::getResultSnapshot,
-                        JSONUtil.toJsonStr(resultSnapshot)));
+                        JSONUtil.toJsonStr(resultSnapshot))) != 1) {
+            throw new CheckedException("物料预留重配完成状态保存失败，整笔重配回滚");
+        }
         return Boolean.TRUE;
     }
 
@@ -657,6 +736,7 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
 
     @Override
     public BigDecimal activeReservedNum(Long liveStockId) {
+        requireScopedOrganization();
         if (liveStockId == null) {
             return BigDecimal.ZERO;
         }
@@ -668,6 +748,7 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
 
     @Override
     public Map<Long, BigDecimal> activeReservedNums(Set<Long> liveStockIds) {
+        requireScopedOrganization();
         if (CollUtil.isEmpty(liveStockIds)) {
             return Map.of();
         }
@@ -685,14 +766,17 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public List<WmsLiveStockEntity> availableReservedStocks(String reservationNo, String actualMatCode, String warehouseCode) {
+    public List<WmsLiveStockEntity> availableReservedStocks(String reservationNo, String actualMatCode,
+                                                            String warehouseCode) {
+        requireScopedOrganization();
         if (StrUtil.isBlank(reservationNo) || StrUtil.isBlank(actualMatCode)) {
             return List.of();
         }
         WmsMaterialReservationEntity reservation = reservationMapper.selectOne(
                 new LambdaQueryWrapper<WmsMaterialReservationEntity>()
                         .eq(WmsMaterialReservationEntity::getReservationNo, reservationNo)
-                        .last("FOR UPDATE"), false);
+                        .last("FOR UPDATE"),
+                false);
         if (reservation == null || !ACTIVE.equals(reservation.getStatus())) {
             throw new CheckedException("预留[" + reservationNo + "]不存在或已失效");
         }
@@ -700,7 +784,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                 new LambdaQueryWrapper<WmsMaterialReservationDetailEntity>()
                         .eq(WmsMaterialReservationDetailEntity::getReservationNo, reservationNo)
                         .eq(WmsMaterialReservationDetailEntity::getActualMatCode, actualMatCode)
-                        .eq(StrUtil.isNotBlank(warehouseCode), WmsMaterialReservationDetailEntity::getWarehouseCode, warehouseCode)
+                        .eq(StrUtil.isNotBlank(warehouseCode), WmsMaterialReservationDetailEntity::getWarehouseCode,
+                                warehouseCode)
                         .eq(WmsMaterialReservationDetailEntity::getStatus, ACTIVE)
                         .orderByAsc(WmsMaterialReservationDetailEntity::getId));
         Map<Long, BigDecimal> quantitiesByStock = new LinkedHashMap<>();
@@ -725,9 +810,11 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void validateOutboundReservation(List<WmsOutBillDetailEntity> details) {
+        requireScopedOrganization();
         List<WmsOutBillDetailEntity> reservedDetails = Optional.ofNullable(details).orElse(List.of()).stream()
                 .filter(item -> item != null && StrUtil.isNotBlank(item.getReservationNo())
-                        && !StrUtil.startWith(item.getReservationNo(), WmsSalesStockReservationServiceImpl.PREFIX)).toList();
+                        && !StrUtil.startWith(item.getReservationNo(), WmsSalesStockReservationService.PREFIX))
+                .toList();
         if (reservedDetails.isEmpty()) {
             return;
         }
@@ -739,7 +826,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
             WmsMaterialReservationEntity reservation = reservationMapper.selectOne(
                     new LambdaQueryWrapper<WmsMaterialReservationEntity>()
                             .eq(WmsMaterialReservationEntity::getReservationNo, entry.getKey())
-                            .last("FOR UPDATE"), false);
+                            .last("FOR UPDATE"),
+                    false);
             if (reservation == null || !ACTIVE.equals(reservation.getStatus())) {
                 throw new CheckedException("预留[" + entry.getKey() + "]不存在或已失效，请重新生成出库批次");
             }
@@ -800,7 +888,9 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
 
     private boolean outboundMatches(WmsOutBillDetailEntity out,
                                     WmsMaterialReservationDetailEntity candidate) {
-        return Objects.equals(out.getMatCode(), candidate.getActualMatCode())
+        return (out.getSourceStockId() == null
+                || Objects.equals(out.getSourceStockId(), candidate.getLiveStockId()))
+                && Objects.equals(out.getMatCode(), candidate.getActualMatCode())
                 && (StrUtil.isBlank(out.getRequirementMatCode())
                 || Objects.equals(out.getRequirementMatCode(), candidate.getRequirementMatCode()))
                 && (StrUtil.isBlank(out.getWarehouseCode())
@@ -816,13 +906,18 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
     @Override
     @Transactional(rollbackFor = Exception.class)
     public List<WmsLiveStockEntity> consume(WmsOutBillDetailEntity out) {
-        if (StrUtil.isBlank(out.getReservationNo())) {
+        requireScopedOrganization();
+        if (out == null || StrUtil.isBlank(out.getReservationNo())) {
             throw new CheckedException("预留出库缺少预留单号");
+        }
+        if (out.getMatNum() == null || !Double.isFinite(out.getMatNum()) || out.getMatNum() <= 0) {
+            throw new CheckedException("生产预留消费数量必须为大于0的有限数值");
         }
         WmsMaterialReservationEntity reservation = reservationMapper.selectOne(
                 new LambdaQueryWrapper<WmsMaterialReservationEntity>()
                         .eq(WmsMaterialReservationEntity::getReservationNo, out.getReservationNo())
-                        .last("FOR UPDATE"), false);
+                        .last("FOR UPDATE"),
+                false);
         if (reservation == null || !ACTIVE.equals(reservation.getStatus())) {
             throw new CheckedException("预留[" + out.getReservationNo() + "]不存在或已失效");
         }
@@ -831,12 +926,20 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                 new LambdaQueryWrapper<WmsMaterialReservationDetailEntity>()
                         .eq(WmsMaterialReservationDetailEntity::getReservationId, reservation.getId())
                         .eq(WmsMaterialReservationDetailEntity::getActualMatCode, out.getMatCode())
-                        .eq(StrUtil.isNotBlank(out.getRequirementMatCode()), WmsMaterialReservationDetailEntity::getRequirementMatCode, out.getRequirementMatCode())
-                        .eq(StrUtil.isNotBlank(out.getWarehouseCode()), WmsMaterialReservationDetailEntity::getWarehouseCode, out.getWarehouseCode())
-                        .eq(StrUtil.isNotBlank(out.getSiteCode()), WmsMaterialReservationDetailEntity::getSiteCode, out.getSiteCode())
-                        .eq(StrUtil.isNotBlank(out.getContainerCode()), WmsMaterialReservationDetailEntity::getContainerCode, out.getContainerCode())
-                        .eq(StrUtil.isNotBlank(out.getMatBatch()), WmsMaterialReservationDetailEntity::getMatBatch, out.getMatBatch())
-                        .eq(StrUtil.isNotBlank(out.getSupplierCode()), WmsMaterialReservationDetailEntity::getSupplierCode, out.getSupplierCode())
+                        .eq(StrUtil.isNotBlank(out.getRequirementMatCode()),
+                                WmsMaterialReservationDetailEntity::getRequirementMatCode, out.getRequirementMatCode())
+                        .eq(StrUtil.isNotBlank(out.getWarehouseCode()),
+                                WmsMaterialReservationDetailEntity::getWarehouseCode, out.getWarehouseCode())
+                        .eq(StrUtil.isNotBlank(out.getSiteCode()), WmsMaterialReservationDetailEntity::getSiteCode,
+                                out.getSiteCode())
+                        .eq(StrUtil.isNotBlank(out.getContainerCode()),
+                                WmsMaterialReservationDetailEntity::getContainerCode, out.getContainerCode())
+                        .eq(StrUtil.isNotBlank(out.getMatBatch()), WmsMaterialReservationDetailEntity::getMatBatch,
+                                out.getMatBatch())
+                        .eq(StrUtil.isNotBlank(out.getSupplierCode()),
+                                WmsMaterialReservationDetailEntity::getSupplierCode, out.getSupplierCode())
+                        .eq(out.getSourceStockId() != null, WmsMaterialReservationDetailEntity::getLiveStockId,
+                                out.getSourceStockId())
                         .eq(WmsMaterialReservationDetailEntity::getStatus, ACTIVE)
                         .orderByAsc(WmsMaterialReservationDetailEntity::getId)
                         .last("FOR UPDATE"));
@@ -859,59 +962,75 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                 throw new CheckedException("预留库存行[" + detail.getLiveStockId() + "]实物数量不足，禁止出库");
             }
             validateReservedStockCompliance(reservation, detail, stock);
+            WmsSerialStockGuard.requireWhole(stock, take);
+            // 实物扣减和预留账必须共同确认，任一写入失败均由消费事务回滚。
             BigDecimal balance = stockNum(stock).subtract(take);
             if (balance.compareTo(BigDecimal.ZERO) == 0) {
-                liveStockMapper.deleteById(stock.getId());
+                if (liveStockMapper.deleteById(stock.getId()) != 1) {
+                    throw new CheckedException("生产预留源库存删除未确认，消费整体回滚");
+                }
             } else {
-                liveStockMapper.update(null, new LambdaUpdateWrapper<WmsLiveStockEntity>()
+                if (liveStockMapper.update(null, new LambdaUpdateWrapper<WmsLiveStockEntity>()
                         .eq(WmsLiveStockEntity::getId, stock.getId())
-                        .set(WmsLiveStockEntity::getMatNum, balance.doubleValue()));
+                        .set(WmsLiveStockEntity::getMatNum, balance.doubleValue())) != 1) {
+                    throw new CheckedException("生产预留源库存扣减未确认，消费整体回滚");
+                }
             }
             stock.setMatNum(take.doubleValue());
             reduced.add(stock);
             BigDecimal consumed = optional(detail.getConsumedNum()).add(take);
-            BigDecimal detailBalance = optional(detail.getReservedNum()).subtract(consumed).subtract(optional(detail.getReleasedNum()));
-            detailMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationDetailEntity>()
+            BigDecimal detailBalance = optional(detail.getReservedNum()).subtract(consumed)
+                    .subtract(optional(detail.getReleasedNum()));
+            if (detailMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationDetailEntity>()
                     .eq(WmsMaterialReservationDetailEntity::getId, detail.getId())
                     .set(WmsMaterialReservationDetailEntity::getConsumedNum, consumed)
                     .set(detailBalance.compareTo(BigDecimal.ZERO) == 0,
-                            WmsMaterialReservationDetailEntity::getStatus, CONSUMED));
+                            WmsMaterialReservationDetailEntity::getStatus, CONSUMED)) != 1) {
+                throw new CheckedException("生产预留明细消费记账未确认，消费整体回滚");
+            }
             remainingOut = remainingOut.subtract(take);
         }
         long activeDetails = detailMapper.selectCount(new LambdaQueryWrapper<WmsMaterialReservationDetailEntity>()
                 .eq(WmsMaterialReservationDetailEntity::getReservationId, reservation.getId())
                 .eq(WmsMaterialReservationDetailEntity::getStatus, ACTIVE));
         if (activeDetails == 0) {
-            reservationMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationEntity>()
+            if (reservationMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationEntity>()
                     .eq(WmsMaterialReservationEntity::getId, reservation.getId())
-                    .set(WmsMaterialReservationEntity::getStatus, CONSUMED));
+                    .set(WmsMaterialReservationEntity::getStatus, CONSUMED)) != 1) {
+                throw new CheckedException("生产预留完成状态更新未确认，消费整体回滚");
+            }
         }
         return reduced;
     }
 
     /**
-     * 生产退料入库通过后，将退回的实物库存重新绑定到原正式预留。
-     * 原消费明细保留 returned_num 审计，新库存建立 RETURN_REPLENISH 子明细，避免改写历史批次轨迹。
+     * 生产退料入库通过后，将退回的实物库存重新绑定到原正式预留。 原消费明细保留 returned_num 审计，新库存建立 RETURN_REPLENISH 子明细，避免改写历史批次轨迹。
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean replenishFromProductionReturn(WmsInBillDetailEntity inDetail, Long liveStockId) {
+        requireScopedOrganization();
         if (inDetail == null || StrUtil.isBlank(inDetail.getReservationNo()) || liveStockId == null) {
             return Boolean.FALSE;
         }
-        if (inDetail.getId() == null || inDetail.getMatNum() == null || inDetail.getMatNum() <= 0) {
+        if (inDetail.getId() == null || inDetail.getMatNum() == null || !Double.isFinite(inDetail.getMatNum())
+                || inDetail.getMatNum() <= 0) {
             throw new CheckedException("生产退料回补缺少入库明细标识或有效数量");
         }
         WmsMaterialReservationEntity reservation = reservationMapper.selectOne(
                 new LambdaQueryWrapper<WmsMaterialReservationEntity>()
                         .eq(WmsMaterialReservationEntity::getReservationNo, inDetail.getReservationNo())
-                        .last("FOR UPDATE"), false);
+                        .last("FOR UPDATE"),
+                false);
         if (reservation == null) {
             throw new CheckedException("生产退料关联的预留[" + inDetail.getReservationNo() + "]不存在");
         }
         // 计划已取消/释放时，退回库存作为普通可用库存，不重新制造已取消需求。
         if (RELEASED.equals(reservation.getStatus())) {
             return Boolean.FALSE;
+        }
+        if (!ACTIVE.equals(reservation.getStatus()) && !CONSUMED.equals(reservation.getStatus())) {
+            throw new CheckedException("生产退料关联的预留状态无效，禁止回补或重新激活");
         }
 
         BigDecimal returnNum = BigDecimal.valueOf(inDetail.getMatNum());
@@ -925,7 +1044,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                     .map(WmsMaterialReservationDetailEntity::getReservedNum)
                     .map(this::optional).reduce(BigDecimal.ZERO, BigDecimal::add);
             if (replenished.compareTo(returnNum) == 0
-                    && existingReplenishments.stream().allMatch(item -> Objects.equals(item.getLiveStockId(), liveStockId))) {
+                    && existingReplenishments.stream()
+                    .allMatch(item -> Objects.equals(item.getLiveStockId(), liveStockId))) {
                 return Boolean.TRUE;
             }
             throw new CheckedException("退料入库明细[" + inDetail.getId() + "]已存在不一致的预留回补记录");
@@ -936,7 +1056,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                         .eq(WmsMaterialReservationDetailEntity::getReservationId, reservation.getId())
                         .eq(WmsMaterialReservationDetailEntity::getActualMatCode, inDetail.getMatCode())
                         .eq(StrUtil.isNotBlank(inDetail.getRequirementMatCode()),
-                                WmsMaterialReservationDetailEntity::getRequirementMatCode, inDetail.getRequirementMatCode())
+                                WmsMaterialReservationDetailEntity::getRequirementMatCode,
+                                inDetail.getRequirementMatCode())
                         .orderByAsc(WmsMaterialReservationDetailEntity::getId)
                         .last("FOR UPDATE"));
         List<WmsMaterialReservationDetailEntity> returnableDetails = consumedDetails.stream()
@@ -960,9 +1081,12 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
             BigDecimal sourceReturnable = optional(source.getConsumedNum()).subtract(optional(source.getReturnedNum()));
             BigDecimal take = sourceReturnable.min(remainingReturn);
             BigDecimal returned = optional(source.getReturnedNum()).add(take);
-            detailMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationDetailEntity>()
+            // 已消费来源的退回量和新回补预留必须同时落账，不能只冻结其中一侧。
+            if (detailMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationDetailEntity>()
                     .eq(WmsMaterialReservationDetailEntity::getId, source.getId())
-                    .set(WmsMaterialReservationDetailEntity::getReturnedNum, returned));
+                    .set(WmsMaterialReservationDetailEntity::getReturnedNum, returned)) != 1) {
+                throw new CheckedException("生产退料原消费明细回写失败，整笔入库回滚");
+            }
 
             BigDecimal ratio = optional(source.getSubstituteRatio());
             if (ratio.compareTo(BigDecimal.ZERO) <= 0) {
@@ -999,12 +1123,16 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
             replenish.setComplianceSnapshot(source.getComplianceSnapshot());
             replenish.setStatus(ACTIVE);
             replenish.setFactoryCode(inDetail.getFactoryCode());
-            detailMapper.insert(replenish);
+            if (detailMapper.insert(replenish) != 1) {
+                throw new CheckedException("生产退料回补明细保存失败，整笔入库回滚");
+            }
             remainingReturn = remainingReturn.subtract(take);
         }
-        reservationMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationEntity>()
+        if (reservationMapper.update(null, new LambdaUpdateWrapper<WmsMaterialReservationEntity>()
                 .eq(WmsMaterialReservationEntity::getId, reservation.getId())
-                .set(WmsMaterialReservationEntity::getStatus, ACTIVE));
+                .set(WmsMaterialReservationEntity::getStatus, ACTIVE)) != 1) {
+            throw new CheckedException("生产退料预留状态回写失败，整笔入库回滚");
+        }
         return Boolean.TRUE;
     }
 
@@ -1030,6 +1158,7 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
 
     @Override
     public Map<Long, String> statuses(String sourceType, Set<Long> sourceIds) {
+        requireScopedOrganization();
         if (StrUtil.isBlank(sourceType) || CollUtil.isEmpty(sourceIds)) {
             return Map.of();
         }
@@ -1046,6 +1175,7 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
      */
     @Override
     public List<WmsMaterialReservationLedgerDTO> ledgers(Set<String> reservationNos) {
+        requireScopedOrganization();
         if (CollUtil.isEmpty(reservationNos)) {
             return List.of();
         }
@@ -1096,8 +1226,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                     .getOrDefault(reservation.getId(), List.of())) {
                 String lineKey = StrUtil.nullToEmpty(detail.getRequirementMatCode()) + "#"
                         + StrUtil.nullToEmpty(detail.getActualMatCode());
-                WmsMaterialReservationLedgerLineDTO line = lines.computeIfAbsent(lineKey, ignored ->
-                        new WmsMaterialReservationLedgerLineDTO()
+                WmsMaterialReservationLedgerLineDTO line = lines.computeIfAbsent(lineKey,
+                        ignored -> new WmsMaterialReservationLedgerLineDTO()
                                 .setRequirementMatCode(detail.getRequirementMatCode())
                                 .setActualMatCode(detail.getActualMatCode())
                                 .setActualMatName(detail.getActualMatName())
@@ -1118,7 +1248,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                 BigDecimal returned = optional(detail.getReturnedNum());
                 BigDecimal released = optional(detail.getReleasedNum());
                 BigDecimal active = ACTIVE.equals(detail.getStatus())
-                        ? reserved.subtract(consumed).subtract(released).max(BigDecimal.ZERO) : BigDecimal.ZERO;
+                        ? reserved.subtract(consumed).subtract(released).max(BigDecimal.ZERO)
+                        : BigDecimal.ZERO;
                 line.setReservedNum(line.getReservedNum().add(reserved));
                 line.setConsumedNum(line.getConsumedNum().add(consumed));
                 line.setReturnedNum(line.getReturnedNum().add(returned));
@@ -1130,7 +1261,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                 ledger.setReleasedNum(ledger.getReleasedNum().add(released));
                 ledger.setActiveReservedNum(ledger.getActiveReservedNum().add(active));
                 if (detail.getLiveStockId() != null) {
-                    lineStockIds.computeIfAbsent(lineKey, ignored -> new LinkedHashSet<>()).add(detail.getLiveStockId());
+                    lineStockIds.computeIfAbsent(lineKey, ignored -> new LinkedHashSet<>())
+                            .add(detail.getLiveStockId());
                 }
                 if (reserved.compareTo(BigDecimal.ZERO) <= 0 || consumed.compareTo(BigDecimal.ZERO) < 0
                         || released.compareTo(BigDecimal.ZERO) < 0 || returned.compareTo(BigDecimal.ZERO) < 0
@@ -1223,7 +1355,8 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                 issues.add("SUPPLIER_BATCH_COMPLIANCE_DRIFT");
             }
         }
-        String quality = stock == null ? "" : StrUtil.blankToDefault(
+        String quality = stock == null ? ""
+                : StrUtil.blankToDefault(
                 StrUtil.trim(stock.getQualityResult()), "").toUpperCase(Locale.ROOT);
         if (stock != null && CollUtil.isNotEmpty(allocation.getAllowedQualityResults())
                 && !allocation.getAllowedQualityResults().contains(quality)) {
@@ -1290,6 +1423,7 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
 
     @Override
     public WmsMaterialCompensationResultDTO compensate(WmsMaterialCompensationCommandDTO command) {
+        requireScopedOrganization();
         if (command == null || StrUtil.isBlank(command.getRequestId()) || StrUtil.isBlank(command.getAction())
                 || StrUtil.isBlank(command.getReservationNo()) || StrUtil.isBlank(command.getRequirementMatCode())
                 || StrUtil.isBlank(command.getActualMatCode())) {

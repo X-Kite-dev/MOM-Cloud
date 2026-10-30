@@ -32,6 +32,9 @@ public class ConflictEngine {
             return List.of();
         }
 
+        if (taskDetails.stream().anyMatch(Objects::isNull)) {
+            throw new com.kitex.common.core.exception.CheckedException("排产任务明细不完整，请重新读取来源后检查冲突");
+        }
         List<PlnSchedulingConflictEntity> result = new ArrayList<>();
         result.addAll(detectMaterialConstraints(taskId, taskDetails));
         result.addAll(detectOperationConstraints(taskId, taskDetails));

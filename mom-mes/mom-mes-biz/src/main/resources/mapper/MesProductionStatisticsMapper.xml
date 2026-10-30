@@ -8,12 +8,12 @@
         <if test="q.materialCode != null">AND t.mat_code = #{q.materialCode}</if>
         <if test="start != null">
             AND ((t.plan_start_date &lt; #{end} AND t.plan_end_date &gt; #{start})
-                OR (t.start_time &lt; #{end} AND (t.finish_time IS NULL OR t.finish_time &gt; #{start})))
+            OR (t.start_time &lt; #{end} AND (t.finish_time IS NULL OR t.finish_time &gt; #{start})))
         </if>
         <if test="q.shiftCode != null">
             AND EXISTS (SELECT 1 FROM mes_task_arrange a WHERE a.tenant_id=t.tenant_id
-                AND a.factory_code=t.factory_code AND a.task_code=t.code AND a.del_flag='0'
-                AND a.shift_code=#{q.shiftCode})
+            AND a.factory_code=t.factory_code AND a.task_code=t.code AND a.del_flag='0'
+            AND a.shift_code=#{q.shiftCode})
         </if>
     </sql>
     <sql id="reportFrom">
@@ -41,69 +41,121 @@
     <sql id="effective">(r.status IS NULL OR r.status='EFFECTIVE')</sql>
     <select id="taskSummary" resultType="map">
         SELECT COUNT(*) AS matched_task_count,
-            COUNT(*) FILTER (WHERE t.status IN ('CREATE','ISSUE','DISPATCH')) AS not_started_count,
-            COUNT(*) FILTER (WHERE t.status='PRODUCT') AS in_progress_count,
-            COUNT(*) FILTER (WHERE t.status IN ('FINISH','CLOSE')) AS finished_count,
-            COUNT(*) FILTER (WHERE t.status IS NULL OR t.status NOT IN ('CREATE','ISSUE','DISPATCH','PRODUCT','FINISH','CLOSE')) AS unknown_status_count,
-            COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM mes_produce_task p
-                WHERE p.tenant_id=t.tenant_id AND p.factory_code=t.factory_code AND p.task_code=t.code
-                AND p.del_flag='0' AND p.status='PAUSE')) AS paused_count,
-            COUNT(*) FILTER (WHERE t.plan_end_date IS NOT NULL AND
-                ((t.finish_time IS NOT NULL AND t.finish_time &gt; t.plan_end_date)
-                OR (t.finish_time IS NULL AND t.status IN ('CREATE','ISSUE','DISPATCH','PRODUCT')
-                    AND t.plan_end_date &lt; #{observedAt}))) AS delayed_count
-        FROM mes_task t WHERE <include refid="taskScope"/>
+        COUNT(*) FILTER (WHERE t.status IN ('CREATE','ISSUE','DISPATCH')) AS not_started_count,
+        COUNT(*) FILTER (WHERE t.status='PRODUCT') AS in_progress_count,
+        COUNT(*) FILTER (WHERE t.status IN ('FINISH','CLOSE')) AS finished_count,
+        COUNT(*) FILTER (WHERE t.status IS NULL OR t.status NOT IN
+        ('CREATE','ISSUE','DISPATCH','PRODUCT','FINISH','CLOSE')) AS unknown_status_count,
+        COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM mes_produce_task p
+        WHERE p.tenant_id=t.tenant_id AND p.factory_code=t.factory_code AND p.task_code=t.code
+        AND p.del_flag='0' AND p.status='PAUSE')) AS paused_count,
+        COUNT(*) FILTER (WHERE t.plan_end_date IS NOT NULL AND
+        ((t.finish_time IS NOT NULL AND t.finish_time &gt; t.plan_end_date)
+        OR (t.finish_time IS NULL AND t.status IN ('CREATE','ISSUE','DISPATCH','PRODUCT')
+        AND t.plan_end_date &lt; #{observedAt}))) AS delayed_count
+        FROM mes_task t WHERE
+        <include refid="taskScope"/>
     </select>
     <select id="reportSummary" resultType="map">
-        SELECT COUNT(*) FILTER (WHERE <include refid="effective"/>) AS effective_count,
-            COUNT(*) FILTER (WHERE r.status='REVERSED') AS reversed_count,
-            COUNT(DISTINCT r.task_code) FILTER (WHERE <include refid="effective"/>) AS distinct_task_count,
-            COUNT(*) FILTER (WHERE r.status IS NOT NULL AND r.status NOT IN ('EFFECTIVE','REVERSED')) AS unknown_status_count
-        <include refid="reportFrom"/> WHERE <include refid="reportScope"/>
+        SELECT COUNT(*) FILTER (WHERE<include refid="effective"/>) AS effective_count,
+        COUNT(*) FILTER (WHERE r.status='REVERSED') AS reversed_count,
+        COUNT(DISTINCT r.task_code) FILTER (WHERE<include refid="effective"/>) AS distinct_task_count,
+        COUNT(*) FILTER (WHERE r.status IS NOT NULL AND r.status NOT IN ('EFFECTIVE','REVERSED')) AS
+        unknown_status_count
+        <include refid="reportFrom"/>
+        WHERE
+        <include refid="reportScope"/>
     </select>
     <select id="quantities" resultType="map">
         SELECT COALESCE(NULLIF(r.mat_code,''),'UNKNOWN') AS material_code,
-            COALESCE(NULLIF(r.report_unit,''),'UNKNOWN') AS report_unit,
-            CASE WHEN COUNT(*) FILTER (WHERE COALESCE(r.effective_report_num,r.report_num) IS NULL
-                OR COALESCE(r.effective_report_num,r.report_num)&lt;0)=0
-                THEN SUM(COALESCE(r.effective_report_num,r.report_num)) END AS reported_quantity,
-            CASE WHEN COUNT(*) FILTER (WHERE r.quality_released_num IS NULL OR r.quality_released_num&lt;0)=0
-                THEN SUM(r.quality_released_num) END AS released_quantity,
-            CASE WHEN COUNT(*) FILTER (WHERE r.quality_pending_num IS NULL OR r.quality_pending_num&lt;0)=0
-                THEN SUM(r.quality_pending_num) END AS pending_quantity,
-            CASE WHEN COUNT(*) FILTER (WHERE r.quality_rejected_num IS NULL OR r.quality_rejected_num&lt;0)=0
-                THEN SUM(r.quality_rejected_num) END AS rejected_quantity,
-            COUNT(*) FILTER (WHERE COALESCE(r.effective_report_num,r.report_num) IS NULL
-                OR COALESCE(r.effective_report_num,r.report_num)&lt;0 OR r.quality_released_num IS NULL
-                OR r.quality_pending_num IS NULL OR r.quality_rejected_num IS NULL OR r.quality_released_num&lt;0
-                OR r.quality_pending_num&lt;0 OR r.quality_rejected_num&lt;0) AS incomplete_count
-        <include refid="reportFrom"/> WHERE <include refid="reportScope"/> AND <include refid="effective"/>
+        COALESCE(NULLIF(r.report_unit,''),'UNKNOWN') AS report_unit,
+        CASE WHEN COUNT(*) FILTER (WHERE COALESCE(r.effective_report_num,r.report_num) IS NULL
+        OR COALESCE(r.effective_report_num,r.report_num)&lt;0)=0
+        THEN SUM(COALESCE(r.effective_report_num,r.report_num)) END AS reported_quantity,
+        CASE WHEN COUNT(*) FILTER (WHERE r.quality_released_num IS NULL OR r.quality_released_num&lt;0)=0
+        THEN SUM(r.quality_released_num) END AS released_quantity,
+        CASE WHEN COUNT(*) FILTER (WHERE r.quality_pending_num IS NULL OR r.quality_pending_num&lt;0)=0
+        THEN SUM(r.quality_pending_num) END AS pending_quantity,
+        CASE WHEN COUNT(*) FILTER (WHERE r.quality_rejected_num IS NULL OR r.quality_rejected_num&lt;0)=0
+        THEN SUM(r.quality_rejected_num) END AS rejected_quantity,
+        COUNT(*) FILTER (WHERE COALESCE(r.effective_report_num,r.report_num) IS NULL
+        OR COALESCE(r.effective_report_num,r.report_num)&lt;0 OR r.quality_released_num IS NULL
+        OR r.quality_pending_num IS NULL OR r.quality_rejected_num IS NULL OR r.quality_released_num&lt;0
+        OR r.quality_pending_num&lt;0 OR r.quality_rejected_num&lt;0) AS incomplete_count
+        <include refid="reportFrom"/>
+        WHERE
+        <include refid="reportScope"/>
+        AND
+        <include refid="effective"/>
         GROUP BY COALESCE(NULLIF(r.mat_code,''),'UNKNOWN'),COALESCE(NULLIF(r.report_unit,''),'UNKNOWN')
         ORDER BY material_code,report_unit
     </select>
     <select id="unattributed" resultType="long">
-        SELECT COUNT(*) <include refid="reportFrom"/> WHERE <include refid="reportBaseScope"/>
-            AND (a.id IS NULL OR a.workshop_code IS NULL OR a.shift_code IS NULL)
+        SELECT COUNT(*)
+        <include refid="reportFrom"/>
+        WHERE
+        <include refid="reportBaseScope"/>
+        AND (a.id IS NULL OR a.workshop_code IS NULL OR a.shift_code IS NULL)
     </select>
     <select id="ranking" resultType="map">
         SELECT grouped.*, COUNT(*) OVER () AS population_count FROM (
         <choose>
             <when test="q.rankMetric == 'TASK_COUNT'">
-                SELECT <choose><when test="q.rankGroupBy == 'WORKSHOP'">COALESCE(NULLIF(t.workshop_code,''),'UNKNOWN')</when><otherwise>t.code</otherwise></choose> AS group_code,
-                    COUNT(*) AS metric_value FROM mes_task t WHERE <include refid="taskScope"/>
-                GROUP BY <choose><when test="q.rankGroupBy == 'WORKSHOP'">COALESCE(NULLIF(t.workshop_code,''),'UNKNOWN')</when><otherwise>t.code</otherwise></choose>
+                SELECT
+                <choose>
+                    <when test="q.rankGroupBy == 'WORKSHOP'">COALESCE(NULLIF(t.workshop_code,''),'UNKNOWN')</when>
+                    <otherwise>t.code</otherwise>
+                </choose>
+                AS group_code,
+                COUNT(*) AS metric_value FROM mes_task t WHERE
+                <include refid="taskScope"/>
+                GROUP BY
+                <choose>
+                    <when test="q.rankGroupBy == 'WORKSHOP'">COALESCE(NULLIF(t.workshop_code,''),'UNKNOWN')</when>
+                    <otherwise>t.code</otherwise>
+                </choose>
             </when>
             <otherwise>
-                SELECT <choose><when test="q.rankGroupBy == 'WORKSHOP'">COALESCE(NULLIF(a.workshop_code,''),'UNKNOWN')</when>
-                    <when test="q.rankGroupBy == 'SHIFT'">COALESCE(NULLIF(a.shift_code,''),'UNKNOWN')</when><otherwise>COALESCE(NULLIF(r.task_code,''),'UNKNOWN')</otherwise></choose> AS group_code,
-                    <choose><when test="q.rankMetric == 'REPORT_QUANTITY'">CASE WHEN COUNT(*) FILTER (WHERE COALESCE(r.effective_report_num,r.report_num) IS NULL OR COALESCE(r.effective_report_num,r.report_num)&lt;0)=0 THEN SUM(COALESCE(r.effective_report_num,r.report_num)) END</when>
-                        <when test="q.rankMetric == 'QUALITY_REJECTED_QUANTITY'">CASE WHEN COUNT(*) FILTER (WHERE r.quality_rejected_num IS NULL OR r.quality_rejected_num&lt;0)=0 THEN SUM(r.quality_rejected_num) END</when><otherwise>COUNT(*)</otherwise></choose> AS metric_value
-                <include refid="reportFrom"/> WHERE <include refid="reportScope"/> AND <include refid="effective"/>
-                GROUP BY <choose><when test="q.rankGroupBy == 'WORKSHOP'">COALESCE(NULLIF(a.workshop_code,''),'UNKNOWN')</when>
-                    <when test="q.rankGroupBy == 'SHIFT'">COALESCE(NULLIF(a.shift_code,''),'UNKNOWN')</when><otherwise>COALESCE(NULLIF(r.task_code,''),'UNKNOWN')</otherwise></choose>
+                SELECT
+                <choose>
+                    <when test="q.rankGroupBy == 'WORKSHOP'">COALESCE(NULLIF(a.workshop_code,''),'UNKNOWN')</when>
+                    <when test="q.rankGroupBy == 'SHIFT'">COALESCE(NULLIF(a.shift_code,''),'UNKNOWN')</when>
+                    <otherwise>COALESCE(NULLIF(r.task_code,''),'UNKNOWN')</otherwise>
+                </choose>
+                AS group_code,
+                <choose>
+                    <when test="q.rankMetric == 'REPORT_QUANTITY'">CASE WHEN COUNT(*) FILTER (WHERE
+                        COALESCE(r.effective_report_num,r.report_num) IS NULL OR
+                        COALESCE(r.effective_report_num,r.report_num)&lt;0)=0 THEN
+                        SUM(COALESCE(r.effective_report_num,r.report_num)) END
+                    </when>
+                    <when test="q.rankMetric == 'QUALITY_REJECTED_QUANTITY'">CASE WHEN COUNT(*) FILTER (WHERE
+                        r.quality_rejected_num IS NULL OR r.quality_rejected_num&lt;0)=0 THEN
+                        SUM(r.quality_rejected_num) END
+                    </when>
+                    <otherwise>COUNT(*)</otherwise>
+                </choose>
+                AS metric_value
+                <include refid="reportFrom"/>
+                WHERE
+                <include refid="reportScope"/>
+                AND
+                <include refid="effective"/>
+                GROUP BY
+                <choose>
+                    <when test="q.rankGroupBy == 'WORKSHOP'">COALESCE(NULLIF(a.workshop_code,''),'UNKNOWN')</when>
+                    <when test="q.rankGroupBy == 'SHIFT'">COALESCE(NULLIF(a.shift_code,''),'UNKNOWN')</when>
+                    <otherwise>COALESCE(NULLIF(r.task_code,''),'UNKNOWN')</otherwise>
+                </choose>
             </otherwise>
-        </choose>) grouped
-        ORDER BY metric_value <choose><when test="q.rankDirection == 'ASC'">ASC</when><otherwise>DESC</otherwise></choose> NULLS LAST, group_code ASC
+        </choose>
+        ) grouped
+        ORDER BY metric_value
+        <choose>
+            <when test="q.rankDirection == 'ASC'">ASC</when>
+            <otherwise>DESC</otherwise>
+        </choose>
+        NULLS LAST, group_code ASC
         LIMIT #{q.rankLimit}
     </select>
 </mapper>

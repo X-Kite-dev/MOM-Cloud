@@ -6,9 +6,12 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
-/** 人工产品需求已接收或仅形成未下达MRP时的受控变更契约。 */
+/**
+ * 人工产品需求已接收或仅形成未下达MRP时的受控变更契约。
+ */
 public final class PlanDemandChangeDTO {
-    private PlanDemandChangeDTO() {}
+    private PlanDemandChangeDTO() {
+    }
 
     @Data
     public static class SubmitCommand {

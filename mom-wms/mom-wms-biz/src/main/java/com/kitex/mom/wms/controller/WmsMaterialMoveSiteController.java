@@ -1,11 +1,8 @@
 package com.kitex.mom.wms.controller;
 
-import cn.hutool.core.collection.CollUtil;
-import cn.hutool.core.util.StrUtil;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.SearchPage;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
@@ -14,6 +11,8 @@ import com.kitex.mom.wms.dto.WmsMaterialMoveSiteQueryDTO;
 import com.kitex.mom.wms.dto.app.WmsMaterialMoveSiteAppDTO;
 import com.kitex.mom.wms.entity.WmsMaterialMoveSiteEntity;
 import com.kitex.mom.wms.service.WmsMaterialMoveSiteService;
+import com.kitex.mom.wms.service.impl.WmsMaterialMoveSiteAccess;
+import com.kitex.mom.wms.service.impl.WmsMaterialMoveSiteQueryScope;
 import com.kitex.mom.wms.vo.WmsMaterialMoveSiteExcelVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -40,6 +39,7 @@ import java.util.List;
 public class WmsMaterialMoveSiteController {
 
     private final WmsMaterialMoveSiteService wmsMaterialMoveSiteService;
+    private final WmsMaterialMoveSiteAccess access;
 
     /**
      * 分页查询
@@ -50,18 +50,13 @@ public class WmsMaterialMoveSiteController {
      */
     @Operation(summary = "分页查询", description = "分页查询")
     @GetMapping("/page")
-//    @PreAuthorize("@pms.hasPermission('wms_wmsMaterialMoveSite_view')")
     public R<Page<WmsMaterialMoveSiteEntity>> getWmsMaterialMoveSitePage(@ParameterObject SearchPage page, @ParameterObject WmsMaterialMoveSiteQueryDTO wmsMaterialMoveSite) {
-        LambdaQueryWrapper<WmsMaterialMoveSiteEntity> wrapper = Wrappers.lambdaQuery();
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialMoveSite.getMatCode()), WmsMaterialMoveSiteEntity::getMatCode, wmsMaterialMoveSite.getMatCode());
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialMoveSite.getMatName()), WmsMaterialMoveSiteEntity::getMatName, wmsMaterialMoveSite.getMatName());
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialMoveSite.getNewSiteCode()), WmsMaterialMoveSiteEntity::getNewSiteCode, wmsMaterialMoveSite.getNewSiteCode());
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialMoveSite.getNewSiteName()), WmsMaterialMoveSiteEntity::getNewSiteName, wmsMaterialMoveSite.getNewSiteName());
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialMoveSite.getOldSiteCode()), WmsMaterialMoveSiteEntity::getOldSiteCode, wmsMaterialMoveSite.getOldSiteCode());
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialMoveSite.getOldSiteName()), WmsMaterialMoveSiteEntity::getOldSiteName, wmsMaterialMoveSite.getOldSiteName());
-        wrapper.eq(StrUtil.isNotBlank(wmsMaterialMoveSite.getWarehouseCode()), WmsMaterialMoveSiteEntity::getWarehouseCode, wmsMaterialMoveSite.getWarehouseCode());
-        wrapper.orderByDesc(WmsMaterialMoveSiteEntity::getCreateTime);
-        return R.ok(wmsMaterialMoveSiteService.page(page.toMpPage(), wrapper));
+        if (wmsMaterialMoveSite == null) {
+            throw new CheckedException("库内移动查询条件不能为空");
+        }
+        access.requireView(wmsMaterialMoveSite.getWarehouseCode());
+        return R.ok(wmsMaterialMoveSiteService.page(page.toMpPage(),
+                WmsMaterialMoveSiteQueryScope.build(wmsMaterialMoveSite, null)));
     }
 
     /**
@@ -72,9 +67,10 @@ public class WmsMaterialMoveSiteController {
      */
     @Operation(summary = "通过id查询", description = "通过id查询")
     @GetMapping("/{id}")
-//    @PreAuthorize("@pms.hasPermission('wms_wmsMaterialMoveSite_view')")
     public R<WmsMaterialMoveSiteEntity> getById(@PathVariable("id") Long id) {
-        return R.ok(wmsMaterialMoveSiteService.getById(id));
+        WmsMaterialMoveSiteEntity row = wmsMaterialMoveSiteService.getById(id);
+        access.requireViewRow(row);
+        return R.ok(row);
     }
 
     /**
@@ -86,8 +82,11 @@ public class WmsMaterialMoveSiteController {
     @Operation(summary = "新增库内移动", description = "新增库内移动")
     @SysLog("新增库内移动")
     @PostMapping
-//    @PreAuthorize("@pms.hasPermission('wms_wmsMaterialMoveSite_add')")
     public R<Boolean> save(@RequestBody WmsMaterialMoveSiteAddDTO wmsMaterialMoveSiteAddDTO) {
+        if (wmsMaterialMoveSiteAddDTO == null) {
+            throw new CheckedException("库内移动数据不能为空");
+        }
+        access.requireMove(wmsMaterialMoveSiteAddDTO.getWarehouseCode());
         return R.ok(wmsMaterialMoveSiteService.materialMoveSiteSave(wmsMaterialMoveSiteAddDTO));
     }
 
@@ -100,23 +99,25 @@ public class WmsMaterialMoveSiteController {
     @Operation(summary = "app-库内移动", description = "app-库内移动")
     @SysLog("app-库内移动")
     @PostMapping("/app")
-//    @PreAuthorize("@pms.hasPermission('wms_wmsMaterialMoveSite_add')")
     public R<Boolean> appSave(@RequestBody @Valid WmsMaterialMoveSiteAppDTO wmsMaterialMoveSiteAddDTO) {
+        if (wmsMaterialMoveSiteAddDTO == null) {
+            throw new CheckedException("库内移动数据不能为空");
+        }
+        access.requireMove(wmsMaterialMoveSiteAddDTO.getWarehouseCode());
         return R.ok(wmsMaterialMoveSiteService.appMaterialMoveSiteSave(wmsMaterialMoveSiteAddDTO));
     }
 
     /**
-     * 通过id删除库内移动
+     * 拒绝删除已生效的移库履历
      *
      * @param ids id列表
      * @return R
      */
-    @Operation(summary = "通过id删除库内移动", description = "通过id删除库内移动")
-    @SysLog("通过id删除库内移动")
+    @Operation(summary = "移库履历禁止删除", description = "已发生库存移动的履历属于追溯证据")
+    @SysLog("尝试删除移库履历")
     @DeleteMapping
-//    @PreAuthorize("@pms.hasPermission('wms_wmsMaterialMoveSite_del')")
     public R<Boolean> removeById(@RequestBody Long[] ids) {
-        return R.ok(wmsMaterialMoveSiteService.removeBatchByIds(CollUtil.toList(ids)));
+        throw new CheckedException("移库履历是库存追溯证据，不能删除；需要纠正库存请执行反向移库");
     }
 
     /**
@@ -128,8 +129,12 @@ public class WmsMaterialMoveSiteController {
      */
     @ResponseExcel
     @GetMapping("/export")
-//    @PreAuthorize("@pms.hasPermission('wms_wmsMaterialMoveSite_export')")
-    public List<WmsMaterialMoveSiteExcelVO> export(WmsMaterialMoveSiteEntity wmsMaterialMoveSite, Long[] ids) {
+    public List<WmsMaterialMoveSiteExcelVO> export(@ParameterObject WmsMaterialMoveSiteQueryDTO wmsMaterialMoveSite,
+            Long[] ids) {
+        if (wmsMaterialMoveSite == null) {
+            throw new CheckedException("库内移动查询条件不能为空");
+        }
+        access.requireExport(wmsMaterialMoveSite.getWarehouseCode());
         return wmsMaterialMoveSiteService.export(wmsMaterialMoveSite, ids);
     }
 }

@@ -27,15 +27,21 @@ public class MesExecutionContractDTO {
 
     private String arrangeCode;
 
-    /** 原生动态契约当前实际父任务，旧契约不补值、不参与历史JSON重算。 */
+    /**
+     * 原生动态契约当前实际父任务，旧契约不补值、不参与历史JSON重算。
+     */
     @Schema(description = "原生动态策略当前工序任务号", accessMode = Schema.AccessMode.READ_ONLY)
     private String produceTaskCode;
 
-    /** 只从原生派工冻结读取，不能用今日模板推断历史。 */
+    /**
+     * 只从原生派工冻结读取，不能用今日模板推断历史。
+     */
     @Schema(description = "原生动态策略当前稳定节点", accessMode = Schema.AccessMode.READ_ONLY)
     private String sourceRouteNodeCode;
 
-    /** 与主工序编码独立的所属工程路线。 */
+    /**
+     * 与主工序编码独立的所属工程路线。
+     */
     @Schema(description = "原生动态策略所属工艺路线", accessMode = Schema.AccessMode.READ_ONLY)
     private String processRouteCode;
     private String reportMode;

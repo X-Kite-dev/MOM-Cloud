@@ -8,7 +8,9 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface PlnMpsExecutionObservationMapper extends MomBaseMapper<PlnMpsExecutionObservationEntity> {
-    /** 当前租户/工厂/请求串行化；采集主事务使用READ_COMMITTED，锁后能读取前一提交回执。 */
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(#{key}, 0))")
-    void lockRequest(@Param("key") String key);
+    /**
+     * 当前租户/工厂/请求串行化；采集主事务使用READ_COMMITTED，锁后能读取前一提交回执。
+     */
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(#{key}, 0))")
+    Integer lockRequest(@Param("key") String key);
 }

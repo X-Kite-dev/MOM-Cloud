@@ -6,6 +6,7 @@ import com.kitex.mom.wms.dto.WmsInNoticeDetailQueryDTO;
 import com.kitex.mom.wms.entity.WmsOutNoticeDetailEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
@@ -22,4 +23,28 @@ public interface WmsOutNoticeDetailMapper extends MomBaseMapper<WmsOutNoticeDeta
     Page<WmsOutNoticeDetailEntity> fetchDetails(Page page, @Param("params") WmsInNoticeDetailQueryDTO params, @Param("ids") Long[] ids);
 
     List<WmsOutNoticeDetailEntity> fetchDetails(@Param("params") WmsInNoticeDetailQueryDTO params, @Param("ids") Long[] ids);
+
+    /**
+     * 仅返回当前组织、仓库且主单仍允许出库的通知明细。
+     */
+    @Select("""
+            SELECT d.id, d.mat_code
+            FROM wms_out_notice_detail d
+            JOIN wms_out_notice n ON n.id = d.notice_id
+                AND n.tenant_id = d.tenant_id
+                AND n.factory_code = d.factory_code
+                AND n.warehouse_code = d.warehouse_code
+            WHERE n.id = #{noticeId}
+                AND n.tenant_id = #{tenantId}
+                AND n.factory_code = #{factoryCode}
+                AND n.warehouse_code = #{warehouseCode}
+                AND n.state IN (#{readyState}, #{runningState})
+                AND n.del_flag = '0'
+                AND d.del_flag = '0'
+            ORDER BY d.id
+            """)
+    List<WmsOutNoticeDetailEntity> selectSelectableStockDetails(@Param("noticeId") Long noticeId,
+            @Param("tenantId") Long tenantId, @Param("factoryCode") String factoryCode,
+            @Param("warehouseCode") String warehouseCode, @Param("readyState") String readyState,
+            @Param("runningState") String runningState);
 }

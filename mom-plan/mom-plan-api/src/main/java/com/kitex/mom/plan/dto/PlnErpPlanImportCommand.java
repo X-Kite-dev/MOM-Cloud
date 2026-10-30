@@ -8,7 +8,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** ERP 连接器向 PLAN 提交的规范正式计划，不接收任意 URL、凭据或可执行表达式。 */
+/**
+ * ERP 连接器向 PLAN 提交的规范正式计划，不接收任意 URL、凭据或可执行表达式。
+ */
 @Data
 @Schema(description = "ERP正式计划导入命令")
 public class PlnErpPlanImportCommand {
@@ -21,7 +23,9 @@ public class PlnErpPlanImportCommand {
     private String sourceContentFingerprint;
     private List<Line> lines;
 
-    /** ERP 计划中的单条自制、采购或外协需求。 */
+    /**
+     * ERP 计划中的单条自制、采购或外协需求。
+     */
     @Data
     public static class Line {
         private String lineNo;

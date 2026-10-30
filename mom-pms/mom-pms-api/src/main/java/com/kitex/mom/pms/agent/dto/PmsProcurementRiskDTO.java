@@ -4,6 +4,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -27,6 +29,12 @@ public final class PmsProcurementRiskDTO {
     public static class Query {
         @NotBlank
         private String factoryCode;
+        /** 精确订单入口使用文本主键，避免浏览器长整数精度损失。 */
+        @Pattern(regexp = "[1-9][0-9]{0,18}")
+        private String orderId;
+        @Pattern(regexp = "[A-Za-z0-9][A-Za-z0-9._/-]{1,99}")
+        @Size(max = 100)
+        private String orderNo;
         @Min(1)
         @Max(90)
         private Integer horizonDays = 7;
@@ -42,12 +50,19 @@ public final class PmsProcurementRiskDTO {
         private String toolCode;
         private String metricDefinition;
         private String factoryCode;
+        private Boolean orderScoped;
+        private String orderId;
+        private String orderNo;
+        private String orderStatus;
         private LocalDateTime observedAt;
         private LocalDateTime horizonEnd;
         private Summary summary;
         private List<RiskLine> riskLines = new ArrayList<>();
+        /** 固定口径边界不等同于数据缺失，供模型和用户理解结论适用范围。 */
+        private List<String> limitations = new ArrayList<>();
         private List<String> dataGaps = new ArrayList<>();
         private List<String> evidenceRefs = new ArrayList<>();
+        private String factFingerprint;
         private Boolean truncated;
     }
 

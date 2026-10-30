@@ -2,6 +2,7 @@ package com.kitex.mom.plan.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.common.core.util.R;
+import com.kitex.mom.plan.dto.PlnDemandPlanningParametersDTO;
 import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
 import com.kitex.mom.plan.entity.PlnProductDemandEntity;
 import com.kitex.mom.plan.vo.PlnProductDemandExcelVO;
@@ -54,6 +55,16 @@ public interface PlnProductDemandService extends IService<PlnProductDemandEntity
      * 仅供OMS在未接收、无下游事实时同步其权威订单需求。
      */
     Boolean updateFromOms(PlnProductDemandEntity planMesPlan);
+
+    /**
+     * 当前工厂OMS未接收需求的计划参数快照。
+     */
+    PlnDemandPlanningParametersDTO.Snapshot getPlanningParameters(Long demandId);
+
+    /**
+     * 按服务端快照指纹，仅修改领料仓与MRP优先级。
+     */
+    Boolean updatePlanningParameters(PlnDemandPlanningParametersDTO.UpdateCommand command);
 
     /**
      * 旧删除入口只能逐条删除无MRP/APS/MES事实的未接收草案。

@@ -4,9 +4,9 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
 import com.kitex.common.log.annotation.SysLog;
-import com.kitex.mom.plan.dto.PlnMpsCommand;
 import com.kitex.mom.plan.dto.PlnMpsCapacityBalanceDTO;
 import com.kitex.mom.plan.dto.PlnMpsCapacityDTO;
+import com.kitex.mom.plan.dto.PlnMpsCommand;
 import com.kitex.mom.plan.entity.PlnMpsPolicyEntity;
 import com.kitex.mom.plan.entity.PlnMpsVersionEntity;
 import com.kitex.mom.plan.entity.PlnProductDemandEntity;
@@ -50,9 +50,9 @@ public class PlnMpsController {
     @Operation(summary = "查询MPS可编排需求")
     @PreAuthorize("@pms.hasPermission('plan_mps_view')")
     public R<Page<PlnProductDemandEntity>> demands(SearchPage page,
-                                                    @RequestParam String factoryCode,
-                                                    @RequestParam(required = false) String productCode,
-                                                    @RequestParam(required = false) String warehouseCode) {
+                                                   @RequestParam String factoryCode,
+                                                   @RequestParam(required = false) String productCode,
+                                                   @RequestParam(required = false) String warehouseCode) {
         return R.ok(service.eligibleDemands(page, factoryCode, productCode, warehouseCode));
     }
 

@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.wms.dto.WmsQualityActionExecuteCommand;
 import com.kitex.mom.wms.dto.WmsQualityStatusCommand;
 import com.kitex.mom.wms.dto.WmsQualityStatusResult;
@@ -21,6 +22,10 @@ import org.springframework.web.bind.annotation.*;
 public class WmsQualityStatusController {
     private final WmsQualityStatusService service;
 
+    /**
+     * 质量状态仅接受QMS等受信业务服务命令，浏览器不能直接伪造正式放行回执。
+     */
+    @Inner
     @PostMapping("/status")
     public R<WmsQualityStatusResult> apply(@RequestBody WmsQualityStatusCommand command) {
         return R.ok(service.apply(command));
@@ -35,8 +40,15 @@ public class WmsQualityStatusController {
         if (factoryCode == null || factoryCode.isBlank()) {
             throw new CheckedException("请先在请求头factory-code中选择实际工厂");
         }
+        String stockId = query.getAffectedStockIds();
+        if (stockId != null && !stockId.isBlank() && !stockId.matches("[1-9][0-9]{0,18}")) {
+            throw new CheckedException("库存主键筛选必须是有效正整数");
+        }
         return R.ok(service.lambdaQuery()
                 .eq(WmsQualityStatusOperationEntity::getFactoryCode, factoryCode)
+                .apply(stockId != null && !stockId.isBlank(),
+                        "string_to_array(COALESCE(affected_stock_ids, ''), ',') @> ARRAY[{0}]::text[]",
+                        stockId)
                 .eq(query.getId() != null, WmsQualityStatusOperationEntity::getId, query.getId())
                 .like(query.getHoldNo() != null && !query.getHoldNo().isBlank(),
                         WmsQualityStatusOperationEntity::getHoldNo, query.getHoldNo())

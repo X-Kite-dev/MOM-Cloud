@@ -13,7 +13,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 仅供原回评岗位实名读取MES完整连续生产段。 */
+/**
+ * 仅供原回评岗位实名读取MES完整连续生产段。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/mesOperationDuration")

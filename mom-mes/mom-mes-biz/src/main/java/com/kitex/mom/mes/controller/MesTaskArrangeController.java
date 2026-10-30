@@ -1,15 +1,12 @@
 package com.kitex.mom.mes.controller;
 
 
-import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
 import com.kitex.common.query.utils.QueryGenerator;
-import com.kitex.common.security.service.MomUser;
-import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.MesChangeoverExecutionEntity;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
@@ -39,6 +36,19 @@ public class MesTaskArrangeController {
 
     private final MesTaskArrangeService service;
 
+    @Operation(summary = "工单派工工作台", description = "按当前租户和工厂查询工单、工序及派工状态")
+    @GetMapping("/workbench/page")
+    @PreAuthorize("@pms.hasPermission('mesTaskArrange:show')")
+    public R<IPage<MesDispatchWorkbenchDTO>> workbenchPage(
+            @RequestParam(defaultValue = "1") long current,
+            @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) String taskCode,
+            @RequestParam(required = false) String matCode,
+            @RequestParam(required = false) String workshopCode,
+            @RequestParam(required = false) String status) {
+        return R.ok(service.workbenchPage(current, size, taskCode, matCode, workshopCode, status));
+    }
+
 
     @Operation(summary = "生产派工分页", description = "生产派工分页")
     @GetMapping("/page")
@@ -60,17 +70,7 @@ public class MesTaskArrangeController {
     @GetMapping("/pad/page")
     @PreAuthorize("@pms.hasPermission('mesTaskArrange:show')")
     public R<IPage<MesTaskArrangeEntity>> padPage(Page<MesTaskArrangeEntity> pageParam, MesTaskArrangeEntity query) {
-        QueryWrapper<MesTaskArrangeEntity> autoQueryWrapper = new QueryWrapper<>();
-        MomUser user = SecurityUtils.getUser();
-        autoQueryWrapper
-                .apply("{0} = ANY(string_to_array(worker_code, ','))", user.getUsername())
-                .eq(StrUtil.isNotEmpty(query.getStatus()), "status", query.getStatus())
-                .eq(StrUtil.isNotEmpty(query.getShiftCode()), "shift_code", query.getShiftCode())
-                .eq(StrUtil.isNotEmpty(query.getWorkshopCode()), "workshop_code", query.getWorkshopCode())
-                .apply(StrUtil.isNotEmpty(query.getWorksiteCodes()),
-                        "{0} = ANY(string_to_array(worksite_codes, ','))", query.getWorksiteCodes())
-                .orderByDesc("create_time");
-        return R.ok(service.page(pageParam, autoQueryWrapper));
+        return R.ok(service.padPage(pageParam, query));
     }
 
     @Operation(summary = "查询详情", description = "查询详情")
@@ -101,6 +101,14 @@ public class MesTaskArrangeController {
     @PreAuthorize("@pms.hasPermission('mesTaskArrange:arrange')")
     public R<Void> arrange(@RequestBody MesTaskArrangeDTO dto) {
         service.arrange(dto);
+        return R.ok();
+    }
+
+    @Operation(summary = "多班次派工", description = "同一工单的多个班次原子提交")
+    @PostMapping("/arrange-batch")
+    @PreAuthorize("@pms.hasPermission('mesTaskArrange:arrange')")
+    public R<Void> arrangeBatch(@RequestBody List<MesTaskArrangeDTO> batches) {
+        service.arrangeBatch(batches);
         return R.ok();
     }
 

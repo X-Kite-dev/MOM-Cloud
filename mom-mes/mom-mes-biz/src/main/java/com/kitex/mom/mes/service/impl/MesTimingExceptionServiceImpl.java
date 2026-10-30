@@ -24,15 +24,18 @@ import com.kitex.mom.mes.mapper.MesTimingExceptionMapper;
 import com.kitex.mom.mes.mapper.MesTimingExceptionOperationMapper;
 import com.kitex.mom.mes.service.MesTimingExceptionService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
 import org.springframework.dao.DataAccessException;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Set;
 
-/** 独立时间例外的申请、异岗决定和永久原号恢复；许可消费由真实报告事务的数据库守卫完成。 */
+/**
+ * 独立时间例外的申请、异岗决定和永久原号恢复；许可消费由真实报告事务的数据库守卫完成。
+ */
 @Service
 @RequiredArgsConstructor
 public class MesTimingExceptionServiceImpl extends ServiceImpl<MesTimingExceptionMapper, MesTimingExceptionEntity>
@@ -49,6 +52,12 @@ public class MesTimingExceptionServiceImpl extends ServiceImpl<MesTimingExceptio
     private final MesTaskReportMapper reportClock;
     private final MesExecutionTaskLock taskLock;
     private final MesTimingExceptionSourceReader sourceReader;
+
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new CheckedException(message);
+        }
+    }
 
     @Override
     public IPage<MesTimingExceptionEntity> pageCases(long current, long size, String status, String taskCode) {
@@ -98,7 +107,7 @@ public class MesTimingExceptionServiceImpl extends ServiceImpl<MesTimingExceptio
         var previous = operationRow(command.requestId(), factory);
         if (previous != null) {
             require(Objects.equals(previous.getCommandJson(), body) && Objects.equals(previous.getFingerprint(), fingerprint)
-                            && Objects.equals(previous.getOperatorId(), actor.getId()), "原动作号已绑定不同正文或操作者");
+                    && Objects.equals(previous.getOperatorId(), actor.getId()), "原动作号已绑定不同正文或操作者");
             return full(row(previous.getCaseId(), factory, false));
         }
         Long id = Long.valueOf(command.caseId());
@@ -164,7 +173,9 @@ public class MesTimingExceptionServiceImpl extends ServiceImpl<MesTimingExceptio
         return full(row(id, factory, false));
     }
 
-    /** 所有前提先检查，再改变内存状态；拒绝动作不应留下半份新审批字段。 */
+    /**
+     * 所有前提先检查，再改变内存状态；拒绝动作不应留下半份新审批字段。
+     */
     private void transition(MesTimingExceptionEntity row, MesTaskArrangeEntity arrange,
                             MesTimingExceptionActionDTO command, LocalDateTime now) {
         switch (command.action()) {
@@ -197,7 +208,9 @@ public class MesTimingExceptionServiceImpl extends ServiceImpl<MesTimingExceptio
         }
     }
 
-    /** 独立只读事务验证真实来源，数据库拒绝不污染外层记录永久DECLINED的事务。 */
+    /**
+     * 独立只读事务验证真实来源，数据库拒绝不污染外层记录永久DECLINED的事务。
+     */
     private void verifySources(MesTimingExceptionEntity row, MesTaskArrangeEntity arrange,
                                LocalDateTime until, LocalDateTime now) {
         require(until != null && until.isAfter(now) && row.getLimitUntil() != null
@@ -264,11 +277,5 @@ public class MesTimingExceptionServiceImpl extends ServiceImpl<MesTimingExceptio
                 .eq(MesTimingExceptionOperationEntity::getTenantId, row.getTenantId())
                 .eq(MesTimingExceptionOperationEntity::getFactoryCode, row.getFactoryCode())
                 .eq(MesTimingExceptionOperationEntity::getCaseId, row.getId()).orderByAsc(MesTimingExceptionOperationEntity::getId)));
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new CheckedException(message);
-        }
     }
 }

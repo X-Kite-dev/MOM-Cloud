@@ -27,7 +27,9 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
 
-/** ERP Outbox 的跨租户领取、连接器投递、退避和死信工作器。 */
+/**
+ * ERP Outbox 的跨租户领取、连接器投递、退避和死信工作器。
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -39,7 +41,30 @@ public class PlnErpIntegrationOutboxWorker {
     private final PlatformTransactionManager transactionManager;
     private final ObjectMapper objectMapper;
 
-    /** 处理到期投递；多实例依赖数据库租约避免重复发送。 */
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new IllegalStateException("SHA-256不可用", ex);
+        }
+    }
+
+    private static String message(Exception ex) {
+        return ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
+    }
+
+    private static String abbreviate(String value) {
+        return value == null ? null : value.substring(0, Math.min(value.length(), 1000));
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new IllegalStateException(message);
+    }
+
+    /**
+     * 处理到期投递；多实例依赖数据库租约避免重复发送。
+     */
     public int processDue(int limit) {
         int size = Math.max(1, Math.min(limit, 200));
         LocalDateTime now = LocalDateTime.now();
@@ -156,22 +181,21 @@ public class PlnErpIntegrationOutboxWorker {
         require(operationMapper.insert(op) == 1, "ERP投递操作履历保存失败");
     }
 
-    private TransactionTemplate tx() { return new TransactionTemplate(transactionManager); }
+    private TransactionTemplate tx() {
+        return new TransactionTemplate(transactionManager);
+    }
+
     private <T> T inFactory(String factory, Supplier<T> work) {
         String old = FactoryContextHolder.getFactoryCode();
         boolean skip = Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip());
-        try { FactoryContextHolder.clear(); FactoryContextHolder.setFactoryCode(factory); return work.get(); }
-        finally { FactoryContextHolder.clear(); FactoryContextHolder.setFactoryCode(old); if (skip) FactoryContextHolder.setFactorySkip(); }
-    }
-    private static String sha256(String value) {
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception ex) {
-            throw new IllegalStateException("SHA-256不可用", ex);
+            FactoryContextHolder.clear();
+            FactoryContextHolder.setFactoryCode(factory);
+            return work.get();
+        } finally {
+            FactoryContextHolder.clear();
+            FactoryContextHolder.setFactoryCode(old);
+            if (skip) FactoryContextHolder.setFactorySkip();
         }
     }
-    private static String message(Exception ex) { return ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage(); }
-    private static String abbreviate(String value) { return value == null ? null : value.substring(0, Math.min(value.length(), 1000)); }
-    private static void require(boolean condition, String message) { if (!condition) throw new IllegalStateException(message); }
 }

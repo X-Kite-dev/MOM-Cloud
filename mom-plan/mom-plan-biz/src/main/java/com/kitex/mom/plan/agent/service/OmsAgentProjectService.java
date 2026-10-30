@@ -24,17 +24,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
 /**
  * 制造项目的显式订单权威归属。每次提交完整新版本，异人审核后取代旧版，订单不允许同时属于两个生效项目。
@@ -67,7 +61,7 @@ public class OmsAgentProjectService {
                 code.length() <= 100), "项目订单不得为空/重复或超过100字符");
         OmsAgentProjectEntity replay = projects.selectOne(new LambdaQueryWrapper<OmsAgentProjectEntity>()
                 .eq(OmsAgentProjectEntity::getFactoryCode, factory()).eq(OmsAgentProjectEntity::getRequestId,
-                command.requestId()).last("LIMIT 1"));
+                        command.requestId()).last("LIMIT 1"));
         String payload = mapper.writeValueAsString(new Submit(command.factoryCode(), command.projectCode().trim(),
                 command.projectName().trim(), codes, command.requestId(), command.reason()));
         if (replay != null) {
@@ -83,7 +77,7 @@ public class OmsAgentProjectService {
         }
         OmsAgentProjectEntity latest = projects.selectOne(new LambdaQueryWrapper<OmsAgentProjectEntity>()
                 .eq(OmsAgentProjectEntity::getFactoryCode, factory()).eq(OmsAgentProjectEntity::getProjectCode,
-                command.projectCode().trim()).orderByDesc(OmsAgentProjectEntity::getVersionNo).last("LIMIT 1 FOR UPDATE"));
+                        command.projectCode().trim()).orderByDesc(OmsAgentProjectEntity::getVersionNo).last("LIMIT 1 FOR UPDATE"));
         Map<String, Object> snapshot = new TreeMap<>();
         snapshot.put("command", mapper.readTree(payload));
         snapshot.put("orders", manifest);
@@ -94,9 +88,10 @@ public class OmsAgentProjectService {
                 .setStatus("WAITING_REVIEW").setScopeSnapshot(frozen).setScopeFingerprint(hash(frozen))
                 .setInitiatedBy(actor()).setReason(command.reason());
         projects.insert(project);
-        for (OmsOrderBaseEntity order : sources) memberships.insert(new OmsAgentProjectOrderEntity()
-                .setFactoryCode(factory()).setProjectId(project.getId()).setOrderId(order.getId())
-                .setOrderCode(order.getOrderCode()).setStatus("WAITING_REVIEW"));
+        for (OmsOrderBaseEntity order : sources)
+            memberships.insert(new OmsAgentProjectOrderEntity()
+                    .setFactoryCode(factory()).setProjectId(project.getId()).setOrderId(order.getId())
+                    .setOrderCode(order.getOrderCode()).setStatus("WAITING_REVIEW"));
         return project.getId();
     }
 
@@ -117,12 +112,13 @@ public class OmsAgentProjectService {
         require(mapper.readTree(command.evidenceRefs()).isArray() && !mapper.readTree(command.evidenceRefs()).isEmpty(),
                 "项目归属审核须提交客观依据引用数组");
         List<OmsAgentProjectOrderEntity> rows = rows(project.getId());
-        for (OmsAgentProjectOrderEntity row : rows) require(Objects.equals(order(row.getOrderCode()).getId(),
-                row.getOrderId()), "订单主键/编号或权限归属已变化，不能换绑生效");
+        for (OmsAgentProjectOrderEntity row : rows)
+            require(Objects.equals(order(row.getOrderCode()).getId(),
+                    row.getOrderId()), "订单主键/编号或权限归属已变化，不能换绑生效");
         if (command.approved()) {
             List<OmsAgentProjectEntity> previous = projects.selectList(new LambdaQueryWrapper<OmsAgentProjectEntity>()
                     .eq(OmsAgentProjectEntity::getFactoryCode, factory()).eq(OmsAgentProjectEntity::getProjectCode,
-                    project.getProjectCode()).eq(OmsAgentProjectEntity::getStatus, "ACTIVE")
+                            project.getProjectCode()).eq(OmsAgentProjectEntity::getStatus, "ACTIVE")
                     .orderByAsc(OmsAgentProjectEntity::getId).last("FOR UPDATE"));
             for (OmsAgentProjectEntity old : previous) {
                 require(old.getVersionNo() < project.getVersionNo(), "不能让较旧待审版本覆盖较新已生效范围");
@@ -175,7 +171,7 @@ public class OmsAgentProjectService {
         require(project != null, "当前工厂没有此项目范围版本");
         return Map.of("project", project, "orders", rows(id), "reviews", reviews.selectList(new
                 LambdaQueryWrapper<OmsAgentProjectReviewEntity>().eq(OmsAgentProjectReviewEntity::getFactoryCode,
-                factory()).eq(OmsAgentProjectReviewEntity::getProjectId, id)
+                        factory()).eq(OmsAgentProjectReviewEntity::getProjectId, id)
                 .orderByAsc(OmsAgentProjectReviewEntity::getId).last("LIMIT 1000")));
     }
 
@@ -186,7 +182,7 @@ public class OmsAgentProjectService {
         scope(command.factoryCode());
         OmsAgentProjectEntity project = projects.selectOne(new LambdaQueryWrapper<OmsAgentProjectEntity>()
                 .eq(OmsAgentProjectEntity::getFactoryCode, factory()).eq(OmsAgentProjectEntity::getProjectCode,
-                command.projectCode()).eq(OmsAgentProjectEntity::getStatus, "ACTIVE").last("LIMIT 1"));
+                        command.projectCode()).eq(OmsAgentProjectEntity::getStatus, "ACTIVE").last("LIMIT 1"));
         List<String> gaps = new ArrayList<>();
         List<OmsProductionScopeDTO.Evidence> evidence = new ArrayList<>();
         Map<String, Object> result = new LinkedHashMap<>();
@@ -209,8 +205,9 @@ public class OmsAgentProjectService {
                     evidence.add(item);
                     if (!Boolean.TRUE.equals(item.getScopeComplete()) || Boolean.TRUE.equals(item.getTruncated()))
                         gaps.add("订单" + row.getOrderCode() + "生产范围不完整");
-                    for (OmsProductionScopeDTO.Line line : item.getLines()) if (!"COMPLETE".equals(line.getQuantityAttributionStatus()))
-                        gaps.add("订单" + row.getOrderCode() + "明细" + line.getLineId() + "数量归属未知");
+                    for (OmsProductionScopeDTO.Line line : item.getLines())
+                        if (!"COMPLETE".equals(line.getQuantityAttributionStatus()))
+                            gaps.add("订单" + row.getOrderCode() + "明细" + line.getLineId() + "数量归属未知");
                 } catch (RuntimeException failure) {
                     gaps.add("订单" + row.getOrderCode() + "权威来源不可用：" + failure.getMessage());
                 }
@@ -236,7 +233,7 @@ public class OmsAgentProjectService {
     private List<OmsAgentProjectOrderEntity> rows(Long id) {
         List<OmsAgentProjectOrderEntity> rows = memberships.selectList(new
                 LambdaQueryWrapper<OmsAgentProjectOrderEntity>().eq(OmsAgentProjectOrderEntity::getFactoryCode,
-                factory()).eq(OmsAgentProjectOrderEntity::getProjectId, id)
+                        factory()).eq(OmsAgentProjectOrderEntity::getProjectId, id)
                 .orderByAsc(OmsAgentProjectOrderEntity::getOrderCode).last("LIMIT 51"));
         require(!rows.isEmpty() && rows.size() <= 50, "项目订单集合为空或超过50条，不能截断后判完整");
         return rows;
@@ -301,16 +298,17 @@ public class OmsAgentProjectService {
     }
 
     public record Submit(@NotBlank String factoryCode, @NotBlank @Size(max = 100) String projectCode, @NotBlank
-            @Size(max = 200) String projectName, @NotEmpty @Size(max = 50) List<String> orderCodes, @NotBlank @Size(max
+    @Size(max = 200) String projectName, @NotEmpty @Size(max = 50) List<String> orderCodes, @NotBlank @Size(max
             = 180) String requestId, @NotBlank @Size(max = 2000) String reason) {
     }
 
     public record Review(@NotBlank String factoryCode, @NotNull Long projectId, @NotBlank String expectedFingerprint,
-            @NotBlank @Size(max = 180) String requestId, @NotNull Boolean approved, @NotBlank String evidenceRefs,
-            @NotBlank @Size(max = 2000) String remark) {
+                         @NotBlank @Size(max = 180) String requestId, @NotNull Boolean approved,
+                         @NotBlank String evidenceRefs,
+                         @NotBlank @Size(max = 2000) String remark) {
     }
 
     public record Retire(@NotBlank String factoryCode, @NotNull Long projectId, @NotBlank String expectedFingerprint,
-            @NotBlank @Size(max = 180) String requestId, @NotBlank @Size(max = 2000) String remark) {
+                         @NotBlank @Size(max = 180) String requestId, @NotBlank @Size(max = 2000) String remark) {
     }
 }

@@ -1,16 +1,16 @@
 package com.kitex.mom.mdm.support;
 
-import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.kitex.common.core.exception.CheckedException;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.List;
 
 /**
  * 工程节点时间规则的独立协议适配器。
@@ -29,36 +29,9 @@ public final class MdmRouteNodeTimingPolicy {
     private MdmRouteNodeTimingPolicy() {
     }
 
-    /** 原生节点来源，不将稳定节点码暴露为主工序编码。 */
-    public record Policy(String version, List<Rule> rules) {
-    }
-
     /**
-     * @param code 目标节点内唯一规则编码
-     * @param name 现场提示使用的规则名称
-     * @param sourceRouteNodeCode 原冻结路线内精确来源节点，允许非相邻祖先
-     * @param scope WORK_ORDER工单范围或IDENTIFIER同一规范标识
-     * @param sourceEvent 实际START/FINISH或有效合格报工的ACCEPTED_REPORT
-     * @param minSeconds 最短等待整数秒，空表示无下限
-     * @param maxSeconds 最长间隔整数秒，空表示无上限
-     * @param lateExceptionSeconds 独立审批可延长的最大秒数，不影响最短等待
-     * @param clockMode 自然时间或只扣除目标派工的真实暂停
-     * @param sourceVisit 首轮或批准路线中的有效来源轮次
+     * 严格解析已冻结的节点规则；工程编辑的临时C键不能进入生产执行。
      */
-    public record Rule(String code, String name, String sourceRouteNodeCode, String scope,
-                       String sourceEvent, String minSeconds, String maxSeconds,
-                       @JsonInclude(JsonInclude.Include.NON_NULL) String lateExceptionSeconds,
-                       @JsonInclude(JsonInclude.Include.NON_NULL) String clockMode,
-                       @JsonInclude(JsonInclude.Include.NON_NULL) String sourceVisit) {
-
-        /** 只复用时间计算参数；调用方须先用冻结图解析出来源的真实主工序。 */
-        public MdmProcessTimingPolicy.Rule calculation(String actualProcessCode) {
-            return new MdmProcessTimingPolicy.Rule(code, name, actualProcessCode, scope, sourceEvent,
-                    minSeconds, maxSeconds, lateExceptionSeconds, clockMode, sourceVisit);
-        }
-    }
-
-    /** 严格解析已冻结的节点规则；工程编辑的临时C键不能进入生产执行。 */
     public static Policy parse(String raw) {
         MdmProcessTimingPolicy validated = MdmProcessTimingPolicy.parse(transform(raw, true, Map.of()));
         List<Rule> rules = validated.rules().stream().map(rule -> {
@@ -72,9 +45,11 @@ public final class MdmRouteNodeTimingPolicy {
         return new Policy(VERSION, rules);
     }
 
-    /** 校验并规范化节点规则；临时键映射必须来自同一次服务器身份协调。 */
+    /**
+     * 校验并规范化节点规则；临时键映射必须来自同一次服务器身份协调。
+     */
     public static String normalize(String raw, Map<String, String> keys, String target,
-            Set<String> ancestors, Map<String, String> modes) {
+                                   Set<String> ancestors, Map<String, String> modes) {
         String transformed = transform(raw, true, keys);
         MdmProcessTimingPolicy policy = MdmProcessTimingPolicy.parse(transformed);
         String normalized = policy.normalize(target, ancestors);
@@ -82,20 +57,26 @@ public final class MdmRouteNodeTimingPolicy {
         return transform(normalized, false, Map.of());
     }
 
-    /** 旧唯一图编辑读取时投影；不修改原规则及已冻结历史。 */
+    /**
+     * 旧唯一图编辑读取时投影；不修改原规则及已冻结历史。
+     */
     public static String fromLegacy(String raw, Map<String, String> processNodes) {
         MdmProcessTimingPolicy.parse(raw);
         return transform(raw, false, processNodes);
     }
 
-    /** 供旧生产消费者使用的无损投影；调用方先保证整图主工序唯一。 */
+    /**
+     * 供旧生产消费者使用的无损投影；调用方先保证整图主工序唯一。
+     */
     public static String toLegacy(String raw, Map<String, String> nodeProcesses) {
         String result = transform(raw, true, nodeProcesses);
         MdmProcessTimingPolicy.parse(result);
         return result;
     }
 
-    /** 复制工程图时只重写节点来源，不复用源路线身份。 */
+    /**
+     * 复制工程图时只重写节点来源，不复用源路线身份。
+     */
     public static String remap(String raw, Map<String, String> nodeKeys) {
         return transform(transform(raw, true, nodeKeys), false, Map.of());
     }
@@ -132,6 +113,39 @@ public final class MdmRouteNodeTimingPolicy {
             throw ex;
         } catch (Exception ex) {
             throw new CheckedException("节点时间规则JSON格式无效");
+        }
+    }
+
+    /**
+     * 原生节点来源，不将稳定节点码暴露为主工序编码。
+     */
+    public record Policy(String version, List<Rule> rules) {
+    }
+
+    /**
+     * @param code                 目标节点内唯一规则编码
+     * @param name                 现场提示使用的规则名称
+     * @param sourceRouteNodeCode  原冻结路线内精确来源节点，允许非相邻祖先
+     * @param scope                WORK_ORDER工单范围或IDENTIFIER同一规范标识
+     * @param sourceEvent          实际START/FINISH或有效合格报工的ACCEPTED_REPORT
+     * @param minSeconds           最短等待整数秒，空表示无下限
+     * @param maxSeconds           最长间隔整数秒，空表示无上限
+     * @param lateExceptionSeconds 独立审批可延长的最大秒数，不影响最短等待
+     * @param clockMode            自然时间或只扣除目标派工的真实暂停
+     * @param sourceVisit          首轮或批准路线中的有效来源轮次
+     */
+    public record Rule(String code, String name, String sourceRouteNodeCode, String scope,
+                       String sourceEvent, String minSeconds, String maxSeconds,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) String lateExceptionSeconds,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) String clockMode,
+                       @JsonInclude(JsonInclude.Include.NON_NULL) String sourceVisit) {
+
+        /**
+         * 只复用时间计算参数；调用方须先用冻结图解析出来源的真实主工序。
+         */
+        public MdmProcessTimingPolicy.Rule calculation(String actualProcessCode) {
+            return new MdmProcessTimingPolicy.Rule(code, name, actualProcessCode, scope, sourceEvent,
+                    minSeconds, maxSeconds, lateExceptionSeconds, clockMode, sourceVisit);
         }
     }
 }

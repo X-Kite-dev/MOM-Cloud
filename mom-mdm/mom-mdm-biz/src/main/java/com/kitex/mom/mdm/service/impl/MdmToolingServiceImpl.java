@@ -12,8 +12,8 @@ import com.kitex.mom.mdm.service.MdmToolingService;
 import com.kitex.mom.mdm.support.MdmRouteNodeResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -290,9 +290,9 @@ public class MdmToolingServiceImpl implements MdmToolingService {
         for (MdmProcedureToolingRequirementEntity requirement : requirements) {
             MdmProcessRouteWorkingEntity node = byNode.get(requirement.getRouteNodeCode());
             require(node != null && Objects.equals(node.getTenantId(), requirement.getTenantId())
-                    && Objects.equals(node.getFactoryCode(), requirement.getFactoryCode())
-                    && Objects.equals(node.getRouteCode(), requirement.getRouteCode())
-                    && Objects.equals(node.getProcessCode(), requirement.getProcessCode()),
+                            && Objects.equals(node.getFactoryCode(), requirement.getFactoryCode())
+                            && Objects.equals(node.getRouteCode(), requirement.getRouteCode())
+                            && Objects.equals(node.getProcessCode(), requirement.getProcessCode()),
                     "工装要求与真实路线节点身份不一致，请先修正主数据");
         }
         LambdaQueryWrapper<MdmToolingEntity> toolingQuery = new LambdaQueryWrapper<MdmToolingEntity>()
@@ -631,7 +631,7 @@ public class MdmToolingServiceImpl implements MdmToolingService {
     }
 
     private MdmProcessRouteWorkingEntity requireRouteAndProcedure(String routeCode, String routeNodeCode,
-                                                                 String processCode, boolean lock) {
+                                                                  String processCode, boolean lock) {
         MdmProcessRouteWorkingEntity node = routeNodeResolver.resolve(routeCode, routeNodeCode, processCode, lock);
         MdmProcessRouteEntity route = routeMapper.selectOne(new LambdaQueryWrapper<MdmProcessRouteEntity>()
                 .eq(MdmProcessRouteEntity::getTenantId, node.getTenantId())

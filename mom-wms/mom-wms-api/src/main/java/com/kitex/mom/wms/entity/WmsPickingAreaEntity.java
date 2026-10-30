@@ -25,6 +25,39 @@ import java.time.LocalDateTime;
 @Schema(description = "拣货区")
 public class WmsPickingAreaEntity extends BaseEntity<WmsPickingAreaEntity> {
 
+    @Schema(description = "本次出库单ID")
+    private Long billId;
+
+    @Schema(description = "本次出库单明细ID")
+    private Long billDetailId;
+
+    @Schema(description = "本次扣减的真实来源库存行ID")
+    private Long sourceStockId;
+
+    @Schema(description = "首次形成来源库存的入库单ID")
+    private Long sourceInBillId;
+
+    @Schema(description = "首次形成来源库存的入库单明细ID")
+    private Long sourceInBillDetailId;
+
+    @Schema(description = "MES成品入库永久请求号快照")
+    private String sourceMesInboundRequestId;
+
+    @Schema(description = "来源库存货权类型快照")
+    private String stockOwnerType;
+
+    @Schema(description = "来源库存归属方编码快照")
+    private String stockOwnerCode;
+
+    @Schema(description = "首次入库来源业务单号快照")
+    private String sourceBusinessNo;
+
+    @Schema(description = "来源库存条码或序列号")
+    private String matBarcode;
+
+    @Schema(description = "单件序列号管理标记")
+    private Boolean serialManaged;
+
     @Schema(description = "来源采购订单号")
     private String sourceOrderNo;
 

@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * 其他入库单
@@ -45,7 +46,8 @@ public class WmsOtherInBillController {
     private final String billType = InBillTypeEnum.OTHER_IN.getCode();
 
     // 其他入库所有类型，查询列表时的条件
-    private final List<String> otherBillTypes = Arrays.stream(OtherInBillTypeEnum.values()).map(OtherInBillTypeEnum::getCode).toList();
+    private final List<String> otherBillTypes = Stream.concat(Stream.of(billType),
+            Arrays.stream(OtherInBillTypeEnum.values()).map(OtherInBillTypeEnum::getCode)).toList();
 
     /**
      * 分页查询
@@ -86,7 +88,7 @@ public class WmsOtherInBillController {
                 .like(StrUtil.isNotBlank(wmsInBill.getNoticeId()), WmsInBillEntity::getNoticeId, wmsInBill.getNoticeId())
                 .eq(StrUtil.isNotBlank(wmsInBill.getWarehouseCode()), WmsInBillEntity::getWarehouseCode, wmsInBill.getWarehouseCode())
                 .like(StrUtil.isNotBlank(wmsInBill.getCreateBy()), WmsInBillEntity::getCreateBy, wmsInBill.getCreateBy())
-                .in(StrUtil.isBlank(wmsInBill.getBillType()), WmsInBillEntity::getBillType, otherBillTypes)
+                .in(WmsInBillEntity::getBillType, otherBillTypes)
                 .eq(StrUtil.isNotBlank(wmsInBill.getBillType()), WmsInBillEntity::getBillType, wmsInBill.getBillType());
         return wrapper;
     }
@@ -275,7 +277,7 @@ public class WmsOtherInBillController {
                 .like(StrUtil.isNotBlank(wmsInBill.getWarehouseCode()), WmsInBillEntity::getWarehouseCode, wmsInBill.getWarehouseCode())
                 .like(StrUtil.isNotBlank(wmsInBill.getCreateBy()), WmsInBillEntity::getCreateBy, wmsInBill.getCreateBy())
                 .eq(StrUtil.isNotBlank(wmsInBill.getBillType()), WmsInBillEntity::getBillType, wmsInBill.getBillType())
-                .in(StrUtil.isBlank(wmsInBill.getBillType()), WmsInBillEntity::getBillType, otherBillTypes)
+                .in(WmsInBillEntity::getBillType, otherBillTypes)
                 .orderByAsc(WmsInBillEntity::getState)
                 .orderByDesc(BaseCore::getCreateTime);
         return wrapper;

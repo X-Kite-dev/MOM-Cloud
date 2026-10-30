@@ -373,7 +373,9 @@ public class PlnSchedulingBatchServiceImpl implements PlnSchedulingBatchService 
         }
     }
 
-    /** 计划在排程后不得换绑工程版本，否则原工序、工装与工时结果全部失效。 */
+    /**
+     * 计划在排程后不得换绑工程版本，否则原工序、工装与工时结果全部失效。
+     */
     private boolean sameEngineeringBinding(PlnSchedulingTaskDetailEntity detail, PlnIssueEntity issue) {
         return detail.getEngineeringReleaseId() != null
                 && detail.getEngineeringContentHash() != null

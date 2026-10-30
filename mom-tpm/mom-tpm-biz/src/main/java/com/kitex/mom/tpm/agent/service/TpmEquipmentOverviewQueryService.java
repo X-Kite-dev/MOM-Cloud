@@ -16,11 +16,14 @@ import com.kitex.mom.tpm.enums.CheckTaskStateEnum;
 import com.kitex.mom.tpm.enums.CheckTypeEnum;
 import com.kitex.mom.tpm.enums.MaintenanceTaskStateEnum;
 import com.kitex.mom.tpm.enums.RepairStateEnum;
+import com.kitex.mom.tpm.enums.RepairTaskTypeEnum;
 import com.kitex.mom.tpm.service.TpmCheckTaskService;
 import com.kitex.mom.tpm.service.TpmMaintenanceTaskService;
 import com.kitex.mom.tpm.service.TpmRepairTaskService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -52,11 +55,13 @@ public class TpmEquipmentOverviewQueryService {
         int limit = query.getLimit() == null ? 20 : query.getLimit();
 
         List<MdmDeviceEntity> devices = loadDevices(factoryCode);
-        List<TpmRepairTaskEntity> repairActivity = loadRepairActivity(factoryCode, range);
+        List<TpmRepairTaskEntity> repairActivity = loadRepairActivity(factoryCode, range).stream()
+                .filter(task -> canViewRepairType(task.getType())).toList();
         List<TpmRepairTaskEntity> openRepairs = repairTaskService.list(
                 new LambdaQueryWrapper<TpmRepairTaskEntity>()
                         .eq(TpmRepairTaskEntity::getFactoryCode, factoryCode)
-                        .ne(TpmRepairTaskEntity::getState, RepairStateEnum.COMPLETE.getCode()));
+                        .ne(TpmRepairTaskEntity::getState, RepairStateEnum.COMPLETE.getCode())).stream()
+                .filter(task -> canViewRepairType(task.getType())).toList();
         List<TpmMaintenanceTaskEntity> maintenanceActivity = loadMaintenanceActivity(factoryCode, range);
         List<TpmMaintenanceTaskEntity> openMaintenance = maintenanceTaskService.list(
                 new LambdaQueryWrapper<TpmMaintenanceTaskEntity>()
@@ -90,7 +95,7 @@ public class TpmEquipmentOverviewQueryService {
                 .setFactoryCode(factoryCode)
                 .setRangeStart(range.start()).setRangeEnd(range.end()).setObservedAt(observedAt)
                 .setSummary(summary).setExceptionItems(exceptions).setTruncated(truncated)
-                .setDataGaps(List.of(
+                .setLimitations(List.of(
                         "当前设备台账状态不能反推出历史运行时长，本场景不计算OEE、MTBF和MTTR",
                         "保养任务缺少独立完成时间字段，历史窗口只使用创建、计划保养和实际开始时间",
                         "设备实时能耗、振动和温度等信号需接入IoT时序数据后再进行趋势和预测性维护分析"))
@@ -215,6 +220,24 @@ public class TpmEquipmentOverviewQueryService {
 
     private long countState(List<MdmDeviceEntity> devices, String state) {
         return devices.stream().filter(device -> state.equals(device.getDeviceState())).count();
+    }
+
+    /** 维修概览只汇总当前实名岗位可见的内修/委外任务，不能通过Agent概览扩大原菜单权限。 */
+    private boolean canViewRepairType(String repairType) {
+        if (RepairTaskTypeEnum.INTERNAL.getCode().equals(repairType)) {
+            return hasAuthority("tpm_tpmRepairTask_internal_view");
+        }
+        if (RepairTaskTypeEnum.OUTSOURCING.getCode().equals(repairType)) {
+            return hasAuthority("tpm_tpmRepairTask_outsourcing_view");
+        }
+        return false;
+    }
+
+    private boolean hasAuthority(String permission) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getAuthorities().stream()
+                .map(value -> value.getAuthority())
+                .anyMatch(value -> "*".equals(value) || permission.equals(value));
     }
 
     private List<TpmEquipmentOverviewDTO.ExceptionItem> collectExceptions(

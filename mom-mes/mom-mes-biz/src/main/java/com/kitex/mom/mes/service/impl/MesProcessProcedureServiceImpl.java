@@ -23,13 +23,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 路线节点模具的工程维护。
@@ -57,14 +51,18 @@ public class MesProcessProcedureServiceImpl extends ServiceImpl<MesProcessProced
         return node;
     }
 
-    /** 保持原按ID接口形状，但读取域已改为精确节点。 */
+    /**
+     * 保持原按ID接口形状，但读取域已改为精确节点。
+     */
     @Override
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public List<MesProcessProcedureMoldEntity> getMold(Long id) {
         return bindings(context(id, null, null, null, false));
     }
 
-    /** 旧编码请求只能在同路线主工序恰好一个节点时桥接。 */
+    /**
+     * 旧编码请求只能在同路线主工序恰好一个节点时桥接。
+     */
     @Override
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public List<MesProcessProcedureMoldEntity> getMoldByCode(String routeCode, String processCode) {
@@ -72,7 +70,9 @@ public class MesProcessProcedureServiceImpl extends ServiceImpl<MesProcessProced
         return bindings(context(null, routeCode, null, processCode, false));
     }
 
-    /** 新选路线用稳定节点读取；不能再回退到同名主工序。 */
+    /**
+     * 新选路线用稳定节点读取；不能再回退到同名主工序。
+     */
     @Override
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public List<MesProcessProcedureMoldEntity> getMoldByNode(String routeCode, String routeNodeCode) {
@@ -130,7 +130,9 @@ public class MesProcessProcedureServiceImpl extends ServiceImpl<MesProcessProced
         return Boolean.TRUE;
     }
 
-    /** 返回可新增工程绑定的候选；真实旧绑定另由configuration返回，不能以候选代替绑定。 */
+    /**
+     * 返回可新增工程绑定的候选；真实旧绑定另由configuration返回，不能以候选代替绑定。
+     */
     @Override
     public List<MdmDeviceEntity> queryMoldList(Long id) {
         return candidates(context(id, null, null, null, false));
@@ -175,7 +177,9 @@ public class MesProcessProcedureServiceImpl extends ServiceImpl<MesProcessProced
         return result;
     }
 
-    /** 数据库函数复核实际父/子归属；写入口同一事务先锁父图，不等待反向子锁。 */
+    /**
+     * 数据库函数复核实际父/子归属；写入口同一事务先锁父图，不等待反向子锁。
+     */
     private MesRouteMoldConfigurationDTO context(Long id, String route, String nodeCode, String process, boolean lock) {
         String factory = factoryAccess.require(lock ? "write" : "read");
         Long tenant = TenantContextHolder.getTenantId();

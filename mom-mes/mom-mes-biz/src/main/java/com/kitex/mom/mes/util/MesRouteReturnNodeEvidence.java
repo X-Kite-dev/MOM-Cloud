@@ -1,26 +1,14 @@
 package com.kitex.mom.mes.util;
 
-import cn.hutool.json.JSONUtil;
 import cn.hutool.json.JSONConfig;
+import cn.hutool.json.JSONUtil;
 import com.kitex.common.core.exception.CheckedException;
-import com.kitex.mom.mes.entity.MesIdentifierRouteReturnEntity;
-import com.kitex.mom.mes.entity.MesProduceTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
+import com.kitex.mom.mes.entity.*;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -32,12 +20,6 @@ public final class MesRouteReturnNodeEvidence {
     public static final String VERSION = "NODE_ROUTE_RETURN_V2";
 
     private MesRouteReturnNodeEvidence() {
-    }
-
-    /** 同一次数据库读取所得的完整原事实；只用于服务端，不接受客户端传入。 */
-    public record Evidence(MesTaskEntity task, String identifier, List<MesProduceTaskEntity> routes,
-                           List<MesProduceTaskEntity> passedRoutes, MesProduceTaskEntity source,
-                           String fingerprint, String sourceSnapshot, MesFrozenExecutionGraph graph) {
     }
 
     public static Evidence capture(MesTaskEntity task, String identifier, List<MesProduceTaskEntity> routes,
@@ -92,7 +74,9 @@ public final class MesRouteReturnNodeEvidence {
         return new Evidence(task, identifier, List.copyOf(routes), passed, source, hash(raw), raw, graph);
     }
 
-    /** 只列出真正已过祖先，不以显示顺序比较两个分支。 */
+    /**
+     * 只列出真正已过祖先，不以显示顺序比较两个分支。
+     */
     public static List<MesProduceTaskEntity> targets(Evidence evidence) {
         return evidence.passedRoutes().stream().filter(row -> evidence.graph().descendantDepths(row)
                 .containsKey(evidence.source().getCode())).toList();
@@ -125,7 +109,9 @@ public final class MesRouteReturnNodeEvidence {
         return segment;
     }
 
-    /** 原申请全部文本和精确身份均需一致；不能借当前工程重新生成一个看似相同的批准。 */
+    /**
+     * 原申请全部文本和精确身份均需一致；不能借当前工程重新生成一个看似相同的批准。
+     */
     public static void assertFrozen(MesIdentifierRouteReturnEntity stored, Evidence current) {
         require(VERSION.equals(stored.getReturnSchemaVersion())
                         && Objects.equals(stored.getSourceFingerprint(), current.fingerprint())
@@ -146,14 +132,16 @@ public final class MesRouteReturnNodeEvidence {
                         && Objects.equals(stored.getResumeRouteNodeCode(), source.getSourceRouteNodeCode())
                         && Objects.equals(stored.getResumeRouteCode(), source.getRouteCode())
                         && Objects.equals(stored.getRouteSnapshot(), json(segment(current, target)
-                                .stream().map(MesRouteReturnNodeEvidence::routeMap).toList())),
+                        .stream().map(MesRouteReturnNodeEvidence::routeMap).toList())),
                 "批准退回的来源、目标、恢复节点或片段与原图不一致");
     }
 
-    /** 返回本轮未执行且片段内全部前序已执行的节点；空集仅表示整片段完成。 */
+    /**
+     * 返回本轮未执行且片段内全部前序已执行的节点；空集仅表示整片段完成。
+     */
     public static List<MesProduceTaskEntity> ready(MesIdentifierRouteReturnEntity stored, Evidence current,
-                                                  List<MesTaskReportEntity> reports,
-                                                  List<MesTaskArrangeEntity> arrangements) {
+                                                   List<MesTaskReportEntity> reports,
+                                                   List<MesTaskArrangeEntity> arrangements) {
         assertFrozen(stored, current);
         List<MesProduceTaskEntity> segment = segment(current, byActualTask(current, stored.getTargetProduceTaskCode()));
         Map<String, MesProduceTaskEntity> members = segment.stream().collect(Collectors.toMap(
@@ -171,7 +159,7 @@ public final class MesRouteReturnNodeEvidence {
         }
         for (String code : passed) {
             require(current.graph().predecessors(members.get(code)).stream()
-                    .filter(parent -> members.containsKey(parent.getCode())).allMatch(parent -> passed.contains(parent.getCode())),
+                            .filter(parent -> members.containsKey(parent.getCode())).allMatch(parent -> passed.contains(parent.getCode())),
                     "本轮重走履历跳过批准片段前序，禁止继续");
         }
         return segment.stream().filter(row -> !passed.contains(row.getCode()))
@@ -195,7 +183,9 @@ public final class MesRouteReturnNodeEvidence {
         return value;
     }
 
-    /** 新协议固定字段即使为NULL也保留，与数据库JSON结构核验一致；不应用到历史协议。 */
+    /**
+     * 新协议固定字段即使为NULL也保留，与数据库JSON结构核验一致；不应用到历史协议。
+     */
     public static String json(Object value) {
         return JSONUtil.toJsonStr(value, JSONConfig.create().setIgnoreNullValue(false));
     }
@@ -223,9 +213,9 @@ public final class MesRouteReturnNodeEvidence {
     private static void assertReport(MesTaskEntity owner, String identifier, MesTaskReportEntity report,
                                      Map<String, MesProduceTaskEntity> tasks, Map<String, MesTaskArrangeEntity> arrangements) {
         require(Objects.equals(owner.getTenantId(), report.getTenantId())
-                        && Objects.equals(owner.getFactoryCode(), report.getFactoryCode())
-                        && Objects.equals(owner.getCode(), report.getTaskCode())
-                        && Objects.equals(identifier, report.getTransferCode()), "过站报告不属于原组织、工单或标识");
+                && Objects.equals(owner.getFactoryCode(), report.getFactoryCode())
+                && Objects.equals(owner.getCode(), report.getTaskCode())
+                && Objects.equals(identifier, report.getTransferCode()), "过站报告不属于原组织、工单或标识");
         require(report.getIdentifierBindingId() == null, "动态换码报告尚未接入退回实例生命周期，不能继承原占用");
         MesTaskArrangeEntity arrange = arrangements.get(report.getArrangeCode());
         MesFrozenExecutionGraph.assertArrangement(tasks.get(report.getProduceTaskCode()), arrange);
@@ -247,5 +237,13 @@ public final class MesRouteReturnNodeEvidence {
 
     private static void require(boolean condition, String message) {
         if (!condition) throw new CheckedException(message);
+    }
+
+    /**
+     * 同一次数据库读取所得的完整原事实；只用于服务端，不接受客户端传入。
+     */
+    public record Evidence(MesTaskEntity task, String identifier, List<MesProduceTaskEntity> routes,
+                           List<MesProduceTaskEntity> passedRoutes, MesProduceTaskEntity source,
+                           String fingerprint, String sourceSnapshot, MesFrozenExecutionGraph graph) {
     }
 }

@@ -74,6 +74,8 @@ public interface PlnQualityLocalReplanService {
      */
     PlnQualitySupplementDemandEntity reviewSupplement(PlanQualityLocalReplanDTO.SupplementReviewCommand command);
 
+    PlnQualitySupplementDemandEntity planSupplement(PlanQualityLocalReplanDTO.SupplementPlanCommand command);
+
     /**
      * 取消尚未形成正式排程影响的补产需求。
      */

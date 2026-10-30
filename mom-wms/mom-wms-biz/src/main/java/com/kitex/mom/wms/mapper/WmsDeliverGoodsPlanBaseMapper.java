@@ -8,6 +8,6 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface WmsDeliverGoodsPlanBaseMapper extends MomBaseMapper<WmsDeliverGoodsPlanBaseEntity> {
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_OMS_DELIVERY:', #{key}), 0))")
-    void lockOmsSource(@Param("key") String key);
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_OMS_DELIVERY:', #{key}), 0))")
+    int lockOmsSource(@Param("key") String key);
 }

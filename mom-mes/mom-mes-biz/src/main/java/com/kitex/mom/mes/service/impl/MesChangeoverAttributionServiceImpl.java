@@ -27,11 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
 import static com.kitex.mom.mes.service.impl.MesChangeoverAttributionFactsReader.*;
 
@@ -51,6 +47,37 @@ public class MesChangeoverAttributionServiceImpl
     private final MesChangeoverAttributionOperationMapper operationMapper;
     private final MesChangeoverExecutionMapper executionMapper;
     private final MesTaskArrangeMapper arrangeMapper;
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> exactMap(Object value) {
+        return (Map<String, Object>) exact(value);
+    }
+
+    private static Map<String, Object> summary(Map<String, Object> value, String... fields) {
+        for (String field : fields) value.remove(field);
+        return value;
+    }
+
+    private static List<Map<String, Object>> bounded(List<Map<String, Object>> rows) {
+        require(bytes(json(rows)) <= 8 * 1024 * 1024, "完整列表超过8MiB，禁止省略原记录");
+        return rows;
+    }
+
+    private static void text(String value, int maximum, String label) {
+        require(StrUtil.isNotBlank(value) && value.equals(value.trim()) && value.length() <= maximum, label + "须非空且不超过" + maximum + "字符");
+    }
+
+    private static LocalDateTime now() {
+        return LocalDateTime.now().truncatedTo(ChronoUnit.MICROS);
+    }
+
+    private static Long tenant() {
+        return TenantContextHolder.getTenantId();
+    }
+
+    private static Long actor() {
+        return SecurityUtils.getUser().getId();
+    }
 
     @Override
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -92,7 +119,9 @@ public class MesChangeoverAttributionServiceImpl
 
     @Override
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
-    public Map<String, Object> detail(String caseId) { return exactMap(caseRow(id(caseId), access.require("read"), false)); }
+    public Map<String, Object> detail(String caseId) {
+        return exactMap(caseRow(id(caseId), access.require("read"), false));
+    }
 
     @Override
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -143,7 +172,7 @@ public class MesChangeoverAttributionServiceImpl
                 .eq(MesChangeoverAttributionOperationEntity::getRequestId, command.getRequestId()));
         if (old != null) {
             require(Objects.equals(old.getRequestFingerprint(), fingerprint) && Objects.equals(old.getActorUserId(), actor())
-                    && Objects.equals(old.getAction(), action) && Objects.equals(old.getRequestSnapshot(), snapshot),
+                            && Objects.equals(old.getAction(), action) && Objects.equals(old.getRequestSnapshot(), snapshot),
                     "原号已用于不同人员/动作/完整载荷，禁止覆盖或宣称未提交");
             return JSONUtil.toBean(old.getResultSnapshot(), MesChangeoverAttributionDTO.Receipt.class);
         }
@@ -173,7 +202,9 @@ public class MesChangeoverAttributionServiceImpl
         return receipt;
     }
 
-    /** 完成全部领域验证并组装，禁止在该方法里保存任何实体。 */
+    /**
+     * 完成全部领域验证并组装，禁止在该方法里保存任何实体。
+     */
     private Prepared prepare(String action, MesChangeoverAttributionDTO.Command command,
                              MesChangeoverAttributionEntity existing, String factory, String fingerprint) {
         if ("SUBMIT".equals(action)) {
@@ -197,7 +228,7 @@ public class MesChangeoverAttributionServiceImpl
         if ("REVOKE".equals(action)) {
             require("ASSIGN".equals(row.getCaseType()) && "APPROVED".equals(row.getStatus()), "只能对精确生效归属申请撤销");
             require(count(scope(factory).eq(MesChangeoverAttributionEntity::getOriginalCaseId, row.getId())
-                    .eq(MesChangeoverAttributionEntity::getCaseType, "REVOKE").eq(MesChangeoverAttributionEntity::getStatus, "PENDING")) == 0,
+                            .eq(MesChangeoverAttributionEntity::getCaseType, "REVOKE").eq(MesChangeoverAttributionEntity::getStatus, "PENDING")) == 0,
                     "该生效归属已有待审撤销");
             var revoke = new MesChangeoverAttributionEntity();
             BeanUtil.copyProperties(row, revoke, "id", "createTime", "updateTime", "createBy", "updateBy",
@@ -235,7 +266,10 @@ public class MesChangeoverAttributionServiceImpl
             var current = factsReader.read(row.getExecutionId(), row.getArrangeId(), factory, true).preview();
             fresh = Boolean.TRUE.equals(current.getEligible()) && Objects.equals(current.getExpectedFingerprint(), row.getBasisFingerprint());
             gap = fresh ? "归属已核定" : "源/目标稳定身份已变化或门禁失败：" + String.join("；", current.getGaps());
-        } catch (CheckedException exception) { fresh = false; gap = "当前原事实不可核验：" + exception.getMessage(); }
+        } catch (CheckedException exception) {
+            fresh = false;
+            gap = "当前原事实不可核验：" + exception.getMessage();
+        }
         markReview(row, command, fingerprint, fresh ? "APPROVED" : "STALE");
         return new Prepared(row, null, false, gap);
     }
@@ -254,12 +288,15 @@ public class MesChangeoverAttributionServiceImpl
                 .setReviewedTime(now()).setReviewRemark(command.getReason()).setReviewChecksSnapshot(json(command.getChecks()));
     }
 
-    /** 动作限定字段，规范化完整正文；客户端不得额外传入另一个目标覆盖被冻结身份。 */
+    /**
+     * 动作限定字段，规范化完整正文；客户端不得额外传入另一个目标覆盖被冻结身份。
+     */
     private Map<String, Object> normalize(String action, MesChangeoverAttributionDTO.Command command) {
         require(command != null && Set.of("SUBMIT", "REVIEW", "CANCEL", "REVOKE").contains(action), "非法归属命令");
         var raw = BeanUtil.beanToMap(command);
         Set<String> allowed = switch (action) {
-            case "SUBMIT" -> Set.of("requestId", "executionId", "arrangeId", "expectedFingerprint", "evidenceReference", "reason");
+            case "SUBMIT" ->
+                    Set.of("requestId", "executionId", "arrangeId", "expectedFingerprint", "evidenceReference", "reason");
             case "REVOKE" -> Set.of("requestId", "caseId", "evidenceReference", "reason");
             case "CANCEL" -> Set.of("requestId", "caseId", "reason");
             default -> Set.of("requestId", "caseId", "decision", "checks", "reason");
@@ -275,7 +312,8 @@ public class MesChangeoverAttributionServiceImpl
         text(command.getReason(), 500, "原因/审核意见");
         if (Set.of("SUBMIT", "REVOKE").contains(action)) text(command.getEvidenceReference(), 500, "真实凭证引用");
         if ("SUBMIT".equals(action)) {
-            id(command.getExecutionId()); id(command.getArrangeId());
+            id(command.getExecutionId());
+            id(command.getArrangeId());
             require(command.getExpectedFingerprint() != null && command.getExpectedFingerprint().matches("[0-9a-f]{64}"), "预览指纹不完整");
         } else id(command.getCaseId());
         if ("REVIEW".equals(action)) {
@@ -296,29 +334,18 @@ public class MesChangeoverAttributionServiceImpl
         require(row != null, "实际组织内未找到精确归属案件");
         return row;
     }
+
     private LambdaQueryWrapper<MesChangeoverAttributionEntity> scope(String factory) {
         return new LambdaQueryWrapper<MesChangeoverAttributionEntity>().eq(MesChangeoverAttributionEntity::getTenantId, tenant())
                 .eq(MesChangeoverAttributionEntity::getFactoryCode, factory);
     }
+
     private LambdaQueryWrapper<MesChangeoverAttributionOperationEntity> operationScope(String factory) {
         return new LambdaQueryWrapper<MesChangeoverAttributionOperationEntity>().eq(MesChangeoverAttributionOperationEntity::getTenantId, tenant())
                 .eq(MesChangeoverAttributionOperationEntity::getFactoryCode, factory);
     }
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> exactMap(Object value) { return (Map<String, Object>) exact(value); }
-    private static Map<String, Object> summary(Map<String, Object> value, String... fields) {
-        for (String field : fields) value.remove(field);
-        return value;
+
+    private record Prepared(MesChangeoverAttributionEntity row, MesChangeoverAttributionEntity original, boolean insert,
+                            String message) {
     }
-    private static List<Map<String, Object>> bounded(List<Map<String, Object>> rows) {
-        require(bytes(json(rows)) <= 8 * 1024 * 1024, "完整列表超过8MiB，禁止省略原记录");
-        return rows;
-    }
-    private static void text(String value, int maximum, String label) {
-        require(StrUtil.isNotBlank(value) && value.equals(value.trim()) && value.length() <= maximum, label + "须非空且不超过" + maximum + "字符");
-    }
-    private static LocalDateTime now() { return LocalDateTime.now().truncatedTo(ChronoUnit.MICROS); }
-    private static Long tenant() { return TenantContextHolder.getTenantId(); }
-    private static Long actor() { return SecurityUtils.getUser().getId(); }
-    private record Prepared(MesChangeoverAttributionEntity row, MesChangeoverAttributionEntity original, boolean insert, String message) { }
 }

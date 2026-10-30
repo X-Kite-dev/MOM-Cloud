@@ -2,6 +2,7 @@ package com.kitex.mom.plan.service.impl;
 
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,7 +17,9 @@ import com.kitex.mom.plan.mapper.PlnAutomationEventMapper;
 import com.kitex.mom.plan.mapper.PlnAutomationEventOperationMapper;
 import com.kitex.mom.plan.mapper.PlnAutomationEventPolicyMapper;
 import com.kitex.mom.plan.service.PlnAutomationEventService;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,10 +33,17 @@ import java.util.*;
 @Service
 @RequiredArgsConstructor
 public class PlnAutomationEventServiceImpl implements PlnAutomationEventService {
-    static final Set<String> SUPPORTED_EVENT_TYPES = Set.of("PLAN_MRP_READY", "MES_QUALITY_CALLBACK",
-            "QMS_QUALITY_CHANGED", "RESOURCE_UNAVAILABLE", "MATERIAL_SHORTAGE_CHANGED",
-            "URGENT_INSERTION_REQUESTED", "RESOURCE_AVAILABLE", "MES_REPAIR_RESUMED",
-            "MES_COMPLETION_REOPENED");
+    static final Set<String> SUPPORTED_EVENT_TYPES =
+            Set.of(
+                    "PLAN_MRP_READY",
+                    "MES_QUALITY_CALLBACK",
+                    "QMS_QUALITY_CHANGED",
+                    "RESOURCE_UNAVAILABLE",
+                    "MATERIAL_SHORTAGE_CHANGED",
+                    "URGENT_INSERTION_REQUESTED",
+                    "RESOURCE_AVAILABLE",
+                    "MES_REPAIR_RESUMED",
+                    "MES_COMPLETION_REOPENED");
     private static final Set<String> FINAL_STATUSES = Set.of("SUCCEEDED", "IGNORED");
 
     private final PlnAutomationEventMapper eventMapper;
@@ -84,11 +94,20 @@ public class PlnAutomationEventServiceImpl implements PlnAutomationEventService 
         String factoryCode = StrUtil.blankToDefault(command.getFactoryCode(), FactoryContextHolder.getFactoryCode());
         require(StrUtil.isNotBlank(factoryCode), "事件工厂不能为空");
         requireFactory(factoryCode);
-        String normalizedPayload = normalizeJson(command.getPayloadJson());
-        String requestFingerprint = hash(String.join("|", source, eventId, eventType,
-                String.valueOf(Objects.requireNonNullElse(command.getEventVersion(), 1)),
-                StrUtil.blankToDefault(command.getAggregateType(), ""),
-                StrUtil.blankToDefault(command.getAggregateId(), ""), factoryCode, normalizedPayload));
+        String normalizedPayload = receivePayload(command, source, eventType);
+        String requestFingerprint =
+                hash(
+                        String.join(
+                                "|",
+                                source,
+                                eventId,
+                                eventType,
+                                String.valueOf(
+                                        Objects.requireNonNullElse(command.getEventVersion(), 1)),
+                                StrUtil.blankToDefault(command.getAggregateType(), ""),
+                                StrUtil.blankToDefault(command.getAggregateId(), ""),
+                                factoryCode,
+                                normalizedPayload));
         eventMapper.lockKey(source + ':' + eventId);
         PlnAutomationEventEntity existing = eventMapper.selectOne(new LambdaQueryWrapper<PlnAutomationEventEntity>()
                 .eq(PlnAutomationEventEntity::getSourceSystem, source)
@@ -227,11 +246,27 @@ public class PlnAutomationEventServiceImpl implements PlnAutomationEventService 
         MomUser user = currentUser();
         PlnAutomationEventPolicyEntity entity;
         if (command.getId() == null) {
-            int version = policyMapper.selectList(new LambdaQueryWrapper<PlnAutomationEventPolicyEntity>()
-                            .eq(PlnAutomationEventPolicyEntity::getFactoryCode, factoryCode)
-                            .eq(PlnAutomationEventPolicyEntity::getPolicyCode, code)
-                            .orderByDesc(PlnAutomationEventPolicyEntity::getPolicyVersion).last("LIMIT 1"))
-                    .stream().findFirst().map(PlnAutomationEventPolicyEntity::getPolicyVersion).orElse(0) + 1;
+            int version =
+                    policyMapper
+                            .selectList(
+                                    new LambdaQueryWrapper<PlnAutomationEventPolicyEntity>()
+                                            .eq(
+                                                    PlnAutomationEventPolicyEntity
+                                                            ::getFactoryCode,
+                                                    factoryCode)
+                                            .eq(
+                                                    PlnAutomationEventPolicyEntity
+                                                            ::getPolicyCode,
+                                                    code)
+                                            .orderByDesc(
+                                                    PlnAutomationEventPolicyEntity
+                                                            ::getPolicyVersion)
+                                            .last("LIMIT 1"))
+                            .stream()
+                            .findFirst()
+                            .map(PlnAutomationEventPolicyEntity::getPolicyVersion)
+                            .orElse(0)
+                            + 1;
             entity = new PlnAutomationEventPolicyEntity().setFactoryCode(factoryCode).setPolicyVersion(version)
                     .setStatus("DRAFT").setAuthorCode(userCode(user)).setAuthorName(userName(user));
         } else {
@@ -239,13 +274,29 @@ public class PlnAutomationEventServiceImpl implements PlnAutomationEventService 
             require("DRAFT".equals(entity.getStatus()), "仅草稿订阅策略允许修改");
             require(Objects.equals(factoryCode, entity.getFactoryCode()), "订阅策略不属于当前工厂");
         }
-        entity.setPolicyCode(code).setPolicyName(command.getPolicyName().trim()).setEventType(eventType)
-                .setHandlerCode(handler).setAutoExecute(Objects.requireNonNullElse(command.getAutoExecute(), true))
+        entity.setPolicyCode(code)
+                .setPolicyName(command.getPolicyName().trim())
+                .setEventType(eventType)
+                .setHandlerCode(handler)
+                .setAutoExecute(Objects.requireNonNullElse(command.getAutoExecute(), true))
                 .setMaxAttempts(bounded(command.getMaxAttempts(), 5, 1, 20, "最大尝试次数必须在1到20之间"))
-                .setInitialBackoffSeconds(bounded(command.getInitialBackoffSeconds(), 60, 10, 86400, "首次退避必须在10秒到1天之间"))
-                .setMaxBackoffSeconds(bounded(command.getMaxBackoffSeconds(), 3600, 60, 604800, "最大退避必须在1分钟到7天之间"))
+                .setInitialBackoffSeconds(
+                        bounded(
+                                command.getInitialBackoffSeconds(),
+                                60,
+                                10,
+                                86400,
+                                "首次退避必须在10秒到1天之间"))
+                .setMaxBackoffSeconds(
+                        bounded(
+                                command.getMaxBackoffSeconds(),
+                                3600,
+                                60,
+                                604800,
+                                "最大退避必须在1分钟到7天之间"))
                 .setPriority(bounded(command.getPriority(), 100, 0, 9999, "策略优先级必须在0到9999之间"))
-                .setEffectiveFrom(command.getEffectiveFrom()).setEffectiveTo(command.getEffectiveTo());
+                .setEffectiveFrom(command.getEffectiveFrom())
+                .setEffectiveTo(command.getEffectiveTo());
         require(entity.getMaxBackoffSeconds() >= entity.getInitialBackoffSeconds(), "最大退避不能小于首次退避");
         entity.setPolicyFingerprint(policyFingerprint(entity));
         require(entity.getId() == null ? policyMapper.insert(entity) == 1 : policyMapper.updateById(entity) == 1,
@@ -256,7 +307,11 @@ public class PlnAutomationEventServiceImpl implements PlnAutomationEventService 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public PlnAutomationEventPolicyEntity activatePolicy(PlanAutomationEventDTO.PolicyActionCommand command) {
-        require(command != null && command.getPolicyId() != null && StrUtil.isNotBlank(command.getRequestId()), "订阅策略启用参数不完整");
+        require(
+                command != null
+                        && command.getPolicyId() != null
+                        && StrUtil.isNotBlank(command.getRequestId()),
+                "订阅策略启用参数不完整");
         String requestId = command.getRequestId().trim();
         policyMapper.lockKey("ACTIVATE:" + requestId);
         PlnAutomationEventPolicyEntity duplicate = policyMapper.selectOne(new LambdaQueryWrapper<PlnAutomationEventPolicyEntity>()
@@ -300,8 +355,11 @@ public class PlnAutomationEventServiceImpl implements PlnAutomationEventService 
         PlnAutomationEventPolicyEntity entity = requirePolicy(command.getPolicyId(), true);
         require("ACTIVE".equals(entity.getStatus()), "仅启用订阅策略允许退役");
         MomUser user = currentUser();
-        entity.setStatus("RETIRED").setRetireRequestId(requestId).setRetireReason(command.getReason().trim())
-                .setRetiredBy(userCode(user)).setRetiredTime(LocalDateTime.now());
+        entity.setStatus("RETIRED")
+                .setRetireRequestId(requestId)
+                .setRetireReason(command.getReason().trim())
+                .setRetiredBy(userCode(user))
+                .setRetiredTime(LocalDateTime.now());
         require(policyMapper.updateById(entity) == 1, "事件订阅策略退役失败");
         return entity;
     }
@@ -314,16 +372,32 @@ public class PlnAutomationEventServiceImpl implements PlnAutomationEventService 
         require(event != null, "事件不存在");
         requireFactory(event.getFactoryCode());
         if (isManualReplay(event, command, "MANUAL_RETRY")) return true;
-        require(Set.of("WAITING_MANUAL", "DEAD_LETTER", "RETRY_WAIT").contains(event.getStatus()), "当前事件状态不允许人工重试");
+        require(
+                Set.of("WAITING_MANUAL", "DEAD_LETTER", "RETRY_WAIT").contains(event.getStatus()),
+                "当前事件状态不允许人工重试");
         String before = event.getStatus();
         int previousAttempts = event.getAttemptCount();
         MomUser user = currentUser();
-        event.setStatus("RECEIVED").setNextAttemptTime(LocalDateTime.now()).setLastErrorCode(null).setLastErrorMessage(null)
-                .setAttemptCount(0).setCompletedTime(null)
-                .setManualRequestId(command.getRequestId().trim()).setManualReason(command.getReason().trim())
-                .setManualOperatorCode(userCode(user)).setManualOperatorName(userName(user)).setManualOperationTime(LocalDateTime.now());
+        event.setStatus("RECEIVED")
+                .setNextAttemptTime(LocalDateTime.now())
+                .setLastErrorCode(null)
+                .setLastErrorMessage(null)
+                .setAttemptCount(0)
+                .setCompletedTime(null)
+                .setManualRequestId(command.getRequestId().trim())
+                .setManualReason(command.getReason().trim())
+                .setManualOperatorCode(userCode(user))
+                .setManualOperatorName(userName(user))
+                .setManualOperationTime(LocalDateTime.now());
         require(eventMapper.updateById(event) == 1, "事件人工重试状态保存失败");
-        operation(event, command.getRequestId().trim(), "MANUAL_RETRY", before, "RECEIVED", previousAttempts, command.getReason().trim());
+        operation(
+                event,
+                command.getRequestId().trim(),
+                "MANUAL_RETRY",
+                before,
+                "RECEIVED",
+                previousAttempts,
+                command.getReason().trim());
         return true;
     }
 
@@ -335,36 +409,76 @@ public class PlnAutomationEventServiceImpl implements PlnAutomationEventService 
         require(event != null, "事件不存在");
         requireFactory(event.getFactoryCode());
         if (isManualReplay(event, command, "MANUAL_IGNORE")) return true;
-        require(!FINAL_STATUSES.contains(event.getStatus()) && !"PROCESSING".equals(event.getStatus()), "当前事件状态不允许忽略");
+        require(
+                !FINAL_STATUSES.contains(event.getStatus())
+                        && !"PROCESSING".equals(event.getStatus()),
+                "当前事件状态不允许忽略");
         String before = event.getStatus();
         MomUser user = currentUser();
         event.setStatus("IGNORED").setNextAttemptTime(null).setCompletedTime(LocalDateTime.now())
                 .setManualRequestId(command.getRequestId().trim()).setManualReason(command.getReason().trim())
                 .setManualOperatorCode(userCode(user)).setManualOperatorName(userName(user)).setManualOperationTime(LocalDateTime.now());
         require(eventMapper.updateById(event) == 1, "事件忽略状态保存失败");
-        operation(event, command.getRequestId().trim(), "MANUAL_IGNORE", before, "IGNORED", event.getAttemptCount(), command.getReason().trim());
+        operation(
+                event,
+                command.getRequestId().trim(),
+                "MANUAL_IGNORE",
+                before,
+                "IGNORED",
+                event.getAttemptCount(),
+                command.getReason().trim());
         return true;
     }
 
     private PlnAutomationEventPolicyEntity resolvePolicy(String factoryCode, String eventType, LocalDateTime now) {
-        return policyMapper.selectList(new LambdaQueryWrapper<PlnAutomationEventPolicyEntity>()
-                        .eq(PlnAutomationEventPolicyEntity::getFactoryCode, factoryCode)
-                        .eq(PlnAutomationEventPolicyEntity::getEventType, eventType)
-                        .eq(PlnAutomationEventPolicyEntity::getStatus, "ACTIVE")
-                        .and(w -> w.isNull(PlnAutomationEventPolicyEntity::getEffectiveFrom)
-                                .or().le(PlnAutomationEventPolicyEntity::getEffectiveFrom, now))
-                        .and(w -> w.isNull(PlnAutomationEventPolicyEntity::getEffectiveTo)
-                                .or().gt(PlnAutomationEventPolicyEntity::getEffectiveTo, now))
-                        .orderByAsc(PlnAutomationEventPolicyEntity::getPriority)
-                        .orderByDesc(PlnAutomationEventPolicyEntity::getPolicyVersion).last("LIMIT 1"))
-                .stream().findFirst().orElse(null);
+        return policyMapper
+                .selectList(
+                        new LambdaQueryWrapper<PlnAutomationEventPolicyEntity>()
+                                .eq(PlnAutomationEventPolicyEntity::getFactoryCode, factoryCode)
+                                .eq(PlnAutomationEventPolicyEntity::getEventType, eventType)
+                                .eq(PlnAutomationEventPolicyEntity::getStatus, "ACTIVE")
+                                .and(
+                                        w ->
+                                                w.isNull(
+                                                                PlnAutomationEventPolicyEntity
+                                                                        ::getEffectiveFrom)
+                                                        .or()
+                                                        .le(
+                                                                PlnAutomationEventPolicyEntity
+                                                                        ::getEffectiveFrom,
+                                                                now))
+                                .and(
+                                        w ->
+                                                w.isNull(
+                                                                PlnAutomationEventPolicyEntity
+                                                                        ::getEffectiveTo)
+                                                        .or()
+                                                        .gt(
+                                                                PlnAutomationEventPolicyEntity
+                                                                        ::getEffectiveTo,
+                                                                now))
+                                .orderByAsc(PlnAutomationEventPolicyEntity::getPriority)
+                                .orderByDesc(PlnAutomationEventPolicyEntity::getPolicyVersion)
+                                .last("LIMIT 1"))
+                .stream()
+                .findFirst()
+                .orElse(null);
     }
 
     private void validateReceive(PlanAutomationEventDTO.ReceiveCommand c) {
-        require(c != null && StrUtil.isNotBlank(c.getEventId()) && StrUtil.isNotBlank(c.getSourceSystem())
-                && StrUtil.isNotBlank(c.getEventType()) && StrUtil.isNotBlank(c.getPayloadJson()), "事件ID、来源、类型和事实载荷不能为空");
-        require(c.getEventId().trim().length() <= 160 && c.getSourceSystem().trim().length() <= 40, "事件标识长度不合法");
-        require(SUPPORTED_EVENT_TYPES.contains(c.getEventType().trim().toUpperCase(Locale.ROOT)), "不支持的制造事件类型");
+        require(
+                c != null
+                        && StrUtil.isNotBlank(c.getEventId())
+                        && StrUtil.isNotBlank(c.getSourceSystem())
+                        && StrUtil.isNotBlank(c.getEventType())
+                        && StrUtil.isNotBlank(c.getPayloadJson()),
+                "事件ID、来源、类型和事实载荷不能为空");
+        require(
+                c.getEventId().trim().length() <= 160 && c.getSourceSystem().trim().length() <= 40,
+                "事件标识长度不合法");
+        require(
+                SUPPORTED_EVENT_TYPES.contains(c.getEventType().trim().toUpperCase(Locale.ROOT)),
+                "不支持的制造事件类型");
         require(c.getEventVersion() == null || c.getEventVersion() > 0, "事件版本必须大于0");
     }
 
@@ -413,9 +527,46 @@ public class PlnAutomationEventServiceImpl implements PlnAutomationEventService 
         require(operationMapper.insert(op) == 1, "事件操作履历保存失败");
     }
 
-    private PlanAutomationEventDTO.ReceiveReceipt receipt(PlnAutomationEventEntity event, boolean duplicate) {
-        return new PlanAutomationEventDTO.ReceiveReceipt().setInboxId(event.getId()).setEventNo(event.getEventNo())
-                .setEventId(event.getEventId()).setStatus(event.getStatus()).setDuplicate(duplicate).setReceivedTime(event.getReceivedTime());
+    private PlanAutomationEventDTO.ReceiveReceipt receipt(
+            PlnAutomationEventEntity event, boolean duplicate) {
+        return new PlanAutomationEventDTO.ReceiveReceipt()
+                .setInboxId(event.getId())
+                .setEventNo(event.getEventNo())
+                .setEventId(event.getEventId())
+                .setStatus(event.getStatus())
+                .setDuplicate(duplicate)
+                .setReceivedTime(event.getReceivedTime());
+    }
+
+    /**
+     * 新反向事件传递MES签名原件；历史事件仍沿用原规范化和幂等摘要。
+     */
+    private String receivePayload(
+            PlanAutomationEventDTO.ReceiveCommand command, String source, String eventType) {
+        if (!"MES".equals(source)
+                || !"MES_COMPLETION_REOPENED".equals(eventType)
+                || !Objects.equals(command.getEventVersion(), 2))
+            return normalizeJson(command.getPayloadJson());
+        String raw = command.getPayloadJson();
+        require(raw != null && raw.length() <= 1_000_000, "反向完成原件范围无效");
+        try {
+            var node =
+                    objectMapper
+                            .copy()
+                            .enable(
+                                    com.fasterxml.jackson.core.JsonParser.Feature
+                                            .STRICT_DUPLICATE_DETECTION)
+                            .readTree(raw);
+            require(
+                    node != null
+                            && node.isObject()
+                            && node.path("sourceSchemaVersion").isIntegralNumber()
+                            && node.path("sourceSchemaVersion").intValue() == 2,
+                    "反向完成原件模型与信封不符");
+            return raw;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException failure) {
+            throw new CheckedException("反向完成原件不是有效JSON对象");
+        }
     }
 
     private String normalizeJson(String value) {
@@ -435,15 +586,29 @@ public class PlnAutomationEventServiceImpl implements PlnAutomationEventService 
     }
 
     private String policyFingerprint(PlnAutomationEventPolicyEntity p) {
-        return hash(String.join("|", p.getFactoryCode(), p.getPolicyCode(), String.valueOf(p.getPolicyVersion()),
-                p.getEventType(), p.getHandlerCode(), String.valueOf(p.getAutoExecute()), String.valueOf(p.getMaxAttempts()),
-                String.valueOf(p.getInitialBackoffSeconds()), String.valueOf(p.getMaxBackoffSeconds()), String.valueOf(p.getPriority()),
-                String.valueOf(p.getEffectiveFrom()), String.valueOf(p.getEffectiveTo())));
+        return hash(
+                String.join(
+                        "|",
+                        p.getFactoryCode(),
+                        p.getPolicyCode(),
+                        String.valueOf(p.getPolicyVersion()),
+                        p.getEventType(),
+                        p.getHandlerCode(),
+                        String.valueOf(p.getAutoExecute()),
+                        String.valueOf(p.getMaxAttempts()),
+                        String.valueOf(p.getInitialBackoffSeconds()),
+                        String.valueOf(p.getMaxBackoffSeconds()),
+                        String.valueOf(p.getPriority()),
+                        String.valueOf(p.getEffectiveFrom()),
+                        String.valueOf(p.getEffectiveTo())));
     }
 
     private String hash(String raw) {
         try {
-            return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8)));
+            return java.util.HexFormat.of()
+                    .formatHex(
+                            MessageDigest.getInstance("SHA-256")
+                                    .digest(raw.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception ex) {
             throw new IllegalStateException("SHA-256不可用", ex);
         }

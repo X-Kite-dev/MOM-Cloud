@@ -23,12 +23,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * 订单级生产调查范围解析。只使用OMS交付行、PLAN来源需求/计划、MES直接/合批分配账。
@@ -44,7 +39,9 @@ public class OmsProductionScopeQueryService {
     private final RemoteMesTaskService remoteMes;
     private final OmsProductionScopeOwnershipMapper ownershipMapper;
 
-    /** 解析单个实名租户/工厂的精确销售订单，所有查询有固定安全边界。 */
+    /**
+     * 解析单个实名租户/工厂的精确销售订单，所有查询有固定安全边界。
+     */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public OmsProductionScopeDTO.Evidence query(OmsProductionScopeDTO.Query query) {
         String factory = FactoryContextHolder.getFactoryCode();
@@ -191,16 +188,17 @@ public class OmsProductionScopeQueryService {
             List<OmsProductionScopeDTO.Link> production = links.stream()
                     .filter(link -> Objects.equals(line.getLineId(), link.getLineId()) && roots.contains(link.getPlanNo())).toList();
             for (String root : roots) {
-                if (production.stream().noneMatch(link -> root.equals(link.getPlanNo()))) quantityGaps.add("成品计划" + root + "缺少工单数量来源");
+                if (production.stream().noneMatch(link -> root.equals(link.getPlanNo())))
+                    quantityGaps.add("成品计划" + root + "缺少工单数量来源");
             }
             java.util.Set<String> keys = new java.util.HashSet<>();
             for (OmsProductionScopeDTO.Link source : production) {
                 if (!Objects.equals(line.getProductCode(), source.getMaterialCode())
                         || !("ALLOCATED".equals(source.getQuantityAttributionStatus())
-                            || "DIRECT_EXCLUSIVE".equals(source.getQuantityAttributionStatus()))
+                        || "DIRECT_EXCLUSIVE".equals(source.getQuantityAttributionStatus()))
                         || source.getCompletedQuantity() == null || source.getInStockQuantity() == null
                         || !keys.add(source.getAllocationId() == null ? "DIRECT:" + source.getTaskCode()
-                                : "ALLOCATION:" + source.getAllocationId())) {
+                        : "ALLOCATION:" + source.getAllocationId())) {
                     quantityGaps.add("来源" + source.getPlanNo() + "/" + source.getTaskCode() + "物料/数量或唯一归属不足");
                 }
             }

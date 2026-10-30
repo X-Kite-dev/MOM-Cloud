@@ -11,7 +11,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** 采集已下达计划的在制、锁定和可移动性证据。 */
+/**
+ * 采集已下达计划的在制、锁定和可移动性证据。
+ */
 @Component
 public class MesApsExecutionCollector extends AbstractApsResourceCollector {
 
@@ -22,8 +24,15 @@ public class MesApsExecutionCollector extends AbstractApsResourceCollector {
         this.service = service;
     }
 
-    @Override public String module() { return "MES"; }
-    @Override public int order() { return 40; }
+    @Override
+    public String module() {
+        return "MES";
+    }
+
+    @Override
+    public int order() {
+        return 40;
+    }
 
     @Override
     public PlnApsResourceEvidence collect(PlnApsResourceCollectionContext context) {
@@ -47,10 +56,11 @@ public class MesApsExecutionCollector extends AbstractApsResourceCollector {
             List<PlnApsResourceEvidence.Gap> gaps = new ArrayList<>();
             if (data.getPlans() != null) for (MesPlanExecutionEvidenceDTO.Plan plan : data.getPlans()) {
                 if (plan.getGaps() == null) continue;
-                for (int i = 0; i < plan.getGaps().size(); i++) gaps.add(new PlnApsResourceEvidence.Gap(
-                        "MES_EXECUTION_GAP_" + sha256(plan.getPlanNo() + ':' + i).substring(0, 12), "EXECUTION", "BLOCKER",
-                        "PLAN_EXECUTION", plan.getPlanNo(), "MES执行证据存在缺口", plan.getGaps().get(i),
-                        "/mes/mesTask/index", Map.of("planNo", plan.getPlanNo())));
+                for (int i = 0; i < plan.getGaps().size(); i++)
+                    gaps.add(new PlnApsResourceEvidence.Gap(
+                            "MES_EXECUTION_GAP_" + sha256(plan.getPlanNo() + ':' + i).substring(0, 12), "EXECUTION", "BLOCKER",
+                            "PLAN_EXECUTION", plan.getPlanNo(), "MES执行证据存在缺口", plan.getGaps().get(i),
+                            "/mes/mesTask/index", Map.of("planNo", plan.getPlanNo())));
             }
             Map<String, Object> summary = Map.of("execution", data);
             String version = stableFingerprint(summary);

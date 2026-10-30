@@ -8,12 +8,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
-import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesTaskReportReverseVO;
 import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.mapper.*;
-import com.kitex.mom.mes.util.MesReportReverseNodeEvidence;
 import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
+import com.kitex.mom.mes.util.MesReportReverseNodeEvidence;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -49,6 +48,30 @@ public class MesIdentifierBindingInverseCoordinator {
     private final MesStationPassRecordMapper stationPasses;
     private final MesTaskArrangeMapper arrangements;
     private final MesExecutionNodeReader executionNodes;
+
+    /**
+     * 只读已存报告版本，不受客户端或当前模板选择影响。
+     */
+    public static boolean isNativeBinding(MesTaskReportEntity report) {
+        if (report.getIdentifierBindingId() == null) return false;
+        String version = bindingSnapshot(report).path("version").asText();
+        require(Set.of("MES_NODE_BINDING_V1", "MES_NODE_BINDING_NODE_V2").contains(version), "未知原动态报工证据协议");
+        return "MES_NODE_BINDING_NODE_V2".equals(version);
+    }
+
+    private static JsonNode bindingSnapshot(MesTaskReportEntity report) {
+        try {
+            JsonNode result = JSON.readTree(report.getIdentifierBindingSnapshot());
+            require(result != null && result.isObject(), "原动态证据缺失");
+            return result;
+        } catch (Exception exception) {
+            throw new CheckedException("原动态报工证据损坏，不能重解释或降级");
+        }
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
 
     /**
      * 工单业务锁后、原报告/库存行锁前一次取得同SN本工单全部区段标识键。
@@ -117,10 +140,10 @@ public class MesIdentifierBindingInverseCoordinator {
                 .eq(MesReportCommandEntity::getTenantId, tenant()).eq(MesReportCommandEntity::getFactoryCode, factory)
                 .eq(MesReportCommandEntity::getReportId, report.getId()));
         require(command != null && "MES_REPORT_COMMAND_V2".equals(command.getCommandVersion())
-                && Objects.equals(original.getRequestFingerprint(), command.getRequestFingerprint())
-                && Objects.equals(original.getRequestId(), command.getRequestId())
-                && Objects.equals(original.getEvidenceSnapshot(), report.getIdentifierBindingSnapshot())
-                && Objects.equals(original.getVersionBefore() == 0 ? 1 : original.getVersionBefore(), report.getIdentifierBindingVersion()),
+                        && Objects.equals(original.getRequestFingerprint(), command.getRequestFingerprint())
+                        && Objects.equals(original.getRequestId(), command.getRequestId())
+                        && Objects.equals(original.getEvidenceSnapshot(), report.getIdentifierBindingSnapshot())
+                        && Objects.equals(original.getVersionBefore() == 0 ? 1 : original.getVersionBefore(), report.getIdentifierBindingVersion()),
                 "原节点账/报工/原正文不一致，禁止补造逆向依据");
         Set<Long> reversed = new HashSet<>();
         chain.stream().map(MesIdentifierBindingOperationEntity::getOriginalOperationId)
@@ -145,7 +168,8 @@ public class MesIdentifierBindingInverseCoordinator {
             }
         }
         for (MesIdentifierBindingOperationEntity fact : chain) {
-            if (fact.getOriginalOperationId() != null || Objects.equals(fact.getId(), original.getId()) || reversed.contains(fact.getId())) continue;
+            if (fact.getOriginalOperationId() != null || Objects.equals(fact.getId(), original.getId()) || reversed.contains(fact.getId()))
+                continue;
             boolean dependent = "BIND".equals(original.getAction())
                     || ("USE".equals(original.getAction()) && "RELEASE".equals(fact.getAction()));
             if (dependent) dependencies.add(fact.getReportId());
@@ -217,7 +241,9 @@ public class MesIdentifierBindingInverseCoordinator {
         return new Evidence(binding, original, Collections.unmodifiableMap(facts), List.copyOf(blockers), Set.copyOf(dependencies));
     }
 
-    /** 原报工已锁后、任何库存写入前执行；必须仍有本次异岗复核资格和精确冻结scope。 */
+    /**
+     * 原报工已锁后、任何库存写入前执行；必须仍有本次异岗复核资格和精确冻结scope。
+     */
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public Prepared prepare(MesTaskReportEntity report, MesTaskReportReverseVO command) {
         Evidence evidence = evidence(report, true);
@@ -325,7 +351,9 @@ public class MesIdentifierBindingInverseCoordinator {
         require(operations.insert(inverse) == 1, "不可变补偿账未保存，库存/产量/占用整笔回滚");
     }
 
-    /** 使用原永久完整DAG的全部后序，不用routeOrder切片或只看最后一笔操作。 */
+    /**
+     * 使用原永久完整DAG的全部后序，不用routeOrder切片或只看最后一笔操作。
+     */
     private Set<String> downstream(MesIdentifierBindingGroupEntity group,
                                    MesIdentifierBindingOperationEntity original, MesTaskReportEntity report) {
         boolean nativeNodes = MesIdentifierNodePolicyValidator.NODE_BINDING_V2.equals(group.getPolicySchemaVersion());
@@ -346,21 +374,24 @@ public class MesIdentifierBindingInverseCoordinator {
                     .get(report.getTaskCode());
             var actual = actualGraph.current(arrange);
             require(MesFrozenExecutionGraph.NODE_EXECUTION_V1.equals(actual.getRouteExecutionSchemaVersion())
-                    && Objects.equals(group.getProcessRouteCode(), actual.getProcessRouteCode())
-                    && Objects.equals(evidence.path("produceTaskCode").asText(), actual.getCode())
-                    && Objects.equals(evidence.path("sourceRouteNodeCode").asText(), actual.getSourceRouteNodeCode())
-                    && Objects.equals(evidence.path("routeCode").asText(), actual.getRouteCode())
-                    && Objects.equals(original.getRouteCode(), actual.getRouteCode())
-                    && Objects.equals(original.getArrangeCode(), arrange.getCode())
-                    && MesIdentifierNodePolicyValidator.NODE_BINDING_V2.equals(evidence.path("policySchemaVersion").asText())
-                    && MesFrozenExecutionGraph.NODE_EXECUTION_V1.equals(evidence.path("routeExecutionSchemaVersion").asText()),
+                            && Objects.equals(group.getProcessRouteCode(), actual.getProcessRouteCode())
+                            && Objects.equals(evidence.path("produceTaskCode").asText(), actual.getCode())
+                            && Objects.equals(evidence.path("sourceRouteNodeCode").asText(), actual.getSourceRouteNodeCode())
+                            && Objects.equals(evidence.path("routeCode").asText(), actual.getRouteCode())
+                            && Objects.equals(original.getRouteCode(), actual.getRouteCode())
+                            && Objects.equals(original.getArrangeCode(), arrange.getCode())
+                            && MesIdentifierNodePolicyValidator.NODE_BINDING_V2.equals(evidence.path("policySchemaVersion").asText())
+                            && MesFrozenExecutionGraph.NODE_EXECUTION_V1.equals(evidence.path("routeExecutionSchemaVersion").asText()),
                     "原动态操作、报告、实际任务和节点证据不一致");
             route = actual.getSourceRouteNodeCode();
             actualDownstream = actualGraph.descendantDepths(actual).keySet();
         }
         JsonNode graph;
-        try { graph = JSON.readTree(group.getGraphSnapshot()); }
-        catch (Exception exception) { throw new CheckedException("原永久DAG损坏，禁止补偿"); }
+        try {
+            graph = JSON.readTree(group.getGraphSnapshot());
+        } catch (Exception exception) {
+            throw new CheckedException("原永久DAG损坏，禁止补偿");
+        }
         require(graph.isArray() && graph.size() <= 2000, "原永久完整DAG格式或规模错误");
         Map<String, JsonNode> nodes = new HashMap<>();
         String identityField = nativeNodes ? "sourceRouteNodeCode" : "routeCode";
@@ -387,24 +418,6 @@ public class MesIdentifierBindingInverseCoordinator {
         return Set.copyOf(taskCodes);
     }
 
-    /** 只读已存报告版本，不受客户端或当前模板选择影响。 */
-    public static boolean isNativeBinding(MesTaskReportEntity report) {
-        if (report.getIdentifierBindingId() == null) return false;
-        String version = bindingSnapshot(report).path("version").asText();
-        require(Set.of("MES_NODE_BINDING_V1", "MES_NODE_BINDING_NODE_V2").contains(version), "未知原动态报工证据协议");
-        return "MES_NODE_BINDING_NODE_V2".equals(version);
-    }
-
-    private static JsonNode bindingSnapshot(MesTaskReportEntity report) {
-        try {
-            JsonNode result = JSON.readTree(report.getIdentifierBindingSnapshot());
-            require(result != null && result.isObject(), "原动态证据缺失");
-            return result;
-        } catch (Exception exception) {
-            throw new CheckedException("原动态报工证据损坏，不能重解释或降级");
-        }
-    }
-
     private List<Object> bindingFact(MesIdentifierBindingEntity binding) {
         return Arrays.asList(binding.getId().toString(), binding.getBindingGroupId().toString(), binding.getTaskCode(),
                 binding.getExternalNamespace(), binding.getExternalCode(), binding.getCanonicalIdentifier(),
@@ -413,11 +426,16 @@ public class MesIdentifierBindingInverseCoordinator {
                 binding.getLastInverseOperationId() == null ? null : binding.getLastInverseOperationId().toString());
     }
 
-    /** 取原申请永久保存的完整逐报告事实，而非用本步已变化的实例/库存倒写批准依据。 */
+    /**
+     * 取原申请永久保存的完整逐报告事实，而非用本步已变化的实例/库存倒写批准依据。
+     */
     private String approvedScopeSnapshot(MesReportReverseExecutionAuthority authority, Long reportId) {
         JsonNode snapshot;
-        try { snapshot = JSON.readTree(authority.evidenceSnapshot); }
-        catch (Exception exception) { throw new CheckedException("动态原申请完整冻结JSON损坏"); }
+        try {
+            snapshot = JSON.readTree(authority.evidenceSnapshot);
+        } catch (Exception exception) {
+            throw new CheckedException("动态原申请完整冻结JSON损坏");
+        }
         require(Objects.equals(sha256(authority.evidenceSnapshot), authority.evidenceFingerprint)
                 && Set.of(MesReportReverseNodeEvidence.BINDING_VERSION, MesReportReverseNodeEvidence.BINDING_NODE_VERSION)
                 .contains(snapshot.path("version").asText())
@@ -462,21 +480,30 @@ public class MesIdentifierBindingInverseCoordinator {
                 .eq(MesIdentifierBindingOperationEntity::getFactoryCode, factory);
     }
 
-    private Long tenant() { return TenantContextHolder.getTenantId(); }
-
-    private String sha256(String value) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
-        catch (Exception exception) { throw new CheckedException("无法生成补偿命令摘要"); }
+    private Long tenant() {
+        return TenantContextHolder.getTenantId();
     }
 
-    private static void require(boolean condition, String message) { if (!condition) throw new CheckedException(message); }
+    private String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception exception) {
+            throw new CheckedException("无法生成补偿命令摘要");
+        }
+    }
 
-    /** 只读原事实、不能覆盖的原操作及真实后序依赖。 */
+    /**
+     * 只读原事实、不能覆盖的原操作及真实后序依赖。
+     */
     public record Evidence(MesIdentifierBindingEntity binding, MesIdentifierBindingOperationEntity original,
-                           Map<String, Object> facts, List<String> blockers, Set<Long> dependencies) { }
+                           Map<String, Object> facts, List<String> blockers, Set<Long> dependencies) {
+    }
 
-    /** 本次事务的精确准备结果；不可拿到其他请求独立执行。 */
+    /**
+     * 本次事务的精确准备结果；不可拿到其他请求独立执行。
+     */
     public record Prepared(Long operationId, Evidence evidence, String requestId, Long reverseRequestId,
                            String approvalFingerprint, String commandSnapshot, String commandFingerprint,
-                           int versionBefore, int versionAfter) { }
+                           int versionBefore, int versionAfter) {
+    }
 }

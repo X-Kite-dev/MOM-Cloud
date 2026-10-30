@@ -25,12 +25,7 @@ import org.springframework.util.StringUtils;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * 实名工厂内的工单知识权威投影；仅读取MES已保存的原快照，不改变下达或历史数据。
@@ -45,7 +40,31 @@ public class MesWorkOrderKnowledgeQueryService {
     private final MesWorkOrderKnowledgeSnapshotCodec codec;
     private final ObjectMapper json;
 
-    /** 分页目录的count与身份记录使用同一独立只读快照，不提前加载大JSON。 */
+    private static String encoded(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    private static String id(Long value) {
+        return value == null ? null : value.toString();
+    }
+
+    private static String label(String name, String code) {
+        return StringUtils.hasText(name) ? name : code;
+    }
+
+    private static boolean bounded(String value, int limit) {
+        return value == null || value.length() <= limit && value.chars().noneMatch(c -> c < 32 || c == 127);
+    }
+
+    private static void require(boolean valid, String message) {
+        if (!valid) {
+            throw new CheckedException(message);
+        }
+    }
+
+    /**
+     * 分页目录的count与身份记录使用同一独立只读快照，不提前加载大JSON。
+     */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, propagation = Propagation.REQUIRES_NEW)
     public MesWorkOrderKnowledgeDTO.CandidatePage candidates(MesWorkOrderKnowledgeDTO.CandidateQuery command) {
         require(command != null, "请提供候选查询");
@@ -73,7 +92,9 @@ public class MesWorkOrderKnowledgeQueryService {
                 LocalDateTime.now(), List.of("候选仅为工单身份摘要；冻结知识须按精确工单独立核验，不用现行标准补历史"));
     }
 
-    /** 精确工单原JSON与身份头在同一只读快照读取；损坏正文整体关闭，不换查现行标准。 */
+    /**
+     * 精确工单原JSON与身份头在同一只读快照读取；损坏正文整体关闭，不换查现行标准。
+     */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, propagation = Propagation.REQUIRES_NEW)
     public MesWorkOrderKnowledgeDTO.Evidence evidence(MesWorkOrderKnowledgeDTO.Query command) {
         require(command != null && StringUtils.hasText(command.taskCode()) && command.taskCode().length() <= 100,
@@ -110,15 +131,17 @@ public class MesWorkOrderKnowledgeQueryService {
         }
     }
 
-    /** 权限只取当前实名；工厂头、内部标记或菜单存在都不能替代实际READ绑定。 */
+    /**
+     * 权限只取当前实名；工厂头、内部标记或菜单存在都不能替代实际READ绑定。
+     */
     private Scope scope(String requestedFactory) {
         var user = SecurityUtils.getUser();
         Long tenant = TenantContextHolder.getTenantId();
         String factory = FactoryContextHolder.getFactoryCode();
         require(user != null && user.getId() != null && user.getTenantId() != null
-                && Objects.equals(user.getTenantId(), tenant) && tenant != null && tenant > 0
-                && !TenantContextHolder.getTenantSkip() && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
-                && StringUtils.hasText(factory) && factory.length() <= 100 && factory.equals(requestedFactory),
+                        && Objects.equals(user.getTenantId(), tenant) && tenant != null && tenant > 0
+                        && !TenantContextHolder.getTenantSkip() && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
+                        && StringUtils.hasText(factory) && factory.length() <= 100 && factory.equals(requestedFactory),
                 "工单知识须实名同租户实际工厂读取，禁止跳过隔离或扩范围");
         R<Boolean> check = factories.check(new MdmFactoryAccessCheck().setUserId(user.getId())
                 .setFactoryCode(factory).setRequiredPermission("read"));
@@ -142,7 +165,7 @@ public class MesWorkOrderKnowledgeQueryService {
     }
 
     private MesWorkOrderKnowledgeDTO.Evidence project(Scope scope, String code, MesWorkOrderKnowledgeDTO.WorkOrder order,
-            String base, MesWorkOrderKnowledgeSnapshotCodec.Bundle bundle, LocalDateTime observed) {
+                                                      String base, MesWorkOrderKnowledgeSnapshotCodec.Bundle bundle, LocalDateTime observed) {
         Map<String, MesWorkOrderKnowledgeDTO.Node> nodes = new LinkedHashMap<>();
         List<MesWorkOrderKnowledgeDTO.Relation> relations = new ArrayList<>();
         LinkedHashSet<String> refs = new LinkedHashSet<>();
@@ -198,7 +221,9 @@ public class MesWorkOrderKnowledgeQueryService {
         return bundle.standard() != null && "ROUTE_NODE_V2".equals(bundle.standard().snapshotSchemaVersion());
     }
 
-    /** V2以原稳定节点建边；保留processCode作为主数据语义及V1原关系键。 */
+    /**
+     * V2以原稳定节点建边；保留processCode作为主数据语义及V1原关系键。
+     */
     private String processId(String base, String node, String process) {
         return base + (node == null ? "/process/" + encoded(process) : "/route-node/" + encoded(node));
     }
@@ -221,28 +246,9 @@ public class MesWorkOrderKnowledgeQueryService {
         edges.add(new MesWorkOrderKnowledgeDTO.Relation(from, to, type, ref));
     }
 
-    private static String encoded(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
-    }
-
-    private static String id(Long value) {
-        return value == null ? null : value.toString();
-    }
-
-    private static String label(String name, String code) {
-        return StringUtils.hasText(name) ? name : code;
-    }
-
-    private static boolean bounded(String value, int limit) {
-        return value == null || value.length() <= limit && value.chars().noneMatch(c -> c < 32 || c == 127);
-    }
-    private static void require(boolean valid, String message) {
-        if (!valid) {
-            throw new CheckedException(message);
-        }
-    }
-
-    /** 只保存当前实名已核验的业务范围，不接受调用者自造租户。 */
+    /**
+     * 只保存当前实名已核验的业务范围，不接受调用者自造租户。
+     */
     private record Scope(Long tenant, String factory) {
     }
 }

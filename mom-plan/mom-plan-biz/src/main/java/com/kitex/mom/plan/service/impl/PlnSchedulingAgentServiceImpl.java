@@ -7,19 +7,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyDTO;
 import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
 import com.kitex.mom.mes.dto.MesPlanSourceMappingDTO;
-import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyDTO;
 import com.kitex.mom.plan.agent.dto.PlanProductionScheduleCommitmentDTO;
 import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.*;
 import com.kitex.mom.plan.mapper.*;
-import com.kitex.mom.plan.service.PlnOperationSchedulingService;
-import com.kitex.mom.plan.service.PlnFactoryPlanningAuthorityService;
-import com.kitex.mom.plan.service.PlnFormalPlanContractService;
-import com.kitex.mom.plan.service.PlnSchedulingAgentService;
-import com.kitex.mom.plan.service.PlnSchedulingEffectReviewService;
-import com.kitex.mom.plan.service.PlnSchedulingEngineService;
+import com.kitex.mom.plan.service.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -69,6 +64,11 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
 
     @Override
     public PlanSchedulingAgentDTO.Readiness preview(PlnSchedulingScenarioRunDTO command) {
+        return previewScope(command).getSolverReadiness();
+    }
+
+    @Override
+    public PlnApsDecisionDTO.ScopePreview previewScope(PlnSchedulingScenarioRunDTO command) {
         require(command != null && StrUtil.isNotBlank(command.getFactoryCode()), "排产预检必须指定工厂");
         requireFactory(command.getFactoryCode());
         try {
@@ -83,7 +83,7 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
                     .toList();
             PlanSchedulingAgentDTO.ObjectiveTemplateOption objectiveTemplate = templateFromSnapshot(
                     input.getObjectiveTemplateSnapshot());
-            return new PlanSchedulingAgentDTO.Readiness()
+            PlanSchedulingAgentDTO.Readiness readiness = new PlanSchedulingAgentDTO.Readiness()
                     .setReady(true)
                     .setFactoryCode(input.getRun().getFactoryCode())
                     .setScheduleDate(input.getRun().getScheduleDate())
@@ -100,8 +100,18 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
                     .setSummary("预检通过：可基于" + input.getSources().size() + "个计划生成"
                             + candidateNames.size() + "个确定性排产候选")
                     .setCapturedTime(LocalDateTime.now());
+            List<PlnApsDecisionDTO.SourcePlan> sources = input.getSources().stream().map(plan ->
+                    new PlnApsDecisionDTO.SourcePlan().setId(plan.getId().toString())
+                            .setIssueNo(plan.getIssueNo()).setProductCode(plan.getProductCode())
+                            .setProductName(plan.getProductName()).setNum(plan.getNum())
+                            .setDemandTime(plan.getDemandTime())).toList();
+            // 与引擎写入input_snapshot及正式求解比较使用同一规范序列化，不能另造浏览器指纹。
+            String fingerprint = com.kitex.mom.plan.service.solver.SequenceSolverRegistry.hash(
+                    com.kitex.mom.plan.service.solver.SequenceSolverRegistry.json(input));
+            return new PlnApsDecisionDTO.ScopePreview().setSolverReadiness(readiness)
+                    .setSourcePlans(sources).setInputFingerprint(fingerprint);
         } catch (CheckedException ex) {
-            return new PlanSchedulingAgentDTO.Readiness()
+            PlanSchedulingAgentDTO.Readiness readiness = new PlanSchedulingAgentDTO.Readiness()
                     .setReady(false)
                     .setFactoryCode(command.getFactoryCode().trim())
                     .setScheduleDate(command.getScheduleDate())
@@ -112,6 +122,7 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
                     .setSourcePlanNos(List.of())
                     .setSummary(ex.getMessage())
                     .setCapturedTime(LocalDateTime.now());
+            return new PlnApsDecisionDTO.ScopePreview().setSolverReadiness(readiness).setSourcePlans(List.of());
         }
     }
 
@@ -215,7 +226,9 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
                 .setCapturedTime(LocalDateTime.now());
     }
 
-    /** 历史情景不猜测正式性；新版案件必须同时匹配当前策略版本与合同指纹。 */
+    /**
+     * 历史情景不猜测正式性；新版案件必须同时匹配当前策略版本与合同指纹。
+     */
     private PlanSchedulingAgentDTO.PlanningAuthorityEvidence planningAuthority(
             PlnSchedulingScenarioEntity scenario, List<String> gaps) {
         MdmFactoryPlanningPolicyDTO current = planningAuthorityService.requireCurrentPolicy(
@@ -295,6 +308,7 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
                     .setNextAction("等待效果回评调度任务采集，或在PLAN效果回评页面执行人工采集");
         }
         var review = detail.getReview();
+        result.setIdentityContractVersion(currentIdentityVersion(detail));
         int toleranceMinutes = currentToleranceMinutes(detail);
         LocalDateTime observedAt = result.getCapturedTime();
         List<PlnSchedulingEffectReviewDTO.OperationEvidence> operations = currentOperationEvidence(detail);
@@ -614,6 +628,23 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
         }
     }
 
+    /** 身份协议来自本次不可变观察，不根据今日路线或显示名称推断。 */
+    private String currentIdentityVersion(PlnSchedulingEffectReviewDTO.Detail detail) {
+        var observation = detail.getObservations().stream()
+                .filter(row -> Objects.equals(row.getId(), detail.getReview().getCurrentObservationId()))
+                .findFirst().orElse(null);
+        if (observation == null || StrUtil.isBlank(observation.getActualSnapshot())) return null;
+        try {
+            JsonNode snapshot = objectMapper.readTree(observation.getActualSnapshot());
+            if (!snapshot.has("identityContractVersion")) return null;
+            String version = snapshot.path("identityContractVersion").asText();
+            require("FROZEN_NODE_V2".equals(version), "效果观察身份协议不受支持");
+            return version;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new CheckedException("效果观察身份协议无法解析");
+        }
+    }
+
     private boolean isExecutionDeviation(PlnSchedulingEffectReviewDTO.OperationEvidence item,
                                          int toleranceMinutes, LocalDateTime observedAt) {
         return !Boolean.TRUE.equals(item.getMatched())
@@ -700,7 +731,8 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
         if (StrUtil.isNotBlank(item.getIssueNo())) refs.add("PLAN:pln_issue_no:" + item.getIssueNo());
         if (StrUtil.isNotBlank(item.getMesTaskCode())) refs.add("MES:mes_task:" + item.getMesTaskCode());
         if (StrUtil.isNotBlank(item.getProcessCode())) refs.add("MES:process:" + item.getProcessCode());
-        return new PlanSchedulingAgentDTO.DeviationDisposition()
+        if (StrUtil.isNotBlank(item.getSourceRouteNodeCode())) refs.add("PLAN:frozenRouteNode:" + item.getSourceRouteNodeCode());
+        var result = new PlanSchedulingAgentDTO.DeviationDisposition()
                 .setIssueId(item.getIssueId()).setIssueNo(item.getIssueNo())
                 .setMesTaskCode(item.getMesTaskCode()).setProcessCode(item.getProcessCode())
                 .setProcessName(item.getProcessName()).setOperationSeq(item.getOperationSeq())
@@ -709,6 +741,11 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
                 .setStartDeviationMinutes(item.getStartDeviationMinutes())
                 .setFinishDeviationMinutes(item.getFinishDeviationMinutes())
                 .setReason(reason).setRecommendedWorkflow(workflow).setEvidenceRefs(refs);
+        if (item.getSchedulingOperationId() != null) {
+            result.setSchedulingOperationId(item.getSchedulingOperationId()).setSourceRouteNodeCode(item.getSourceRouteNodeCode())
+                    .setMesProduceTaskId(item.getMesProduceTaskId()).setMesProduceTaskCode(item.getMesProduceTaskCode());
+        }
+        return result;
     }
 
     private int countDisposition(List<PlanSchedulingAgentDTO.DeviationDisposition> dispositions,
@@ -729,20 +766,30 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
         facts.put("startDeviationOperationCount", evidence.getStartDeviationOperationCount());
         facts.put("finishDeviationOperationCount", evidence.getFinishDeviationOperationCount());
         facts.put("pendingStartOverdueOperationCount", evidence.getPendingStartOverdueOperationCount());
+        if (evidence.getIdentityContractVersion() != null) {
+            facts.put("identityContractVersion", evidence.getIdentityContractVersion());
+            facts.put("plannedScopeFingerprint", evidence.getDetail().getReview().getPlannedScopeFingerprint());
+        }
         List<PlanSchedulingAgentDTO.DeviationDisposition> dispositions =
                 evidence.getDeviationDispositions() == null ? List.of() : evidence.getDeviationDispositions();
         facts.put("dispositions", dispositions.stream().map(item -> {
-                    Map<String, Object> disposition = new LinkedHashMap<>();
-                    disposition.put("issueId", item.getIssueId());
-                    disposition.put("issueNo", item.getIssueNo());
-                    disposition.put("processCode", item.getProcessCode());
-                    disposition.put("mesStatus", item.getMesStatus());
-                    disposition.put("disposition", item.getDisposition());
-                    disposition.put("replanEligible", item.getReplanEligible());
-                    disposition.put("startDeviationMinutes", item.getStartDeviationMinutes());
-                    disposition.put("finishDeviationMinutes", item.getFinishDeviationMinutes());
-                    return disposition;
-                }).toList());
+            Map<String, Object> disposition = new LinkedHashMap<>();
+            disposition.put("issueId", item.getIssueId());
+            disposition.put("issueNo", item.getIssueNo());
+            disposition.put("processCode", item.getProcessCode());
+            if (item.getSchedulingOperationId() != null) {
+                disposition.put("schedulingOperationId", item.getSchedulingOperationId());
+                disposition.put("sourceRouteNodeCode", item.getSourceRouteNodeCode());
+                disposition.put("mesProduceTaskId", item.getMesProduceTaskId());
+                disposition.put("mesProduceTaskCode", item.getMesProduceTaskCode());
+            }
+            disposition.put("mesStatus", item.getMesStatus());
+            disposition.put("disposition", item.getDisposition());
+            disposition.put("replanEligible", item.getReplanEligible());
+            disposition.put("startDeviationMinutes", item.getStartDeviationMinutes());
+            disposition.put("finishDeviationMinutes", item.getFinishDeviationMinutes());
+            return disposition;
+        }).toList());
         facts.put("dataGaps", evidence.getDataGaps());
         return hash(json(facts));
     }

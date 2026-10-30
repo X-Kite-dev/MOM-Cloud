@@ -1,5 +1,7 @@
 package com.kitex.mom.plan.dto;
+
 import lombok.Data;
+
 @Data
 public class PlnSchedulingExecutionCommand {
     private String requestId;

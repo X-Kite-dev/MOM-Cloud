@@ -8,15 +8,11 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
-/** MPS执行兑现业务工作台，核验记录不授权改动生产事实。 */
+/**
+ * MPS执行兑现业务工作台，核验记录不授权改动生产事实。
+ */
 @RestController
 @RequestMapping("/plnMpsExecution")
 @RequiredArgsConstructor
@@ -28,7 +24,7 @@ public class PlnMpsExecutionObservationController {
     @PreAuthorize("@pms.hasPermission('plan_mps_view')")
     @Operation(summary = "MPS日桶到根计划和MES精确来源的执行兑现预览")
     public R<PlnMpsExecutionDTO.Evidence> preview(@PathVariable Long versionId,
-            @RequestParam(defaultValue = "30") int toleranceMinutes) {
+                                                  @RequestParam(defaultValue = "30") int toleranceMinutes) {
         return R.ok(service.preview(versionId, toleranceMinutes));
     }
 
@@ -44,7 +40,7 @@ public class PlnMpsExecutionObservationController {
     @PreAuthorize("@pms.hasPermission('plan_mps_view')")
     @Operation(summary = "分页查询当前工厂MPS版本的不可变观察与核验摘要")
     public R<?> history(@PathVariable Long versionId, @RequestParam(defaultValue = "1") long current,
-            @RequestParam(defaultValue = "20") long size) {
+                        @RequestParam(defaultValue = "20") long size) {
         return R.ok(service.history(versionId, current, size));
     }
 

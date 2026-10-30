@@ -6,7 +6,9 @@ import com.kitex.mom.mes.mapper.MesIdentifierRouteReturnMapper;
 import com.kitex.mom.mes.service.MesIdentifierRouteReturnService;
 import org.springframework.stereotype.Service;
 
-/** 逐标识退回上序申请标准数据服务实现。 */
+/**
+ * 逐标识退回上序申请标准数据服务实现。
+ */
 @Service
 public class MesIdentifierRouteReturnServiceImpl
         extends ServiceImpl<MesIdentifierRouteReturnMapper, MesIdentifierRouteReturnEntity>

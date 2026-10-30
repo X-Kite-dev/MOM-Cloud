@@ -12,7 +12,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** MES实名现场查询专用入口；精确任务来源反查，不授予全量计划查询。 */
+/**
+ * MES实名现场查询专用入口；精确任务来源反查，不授予全量计划查询。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/plnMpsRemainingField")

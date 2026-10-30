@@ -11,7 +11,16 @@ public interface MesQualityQuantityService {
 
     MesQualityGateDecision reconcile(String produceTaskCode, MesQualityGateDecision decision);
 
-    MesQualityGateDecision reconcileRework(String produceTaskCode, Long qmsTaskId,
-                                           BigDecimal usableNum, BigDecimal handledNum,
-                                           boolean allQualified);
+    MesQualityGateDecision reconcileRework(
+            String produceTaskCode,
+            Long qmsTaskId,
+            BigDecimal usableNum,
+            BigDecimal handledNum,
+            boolean allQualified);
+
+    /**
+     * 在根业务锁内重新核候选冻结依据，供正式应用事务调用；不接受客户端判定对象。
+     */
+    MesQualityGateDecision reconcileEvent(
+            String produceTaskCode, Long recordId, Long eventId, java.util.Date appliedAt);
 }

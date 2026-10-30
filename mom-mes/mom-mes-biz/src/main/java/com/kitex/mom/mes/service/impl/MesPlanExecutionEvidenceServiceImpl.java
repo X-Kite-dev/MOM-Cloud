@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.mes.dto.MesPlanExecutionEvidenceDTO;
+import com.kitex.mom.mes.dto.MesReportSourceAssignmentDTO;
 import com.kitex.mom.mes.entity.MesApsBatchAllocationEntity;
 import com.kitex.mom.mes.entity.MesProduceTaskEntity;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
@@ -17,7 +18,6 @@ import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
 import com.kitex.mom.mes.mapper.MesTaskMapper;
 import com.kitex.mom.mes.service.MesPlanExecutionEvidenceService;
 import com.kitex.mom.mes.service.MesReportSourceAssignmentService;
-import com.kitex.mom.mes.dto.MesReportSourceAssignmentDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -25,13 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -59,9 +53,9 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
     public MesPlanExecutionEvidenceDTO.Evidence query(MesPlanExecutionEvidenceDTO.Query query) {
         String factory = factoryAccess.require("read");
         require(query != null && Objects.equals(factory, query.getFactoryCode()) && query.getPlanNos() != null
-                && !query.getPlanNos().isEmpty() && query.getPlanNos().size() <= 500
-                && query.getPlanNos().stream().allMatch(no -> StrUtil.isNotBlank(no) && no.length() <= 100)
-                && query.getPlanNos().stream().distinct().count() == query.getPlanNos().size(),
+                        && !query.getPlanNos().isEmpty() && query.getPlanNos().size() <= 500
+                        && query.getPlanNos().stream().allMatch(no -> StrUtil.isNotBlank(no) && no.length() <= 100)
+                        && query.getPlanNos().stream().distinct().count() == query.getPlanNos().size(),
                 "计划执行取证须指定实际工厂及1至500个不重复精确计划号");
         Long tenant = TenantContextHolder.getTenantId();
         // 使用MES自己的查询起点作为补录边界；结束时刻会把查询期间正常提交误当作旧补录。
@@ -141,7 +135,8 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
                     var sourceLink = link(task, null, taskOperations, taskArrangements, sourceProof);
                     if (includeEvents) sourceLink.setProductionSnapshotStartedAt(snapshotStartedAt.toString())
                             .setProductionObservedAt(observedAt.toString());
-                    if (includeEvents) productionEventReader.populate(sourceLink, sourceProof, offlineEvidence, observedAt);
+                    if (includeEvents)
+                        productionEventReader.populate(sourceLink, sourceProof, offlineEvidence, observedAt);
                     plan.getLinks().add(sourceLink);
                 }
             } else {
@@ -152,7 +147,8 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
                         var sourceLink = link(task, allocation, taskOperations, taskArrangements, sourceProof);
                         if (includeEvents) sourceLink.setProductionSnapshotStartedAt(snapshotStartedAt.toString())
                                 .setProductionObservedAt(observedAt.toString());
-                        if (includeEvents) productionEventReader.populate(sourceLink, sourceProof, offlineEvidence, observedAt);
+                        if (includeEvents)
+                            productionEventReader.populate(sourceLink, sourceProof, offlineEvidence, observedAt);
                         plan.getLinks().add(sourceLink);
                     }
                 }
@@ -233,8 +229,8 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
     }
 
     private MesPlanExecutionEvidenceDTO.Link link(MesTaskEntity task, MesApsBatchAllocationEntity allocation,
-            List<MesProduceTaskEntity> operations, List<MesTaskArrangeEntity> arrangements,
-            MesReportSourceAssignmentDTO.Preview sourceProof) {
+                                                  List<MesProduceTaskEntity> operations, List<MesTaskArrangeEntity> arrangements,
+                                                  MesReportSourceAssignmentDTO.Preview sourceProof) {
         boolean started = task.getStartTime() != null || task.getFinishTime() != null || positive(task.getCompleteNum())
                 || positive(task.getInStockNum())
                 || Set.of("PRODUCT", "PAUSE", "FINISH", "CLOSE").contains(StrUtil.blankToDefault(task.getStatus(), "UNKNOWN"))

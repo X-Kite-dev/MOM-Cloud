@@ -8,7 +8,9 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
-/** MPS承诺兑现的不可变执行观察与独立核验，不覆盖已开工生产事实。 */
+/**
+ * MPS承诺兑现的不可变执行观察与独立核验，不覆盖已开工生产事实。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

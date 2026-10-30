@@ -14,7 +14,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 现场工单剩余承诺只读入口；先验证可读真实工单，不扩大到全量PLAN权限。 */
+/**
+ * 现场工单剩余承诺只读入口；先验证可读真实工单，不扩大到全量PLAN权限。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/mesTask/remaining-commitment")

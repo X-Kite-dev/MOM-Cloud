@@ -6,13 +6,9 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.mom.mes.dto.MesWarehouseStockOutReceiptDTO;
 import com.kitex.mom.mes.dto.MesWarehouseFeedBirthDTO;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesWarehouseFeedBirthEntity;
-import com.kitex.mom.mes.entity.MesWarehouseFeedBirthLineEntity;
-import com.kitex.mom.mes.entity.MesWarehouseFeedEntity;
+import com.kitex.mom.mes.dto.MesWarehouseStockOutReceiptDTO;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.mapper.MesWarehouseFeedBirthLineMapper;
 import com.kitex.mom.mes.mapper.MesWarehouseFeedBirthMapper;
 import com.kitex.mom.mes.service.MesWarehouseFeedBirthService;
@@ -22,14 +18,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
 /**
  * 首次实际投料的永久出生全集。
@@ -56,7 +45,9 @@ public class MesWarehouseFeedBirthServiceImpl
             throw new CheckedException("实际投料出生保护未完整部署，请先执行V2第260节；禁止降级为无来源投料");
     }
 
-    /** 生产状态变化或源库存耗尽后仍读原出生事实；不拿当前MDM重算原单位。 */
+    /**
+     * 生产状态变化或源库存耗尽后仍读原出生事实；不拿当前MDM重算原单位。
+     */
     @Override
     @Transactional(readOnly = true)
     public MesWarehouseFeedBirthDTO evidence(Long feedId) {
@@ -105,11 +96,13 @@ public class MesWarehouseFeedBirthServiceImpl
         return new MesWarehouseFeedBirthDTO("RECORDED", birth, children);
     }
 
-    /** feed保存、OUT、出生主/子账和原操作履历必须共用当前事务。 */
+    /**
+     * feed保存、OUT、出生主/子账和原操作履历必须共用当前事务。
+     */
     @Override
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public MesWarehouseFeedBirthEntity record(MesWarehouseFeedEntity feed, MesTaskEntity task,
-                                               MesTaskArrangeEntity arrange, MesWarehouseStockOutReceiptDTO receipt) {
+                                              MesTaskArrangeEntity arrange, MesWarehouseStockOutReceiptDTO receipt) {
         assertReady();
         Long tenant = TenantContextHolder.getTenantId();
         String factory = access.require("write");
@@ -230,7 +223,9 @@ public class MesWarehouseFeedBirthServiceImpl
         return birth;
     }
 
-    /** 回读原raw/SHA和逐源全集；不能只看insert返回行数就接受静默数值转换。 */
+    /**
+     * 回读原raw/SHA和逐源全集；不能只看insert返回行数就接受静默数值转换。
+     */
     private void verify(MesWarehouseFeedBirthEntity expected, List<MesWarehouseFeedBirthLineEntity> children) {
         var stored = getById(expected.getId());
         if (stored == null || !Objects.equals(stored.getEvidenceSnapshot(), expected.getEvidenceSnapshot())

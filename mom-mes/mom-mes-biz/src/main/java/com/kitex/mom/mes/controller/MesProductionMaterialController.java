@@ -9,16 +9,13 @@ import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
-/** 真实投料耗用纠正与原号查询；登记不良权限不默认具有恢复耗料权限。 */
+/**
+ * 真实投料耗用纠正与原号查询；登记不良权限不默认具有恢复耗料权限。
+ */
 @RestController
 @RequestMapping("/mesProductionMaterial")
 @RequiredArgsConstructor

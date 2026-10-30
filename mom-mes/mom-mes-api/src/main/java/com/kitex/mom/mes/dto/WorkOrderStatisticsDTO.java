@@ -13,7 +13,7 @@ import java.time.LocalDate;
  * @since 2025-01-09
  */
 @Data
-@Schema(description = "工单统计数据")
+@Schema(description = "按计划结束时间归日的到期工单当前状态；无计划结束时间不入趋势。完成率分母为有效工单数")
 public class WorkOrderStatisticsDTO implements Serializable {
 
     private static final long serialVersionUID = 1L;
@@ -89,4 +89,15 @@ public class WorkOrderStatisticsDTO implements Serializable {
      */
     @Schema(description = "按时完成率")
     private Double onTimeCompletionRate;
+
+    @Schema(description = "关闭工单数（与已完成数可能重叠；关闭本身不证明完工）")
+    private Long closedCount;
+    @Schema(description = "未知工单状态数，不参与完成率分母")
+    private Long unknownStatusCount;
+    @Schema(description = "完成率分母：正式未关闭工单及有真实完工时间的关闭工单")
+    private Long eligibleCount;
+    @Schema(description = "已完成但缺少完工时间的工单数，不能判定按时或延期")
+    private Long unknownCompletionTimeCount;
+    @Schema(description = "截至查询时已过计划结束时间但尚未完成的有效工单数")
+    private Long overdueUnfinishedCount;
 }

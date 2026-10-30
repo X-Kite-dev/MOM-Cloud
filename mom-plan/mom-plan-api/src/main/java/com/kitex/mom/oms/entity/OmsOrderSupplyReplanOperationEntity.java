@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** OMS订单供应级联不可变操作履历，同时承担人工命令永久幂等账。 */
+/**
+ * OMS订单供应级联不可变操作履历，同时承担人工命令永久幂等账。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

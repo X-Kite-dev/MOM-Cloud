@@ -8,7 +8,9 @@ import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
-/** TPM、MDM、WMS、QMS等权威源投递制造事件的内部契约。 */
+/**
+ * TPM、MDM、WMS、QMS等权威源投递制造事件的内部契约。
+ */
 @FeignClient(contextId = "remotePlnAutomationEventService", value = Constants.Name)
 public interface RemotePlnAutomationEventService {
     @InternalCall

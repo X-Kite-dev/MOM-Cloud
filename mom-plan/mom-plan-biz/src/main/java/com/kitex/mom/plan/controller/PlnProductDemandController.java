@@ -12,6 +12,7 @@ import com.kitex.common.excel.annotation.RequestExcel;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.common.security.annotation.Inner;
+import com.kitex.mom.plan.dto.PlnDemandPlanningParametersDTO;
 import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
 import com.kitex.mom.plan.entity.PlnProductDemandEntity;
 import com.kitex.mom.plan.service.PlnProductDemandService;
@@ -19,6 +20,7 @@ import com.kitex.mom.plan.vo.PlnProductDemandExcelVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpHeaders;
@@ -169,6 +171,19 @@ public class PlnProductDemandController {
     @PreAuthorize("@pms.hasPermission('plan_planMesPlan_edit')")
     public R update(@RequestBody PlnProductDemandEntity planMesPlan) {
         return R.ok(planMesPlanService.updatePlan(planMesPlan));
+    }
+
+    @GetMapping("/{demandId}/planning-parameters")
+    @PreAuthorize("@pms.hasPermission('plan_planMesPlan_view')")
+    public R<PlnDemandPlanningParametersDTO.Snapshot> getPlanningParameters(@PathVariable Long demandId) {
+        return R.ok(planMesPlanService.getPlanningParameters(demandId));
+    }
+
+    @PutMapping("/planning-parameters")
+    @SysLog("配置OMS需求计划参数")
+    @PreAuthorize("@pms.hasPermission('plan_planMesPlan_edit')")
+    public R<Boolean> updatePlanningParameters(@Valid @RequestBody PlnDemandPlanningParametersDTO.UpdateCommand command) {
+        return R.ok(planMesPlanService.updatePlanningParameters(command));
     }
 
     /**

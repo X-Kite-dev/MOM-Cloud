@@ -13,13 +13,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
-/** 专用局部重排事实到统一 APS 案件的只读适配实现。 */
+/**
+ * 专用局部重排事实到统一 APS 案件的只读适配实现。
+ */
 @Service
 @RequiredArgsConstructor
 public class PlnApsReplanAdapterImpl implements PlnApsReplanAdapter {
@@ -30,6 +28,43 @@ public class PlnApsReplanAdapterImpl implements PlnApsReplanAdapter {
     private final PlnQualityReplanCaseMapper qualityMapper;
     private final PlnInsertionReplanCaseMapper insertionMapper;
     private final PlnSchedulingEffectReviewMapper effectReviewMapper;
+
+    private static Map<String, Object> map() {
+        return new LinkedHashMap<>();
+    }
+
+    private static boolean present(String... values) {
+        return java.util.Arrays.stream(values).allMatch(StrUtil::isNotBlank);
+    }
+
+    private static String version(LocalDateTime updateTime, LocalDateTime createTime, String state) {
+        LocalDateTime time = updateTime == null ? createTime : updateTime;
+        require(time != null, "局部重排来源缺少可核验的更新时间");
+        return time + ":" + StrUtil.blankToDefault(state, "NA");
+    }
+
+    private static Long parseId(String value, String label) {
+        try {
+            Long id = Long.valueOf(value);
+            require(id > 0, label + "必须为正整数");
+            return id;
+        } catch (NumberFormatException ex) {
+            throw new CheckedException(label + "格式不正确");
+        }
+    }
+
+    private static <T> T required(T value, String message) {
+        require(value != null, message);
+        return value;
+    }
+
+    private static String text(Long value) {
+        return value == null ? null : value.toString();
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
 
     @Override
     public PlnApsCaseDTO launchFromReplanSource(PlnApsReplanDTO.LaunchCommand command) {
@@ -119,7 +154,7 @@ public class PlnApsReplanAdapterImpl implements PlnApsReplanAdapter {
     }
 
     private PlnApsReplanDTO.Projection shortageProjection(PlnApsCaseDTO apsCase, PlnApsCaseDTO.Source source,
-                                                           PlnShortageReplanCaseEntity row) {
+                                                          PlnShortageReplanCaseEntity row) {
         Map<String, Object> metrics = map();
         metrics.put("materialCode", row.getMaterialCode());
         metrics.put("expectedSupplyTime", row.getExpectedSupplyTime());
@@ -133,7 +168,7 @@ public class PlnApsReplanAdapterImpl implements PlnApsReplanAdapter {
     }
 
     private PlnApsReplanDTO.Projection resourceProjection(PlnApsCaseDTO apsCase, PlnApsCaseDTO.Source source,
-                                                           PlnResourceReplanCaseEntity row) {
+                                                          PlnResourceReplanCaseEntity row) {
         Map<String, Object> metrics = map();
         metrics.put("resourceType", row.getResourceType());
         metrics.put("resourceCode", row.getResourceCode());
@@ -149,7 +184,7 @@ public class PlnApsReplanAdapterImpl implements PlnApsReplanAdapter {
     }
 
     private PlnApsReplanDTO.Projection qualityProjection(PlnApsCaseDTO apsCase, PlnApsCaseDTO.Source source,
-                                                          PlnQualityReplanCaseEntity row) {
+                                                         PlnQualityReplanCaseEntity row) {
         Map<String, Object> metrics = map();
         metrics.put("deviationRate", row.getDeviationRate());
         metrics.put("requiredSupplementQuantity", row.getRequiredSupplementQuantity());
@@ -162,7 +197,7 @@ public class PlnApsReplanAdapterImpl implements PlnApsReplanAdapter {
     }
 
     private PlnApsReplanDTO.Projection insertionProjection(PlnApsCaseDTO apsCase, PlnApsCaseDTO.Source source,
-                                                            PlnInsertionReplanCaseEntity row) {
+                                                           PlnInsertionReplanCaseEntity row) {
         Map<String, Object> metrics = map();
         metrics.put("urgencyLevel", row.getUrgencyLevel());
         metrics.put("affectedIssueCount", row.getAffectedIssueCount());
@@ -177,7 +212,7 @@ public class PlnApsReplanAdapterImpl implements PlnApsReplanAdapter {
     }
 
     private PlnApsReplanDTO.Projection effectProjection(PlnApsCaseDTO apsCase, PlnApsCaseDTO.Source source,
-                                                         PlnSchedulingEffectReviewEntity row) {
+                                                        PlnSchedulingEffectReviewEntity row) {
         Map<String, Object> metrics = map();
         metrics.put("completionRate", row.getCompletionRate());
         metrics.put("scheduleAdherenceRate", row.getScheduleAdherenceRate());
@@ -201,43 +236,6 @@ public class PlnApsReplanAdapterImpl implements PlnApsReplanAdapter {
                 .setOriginalTaskId(text(originalTaskId)).setProposalTaskId(text(proposalTaskId))
                 .setEvidenceFingerprint(fingerprint).setMovableScopeVerified(movableVerified)
                 .setSummary(summary).setMetrics(metrics);
-    }
-
-    private static Map<String, Object> map() {
-        return new LinkedHashMap<>();
-    }
-
-    private static boolean present(String... values) {
-        return java.util.Arrays.stream(values).allMatch(StrUtil::isNotBlank);
-    }
-
-    private static String version(LocalDateTime updateTime, LocalDateTime createTime, String state) {
-        LocalDateTime time = updateTime == null ? createTime : updateTime;
-        require(time != null, "局部重排来源缺少可核验的更新时间");
-        return time + ":" + StrUtil.blankToDefault(state, "NA");
-    }
-
-    private static Long parseId(String value, String label) {
-        try {
-            Long id = Long.valueOf(value);
-            require(id > 0, label + "必须为正整数");
-            return id;
-        } catch (NumberFormatException ex) {
-            throw new CheckedException(label + "格式不正确");
-        }
-    }
-
-    private static <T> T required(T value, String message) {
-        require(value != null, message);
-        return value;
-    }
-
-    private static String text(Long value) {
-        return value == null ? null : value.toString();
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
     }
 
     private record SourceIdentity(String sourceType, String caseType, Long id, String code, String version) {

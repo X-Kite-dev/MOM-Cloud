@@ -9,8 +9,8 @@ import com.kitex.mom.mes.dto.MdmProcessRouteWorkingDTO;
 import com.kitex.mom.mes.entity.MesProduceTaskEntity;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.entity.MesTaskExecutionSegmentEntity;
-import com.kitex.mom.mes.mapper.MesTaskExecutionSegmentMapper;
 import com.kitex.mom.mes.mapper.MesProduceTaskMapper;
+import com.kitex.mom.mes.mapper.MesTaskExecutionSegmentMapper;
 import com.kitex.mom.mes.service.MesTaskService;
 import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import lombok.RequiredArgsConstructor;
@@ -22,14 +22,7 @@ import org.springframework.util.StringUtils;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Map;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.Set;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -260,7 +253,9 @@ public class MesProcessTelemetryScopeQueryService {
         return StringUtils.hasText(value) ? value : fallback;
     }
 
-    /** 节点协议严格分支；V1只能解释历史按工序冻结的参数，不能混入节点内容。 */
+    /**
+     * 节点协议严格分支；V1只能解释历史按工序冻结的参数，不能混入节点内容。
+     */
     private boolean nodeProtocol(MdmProcessParameterStandardDTO.FrozenCatalog catalog) {
         String schema = catalog.getSnapshotSchemaVersion();
         boolean node = MdmProcessParameterStandardDTO.ROUTE_NODE_V2.equals(schema);
@@ -278,7 +273,9 @@ public class MesProcessTelemetryScopeQueryService {
         return node;
     }
 
-    /** 仅从工单原路线读取节点，不查询现行MDM或依据主工序补造身份。 */
+    /**
+     * 仅从工单原路线读取节点，不查询现行MDM或依据主工序补造身份。
+     */
     private Map<String, String> frozenNodes(MesTaskEntity task) {
         Map<String, String> result = new LinkedHashMap<>();
         List<MdmProcessRouteWorkingDTO> routes;
@@ -332,7 +329,7 @@ public class MesProcessTelemetryScopeQueryService {
     }
 
     private Map<String, List<MesProduceTaskEntity>> loadOperations(MesTaskEntity task,
-                                                                  List<MesTaskExecutionSegmentEntity> segments) {
+                                                                   List<MesTaskExecutionSegmentEntity> segments) {
         Set<String> codes = segments.stream().map(MesTaskExecutionSegmentEntity::getProduceTaskCode)
                 .filter(StringUtils::hasText).collect(Collectors.toSet());
         if (codes.isEmpty()) {
@@ -345,7 +342,9 @@ public class MesProcessTelemetryScopeQueryService {
                 .stream().collect(Collectors.groupingBy(MesProduceTaskEntity::getCode));
     }
 
-    /** 实际段→唯一工序任务→原冻结节点三者必须一致，任务参数原字节SHA独立校验。 */
+    /**
+     * 实际段→唯一工序任务→原冻结节点三者必须一致，任务参数原字节SHA独立校验。
+     */
     private String verifiedNode(MesTaskEntity task, MesTaskExecutionSegmentEntity segment,
                                 FrozenStandard standard, Map<String, List<MesProduceTaskEntity>> operations) {
         List<MesProduceTaskEntity> matches = operations.getOrDefault(segment.getProduceTaskCode(), List.of());

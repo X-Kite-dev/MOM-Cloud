@@ -1,10 +1,5 @@
 package com.kitex.mom.wms.controller;
 
-import cn.hutool.core.collection.CollUtil;
-import cn.hutool.core.util.ArrayUtil;
-import cn.hutool.core.util.StrUtil;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
@@ -24,7 +19,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Objects;
 
 /**
  * 物料预警表
@@ -51,23 +45,11 @@ public class WmsMaterialWarningController {
     @Operation(summary = "分页查询", description = "分页查询")
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('wms_wmsMaterialWarning_view')")
-    public R<Page<WmsMaterialWarningEntity>> getWmsMaterialWarningPage(@ParameterObject SearchPage page, @ParameterObject WmsMaterialWarningQueryDTO wmsMaterialWarning) {
-        LambdaQueryWrapper<WmsMaterialWarningEntity> wrapper = Wrappers.lambdaQuery();
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialWarning.getMatCode()), WmsMaterialWarningEntity::getMatCode, wmsMaterialWarning.getMatCode());
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialWarning.getMatName()), WmsMaterialWarningEntity::getMatName, wmsMaterialWarning.getMatName());
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialWarning.getMatBatch()), WmsMaterialWarningEntity::getMatBatch, wmsMaterialWarning.getMatBatch());
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialWarning.getWarehouseCode()), WmsMaterialWarningEntity::getWarehouseCode, wmsMaterialWarning.getWarehouseCode());
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialWarning.getWarehouseName()), WmsMaterialWarningEntity::getWarehouseName, wmsMaterialWarning.getWarehouseName());
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialWarning.getSiteCode()), WmsMaterialWarningEntity::getSiteCode, wmsMaterialWarning.getSiteCode());
-        wrapper.like(StrUtil.isNotBlank(wmsMaterialWarning.getSiteName()), WmsMaterialWarningEntity::getSiteName, wmsMaterialWarning.getSiteName());
-        wrapper.eq(Objects.nonNull(wmsMaterialWarning.getType()), WmsMaterialWarningEntity::getType, wmsMaterialWarning.getType());
-        if (ArrayUtil.isNotEmpty(wmsMaterialWarning.getCreateTime())) {
-            wrapper.between(WmsMaterialWarningEntity::getCreateTime, wmsMaterialWarning.getCreateTime()[0],
-                    wmsMaterialWarning.getCreateTime()[1]);
-        }
-        return R.ok(wmsMaterialWarningService.page(page.toMpPage(), wrapper));
+    public R<Page<WmsMaterialWarningEntity>> getWmsMaterialWarningPage(@ParameterObject SearchPage page,
+                                                                       @ParameterObject WmsMaterialWarningQueryDTO wmsMaterialWarning) {
+        return R.ok(
+                wmsMaterialWarningService.page(page.toMpPage(), wmsMaterialWarningService.query(wmsMaterialWarning)));
     }
-
 
     /**
      * 通过id查询物料预警表
@@ -79,7 +61,7 @@ public class WmsMaterialWarningController {
     @GetMapping("/{id}")
     @PreAuthorize("@pms.hasPermission('wms_wmsMaterialWarning_view')")
     public R<WmsMaterialWarningEntity> getById(@PathVariable("id") Long id) {
-        return R.ok(wmsMaterialWarningService.getById(id));
+        return R.ok(wmsMaterialWarningService.getScopedById(id));
     }
 
     /**
@@ -93,9 +75,8 @@ public class WmsMaterialWarningController {
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('wms_wmsMaterialWarning_del')")
     public R<Boolean> removeById(@RequestBody Long[] ids) {
-        return R.ok(wmsMaterialWarningService.removeBatchByIds(CollUtil.toList(ids)));
+        throw new com.kitex.common.core.exception.CheckedException("物料预警是业务追溯记录，不支持删除");
     }
-
 
     /**
      * 导出excel 表格
@@ -107,7 +88,7 @@ public class WmsMaterialWarningController {
     @ResponseExcel
     @GetMapping("/export")
     @PreAuthorize("@pms.hasPermission('wms_wmsMaterialWarning_export')")
-    public List<WmsMaterialWarningExcelVO> export(WmsMaterialWarningEntity wmsMaterialWarning, Long[] ids) {
+    public List<WmsMaterialWarningExcelVO> export(WmsMaterialWarningQueryDTO wmsMaterialWarning, Long[] ids) {
         return wmsMaterialWarningService.export(wmsMaterialWarning, ids);
     }
 }

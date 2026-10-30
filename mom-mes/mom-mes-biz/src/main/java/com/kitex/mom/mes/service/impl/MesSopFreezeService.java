@@ -10,17 +10,10 @@ import com.kitex.mom.mes.entity.MesTaskEntity;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 正式SOP从MDM权威源冻结到MES稳定节点，并在执行时核精确旧版的安全撤回状态。
@@ -31,7 +24,39 @@ import java.util.Set;
 public class MesSopFreezeService {
     private final RemoteMdmFormalSopService sources;
 
-    /** 新下达完整解析，调用者在同一MES事务保存包含formalSops的原工艺快照。 */
+    public static String fingerprint(MesFormalSopNodeDTO node) {
+        return hashBytes(JSONUtil.toJsonStr(Arrays.asList(node.getSchemaVersion(), node.getSourceManifestHash(),
+                node.getTenantId(), node.getFactoryCode(), node.getRouteCode(), node.getRouteNodeCode(), node.getProcessCode(),
+                node.getSources(), node.getGaps())).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String hashBytes(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (Exception exception) {
+            throw new IllegalStateException("无法计算正式SOP冻结字节指纹", exception);
+        }
+    }
+
+    private static boolean validHash(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static boolean positiveId(String value) {
+        return value != null && value.matches("[1-9][0-9]{0,18}");
+    }
+
+    private static String processCode(MdmProcessRouteWorkingDTO route) {
+        return route.getProcessCode() == null || route.getProcessCode().isBlank() ? route.getRouteCode() : route.getProcessCode();
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
+    /**
+     * 新下达完整解析，调用者在同一MES事务保存包含formalSops的原工艺快照。
+     */
     public void freeze(MesTaskEntity task, List<MdmProcessRouteWorkingDTO> routes) {
         require(task != null && task.getTenantId() != null && routes != null && !routes.isEmpty() && routes.size() <= 200,
                 "正式SOP下达冻结须明确工单且包含1至200个真实节点");
@@ -50,7 +75,9 @@ public class MesSopFreezeService {
         applyManifest(task, routes, response.getData());
     }
 
-    /** 直接消费工程联合版本中批准的SOP manifest，不重选今日绑定。 */
+    /**
+     * 直接消费工程联合版本中批准的SOP manifest，不重选今日绑定。
+     */
     public void freezeFromEngineeringSnapshot(MesTaskEntity task, List<MdmProcessRouteWorkingDTO> routes,
                                               String snapshot) {
         require(snapshot != null && !snapshot.isBlank(), "工程版本缺少正式SOP清单");
@@ -79,7 +106,7 @@ public class MesSopFreezeService {
     private void applyManifest(MesTaskEntity task, List<MdmProcessRouteWorkingDTO> routes,
                                MdmFormalSopDTO.Manifest manifest) {
         require(task != null && task.getTenantId() != null && routes != null && !routes.isEmpty()
-                        && routes.size() <= 200, "正式SOP冻结须明确工单且包含1至200个真实节点");
+                && routes.size() <= 200, "正式SOP冻结须明确工单且包含1至200个真实节点");
         Map<String, MdmProcessRouteWorkingDTO> expected = new LinkedHashMap<>();
         for (var route : routes) {
             require(route != null && route.getRouteNodeCode() != null
@@ -89,10 +116,10 @@ public class MesSopFreezeService {
                     "正式SOP冻结缺少唯一稳定路线节点或主工序");
         }
         require(manifest.isComplete() && "FORMAL_SOP_MANIFEST_V1".equals(manifest.getSchemaVersion())
-                        && Objects.equals(manifest.getTenantId(), task.getTenantId().toString())
-                        && Objects.equals(manifest.getFactoryCode(), task.getFactoryCode())
-                        && validHash(manifest.getManifestHash()) && manifest.getNodes() != null
-                        && manifest.getNodes().size() == expected.size(), "MDM正式SOP目录作用域或完整性不一致");
+                && Objects.equals(manifest.getTenantId(), task.getTenantId().toString())
+                && Objects.equals(manifest.getFactoryCode(), task.getFactoryCode())
+                && validHash(manifest.getManifestHash()) && manifest.getNodes() != null
+                && manifest.getNodes().size() == expected.size(), "MDM正式SOP目录作用域或完整性不一致");
         Set<String> visited = new HashSet<>();
         int count = 0;
         for (var item : manifest.getNodes()) {
@@ -101,15 +128,15 @@ public class MesSopFreezeService {
             var node = item.getNode();
             var route = expected.get(node.getRouteNodeCode());
             require(route != null && visited.add(node.getRouteNodeCode())
-                            && Objects.equals(node.getRouteCode(), task.getProcessRouteCode())
-                            && Objects.equals(node.getProcessCode(), processCode(route)), "MDM正式SOP真实路线节点归属不一致");
+                    && Objects.equals(node.getRouteCode(), task.getProcessRouteCode())
+                    && Objects.equals(node.getProcessCode(), processCode(route)), "MDM正式SOP真实路线节点归属不一致");
             count += item.getSources().size();
             require(count <= 1000, "正式SOP冻结超过1000份，不允许截断");
             Set<String> versionFamilies = new HashSet<>();
             for (var source : item.getSources()) {
                 validateSource(source, task.getTenantId().toString(), task.getFactoryCode());
                 require(source.isIssueAllowed() && source.isFrozenStartAllowed() && "RELEASED".equals(source.getStatus())
-                                && versionFamilies.add(source.getSopNo()), "正式SOP不可下达或同节点同编号出现重复正式版本");
+                        && versionFamilies.add(source.getSopNo()), "正式SOP不可下达或同节点同编号出现重复正式版本");
             }
             var frozen = new MesFormalSopNodeDTO();
             frozen.setSchemaVersion("MES_FORMAL_SOP_NODE_V1");
@@ -127,7 +154,9 @@ public class MesSopFreezeService {
         require(visited.equals(expected.keySet()), "部分正式SOP节点未返回，禁止不完整冻结");
     }
 
-    /** 只追加正式SOP字段，原快照未被本DTO建模的工程信息也原样保留，不能序列化DTO时丢失。 */
+    /**
+     * 只追加正式SOP字段，原快照未被本DTO建模的工程信息也原样保留，不能序列化DTO时丢失。
+     */
     public String mergeFrozenSnapshot(String original, List<MdmProcessRouteWorkingDTO> routes) {
         var array = JSONUtil.parseArray(original);
         require(array.size() == routes.size(), "原路线快照节点数量已变化，不能合并正式SOP");
@@ -148,19 +177,23 @@ public class MesSopFreezeService {
         return result;
     }
 
-    /** 核MES已冻结节点本体，不访问今日绑定目录，也不从旧附件猜正式来源。 */
+    /**
+     * 核MES已冻结节点本体，不访问今日绑定目录，也不从旧附件猜正式来源。
+     */
     public void validateFrozen(MesFormalSopNodeDTO node, String tenant, String factory, String routeCode,
                                String nodeCode, String process) {
         require(node != null && "MES_FORMAL_SOP_NODE_V1".equals(node.getSchemaVersion())
-                        && Objects.equals(node.getTenantId(), tenant) && Objects.equals(node.getFactoryCode(), factory)
-                        && Objects.equals(node.getRouteCode(), routeCode) && Objects.equals(node.getRouteNodeCode(), nodeCode)
-                        && Objects.equals(node.getProcessCode(), process) && validHash(node.getSourceManifestHash())
-                        && node.getSources() != null && node.getSources().size() <= 1000 && node.getGaps() != null
-                        && Objects.equals(node.getManifestHash(), fingerprint(node)), "MES正式SOP原冻结节点或内容指纹损坏");
+                && Objects.equals(node.getTenantId(), tenant) && Objects.equals(node.getFactoryCode(), factory)
+                && Objects.equals(node.getRouteCode(), routeCode) && Objects.equals(node.getRouteNodeCode(), nodeCode)
+                && Objects.equals(node.getProcessCode(), process) && validHash(node.getSourceManifestHash())
+                && node.getSources() != null && node.getSources().size() <= 1000 && node.getGaps() != null
+                && Objects.equals(node.getManifestHash(), fingerprint(node)), "MES正式SOP原冻结节点或内容指纹损坏");
         for (var source : node.getSources()) validateSource(source, tenant, factory);
     }
 
-    /** 纯读取证，失败明确UNKNOWN；不写开工事实，也不以错误吞掉正式门禁。 */
+    /**
+     * 纯读取证，失败明确UNKNOWN；不写开工事实，也不以错误吞掉正式门禁。
+     */
     public Map<String, Object> currentState(MesFormalSopNodeDTO node) {
         if (node == null) return Map.of("status", "LEGACY_REFERENCE", "allowed", true,
                 "message", "历史任务没有正式SOP冻结证明，保持旧引用语义，不自动回填批准", "sources", List.of());
@@ -182,17 +215,21 @@ public class MesSopFreezeService {
                 var actual = response.getData().getSource();
                 validateSource(actual, node.getTenantId(), node.getFactoryCode());
                 require(Objects.equals(actual.getVersionId(), source.getVersionId())
-                                && Objects.equals(actual.getContentHash(), source.getContentHash())
-                                && Objects.equals(actual.getOriginalHash(), source.getOriginalHash())
-                                && Objects.equals(actual.getOriginalId(), source.getOriginalId()), "MDM精确版本或原件身份与原冻结版不一致");
+                        && Objects.equals(actual.getContentHash(), source.getContentHash())
+                        && Objects.equals(actual.getOriginalHash(), source.getOriginalHash())
+                        && Objects.equals(actual.getOriginalId(), source.getOriginalId()), "MDM精确版本或原件身份与原冻结版不一致");
                 boolean usable = actual.isFrozenStartAllowed() && Set.of("RELEASED", "RETIRED").contains(actual.getStatus());
                 check.put("status", actual.getStatus());
                 check.put("allowed", usable);
                 check.put("message", Objects.toString(response.getData().getMessage(), ""));
                 check.put("withdrawalReason", Objects.toString(actual.getWithdrawalReason(), ""));
-                if (!usable) { allowed = false; overall = "WITHDRAWN"; }
+                if (!usable) {
+                    allowed = false;
+                    overall = "WITHDRAWN";
+                }
             } catch (Exception failure) {
-                check.put("status", "UNKNOWN"); check.put("allowed", false);
+                check.put("status", "UNKNOWN");
+                check.put("allowed", false);
                 check.put("message", "精确正式SOP源或原件当前不可核验，需恢复MDM/存储或由工艺人员核查；不能放行");
                 allowed = false;
                 if (!"WITHDRAWN".equals(overall)) overall = "UNKNOWN";
@@ -203,13 +240,15 @@ public class MesSopFreezeService {
                 "message", allowed ? "原冻结正式来源允许继续进入MES其他开工检查" : "正式SOP存在安全撤回或不可核验来源，禁止签收及新开工/复工");
     }
 
-    /** 调用者已验证派工与冻结文件key，只向MDM请求精确旧版原件。 */
+    /**
+     * 调用者已验证派工与冻结文件key，只向MDM请求精确旧版原件。
+     */
     public ResponseEntity<byte[]> original(String factory, String versionId, String contentHash, String originalHash) {
         var response = sources.original(new MdmFormalSopDTO.VerifyQuery().setFactoryCode(factory)
                 .setVersionId(versionId).setContentHash(contentHash));
         require(response != null && response.getStatusCode().is2xxSuccessful() && response.getBody() != null
-                        && response.getBody().length > 0 && response.getBody().length <= 20 * 1024 * 1024
-                        && Objects.equals(originalHash, hashBytes(response.getBody())), "MDM原件传输结果与冻结字节hash不一致");
+                && response.getBody().length > 0 && response.getBody().length <= 20 * 1024 * 1024
+                && Objects.equals(originalHash, hashBytes(response.getBody())), "MDM原件传输结果与冻结字节hash不一致");
         return response;
     }
 
@@ -225,22 +264,4 @@ public class MesSopFreezeService {
                         && source.getApprovedBy() != null && source.getApprovedAt() != null && source.getEffectiveFrom() != null,
                 "正式SOP来源身份、版本、批准或字节证明不完整");
     }
-
-    public static String fingerprint(MesFormalSopNodeDTO node) {
-        return hashBytes(JSONUtil.toJsonStr(Arrays.asList(node.getSchemaVersion(), node.getSourceManifestHash(),
-                node.getTenantId(), node.getFactoryCode(), node.getRouteCode(), node.getRouteNodeCode(), node.getProcessCode(),
-                node.getSources(), node.getGaps())).getBytes(StandardCharsets.UTF_8));
-    }
-
-    private static String hashBytes(byte[] bytes) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); }
-        catch (Exception exception) { throw new IllegalStateException("无法计算正式SOP冻结字节指纹", exception); }
-    }
-
-    private static boolean validHash(String value) { return value != null && value.matches("[0-9a-f]{64}"); }
-    private static boolean positiveId(String value) { return value != null && value.matches("[1-9][0-9]{0,18}"); }
-    private static String processCode(MdmProcessRouteWorkingDTO route) {
-        return route.getProcessCode() == null || route.getProcessCode().isBlank() ? route.getRouteCode() : route.getProcessCode();
-    }
-    private static void require(boolean condition, String message) { if (!condition) throw new CheckedException(message); }
 }

@@ -19,7 +19,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** 节点工程设备候选：节点身份与主工序能力分开解析，不根据瞬时运行状态过滤。 */
+/**
+ * 节点工程设备候选：节点身份与主工序能力分开解析，不根据瞬时运行状态过滤。
+ */
 @Component
 @RequiredArgsConstructor
 public class MdmRouteNodeDeviceSupport {

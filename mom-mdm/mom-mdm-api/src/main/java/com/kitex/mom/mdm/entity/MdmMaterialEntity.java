@@ -239,6 +239,30 @@ public class MdmMaterialEntity extends BaseEntity<MdmMaterialEntity> {
     private Boolean fifo;
 
     /**
+     * 跨仓储作业统一生效的物料批次管理要求。
+     */
+    @Schema(description = "是否按批次管理")
+    private Boolean batchManaged;
+
+    /**
+     * 空批次自动生成时使用的编码模板；只定义结构，作业类型决定是否启用生成。
+     */
+    @Schema(description = "批次编码模板")
+    private String batchCodeTemplate;
+
+    /**
+     * 单件物理身份编码模板，由WMS入库作业规则决定是否自动生成。
+     */
+    @Schema(description = "单件条码模板")
+    private String serialCodeTemplate;
+
+    /**
+     * 单件身份要求由物料主数据定义，仓储作业规则只能加强。
+     */
+    @Schema(description = "是否按单件序列号管理")
+    private Boolean serialManaged;
+
+    /**
      * 先入先出字段
      */
     @Schema(description = "先入先出字段")

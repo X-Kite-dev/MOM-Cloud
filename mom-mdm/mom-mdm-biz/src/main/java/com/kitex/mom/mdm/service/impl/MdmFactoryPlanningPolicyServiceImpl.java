@@ -2,6 +2,7 @@ package com.kitex.mom.mdm.service.impl;
 
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -10,9 +11,10 @@ import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
+import com.kitex.mom.mdm.dto.MdmFactoryPlanningApsReferencesDTO;
+import com.kitex.mom.mdm.dto.MdmFactoryPlanningImpactDTO;
 import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyCommand;
 import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyDTO;
-import com.kitex.mom.mdm.dto.MdmFactoryPlanningImpactDTO;
 import com.kitex.mom.mdm.entity.MdmFactoryModelEntity;
 import com.kitex.mom.mdm.entity.MdmFactoryPlanningPolicyEntity;
 import com.kitex.mom.mdm.enums.FactoryModelTypeEnum;
@@ -21,8 +23,8 @@ import com.kitex.mom.mdm.enums.ProductionOrderSyncModeEnum;
 import com.kitex.mom.mdm.enums.SubstituteGovernanceModeEnum;
 import com.kitex.mom.mdm.mapper.MdmFactoryModelMapper;
 import com.kitex.mom.mdm.mapper.MdmFactoryPlanningPolicyMapper;
-import com.kitex.mom.mdm.service.MdmFactoryPlanningPolicyService;
 import com.kitex.mom.mdm.service.FactoryPlanningPolicyImpactInspector;
+import com.kitex.mom.mdm.service.MdmFactoryPlanningPolicyService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,11 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Locale;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 工厂计划协同策略领域实现。
@@ -52,6 +50,47 @@ public class MdmFactoryPlanningPolicyServiceImpl
     private static final int MAX_REQUEST_LENGTH = 100;
     private final MdmFactoryModelMapper factoryMapper;
     private final FactoryPlanningPolicyImpactInspector impactInspector;
+
+    private static Long parseId(String value, String label) {
+        try {
+            Long id = Long.valueOf(value);
+            require(id > 0, label + "必须为正整数");
+            return id;
+        } catch (Exception ex) {
+            throw new CheckedException(label + "格式不正确");
+        }
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    private static boolean isSha256(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static String upper(String value) {
+        return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private static String trim(String value) {
+        return StrUtil.isBlank(value) ? null : value.trim();
+    }
+
+    private static String value(Object value) {
+        return value == null ? "" : value.toString();
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new CheckedException(message);
+        }
+    }
 
     @Override
     public MdmFactoryPlanningPolicyDTO requireActive(String factoryCode) {
@@ -145,7 +184,13 @@ public class MdmFactoryPlanningPolicyServiceImpl
     public MdmFactoryPlanningImpactDTO inspect(String draftId) {
         Scope scope = requireScope(null, false);
         MdmFactoryPlanningPolicyEntity draft = requireDraft(parseId(draftId, "策略草稿主键"), scope, false);
-        return impactInspector.inspect(draft);
+        return inspectImpact(draft, scope);
+    }
+
+    @Override
+    public MdmFactoryPlanningApsReferencesDTO apsReferences(String draftId) {
+        Scope scope = requireScope(null, false);
+        return impactInspector.apsReferences(requireDraft(parseId(draftId, "策略草稿主键"), scope, false));
     }
 
     @Override
@@ -163,7 +208,9 @@ public class MdmFactoryPlanningPolicyServiceImpl
         Long draftId = parseId(command.getDraftId(), "策略草稿主键");
         baseMapper.lock("MDM_FACTORY_PLANNING_POLICY:" + scope.tenantId() + ':' + scope.factoryCode());
 
-        String commandFingerprint = sha256(String.join("|", "PLANNING_POLICY_PUBLISH_V1",
+        boolean initialActivation = Boolean.TRUE.equals(command.getInitialLocalActivation());
+        String commandFingerprint = sha256(String.join("|",
+                initialActivation ? "PLANNING_POLICY_INITIAL_LOCAL_PUBLISH_V1" : "PLANNING_POLICY_PUBLISH_V1",
                 scope.tenantId().toString(), scope.factoryCode(), draftId.toString(), expectedFingerprint,
                 impactConfirmationNo, requestId));
         MdmFactoryPlanningPolicyEntity replay = getOne(policyQuery(scope)
@@ -183,11 +230,15 @@ public class MdmFactoryPlanningPolicyServiceImpl
         require(!Objects.equals(lastCompiler, scope.operator()),
                 "策略发布必须由不同于最后编制人的实名人员完成");
 
-        MdmFactoryPlanningImpactDTO impact = impactInspector.inspect(draft);
+        MdmFactoryPlanningImpactDTO impact = inspectImpact(draft, scope);
         require(Objects.equals(impactConfirmationNo, impact.getConfirmationNo()),
                 "PLAN/MES影响事实已变化，请重新查看影响并确认");
         boolean future = draft.getEffectiveFrom().isAfter(LocalDateTime.now());
-        require(future || Boolean.TRUE.equals(impact.getImmediateSwitchAllowed()),
+        if (initialActivation) {
+            require(!future && Boolean.TRUE.equals(impact.getInitialLocalActivationAllowed()),
+                    "当前策略不符合首次独立MOM启用条件：" + String.join("、", impact.getInitialActivationBlockers()));
+        }
+        require(initialActivation || future || Boolean.TRUE.equals(impact.getImmediateSwitchAllowed()),
                 "当前存在未结计划或生产执行事实，不能立即切换；请预约未来生效并先完成迁移清理："
                         + String.join("、", impact.getBlockers()));
 
@@ -200,6 +251,11 @@ public class MdmFactoryPlanningPolicyServiceImpl
         draft.setPublishCommandFingerprint(commandFingerprint);
         draft.setImpactConfirmationNo(impactConfirmationNo);
         draft.setActivationFailureReason(null);
+        if (initialActivation) {
+            draft.setInitialActivationSnapshot(JSONUtil.toJsonStr(Map.of(
+                    "schemaVersion", 1, "scope", "NEW_CONTRACTS_ONLY", "operator", scope.operator(),
+                    "decidedAt", now.toString(), "impact", impact)));
+        }
         if (future) {
             draft.setStatus("PENDING_EFFECTIVE");
         } else {
@@ -210,6 +266,10 @@ public class MdmFactoryPlanningPolicyServiceImpl
         draft.setUpdateTime(now);
         require(baseMapper.updateById(draft) == 1, "发布工厂计划协同策略失败");
         return toDto(draft);
+    }
+
+    private MdmFactoryPlanningImpactDTO inspectImpact(MdmFactoryPlanningPolicyEntity draft, Scope scope) {
+        return impactInspector.inspect(draft, baseMapper.countEverPublished(scope.tenantId(), scope.factoryCode()));
     }
 
     private MdmFactoryPlanningPolicyEntity requireDraft(Long draftId, Scope scope, boolean lock) {
@@ -241,6 +301,13 @@ public class MdmFactoryPlanningPolicyServiceImpl
 
     private void validateMode(String authority, String erpSystemCode, String externalFactoryCode,
                               String syncMode, String substituteMode) {
+        if (ProductionOrderSyncModeEnum.isLocalOnly(syncMode)) {
+            require("MOM_MRP".equals(authority) && "MOM_APPROVAL".equals(substituteMode),
+                    "MOM独立执行必须由MOM计算MRP并审批替代料");
+            require(StrUtil.isBlank(erpSystemCode) && StrUtil.isBlank(externalFactoryCode),
+                    "MOM独立执行不能配置ERP系统或外部工厂映射");
+            return;
+        }
         if ("ERP_MRP".equals(authority)) {
             require(StrUtil.isNotBlank(erpSystemCode) && StrUtil.isNotBlank(externalFactoryCode),
                     "ERP_MRP必须配置ERP系统编码和ERP工厂编码");
@@ -305,6 +372,7 @@ public class MdmFactoryPlanningPolicyServiceImpl
         dto.setPublishedBy(row.getPublishedBy());
         dto.setPublishedTime(row.getPublishedTime());
         dto.setActivationFailureReason(row.getActivationFailureReason());
+        dto.setInitialActivationSnapshot(row.getInitialActivationSnapshot());
         return dto;
     }
 
@@ -320,47 +388,6 @@ public class MdmFactoryPlanningPolicyServiceImpl
         MomUser user = SecurityUtils.getUser();
         require(!write || user != null && user.getId() != null, "计划协同策略写入必须实名登录");
         return new Scope(tenantId, factoryCode, user == null ? "internal" : user.getUsername());
-    }
-
-    private static Long parseId(String value, String label) {
-        try {
-            Long id = Long.valueOf(value);
-            require(id > 0, label + "必须为正整数");
-            return id;
-        } catch (Exception ex) {
-            throw new CheckedException(label + "格式不正确");
-        }
-    }
-
-    private static String sha256(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException(ex);
-        }
-    }
-
-    private static boolean isSha256(String value) {
-        return value != null && value.matches("[0-9a-f]{64}");
-    }
-
-    private static String upper(String value) {
-        return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
-    }
-
-    private static String trim(String value) {
-        return StrUtil.isBlank(value) ? null : value.trim();
-    }
-
-    private static String value(Object value) {
-        return value == null ? "" : value.toString();
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new CheckedException(message);
-        }
     }
 
     private record Scope(Long tenantId, String factoryCode, String operator) {

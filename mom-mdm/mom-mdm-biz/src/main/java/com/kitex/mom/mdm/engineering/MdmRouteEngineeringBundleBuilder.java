@@ -4,8 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
@@ -15,35 +15,9 @@ import com.kitex.mom.mdm.dto.MdmBomChildDTO;
 import com.kitex.mom.mdm.dto.MdmFormalSopDTO;
 import com.kitex.mom.mdm.dto.MdmProcessParameterStandardDTO;
 import com.kitex.mom.mdm.dto.MdmRouteEngineeringDTO;
-import com.kitex.mom.mdm.entity.MdmBomChildEntity;
-import com.kitex.mom.mdm.entity.MdmBomEntity;
-import com.kitex.mom.mdm.entity.MdmFactoryModelEntity;
-import com.kitex.mom.mdm.entity.MdmMaterialEntity;
-import com.kitex.mom.mdm.entity.MdmProcedureEntity;
-import com.kitex.mom.mdm.entity.MdmProcedureToolingRequirementEntity;
-import com.kitex.mom.mdm.entity.MdmProcessProcedureMatEntity;
-import com.kitex.mom.mdm.entity.MdmProcessProcedureSettingEntity;
-import com.kitex.mom.mdm.entity.MdmProcessProcedureSopEntity;
-import com.kitex.mom.mdm.entity.MdmProcessRouteEntity;
-import com.kitex.mom.mdm.entity.MdmRouteEngineeringReleaseEntity;
-import com.kitex.mom.mdm.entity.MdmStationSettingEntity;
-import com.kitex.mom.mdm.entity.MdmToolingEntity;
-import com.kitex.mom.mdm.mapper.MdmBomMapper;
-import com.kitex.mom.mdm.mapper.MdmFactoryModelMapper;
-import com.kitex.mom.mdm.mapper.MdmMaterialMapper;
-import com.kitex.mom.mdm.mapper.MdmProcedureMapper;
-import com.kitex.mom.mdm.mapper.MdmProcedureToolingRequirementMapper;
-import com.kitex.mom.mdm.mapper.MdmProcessProcedureMatMapper;
-import com.kitex.mom.mdm.mapper.MdmProcessProcedureSettingMapper;
-import com.kitex.mom.mdm.mapper.MdmProcessProcedureSopMapper;
-import com.kitex.mom.mdm.mapper.MdmProcessRouteMapper;
-import com.kitex.mom.mdm.mapper.MdmRouteEngineeringSourceMapper;
-import com.kitex.mom.mdm.mapper.MdmToolingMapper;
-import com.kitex.mom.mdm.service.MdmBomService;
-import com.kitex.mom.mdm.service.MdmFactoryModelService;
-import com.kitex.mom.mdm.service.MdmProcessParameterStandardService;
-import com.kitex.mom.mdm.service.MdmProcessRouteService;
-import com.kitex.mom.mdm.service.MdmStationSettingService;
+import com.kitex.mom.mdm.entity.*;
+import com.kitex.mom.mdm.mapper.*;
+import com.kitex.mom.mdm.service.*;
 import com.kitex.mom.mdm.service.impl.MdmBomGovernance;
 import com.kitex.mom.mdm.sop.MdmFormalSopSourceService;
 import com.kitex.mom.mdm.sop.MdmSopSupport;
@@ -59,17 +33,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
 /**
  * 工程版本权威采集器。只封存服务器真实来源，不接受客户端正文，也不改写来源发布状态。
@@ -101,7 +65,9 @@ public class MdmRouteEngineeringBundleBuilder {
     private final MdmRouteEngineeringSourceMapper sources;
     private final ObjectMapper objectMapper;
 
-    /** 当前真实授权路线的完整图与正式BOM候选；上下文不表示预检通过。 */
+    /**
+     * 当前真实授权路线的完整图与正式BOM候选；上下文不表示预检通过。
+     */
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public MdmRouteEngineeringDTO.Context context(Long routeId) {
         MdmProcessRouteEntity route = lockedRoute(routeId);
@@ -126,7 +92,9 @@ public class MdmRouteEngineeringBundleBuilder {
                 .setBoms(candidates);
     }
 
-    /** 锁真实父路线后完整重采；原文指纹对应本次实际返回的UTF-8字节。 */
+    /**
+     * 锁真实父路线后完整重采；原文指纹对应本次实际返回的UTF-8字节。
+     */
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public MdmRouteEngineeringDTO.Preview build(MdmRouteEngineeringDTO.PreviewQuery query) {
         require(query != null, "请提供路线、精确BOM与节点适用声明");
@@ -210,10 +178,10 @@ public class MdmRouteEngineeringBundleBuilder {
             if (!nodeSettings.isEmpty()) {
                 var setting = nodeSettings.get(0);
                 require(!Boolean.TRUE.equals(setting.getIsMatWeightConvert())
-                        || setting.getMatWeightConvert() != null && setting.getMatWeightConvert().signum() > 0,
+                                || setting.getMatWeightConvert() != null && setting.getMatWeightConvert().signum() > 0,
                         "节点" + rn + "重量转换设置损坏，请修正");
                 require(!Boolean.TRUE.equals(setting.getTimeCheck())
-                        || setting.getTimeVal() != null && setting.getTimeVal().signum() >= 0,
+                                || setting.getTimeVal() != null && setting.getTimeVal().signum() >= 0,
                         "节点" + rn + "转序时间设置损坏，请修正");
             }
             List<MdmProcessProcedureMatEntity> nodeMaterials = matRows.stream().filter(row -> rn.equals(row.getRouteNodeCode())).toList();
@@ -315,7 +283,7 @@ public class MdmRouteEngineeringBundleBuilder {
      */
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public MdmRouteEngineeringDTO.Preview buildReworkOverride(MdmRouteEngineeringDTO.PreviewQuery query,
-                                                               MdmRouteEngineeringReleaseEntity base) {
+                                                              MdmRouteEngineeringReleaseEntity base) {
         require(query != null && base != null, "返工覆盖预检缺少请求或原生产工程版本");
         require(Objects.equals(query.getRouteId(), base.getRouteId())
                         && Objects.equals(query.getBomId(), base.getBomId())
@@ -444,7 +412,9 @@ public class MdmRouteEngineeringBundleBuilder {
                 .setReleasePurpose(MdmRouteEngineeringDTO.PURPOSE_REWORK_OVERRIDE);
     }
 
-    /** 规范化为稳定顺序，拒绝把材料、工装等越权塞入返工覆盖。 */
+    /**
+     * 规范化为稳定顺序，拒绝把材料、工装等越权塞入返工覆盖。
+     */
     private List<String> normalizedOverrideCategories(List<String> values) {
         require(values != null && !values.isEmpty() && values.size() <= 2,
                 "返工覆盖须明确SOP和/或PARAMETER");
@@ -456,7 +426,9 @@ public class MdmRouteEngineeringBundleBuilder {
         return unique.stream().sorted().toList();
     }
 
-    /** 用当前实名组织核验真实路线，父行锁先于全部工程来源读取。 */
+    /**
+     * 用当前实名组织核验真实路线，父行锁先于全部工程来源读取。
+     */
     private MdmProcessRouteEntity lockedRoute(Long id) {
         require(TransactionSynchronizationManager.isActualTransactionActive()
                         && !TransactionSynchronizationManager.isCurrentTransactionReadOnly(),
@@ -473,15 +445,17 @@ public class MdmRouteEngineeringBundleBuilder {
         require(Boolean.TRUE.equals(route.getStatus()) && MdmRouteNodeGraphSupport.VERSION.equals(route.getGraphSchemaVersion()),
                 "工程发布只支持已启用且已持久保存ROUTE_NODE_GRAPH_V2的路线，请先完善路线图");
         require(routes.selectCount(new LambdaQueryWrapper<MdmProcessRouteEntity>()
-                .eq(MdmProcessRouteEntity::getTenantId, tenant())
-                .eq(MdmProcessRouteEntity::getFactoryCode, factory())
-                .eq(MdmProcessRouteEntity::getRouteCode, route.getRouteCode())) == 1,
+                        .eq(MdmProcessRouteEntity::getTenantId, tenant())
+                        .eq(MdmProcessRouteEntity::getFactoryCode, factory())
+                        .eq(MdmProcessRouteEntity::getRouteCode, route.getRouteCode())) == 1,
                 "当前组织路线编码不唯一，请修正主数据");
         material(route.getProductCode());
         return route;
     }
 
-    /** 复用现有图规范化，并以稳定RN排序节点及关系，排除DAO返回顺序。 */
+    /**
+     * 复用现有图规范化，并以稳定RN排序节点及关系，排除DAO返回顺序。
+     */
     private MdmProcessRouteProcedureVO graph(MdmProcessRouteEntity route) {
         MdmProcessRouteProcedureVO graph = routeService.getProcessWorking(route.getId());
         require(graph != null && graph.getProcedureList() != null && !graph.getProcedureList().isEmpty()
@@ -514,7 +488,9 @@ public class MdmRouteEngineeringBundleBuilder {
         return graph;
     }
 
-    /** 读取精确BOM版本，不以默认版或当前头替代指定ID。 */
+    /**
+     * 读取精确BOM版本，不以默认版或当前头替代指定ID。
+     */
     private MdmBomEntity exactBom(Long id, String product) {
         require(id != null && id > 0, "请选择精确正式BOM版本");
         MdmBomEntity row = boms.selectOne(new LambdaQueryWrapper<MdmBomEntity>()
@@ -525,7 +501,9 @@ public class MdmRouteEngineeringBundleBuilder {
         return row;
     }
 
-    /** 每个根/子BOM都须具有同组织、同产品的正式有效版本证明。 */
+    /**
+     * 每个根/子BOM都须具有同组织、同产品的正式有效版本证明。
+     */
     private void formalBom(MdmBomEntity row, String product) {
         LocalDate now = LocalDate.now();
         require(row != null && Objects.equals(row.getTenantId(), tenant()) && Objects.equals(row.getFactoryCode(), factory())
@@ -535,7 +513,9 @@ public class MdmRouteEngineeringBundleBuilder {
         material(product);
     }
 
-    /** 逐层核验完整版本树，每层按真实明细ID排序；保留原替代认证正文。 */
+    /**
+     * 逐层核验完整版本树，每层按真实明细ID排序；保留原替代认证正文。
+     */
     private void validateBomTree(List<MdmBomChildDTO> children, MdmBomEntity parent, Map<Long, MdmBomEntity> references,
                                  Set<String> codes, Set<Long> path, int[] count) {
         require(children != null && path.size() <= 64, "BOM结构缺失或超过64层，不能完整冻结");
@@ -571,7 +551,9 @@ public class MdmRouteEngineeringBundleBuilder {
         }
     }
 
-    /** 工程引用的每个物料都必须在当前真实组织唯一且启用。 */
+    /**
+     * 工程引用的每个物料都必须在当前真实组织唯一且启用。
+     */
     private void material(String code) {
         require(!blank(code), "工程物料身份不能为空");
         List<MdmMaterialEntity> matched = materials.selectList(new LambdaQueryWrapper<MdmMaterialEntity>()
@@ -582,9 +564,11 @@ public class MdmRouteEngineeringBundleBuilder {
         require(matched.size() == 1 && Boolean.TRUE.equals(matched.get(0).getStatus()), "物料" + code + "在真实组织缺失、停用或不唯一");
     }
 
-    /** 固定六类显式声明并稳定排序，缺声明形成缺口，禁止推断不适用。 */
+    /**
+     * 固定六类显式声明并稳定排序，缺声明形成缺口，禁止推断不适用。
+     */
     private List<MdmRouteEngineeringDTO.Applicability> declarations(List<MdmRouteEngineeringDTO.Applicability> inputs,
-                                                                  Set<String> nodes, List<String> gaps) {
+                                                                    Set<String> nodes, List<String> gaps) {
         require(inputs != null && inputs.size() <= 1200, "节点适用声明不能为空且最多1200项");
         Map<String, MdmRouteEngineeringDTO.Applicability> values = new TreeMap<>();
         for (var input : inputs) {
@@ -611,7 +595,9 @@ public class MdmRouteEngineeringBundleBuilder {
         return new ArrayList<>(values.values());
     }
 
-    /** 检查全部路线配置，不静默隐藏孤立节点或变化后的主工序归属。 */
+    /**
+     * 检查全部路线配置，不静默隐藏孤立节点或变化后的主工序归属。
+     */
     private void validateRows(ObjectMapper json, List<?> rows, MdmProcessRouteEntity route,
                               Map<String, MdmProcessRouteWorkingVO> nodes, String label) {
         bounded(rows.size(), label);
@@ -626,7 +612,9 @@ public class MdmRouteEngineeringBundleBuilder {
         }
     }
 
-    /** 限定函数必须返回完整文本ID数组，验证组织/节点后按RN和绑定ID排序。 */
+    /**
+     * 限定函数必须返回完整文本ID数组，验证组织/节点后按RN和绑定ID排序。
+     */
     private ArrayNode molds(ObjectMapper json, MdmProcessRouteEntity route, Map<String, MdmProcessRouteWorkingVO> nodes) {
         JsonNode value;
         try {
@@ -658,7 +646,9 @@ public class MdmRouteEngineeringBundleBuilder {
         return result;
     }
 
-    /** 工作中心沿用真实工序绑定与工厂建模服务，并重新核对当前完整启用祖先链。 */
+    /**
+     * 工作中心沿用真实工序绑定与工厂建模服务，并重新核对当前完整启用祖先链。
+     */
     private List<Map<String, Object>> works(String process) {
         // 原按工序读取的SQL未显式限定工厂，使用同一真实服务的组织限定查询，避免同码串厂。
         List<MdmStationSettingEntity> rows = new ArrayList<>(stationService.list(new LambdaQueryWrapper<MdmStationSettingEntity>()
@@ -683,8 +673,8 @@ public class MdmRouteEngineeringBundleBuilder {
             require(ancestors.size() == 1, "执行工位完整祖先来源不唯一");
             var actual = ancestors.get(0);
             require(Objects.equals(actual.getStationId(), binding.getStationId()) && Objects.equals(actual.getStationCode(), binding.getStationCode())
-                    && Objects.equals(actual.getLineId(), binding.getLineId()) && Objects.equals(actual.getWorkshopId(), binding.getWorkshopId())
-                    && Objects.equals(actual.getFactoryId(), binding.getFactoryId()) && factory().equals(actual.getFactoryCode()),
+                            && Objects.equals(actual.getLineId(), binding.getLineId()) && Objects.equals(actual.getWorkshopId(), binding.getWorkshopId())
+                            && Objects.equals(actual.getFactoryId(), binding.getFactoryId()) && factory().equals(actual.getFactoryCode()),
                     "执行工作中心已迁移或不属于实际工厂，请重绑工序工位");
             var work = new LinkedHashMap<String, Object>();
             work.put("binding", binding);
@@ -695,7 +685,9 @@ public class MdmRouteEngineeringBundleBuilder {
         return result;
     }
 
-    /** 沿真实父ID核验启用建模链，提前拒绝循环，避免祖先服务无界展开。 */
+    /**
+     * 沿真实父ID核验启用建模链，提前拒绝循环，避免祖先服务无界展开。
+     */
     private List<MdmFactoryModelEntity> modelChain(Long stationId) {
         require(stationId != null && stationId > 0, "工作中心缺少真实工位ID");
         List<MdmFactoryModelEntity> chain = new ArrayList<>();
@@ -727,7 +719,9 @@ public class MdmRouteEngineeringBundleBuilder {
         return chain;
     }
 
-    /** 复制应用注入的日期/时区配置，仅补长ID文本化，不新建另一套日期表达。 */
+    /**
+     * 复制应用注入的日期/时区配置，仅补长ID文本化，不新建另一套日期表达。
+     */
     private ObjectMapper serializer() {
         ObjectMapper json = objectMapper.copy();
         SimpleModule identifiers = new SimpleModule();
@@ -737,7 +731,9 @@ public class MdmRouteEngineeringBundleBuilder {
         return json;
     }
 
-    /** 直接生成待持久化原文；外层对这些字节求hash，不解析重排后替代原文。 */
+    /**
+     * 直接生成待持久化原文；外层对这些字节求hash，不解析重排后替代原文。
+     */
     private String write(ObjectMapper json, Object value) {
         try {
             return json.writeValueAsString(value);
@@ -758,7 +754,9 @@ public class MdmRouteEngineeringBundleBuilder {
         return value == null || value.isBlank();
     }
 
-    /** 多读一条用于容量判定，任何超界都拒绝，不冻结截断来源。 */
+    /**
+     * 多读一条用于容量判定，任何超界都拒绝，不冻结截断来源。
+     */
     private void bounded(int size, String label) {
         require(size <= MAX_ROWS,
                 label + "超过10000项完整冻结上限，请拆分工程来源，不允许截断");

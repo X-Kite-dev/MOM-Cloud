@@ -10,7 +10,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** 采集采购在途、供应承诺和交付风险证据。 */
+/**
+ * 采集采购在途、供应承诺和交付风险证据。
+ */
 @Component
 public class PmsApsSupplyCollector extends AbstractApsResourceCollector {
 
@@ -21,8 +23,15 @@ public class PmsApsSupplyCollector extends AbstractApsResourceCollector {
         this.service = service;
     }
 
-    @Override public String module() { return "PMS"; }
-    @Override public int order() { return 70; }
+    @Override
+    public String module() {
+        return "PMS";
+    }
+
+    @Override
+    public int order() {
+        return 70;
+    }
 
     @Override
     public PlnApsResourceEvidence collect(PlnApsResourceCollectionContext context) {

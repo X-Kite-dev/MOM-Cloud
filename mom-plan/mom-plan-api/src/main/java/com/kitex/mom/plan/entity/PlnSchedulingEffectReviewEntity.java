@@ -65,7 +65,9 @@ public class PlnSchedulingEffectReviewEntity extends BaseEntity<PlnSchedulingEff
     private LocalDateTime nextEvaluationTime;
     private Integer observationCount;
     private String lastError;
-    /** 最新已核验观察形成的待确认偏差行动；仅返回字段，不写入本表。 */
+    /**
+     * 最新已核验观察形成的待确认偏差行动；仅返回字段，不写入本表。
+     */
     @TableField(exist = false)
     private PlnSchedulingEffectActionEntity pendingAction;
     @TableField(fill = FieldFill.INSERT)

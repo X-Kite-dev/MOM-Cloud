@@ -15,7 +15,9 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.stream.Collectors;
 
 /**
@@ -76,7 +78,7 @@ public class MesProduceTaskServiceImpl extends ServiceImpl<MesProduceTaskMapper,
                 process.setTransferBatchQuantity(task.getTransferBatchQuantity());
                 List<MesProduceTaskEntity> blocking = graph.predecessors(task).stream().filter(predecessor ->
                         predecessor.getTransferReleasedTime() == null
-                            || predecessor.getTransferReleasedTime().isAfter(java.time.LocalDateTime.now())).toList();
+                                || predecessor.getTransferReleasedTime().isAfter(java.time.LocalDateTime.now())).toList();
                 process.setReadyToStart(blocking.isEmpty());
                 process.setBlockingPredecessorCodes(blocking.stream().map(MesProduceTaskEntity::getRouteCode)
                         .collect(Collectors.joining(",")));

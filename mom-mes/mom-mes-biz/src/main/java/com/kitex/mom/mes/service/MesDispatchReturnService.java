@@ -51,6 +51,11 @@ public interface MesDispatchReturnService extends IService<MesDispatchReturnRequ
     void assertExecutionAllowed(MesTaskArrangeEntity arrange);
 
     /**
+     * 仅同事务精确待审修正可调用；保留原资源释放与未执行门。
+     */
+    void retireForCorrection(Long correctionId, String expectedSourceFingerprint);
+
+    /**
      * 上游PLAN撤回已批准时，终止同一批派工的待审现场申请。
      */
     void supersedeByPlan(List<MesTaskArrangeEntity> arranges, String planRequestId);

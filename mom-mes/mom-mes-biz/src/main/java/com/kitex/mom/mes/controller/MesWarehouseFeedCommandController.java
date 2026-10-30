@@ -9,17 +9,13 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.ModelAttribute;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Set;
 
-/** 原新增投料权限下的本人稳定命令；不授予查询他人正文或取消已投实物的权限。 */
+/**
+ * 原新增投料权限下的本人稳定命令；不授予查询他人正文或取消已投实物的权限。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/mesWarehouseFeedCommand")
@@ -58,7 +54,7 @@ public class MesWarehouseFeedCommandController {
     public R<MesWarehouseFeedCommandDTO.Receipt> cancel(@RequestBody String wrapper) {
         var value = codec.objectDocument(wrapper, 256 * 1024);
         MesPhysicalTransformCodec.require(value.size() == 2
-                && Set.of("originalRaw", "reason").stream().allMatch(key -> value.has(key) && value.get(key).isTextual()),
+                        && Set.of("originalRaw", "reason").stream().allMatch(key -> value.has(key) && value.get(key).isTextual()),
                 "作废须保留完整originalRaw及文本reason，禁止重建命令");
         return R.ok(commands.cancel(value.get("originalRaw").textValue(), value.get("reason").textValue()));
     }

@@ -21,8 +21,8 @@ public interface MesWarehouseLiveStockMapper extends MomBaseMapper<MesWarehouseL
     @Select("SELECT * FROM \"mom_mes\".mes_warehouse_live_stock "
             + "WHERE id=#{stockId} AND tenant_id=#{tenantId} AND factory_code=#{factoryCode}")
     MesWarehouseLiveStockEntity selectOutProof(@Param("stockId") Long stockId,
-                                              @Param("tenantId") Long tenantId,
-                                              @Param("factoryCode") String factoryCode);
+                                               @Param("tenantId") Long tenantId,
+                                               @Param("factoryCode") String factoryCode);
 
     IPage<MesWarehouseFeedDTO> getPageFeedBack(Page<MesWarehouseFeedDTO> pageParam, @Param("query") MesWarehouseFeedDTO query);
 

@@ -26,7 +26,9 @@ public class MdmProcessProcedureSopDTO {
     @Schema(description = "工序SOP列表")
     private List<MdmProcedureSopDTO> sopList;
 
-    /** 读取时的全部附件指纹；空列表表示原来无附件，null仅兼容未转入的旧客户端。 */
+    /**
+     * 读取时的全部附件指纹；空列表表示原来无附件，null仅兼容未转入的旧客户端。
+     */
     @Schema(description = "原附件集合指纹，防止并发覆盖")
     private List<String> expectedAttachmentHashes;
 

@@ -8,6 +8,9 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface WmsInNoticeMapper extends MomBaseMapper<WmsInNoticeEntity> {
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_IN_NOTICE:', #{requestId}), 0))")
-    void lockSourceRequest(@Param("requestId") String requestId);
+    @Select("SELECT id FROM wms_in_notice WHERE id = #{id} FOR UPDATE")
+    Long lockNotice(@Param("id") Long id);
+
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_IN_NOTICE:', #{requestId}), 0))")
+    int lockSourceRequest(@Param("requestId") String requestId);
 }

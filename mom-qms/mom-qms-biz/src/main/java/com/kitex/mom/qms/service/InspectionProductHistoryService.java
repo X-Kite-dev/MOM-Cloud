@@ -5,6 +5,7 @@ import com.kitex.mom.qms.entity.QmsInspectionProductHistoryEntity;
 import com.kitex.mom.qms.entity.QmsInspectionProductTaskEntity;
 
 import java.util.List;
+import com.kitex.mom.qms.dto.QmsFirstInspectionDecisionDTO;
 
 /**
  * 成品质检任务历史记录
@@ -51,5 +52,7 @@ public interface InspectionProductHistoryService extends IService<QmsInspectionP
      * 质检任务历史详情
      */
     QmsInspectionProductHistoryEntity findById(Long id);
+
+    QmsFirstInspectionDecisionDTO firstDecision(Long taskId);
 
 }

@@ -16,15 +16,21 @@ import java.util.List;
 @Data
 public class MdmProcessRouteProcedureDTO {
 
-    /** 本次编辑读取的原图版本；用于拒绝旧页面覆盖新图，不能用当前版本代填重试。 */
+    /**
+     * 本次编辑读取的原图版本；用于拒绝旧页面覆盖新图，不能用当前版本代填重试。
+     */
     @Schema(description = "编辑时读取的路线图版本，必填")
     private Long expectedGraphRevision;
 
-    /** 独立节点图协议，新管理端固定ROUTE_NODE_GRAPH_V2。 */
+    /**
+     * 独立节点图协议，新管理端固定ROUTE_NODE_GRAPH_V2。
+     */
     @Schema(description = "图保存协议")
     private String graphSchemaVersion;
 
-    /** 新页面明确新增的主工序；用于区分删除重加与旧请求省略身份的唯一桥接。 */
+    /**
+     * 新页面明确新增的主工序；用于区分删除重加与旧请求省略身份的唯一桥接。
+     */
     @Schema(description = "本次明确新增节点的主工序编码集合；仍不允许重复主工序")
     private List<String> newProcessCodes;
 

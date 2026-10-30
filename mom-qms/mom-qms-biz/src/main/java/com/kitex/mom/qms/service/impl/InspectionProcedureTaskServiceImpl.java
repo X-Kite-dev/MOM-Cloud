@@ -77,6 +77,7 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
     private final InspectionProcedureItemResultRecordService recordService;
 
     private final QmsBadInfoService badInfoService;
+    private final QmsProcedureDispositionService procedureDispositions;
 
     private final InspectionProcedureHandleRecordService handleRecordService;
 
@@ -1137,6 +1138,9 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void handleFinish(HandleFinishDTO dto) {
+        if (procedureDispositions.handleIfManaged(dto)) {
+            return;
+        }
         // 锁定质检任务，避免两个不同请求同时处置导致累计数量越界。
         QmsInspectionProcedureTaskEntity task = this.getOne(
                 new LambdaQueryWrapper<QmsInspectionProcedureTaskEntity>()

@@ -8,29 +8,21 @@ package com.kitex.mom.qms.enums;
  */
 public enum InspectionHistoryTypeEnum {
 
-    /**
-     * 报检
-     */
+    /** 报检 */
     CREATE,
 
-    /**
-     * 追加
-     */
+    /** 追加 */
     APPEND,
 
-    /**
-     * 质检结果
-     */
+    /** 质检结果 */
     RESULT,
 
-    /**
-     * 作废
-     */
+    /** 作废 */
     CANCELED,
 
-    /**
-     * 免检
-     */
-    EXEMPTION;
+    /** 免检 */
+    EXEMPTION,
 
+    /** 已判不合格后的正式放行/让步处置，不是再次检验结果。 */
+    DISPOSITION;
 }

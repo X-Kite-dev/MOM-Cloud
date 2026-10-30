@@ -9,7 +9,9 @@ import com.kitex.mom.mes.entity.MesWarehouseFeedEntity;
 
 import java.util.List;
 
-/** 投料及实际耗用领域服务；写动作分别遵循原库存出生或原生产事务，不提供余额裸改入口。 */
+/**
+ * 投料及实际耗用领域服务；写动作分别遵循原库存出生或原生产事务，不提供余额裸改入口。
+ */
 public interface MesWarehouseFeedService extends IService<MesWarehouseFeedEntity> {
 
     /**

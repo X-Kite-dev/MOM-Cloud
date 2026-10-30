@@ -25,14 +25,18 @@ import java.math.BigDecimal;
 @Schema(description = "工艺路线")
 public class MdmProcessRouteEntity extends BaseEntity<MdmProcessRouteEntity> {
 
-    /** 路线图并发版本，由数据库递增；调用方不能直接写入。 */
+    /**
+     * 路线图并发版本，由数据库递增；调用方不能直接写入。
+     */
     @TableField(insertStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.NEVER,
             updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.NEVER)
     @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING)
     @Schema(description = "路线图并发版本，只读")
     private Long graphRevision;
 
-    /** 节点图协议；历史空值保留，只有受控图保存入口可以升级。 */
+    /**
+     * 节点图协议；历史空值保留，只有受控图保存入口可以升级。
+     */
     @TableField(insertStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.NEVER,
             updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.NEVER)
     @Schema(description = "图协议，ROUTE_NODE_GRAPH_V2；历史主工序图为空")

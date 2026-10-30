@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** ERP 投递状态变化及人工补偿履历。 */
+/**
+ * ERP 投递状态变化及人工补偿履历。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

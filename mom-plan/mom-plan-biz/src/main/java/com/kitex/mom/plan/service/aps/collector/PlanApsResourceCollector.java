@@ -9,7 +9,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 采集案件自身已核验的 PLAN 来源谱系。 */
+/**
+ * 采集案件自身已核验的 PLAN 来源谱系。
+ */
 @Component
 public class PlanApsResourceCollector extends AbstractApsResourceCollector {
 

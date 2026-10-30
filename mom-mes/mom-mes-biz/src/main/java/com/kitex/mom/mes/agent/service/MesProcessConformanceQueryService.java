@@ -10,6 +10,7 @@ import com.kitex.mom.mes.dto.MdmProcessRouteWorkingDTO;
 import com.kitex.mom.mes.dto.MesApsOperationSnapshotDTO;
 import com.kitex.mom.mes.entity.MesProduceTaskEntity;
 import com.kitex.mom.mes.entity.MesTaskEntity;
+import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
 import com.kitex.mom.mes.service.MesProduceTaskService;
 import com.kitex.mom.mes.service.MesTaskService;
 import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
@@ -72,15 +73,14 @@ public class MesProcessConformanceQueryService {
         if (!issued) {
             gaps.add("工单仍为新建状态，尚未下达生成工序任务；只能校验冻结工艺快照，不能判定执行一致性");
         }
-        gaps.add("当前MES未形成统一的工艺参数实测时序账，本工具不判断温度、压力、速度等参数是否越界");
-        gaps.add("当前证据只有APS计划工位和设备，没有派工接收后的完整实际工位、实际设备时序，不能证明全过程资源一致");
 
         List<String> refs = new ArrayList<>();
         refs.add("MES:mes_task:" + task.getCode());
         actualOperations.forEach(operation -> refs.add("MES:mes_produce_task:" + operation.getCode()));
         return new MesProcessConformanceDTO.Evidence()
                 .setToolCode(TOOL_CODE)
-                .setMetricDefinition("以生产工单冻结工艺快照为执行合同，精确核对已生成工序的路线身份、快照、拓扑顺序、转序策略、计划工位和APS锁定证据；当前MDM主数据变化不自动判为本工单违规。")
+                .setIdentityContractVersion(contract.nodes() ? MesFrozenExecutionGraph.NODE_EXECUTION_V1 : "LEGACY_PROCESS_V1")
+                .setMetricDefinition("以生产工单冻结工艺快照为执行合同，精确核对已生成工序的路线身份、快照、拓扑顺序、转序策略、计划工位和APS锁定证据；当前MDM主数据变化不自动判为本工单违规。本项不评价参数实测越界或现场实际资源，后者由各自工具单独取证。")
                 .setFactoryCode(actualFactory)
                 .setObservedAt(LocalDateTime.now())
                 .setWorkOrder(toWorkOrder(task))
@@ -115,7 +115,7 @@ public class MesProcessConformanceQueryService {
     private RouteContract readContract(String snapshot, List<String> gaps) {
         if (!StringUtils.hasText(snapshot)) {
             gaps.add("生产工单缺少冻结工艺快照，无法建立执行合同");
-            return new RouteContract(Map.of(), false);
+            return new RouteContract(Map.of(), false, false);
         }
         try {
             List<MdmProcessRouteWorkingDTO> routes = objectMapper.readValue(snapshot,
@@ -124,7 +124,7 @@ public class MesProcessConformanceQueryService {
             return normalize(routes);
         } catch (Exception exception) {
             gaps.add("生产工单冻结工艺快照无法解析或拓扑无效：" + safeMessage(exception));
-            return new RouteContract(Map.of(), false);
+            return new RouteContract(Map.of(), false, false);
         }
     }
 
@@ -135,11 +135,17 @@ public class MesProcessConformanceQueryService {
         if (routeList == null || routeList.isEmpty()) {
             throw new CheckedException("冻结工艺快照没有工序");
         }
+        boolean nodes = routeList.stream().anyMatch(route -> StringUtils.hasText(route.getRouteNodeCode())
+                || route.getPreRouteNodeCodes() != null || route.getNextRouteNodeCodes() != null);
         Map<String, MdmProcessRouteWorkingDTO> routes = new LinkedHashMap<>();
         for (MdmProcessRouteWorkingDTO route : routeList) {
-            String code = firstText(route.getProcessCode(), route.getRouteCode());
-            if (!StringUtils.hasText(code) || routes.putIfAbsent(code, route) != null) {
-                throw new CheckedException("冻结工艺存在空编码或重复工序：" + code);
+            String process = firstText(route.getProcessCode(), route.getRouteCode());
+            String code = nodes ? route.getRouteNodeCode() : process;
+            if (!StringUtils.hasText(process) || !StringUtils.hasText(code)
+                    || nodes && (!code.matches("RN-[1-9][0-9]{0,18}")
+                    || route.getPreRouteNodeCodes() == null || route.getNextRouteNodeCodes() == null)
+                    || routes.putIfAbsent(code, route) != null) {
+                throw new CheckedException("冻结工艺节点或主工序身份缺失、混合或重复：" + code);
             }
         }
         Map<String, LinkedHashSet<String>> predecessors = new LinkedHashMap<>();
@@ -154,19 +160,27 @@ public class MesProcessConformanceQueryService {
         List<MdmProcessRouteWorkingDTO> ordered = routeList.stream().sorted(Comparator
                 .comparingInt((MdmProcessRouteWorkingDTO route) -> expectedOrderOr(route, Integer.MAX_VALUE))
                 .thenComparing(route -> firstText(route.getProcessCode(), route.getRouteCode()))).toList();
-        if (!explicit && ordered.size() > 1) {
+        if (!nodes && !explicit && ordered.size() > 1) {
             for (int index = 1; index < ordered.size(); index++) {
                 ordered.get(index).setPreRouteCode(new String[]{firstText(
                         ordered.get(index - 1).getProcessCode(), ordered.get(index - 1).getRouteCode())});
             }
         }
-        routes.forEach((code, route) -> split(route.getPreRouteCode()).forEach(predecessor -> {
+        routes.forEach((code, route) -> (nodes ? strictNodes(route.getPreRouteNodeCodes())
+                : split(route.getPreRouteCode())).forEach(predecessor -> {
             if (!routes.containsKey(predecessor) || code.equals(predecessor)) {
                 throw new CheckedException("工序[" + code + "]引用无效前置工序[" + predecessor + "]");
             }
             predecessors.get(code).add(predecessor);
             successors.get(predecessor).add(code);
         }));
+        if (nodes) {
+            routes.forEach((code, route) -> {
+                if (!strictNodes(route.getNextRouteNodeCodes()).equals(successors.get(code))) {
+                    throw new CheckedException("冻结路线节点前后序不互逆：" + code);
+                }
+            });
+        }
         if (successors.values().stream().filter(Set::isEmpty).count() != 1) {
             throw new CheckedException("冻结工艺必须且只能有一道最终工序");
         }
@@ -194,12 +208,17 @@ public class MesProcessConformanceQueryService {
             throw new CheckedException("冻结工艺拓扑存在环路");
         }
         routes.forEach((code, route) -> {
-            route.setPreRouteCode(predecessors.get(code).toArray(String[]::new));
-            route.setNextRouteCode(successors.get(code).toArray(String[]::new));
+            if (nodes) {
+                route.setPreRouteNodeCodes(predecessors.get(code).toArray(String[]::new));
+                route.setNextRouteNodeCodes(successors.get(code).toArray(String[]::new));
+            } else {
+                route.setPreRouteCode(predecessors.get(code).toArray(String[]::new));
+                route.setNextRouteCode(successors.get(code).toArray(String[]::new));
+            }
             route.setOrderNum(levels.get(code));
             route.setRouteOrder(levels.get(code));
         });
-        return new RouteContract(routes, true);
+        return new RouteContract(routes, true, nodes);
     }
 
     private List<MesProcessConformanceDTO.OperationConformance> compare(
@@ -208,28 +227,41 @@ public class MesProcessConformanceQueryService {
         if (!contract.valid()) {
             return actualOperations.stream().map(this::unknownWithoutContract).toList();
         }
-        Map<String, MesProduceTaskEntity> actualByCode = new LinkedHashMap<>();
-        Set<String> duplicateActualCodes = new LinkedHashSet<>();
+        Map<String, List<MesProduceTaskEntity>> actualByKey = new LinkedHashMap<>();
         for (MesProduceTaskEntity operation : actualOperations) {
-            if (actualByCode.putIfAbsent(operation.getRouteCode(), operation) != null) {
-                duplicateActualCodes.add(operation.getRouteCode());
-            }
-        }
-        if (!duplicateActualCodes.isEmpty()) {
-            gaps.add("已生成工序任务存在重复工序编码：" + String.join(",", duplicateActualCodes));
+            String key = contract.nodes() ? operation.getSourceRouteNodeCode() : operation.getRouteCode();
+            actualByKey.computeIfAbsent(key, ignored -> new ArrayList<>()).add(operation);
         }
         List<MesProcessConformanceDTO.OperationConformance> results = new ArrayList<>();
-        contract.routes().forEach((code, expected) -> results.add(compareExpected(
-                task, code, expected, actualByCode.remove(code), duplicateActualCodes.contains(code))));
-        actualByCode.values().forEach(actual -> results.add(unexpected(actual)));
+        contract.routes().forEach((code, expected) -> {
+            List<MesProduceTaskEntity> actual = actualByKey.remove(code);
+            boolean duplicate = actual != null && actual.size() != 1;
+            results.add(compareExpected(task, code, expected, actual != null && actual.size() == 1 ? actual.get(0) : null,
+                    duplicate, contract.nodes()));
+            if (duplicate) actual.forEach(row -> results.add(unexpected(row)));
+        });
+        actualByKey.values().forEach(rows -> rows.forEach(actual -> results.add(unexpected(actual))));
+        if (contract.nodes() && !actualOperations.isEmpty()) {
+            try {
+                MesFrozenExecutionGraph.of(actualOperations);
+            } catch (CheckedException ex) {
+                gaps.add("原完整执行节点图不一致：" + safeMessage(ex));
+                results.forEach(row -> {
+                    List<String> issues = new ArrayList<>(row.getIssues());
+                    issues.add("原完整执行节点图不一致");
+                    row.setGraphMatched(false).setConformanceLevel("CRITICAL").setIssues(issues);
+                });
+            }
+        }
         return results;
     }
 
     private MesProcessConformanceDTO.OperationConformance compareExpected(
             MesTaskEntity task, String code, MdmProcessRouteWorkingDTO expected,
-            MesProduceTaskEntity actual, boolean duplicateActual) {
+            MesProduceTaskEntity actual, boolean duplicateActual, boolean nodes) {
         MesProcessConformanceDTO.OperationConformance result = new MesProcessConformanceDTO.OperationConformance()
-                .setProcessCode(code)
+                .setRouteNodeCode(nodes ? code : null)
+                .setProcessCode(firstText(expected.getProcessCode(), expected.getRouteCode()))
                 .setProcessName(firstText(expected.getProcessName(), expected.getRouteName()))
                 .setExpectedOrder(expectedOrder(expected));
         if (actual == null) {
@@ -238,16 +270,24 @@ public class MesProcessConformanceQueryService {
                         .setIssues(List.of("工单尚未下达，未生成该工序任务"));
             }
             return result.setConformanceLevel("CRITICAL")
-                    .setIssues(List.of("冻结工艺要求该工序，但MES未生成对应工序任务"));
+                    .setIssues(List.of(duplicateActual ? "冻结身份对应多个实际任务，未挑选其中一条" : "冻结工艺要求该工序，但MES未生成对应工序任务"));
         }
         fillActual(result, actual);
         List<String> issues = new ArrayList<>();
         boolean identity = Objects.equals(task.getProcessRouteId(), actual.getProcessRouteId())
-                && Objects.equals(task.getProcessRouteCode(), actual.getProcessRouteCode());
+                && Objects.equals(task.getProcessRouteCode(), actual.getProcessRouteCode())
+                && Objects.equals(firstText(expected.getProcessCode(), expected.getRouteCode()), actual.getRouteCode())
+                && (!nodes || Objects.equals(code, actual.getSourceRouteNodeCode()));
         boolean snapshot = Objects.equals(task.getProcessRouteSnapshot(), actual.getProcessRouteSnapshot());
         boolean graph = Objects.equals(expectedOrder(expected), actual.getRouteOrder())
+                && (nodes ? MesFrozenExecutionGraph.NODE_EXECUTION_V1.equals(actual.getRouteExecutionSchemaVersion())
+                && strictNodes(expected.getPreRouteNodeCodes()).equals(split(actual.getPredecessorNodeCodes()))
+                && strictNodes(expected.getNextRouteNodeCodes()).equals(split(actual.getSuccessorNodeCodes()))
+                && Objects.equals(expected.getNodeTimingRulesJson(), actual.getNodeTimingRulesJson())
+                && Objects.equals(expected.getNextRouteNodeCodes().length == 0, actual.getLastRoute())
+                : actual.getRouteExecutionSchemaVersion() == null
                 && split(expected.getPreRouteCode()).equals(split(actual.getPredecessorCodes()))
-                && split(expected.getNextRouteCode()).equals(split(actual.getSuccessorCodes()));
+                && split(expected.getNextRouteCode()).equals(split(actual.getSuccessorCodes())));
         boolean transfer = Boolean.TRUE.equals(expected.getOverlapEnabled())
                 == Boolean.TRUE.equals(actual.getOverlapEnabled())
                 && sameDecimal(Boolean.TRUE.equals(expected.getOverlapEnabled())
@@ -291,7 +331,7 @@ public class MesProcessConformanceQueryService {
 
     private void fillActual(MesProcessConformanceDTO.OperationConformance result,
                             MesProduceTaskEntity actual) {
-        result.setOperationId(actual.getId())
+        result.setActualRouteNodeCode(actual.getSourceRouteNodeCode()).setOperationId(actual.getId())
                 .setOperationTaskCode(actual.getCode())
                 .setOperationStatus(actual.getStatus())
                 .setActualOrder(actual.getRouteOrder())
@@ -317,6 +357,9 @@ public class MesProcessConformanceQueryService {
             boolean valid = Boolean.TRUE.equals(aps.getLockStatus())
                     && !Boolean.TRUE.equals(aps.getHardBlocked())
                     && Objects.equals(actual.getRouteCode(), aps.getProcessCode())
+                    && (!MesFrozenExecutionGraph.NODE_EXECUTION_V1.equals(actual.getRouteExecutionSchemaVersion())
+                    || Objects.equals(actual.getSourceRouteNodeCode(), aps.getSourceRouteNodeCode())
+                    && split(actual.getPredecessorNodeCodes()).equals(split(aps.getPredecessorNodeCodes())))
                     && Objects.equals(actual.getRouteOrder(), aps.getOperationSeq())
                     && split(actual.getPredecessorCodes()).equals(split(aps.getPredecessorCodes()))
                     && Boolean.TRUE.equals(actual.getOverlapEnabled()) == Boolean.TRUE.equals(aps.getOverlapEnabled())
@@ -366,6 +409,18 @@ public class MesProcessConformanceQueryService {
         return left == null ? right == null : right != null && left.compareTo(right) == 0;
     }
 
+    /** 节点关系不允许空项、重复或混入主工序编码。 */
+    private LinkedHashSet<String> strictNodes(String[] values) {
+        if (values == null) throw new CheckedException("冻结节点关系缺失");
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        for (String value : values) {
+            if (value == null || !value.matches("RN-[1-9][0-9]{0,18}") || !result.add(value)) {
+                throw new CheckedException("冻结节点关系包含非法或重复身份");
+            }
+        }
+        return result;
+    }
+
     private LinkedHashSet<String> split(String[] values) {
         if (values == null) return new LinkedHashSet<>();
         return Arrays.stream(values).filter(StringUtils::hasText).map(String::trim)
@@ -402,6 +457,6 @@ public class MesProcessConformanceQueryService {
         return StringUtils.hasText(message) ? message : exception.getClass().getSimpleName();
     }
 
-    private record RouteContract(Map<String, MdmProcessRouteWorkingDTO> routes, boolean valid) {
+    private record RouteContract(Map<String, MdmProcessRouteWorkingDTO> routes, boolean valid, boolean nodes) {
     }
 }

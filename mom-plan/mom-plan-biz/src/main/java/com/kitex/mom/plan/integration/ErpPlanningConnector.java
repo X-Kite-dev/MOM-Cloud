@@ -12,7 +12,9 @@ public interface ErpPlanningConnector {
 
     SendResult send(PlnErpPostingEnvelope envelope);
 
-    /** 连接器必须明确区分成功、可重试和业务拒绝。 */
+    /**
+     * 连接器必须明确区分成功、可重试和业务拒绝。
+     */
     record SendResult(boolean accepted, boolean retryable, String receiptCode,
                       String receiptPayload, String message) {
         public static SendResult accepted(String code, String payload) {

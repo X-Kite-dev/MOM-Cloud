@@ -1,11 +1,6 @@
 package com.kitex.mom.mes.service.impl;
 
-import com.kitex.mom.mes.entity.MesProduceTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
-import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
-import com.kitex.mom.mes.entity.MesWipTransferEntity;
+import com.kitex.mom.mes.entity.*;
 
 import java.util.HashSet;
 import java.util.Map;
@@ -20,65 +15,65 @@ final class MesPhysicalTransformFactSchema {
     private static final String BASE = "id tenantId createBy createTime updateBy updateTime delFlag ";
     private static final Map<Class<?>, Set<String>> FIELDS = Map.of(
             MesWarehouseLiveStockEntity.class, fields("""
-                qualityCaseId qualityDispositionReceiptId qualityOriginCaseId qualityReleaseReceiptId materialReceiptId
-                sourceReportId physicalLocationCode physicalLocationName physicalConfirmedTime billNo produceTaskCode
-                routeCode routeName matCode reservationNo requirementMatCode requirementMatName substituteFlag substituteRatio
-                matName matSpec matBatch matUnit matProduceDate matValidPeriod matValidEndDate matBarcode matBarcodeImage
-                supplierCode supplierName warehouseCode warehouseName containerCode containerName siteCode siteName inTime
-                num status inspectionStatus judgeStatus matDetailType factoryCode
-                """),
+                    qualityCaseId qualityDispositionReceiptId qualityOriginCaseId qualityReleaseReceiptId materialReceiptId
+                    sourceReportId physicalLocationCode physicalLocationName physicalConfirmedTime billNo produceTaskCode
+                    routeCode routeName matCode reservationNo requirementMatCode requirementMatName substituteFlag substituteRatio
+                    matName matSpec matBatch matUnit matProduceDate matValidPeriod matValidEndDate matBarcode matBarcodeImage
+                    supplierCode supplierName warehouseCode warehouseName containerCode containerName siteCode siteName inTime
+                    num status inspectionStatus judgeStatus matDetailType factoryCode
+                    """),
             MesTaskReportEntity.class, fields("""
-                requestId status reverseRequestId reverseReason reverseTime reverseWorkerCode reverseWorkerName arrangeCode
-                produceTaskCode taskCode workerCode workerName matCode matName matSpec reportNum effectiveReportNum
-                correctedReportNum lastCorrectionTime correctionPermitId correctionPermitNo reportUnit reportMode reportTime
-                transferCode submittedIdentifier identifierMappingId identifierType identifierResolutionSnapshot identifierBindingId
-                identifierBindingVersion identifierNodeAction identifierBindingSnapshot extensionEvidenceSnapshot executionKind
-                routeReturnId identifierRouteVersion carrierOperationId carrierCode type sourceEventId sourceEventTime manualOverrideReason
-                qualityGateMode qualityGateStatus qualityGateMessage qualityTaskIds qualityEvidenceFingerprint qualityEvidenceSnapshot
-                qualityQuantityStatus qualityReleasedNum qualityPendingNum qualityRejectedNum qualitySyncTime deviceGateStage
-                deviceGateAllowed deviceGateState deviceGateStateName deviceGateMessage deviceGateCheckTime deviceCode deviceName factoryCode
-                """),
+                    requestId status reverseRequestId reverseReason reverseTime reverseWorkerCode reverseWorkerName arrangeCode
+                    produceTaskCode taskCode workerCode workerName matCode matName matSpec reportNum effectiveReportNum
+                    correctedReportNum lastCorrectionTime correctionPermitId correctionPermitNo reportUnit reportMode reportTime
+                    transferCode submittedIdentifier identifierMappingId identifierType identifierResolutionSnapshot identifierBindingId
+                    identifierBindingVersion identifierNodeAction identifierBindingSnapshot extensionEvidenceSnapshot executionKind
+                    routeReturnId identifierRouteVersion carrierOperationId carrierCode type sourceEventId sourceEventTime manualOverrideReason
+                    qualityGateMode qualityGateStatus qualityGateMessage qualityTaskIds qualityEvidenceFingerprint qualityEvidenceSnapshot
+                    qualityQuantityStatus qualityReleasedNum qualityPendingNum qualityRejectedNum qualitySyncTime deviceGateStage
+                    deviceGateAllowed deviceGateState deviceGateStateName deviceGateMessage deviceGateCheckTime deviceCode deviceName factoryCode
+                    """),
             MesTaskArrangeEntity.class, fields("""
-                code produceTaskCode taskCode matCode matName matSpec routeCode routeName routeType reportMode executionTemplateId
-                executionTemplateCode executionTemplateVersion executionPolicySnapshot routeWorkCenter routeOrder predecessorCodes
-                successorCodes overlapEnabled transferBatchQuantity transferMinutes lastRoute workerCode workerName dispatcherCode
-                dispatcherName shiftCode shiftName dispatcherTime startTime finishTime finishHour status worksiteCodes worksiteNames
-                worksiteTypes actualWorksiteCode plannedWorksiteCode plannedWorksiteName plannedWorkerCode plannedWorkerName
-                plannedStartTime plannedEndTime plannedDeviceCode plannedDeviceName plannedResourceSlotNo plannedResourceGroupCode
-                plannedResourceGroupName plannedResourceGroupCapacity plannedResourceGroupSlotNo plannedToolingCodes plannedToolingNames
-                toolingAllocationSnapshot toolingLifeUsageSnapshot apsOperationSnapshot noticeNum plannedNum completeNum qualityReleasedNum
-                materialGateRecordId unPassNum workshopCode workshopName batchNo wrapRuleCode wrapCode wrapCapacity factoryCode
-                """),
+                    code produceTaskCode taskCode matCode matName matSpec routeCode routeName routeType reportMode executionTemplateId
+                    executionTemplateCode executionTemplateVersion executionPolicySnapshot routeWorkCenter routeOrder predecessorCodes
+                    successorCodes overlapEnabled transferBatchQuantity transferMinutes lastRoute workerCode workerName dispatcherCode
+                    dispatcherName shiftCode shiftName dispatcherTime startTime finishTime finishHour status worksiteCodes worksiteNames
+                    worksiteTypes actualWorksiteCode plannedWorksiteCode plannedWorksiteName plannedWorkerCode plannedWorkerName
+                    plannedStartTime plannedEndTime plannedDeviceCode plannedDeviceName plannedResourceSlotNo plannedResourceGroupCode
+                    plannedResourceGroupName plannedResourceGroupCapacity plannedResourceGroupSlotNo plannedToolingCodes plannedToolingNames
+                    toolingAllocationSnapshot toolingLifeUsageSnapshot apsOperationSnapshot noticeNum plannedNum completeNum qualityReleasedNum
+                    materialGateRecordId unPassNum workshopCode workshopName batchNo wrapRuleCode wrapCode wrapCapacity factoryCode
+                    """),
             MesWipTransferEntity.class, fields("""
-                factoryCode sourceStockId sourceReportId arrangeCode produceTaskCode matCode matName matBatch matBarcode matUnit
-                reportMode indivisible fromLocationCode fromLocationName toLocationCode toLocationName quantity receivedQuantity
-                returnedQuantity quarantinedQuantity lostQuantity remainingQuantity status revision resumeStatus dispatchUserId
-                returnUserId holdUserId dispatchTime dueTime closedTime reason sourceSnapshot locationSnapshot
-                """),
+                    factoryCode sourceStockId sourceReportId arrangeCode produceTaskCode matCode matName matBatch matBarcode matUnit
+                    reportMode indivisible fromLocationCode fromLocationName toLocationCode toLocationName quantity receivedQuantity
+                    returnedQuantity quarantinedQuantity lostQuantity remainingQuantity status revision resumeStatus dispatchUserId
+                    returnUserId holdUserId dispatchTime dueTime closedTime reason sourceSnapshot locationSnapshot
+                    """),
             MesTaskEntity.class, fields("""
-                reworkMaterialPlanId code type planNo sourceRequestId sourceRequestFingerprint productionOrder matCode matName matSpec
-                planStartDate planEndDate noticeNum dayNeedNum plannedNum completeNum inStockNum unInStockNum unPassNum alreadyNoticeNum
-                startTime finishTime completionVersion status bomId bomSnapshot bomVersion processRouteId processRouteSnapshot
-                processRouteCode engineeringReleaseId engineeringContentHash engineeringVersionNo engineeringBundleSnapshot
-                processParameterStandardNo processParameterStandardVersion processParameterStandardSnapshot
-                processParameterSnapshotFingerprint resourceType resourceId reworkRequestId sourceTaskCode sourceInspectionType
-                sourceProduceTaskCode sourceInspectionTaskId sourceHandleRecordId reworkProcessCode reworkRouteNodeCode reworkTimingPolicySnapshot
-                reworkReason reworkCallbackStatus reworkCallbackMessage
-                reworkCallbackCount reinspectionTaskId reinspectionStatus reinspectionMessage reworkQualifiedNum reworkRejectedNum
-                materialReservationSnapshot apsOperationSnapshot apsTaskId apsBatchId apsBatchNo apsBatchType apsBatchFingerprint
-                workshopCode workshopName wrapCode wrapCapacity batchRuleCode transferCode factoryCode
-                """),
+                    reworkMaterialPlanId code type planNo sourceRequestId sourceRequestFingerprint productionOrder matCode matName matSpec
+                    planStartDate planEndDate noticeNum dayNeedNum plannedNum completeNum inStockNum unInStockNum unPassNum alreadyNoticeNum
+                    startTime finishTime completionVersion status bomId bomSnapshot bomVersion processRouteId processRouteSnapshot
+                    processRouteCode engineeringReleaseId engineeringContentHash engineeringVersionNo engineeringBundleSnapshot
+                    processParameterStandardNo processParameterStandardVersion processParameterStandardSnapshot
+                    processParameterSnapshotFingerprint resourceType resourceId reworkRequestId sourceTaskCode sourceInspectionType
+                    sourceProduceTaskCode sourceInspectionTaskId sourceHandleRecordId reworkProcessCode reworkRouteNodeCode reworkTimingPolicySnapshot
+                    reworkReason reworkCallbackStatus reworkCallbackMessage
+                    reworkCallbackCount reinspectionTaskId reinspectionStatus reinspectionMessage reworkQualifiedNum reworkRejectedNum
+                    materialReservationSnapshot apsOperationSnapshot apsTaskId apsBatchId apsBatchNo apsBatchType apsBatchFingerprint
+                    workshopCode workshopName wrapCode wrapCapacity batchRuleCode transferCode factoryCode
+                    """),
             MesProduceTaskEntity.class, fields("""
-                code taskCode processRouteId processRouteSnapshot processRouteCode processParameterStandardNo
-                processParameterStandardVersion processParameterStandardSnapshot processParameterSnapshotFingerprint matCode matName
-                matSpec routeCode routeName routeType routeWorkCenter routeOrder predecessorCodes successorCodes overlapEnabled
-                transferBatchQuantity transferMinutes transferReleasedTime lastRoute worksiteCodes worksiteNames worksiteTypes
-                plannedWorksiteCode plannedWorksiteName plannedResourceSlotNo plannedResourceGroupCode plannedResourceGroupName
-                plannedResourceGroupCapacity plannedResourceGroupSlotNo plannedDeviceCode plannedDeviceName plannedWorkerCode
-                plannedWorkerName plannedToolingCodes plannedToolingNames toolingAllocationSnapshot toolingLifeUsageSnapshot
-                plannedStartTime plannedEndTime apsOperationSnapshot noticeNum plannedNum completeNum qualityReleasedNum unPassNum
-                noticeDate status startTime finishTime workshopCode workshopName wrapCode reportType isInspection factoryCode
-                """));
+                    code taskCode processRouteId processRouteSnapshot processRouteCode processParameterStandardNo
+                    processParameterStandardVersion processParameterStandardSnapshot processParameterSnapshotFingerprint matCode matName
+                    matSpec routeCode routeName routeType routeWorkCenter routeOrder predecessorCodes successorCodes overlapEnabled
+                    transferBatchQuantity transferMinutes transferReleasedTime lastRoute worksiteCodes worksiteNames worksiteTypes
+                    plannedWorksiteCode plannedWorksiteName plannedResourceSlotNo plannedResourceGroupCode plannedResourceGroupName
+                    plannedResourceGroupCapacity plannedResourceGroupSlotNo plannedDeviceCode plannedDeviceName plannedWorkerCode
+                    plannedWorkerName plannedToolingCodes plannedToolingNames toolingAllocationSnapshot toolingLifeUsageSnapshot
+                    plannedStartTime plannedEndTime apsOperationSnapshot noticeNum plannedNum completeNum qualityReleasedNum unPassNum
+                    noticeDate status startTime finishTime workshopCode workshopName wrapCode reportType isInspection factoryCode
+                    """));
 
     private MesPhysicalTransformFactSchema() {
     }

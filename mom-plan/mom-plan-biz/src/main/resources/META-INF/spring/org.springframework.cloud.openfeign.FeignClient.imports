@@ -1,3 +1,4 @@
 com.kitex.mom.oms.feign.RemoteOmsOrderService
 com.kitex.mom.plan.feign.RemotePlnIssueMonthService
 com.kitex.mom.plan.feign.RemotePlnIssueService
+com.kitex.mom.plan.feign.RemotePlnWarehouseLifecycleService

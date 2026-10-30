@@ -6,3 +6,4 @@ com.kitex.mom.wms.api.feign.RemoteProducePickingNoticeService
 com.kitex.mom.wms.api.feign.RemoteProductInNoticeService
 com.kitex.mom.wms.api.feign.RemoteProductionPickingOutBillService
 com.kitex.mom.wms.api.feign.RemoteSalesOutboundNoticeService
+com.kitex.mom.wms.api.feign.RemoteWmsWarehouseLifecycleService

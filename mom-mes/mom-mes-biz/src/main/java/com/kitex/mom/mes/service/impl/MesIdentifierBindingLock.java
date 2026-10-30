@@ -8,7 +8,8 @@ import java.util.HexFormat;
  * 先把所有标识转换成此键再排序，不能按Java UTF-16字符或SQL区域排序分别取锁。
  */
 public final class MesIdentifierBindingLock {
-    private MesIdentifierBindingLock() { }
+    private MesIdentifierBindingLock() {
+    }
 
     public static String key(Long tenant, String factory, String identifier) {
         return "MES_NODE_IDENTIFIER_LOCK_V2:" + tenant + ":" + hex(factory) + ":" + hex(identifier);

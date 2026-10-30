@@ -15,7 +15,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** 精确组织范围的实物查询。返回原始状态，由工程配置或执行业务分别判断可用性。 */
+/**
+ * 精确组织范围的实物查询。返回原始状态，由工程配置或执行业务分别判断可用性。
+ */
 @Component
 @RequiredArgsConstructor
 public class MdmScopedDeviceQuerySupport {

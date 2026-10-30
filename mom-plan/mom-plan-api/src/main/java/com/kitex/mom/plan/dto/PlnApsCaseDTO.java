@@ -49,7 +49,9 @@ public class PlnApsCaseDTO {
     private List<Source> sources;
     private List<Operation> recentOperations;
 
-    /** 案件来源引用，只返回服务端核验后的身份与版本。 */
+    /**
+     * 案件来源引用，只返回服务端核验后的身份与版本。
+     */
     @Data
     @Accessors(chain = true)
     public static class Source {
@@ -63,7 +65,9 @@ public class PlnApsCaseDTO {
         private String relationshipStatus;
     }
 
-    /** 案件最近操作摘要，不下发内部前后JSON快照。 */
+    /**
+     * 案件最近操作摘要，不下发内部前后JSON快照。
+     */
     @Data
     @Accessors(chain = true)
     public static class Operation {

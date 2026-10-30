@@ -30,7 +30,28 @@ public class MesNgIdentificationCodec {
     private static final Set<String> MAPPED_FIELDS = Set.of("mappingId", "mappingCode", "mappingVersion", "scope");
     private final MesPhysicalTransformCodec codec;
 
-    /** SOURCE_V1已生成后，仅为真实新报告冻结一次；历史读取绝不调用。 */
+    /**
+     * 新协议按原始输入恢复；两个历史分支完全保留原先精确/去空白语义。
+     */
+    public static boolean sameInput(MesTaskReportUnqualifiedEntity row, String submitted) {
+        if (row.getIdentificationVersion() != null) {
+            return Objects.equals(row.getSubmittedIdentifier(), original(submitted));
+        }
+        return row.getSourceVersion() == null
+                ? Objects.equals(StrUtil.nullToEmpty(row.getTransferCode()).trim(), StrUtil.nullToEmpty(submitted).trim())
+                : Objects.equals(row.getTransferCode(), original(submitted));
+    }
+
+    /**
+     * 延续原NG的blank-to-null契约，非空值不擅自去掉外侧空白。
+     */
+    public static String original(String value) {
+        return StrUtil.blankToDefault(value, null);
+    }
+
+    /**
+     * SOURCE_V1已生成后，仅为真实新报告冻结一次；历史读取绝不调用。
+     */
     public void freeze(MesTaskReportUnqualifiedEntity row) {
         require(row.getIdentificationVersion() == null && row.getIdentificationSnapshot() == null
                 && row.getIdentificationFingerprint() == null, "新不良标识证据不能覆盖已有原文");
@@ -42,12 +63,14 @@ public class MesNgIdentificationCodec {
         verify(row);
     }
 
-    /** 历史全NULL保持旧含义；部分字段缺失、未知协议或与原报告不一致均不得降级兼容。 */
+    /**
+     * 历史全NULL保持旧含义；部分字段缺失、未知协议或与原报告不一致均不得降级兼容。
+     */
     public void verify(MesTaskReportUnqualifiedEntity row) {
         if (row.getIdentificationVersion() == null) {
             require(row.getIdentificationSnapshot() == null && row.getIdentificationFingerprint() == null
-                    && row.getSubmittedIdentifier() == null && row.getIdentifierMappingId() == null
-                    && row.getIdentifierType() == null && row.getIdentifierResolutionSnapshot() == null,
+                            && row.getSubmittedIdentifier() == null && row.getIdentifierMappingId() == null
+                            && row.getIdentifierType() == null && row.getIdentifierResolutionSnapshot() == null,
                     "不良标识证明不完整，不能当作旧历史");
             return;
         }
@@ -59,28 +82,13 @@ public class MesNgIdentificationCodec {
         require(actual.size() == expected.size() && expected.keySet().stream().allMatch(actual::has),
                 "不良标识证据存在遗漏或未知字段");
         expected.forEach((key, value) -> require(value == null ? actual.get(key).isNull()
-                : actual.get(key).isTextual() && value.equals(actual.get(key).textValue()),
+                        : actual.get(key).isTextual() && value.equals(actual.get(key).textValue()),
                 "不良标识原字段不一致：" + key));
-    }
-
-    /** 新协议按原始输入恢复；两个历史分支完全保留原先精确/去空白语义。 */
-    public static boolean sameInput(MesTaskReportUnqualifiedEntity row, String submitted) {
-        if (row.getIdentificationVersion() != null) {
-            return Objects.equals(row.getSubmittedIdentifier(), original(submitted));
-        }
-        return row.getSourceVersion() == null
-                ? Objects.equals(StrUtil.nullToEmpty(row.getTransferCode()).trim(), StrUtil.nullToEmpty(submitted).trim())
-                : Objects.equals(row.getTransferCode(), original(submitted));
-    }
-
-    /** 延续原NG的blank-to-null契约，非空值不擅自去掉外侧空白。 */
-    public static String original(String value) {
-        return StrUtil.blankToDefault(value, null);
     }
 
     private TreeMap<String, String> facts(MesTaskReportUnqualifiedEntity row) {
         require(MesProductionNgSourceCodec.VERSION.equals(row.getSourceVersion())
-                && row.getSourceFingerprint() != null && row.getId() != null && row.getTenantId() != null,
+                        && row.getSourceFingerprint() != null && row.getId() != null && row.getTenantId() != null,
                 "双标识证据必须绑定真实已冻结不良来源");
         String mappingVersion = resolutionVersion(row);
         var result = new TreeMap<String, String>();
@@ -99,13 +107,15 @@ public class MesNgIdentificationCodec {
         return result;
     }
 
-    /** 内部解析器仍使用原数值ID格式；后端精确读Long，外层始终输出文本供三端使用。 */
+    /**
+     * 内部解析器仍使用原数值ID格式；后端精确读Long，外层始终输出文本供三端使用。
+     */
     private String resolutionVersion(MesTaskReportUnqualifiedEntity row) {
         String original = row.getSubmittedIdentifier();
         if (original == null) {
             require(ReportModeEnum.QUANTITY.name().equals(row.getReportMode())
-                    && row.getTransferCode() == null && row.getIdentifierMappingId() == null
-                    && row.getIdentifierType() == null && row.getIdentifierResolutionSnapshot() == null,
+                            && row.getTransferCode() == null && row.getIdentifierMappingId() == null
+                            && row.getIdentifierType() == null && row.getIdentifierResolutionSnapshot() == null,
                     "无码不良报告不能附带标识或映射事实");
             return null;
         }
@@ -153,7 +163,9 @@ public class MesNgIdentificationCodec {
         return raw.get("mappingVersion").asText();
     }
 
-    /** 返工动态实例是批准范围引用，不是静态映射，也不创建第二套外码生命周期。 */
+    /**
+     * 返工动态实例是批准范围引用，不是静态映射，也不创建第二套外码生命周期。
+     */
     private String reworkResolutionVersion(MesTaskReportUnqualifiedEntity row, String original, JsonNode raw) {
         var keys = Set.of("version", "submittedIdentifier", "canonicalIdentifier", "objectType",
                 "identifierType", "sourceBindingId", "sourceBindingGroupId", "sourceBindingVersion",

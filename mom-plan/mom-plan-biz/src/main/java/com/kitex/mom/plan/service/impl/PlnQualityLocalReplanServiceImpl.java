@@ -9,6 +9,7 @@ import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
@@ -72,6 +73,10 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
     private final PlnProductDemandService productDemandService;
     private final PlanMatMrpService planMatMrpService;
     private final RemoteMesTaskService remoteMesTaskService;
+    private final PlnQualitySupplementSourceGuard supplementSourceGuard;
+    private final PlnQualitySupplementPlanningProjector supplementPlanning;
+    private final PlnQualitySupplementProgressReader supplementProgress;
+    private final PlnMpsCapacityPublicationLock publicationLock;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -424,6 +429,7 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
     @Transactional(rollbackFor = Exception.class)
     public PlnQualitySupplementDemandEntity submitSupplement(
             PlanQualityLocalReplanDTO.SupplementSubmitCommand command) {
+        PlnQualitySupplementSourceGuard.requireActor();
         require(command != null && command.getCaseId() != null && StrUtil.isNotBlank(command.getRequestId())
                 && command.getRequestQuantity() != null && command.getRequestQuantity().signum() > 0
                 && command.getDemandDate() != null && StrUtil.isNotBlank(command.getDemandWarehouseCode())
@@ -503,17 +509,19 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
         require(command != null && command.getSupplementId() != null && StrUtil.isNotBlank(command.getRequestId())
                 && command.getApproved() != null && StrUtil.isNotBlank(command.getExpectedRequestFingerprint())
                 && StrUtil.isNotBlank(command.getReason()), "补产需求复核参数不完整");
+        MomUser user = PlnQualitySupplementSourceGuard.requireActor();
         String requestId = command.getRequestId().trim();
         supplementMapper.lockKey("REVIEW:" + requestId);
         PlnQualitySupplementDemandEntity duplicate = supplementMapper.selectOne(
                 new LambdaQueryWrapper<PlnQualitySupplementDemandEntity>()
                         .eq(PlnQualitySupplementDemandEntity::getReviewRequestId, requestId));
         if (duplicate != null) {
+            requireFactory(duplicate.getFactoryCode());
             require(Objects.equals(duplicate.getId(), command.getSupplementId())
                             && Objects.equals(duplicate.getRequestFingerprint(), command.getExpectedRequestFingerprint()),
                     "补产复核幂等号已被不同请求使用");
             boolean sameDecision = Boolean.TRUE.equals(command.getApproved())
-                    ? Set.of("MRP_GENERATED", "FULFILLED", "STALE").contains(duplicate.getStatus())
+                    ? Set.of("DEMAND_CREATED", "MRP_GENERATED", "FULFILLED", "WITHDRAWN", "STALE").contains(duplicate.getStatus())
                     : "REJECTED".equals(duplicate.getStatus());
             require(sameDecision && Objects.equals(duplicate.getReviewReason(), command.getReason().trim()),
                     "补产复核幂等号已被不同审批结论使用");
@@ -528,9 +536,14 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
         require("SUBMITTED".equals(supplement.getStatus()), "仅待复核补产需求允许审批");
         require(Objects.equals(supplement.getRequestFingerprint(), command.getExpectedRequestFingerprint()),
                 "补产请求指纹不一致，请刷新后重试");
-        MomUser user = currentUser();
         require(!Objects.equals(supplement.getApplicantCode(), userCode(user)), "补产申请人与复核人必须分离");
         PlnQualityReplanCaseEntity qualityCase = requireCase(supplement.getCaseId(), false);
+        require(Objects.equals(qualityCase.getFactoryCode(), supplement.getFactoryCode())
+                        && Objects.equals(qualityCase.getIssueId(), sourceIssue.getId())
+                        && Objects.equals(qualityCase.getProductCode(), sourceIssue.getProductCode())
+                        && Objects.equals(supplement.getSourceIssueNo(), sourceIssue.getIssueNo())
+                        && Objects.equals(supplement.getProductCode(), sourceIssue.getProductCode()),
+                "补产需求、质量案件与原生产计划来源不一致");
         if (!Boolean.TRUE.equals(command.getApproved())) {
             supplement.setStatus("REJECTED").setReviewRequestId(requestId).setReviewReason(command.getReason().trim())
                     .setReviewerCode(userCode(user)).setReviewerName(userName(user)).setReviewedTime(LocalDateTime.now());
@@ -561,6 +574,7 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
         demand.setProductCode(sourceIssue.getProductCode());
         demand.setProductName(sourceIssue.getProductName());
         demand.setSpecification(sourceIssue.getSpecificationModel());
+        demand.setProductUnit(supplementSourceGuard.productUnit(sourceIssue));
         demand.setDemandWarehouseCode(supplement.getDemandWarehouseCode());
         demand.setPlanEndDate(supplement.getDemandDate());
         demand.setNeedNum(supplement.getRequestQuantity());
@@ -574,43 +588,59 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
         require(Boolean.TRUE.equals(productDemandService.savePlan(demand)) && demand.getId() != null
                 && StrUtil.isNotBlank(demand.getDemandNo()), "补产产品需求创建失败");
         require(Boolean.TRUE.equals(productDemandService.receive(new Long[]{demand.getId()})), "补产产品需求接收失败");
-        R mrpResult = productDemandService.mrp(new Long[]{demand.getId()});
-        require(mrpResult != null && mrpResult.isOk(), "补产产品需求MRP运算失败");
-        PlnProductDemandEntity mrpDemand = productDemandService.getById(demand.getId());
-        List<PlanMatMrpEntity> mrpLines = planMatMrpService.list(new LambdaQueryWrapper<PlanMatMrpEntity>()
-                .eq(PlanMatMrpEntity::getPlanDemandNo, demand.getDemandNo()));
-        require(mrpDemand != null && "2".equals(mrpDemand.getPlanState()) && !mrpLines.isEmpty(),
-                "补产需求未形成可下达MRP，请检查产品BOM和物料属性");
-
-        PlnIssueEntity supplementIssue = new PlnIssueEntity();
-        supplementIssue.setIssueNo(demand.getDemandNo());
-        supplementIssue.setFactoryCode(sourceIssue.getFactoryCode());
-        supplementIssue.setCustomerCode(sourceIssue.getCustomerCode());
-        supplementIssue.setCustomerName(sourceIssue.getCustomerName());
-        supplementIssue.setProductCode(sourceIssue.getProductCode());
-        supplementIssue.setProductName(sourceIssue.getProductName());
-        supplementIssue.setSpecificationModel(sourceIssue.getSpecificationModel());
-        supplementIssue.setMaterialAttribute(sourceIssue.getMaterialAttribute());
-        supplementIssue.setNum(supplement.getRequestQuantity());
-        supplementIssue.setFinishNum(BigDecimal.ZERO);
-        supplementIssue.setIssueTime(LocalDateTime.now());
-        supplementIssue.setDemandTime(supplement.getDemandDate());
-        supplementIssue.setPlanType("QUALITY_SUPPLEMENT");
-        supplementIssue.setType("quality_supplement");
-        supplementIssue.setStatus(IssueStatusEnum.UNISSUED.getCode());
-        supplementIssue.setLockStatus(Boolean.FALSE);
-        require(issueMapper.insert(supplementIssue) == 1, "补产生产计划创建失败");
-
-        supplement.setStatus("MRP_GENERATED").setReviewRequestId(requestId)
+        supplement.setPlanningModelVersion(2).setStatus("DEMAND_CREATED").setReviewRequestId(requestId)
                 .setReviewReason(command.getReason().trim()).setReviewerCode(userCode(user))
                 .setReviewerName(userName(user)).setReviewedTime(LocalDateTime.now())
-                .setDemandWarehouseName(mrpDemand.getDemandWarehouseName()).setProductDemandId(demand.getId())
-                .setProductDemandNo(demand.getDemandNo()).setSupplementIssueId(supplementIssue.getId())
-                .setSupplementIssueNo(supplementIssue.getIssueNo()).setMrpGeneratedTime(LocalDateTime.now());
-        require(supplementMapper.updateById(supplement) == 1, "补产需求及MRP回执写回失败");
+                .setProductDemandId(demand.getId()).setProductDemandNo(demand.getDemandNo());
+        require(supplementMapper.updateById(supplement) == 1, "补产需求审批回执写回失败");
         audit(qualityCase, requestId, "SUPPLEMENT_APPROVE", qualityCase.getStatus(), qualityCase.getStatus(),
-                "复核通过补产" + plain(supplement.getRequestQuantity()) + "；产品需求/生产计划="
-                        + demand.getDemandNo() + "；MRP行数=" + mrpLines.size());
+                "复核通过补产" + plain(supplement.getRequestQuantity()) + "；已接收产品需求=" + demand.getDemandNo());
+        enrichSupplement(supplement);
+        return supplement;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public PlnQualitySupplementDemandEntity planSupplement(PlanQualityLocalReplanDTO.SupplementPlanCommand command) {
+        require(command != null && command.getSupplementId() != null && StrUtil.isNotBlank(command.getRequestId())
+                && command.getRequestId().trim().length() <= 64
+                && StrUtil.isNotBlank(command.getExpectedRequestFingerprint()), "继续补产计划参数不完整");
+        PlnQualitySupplementSourceGuard.requireActor();
+        publicationLock.acquire(FactoryContextHolder.getFactoryCode());
+        String requestId = command.getRequestId().trim();
+        supplementMapper.lockKey("PLAN:" + requestId);
+        String payload = hash(command.getSupplementId() + "|" + command.getExpectedRequestFingerprint());
+        PlnQualityReplanOperationEntity old = operationMapper.selectOne(
+                new LambdaQueryWrapper<PlnQualityReplanOperationEntity>().eq(PlnQualityReplanOperationEntity::getRequestId, requestId));
+        var supplement = requireSupplement(command.getSupplementId(), false);
+        requireFactory(supplement.getFactoryCode());
+        require(Integer.valueOf(2).equals(supplement.getPlanningModelVersion())
+                        && Objects.equals(supplement.getRequestFingerprint(), command.getExpectedRequestFingerprint()),
+                "补产请求版本或指纹不一致，请刷新后重试");
+        if (old != null) {
+            require(Objects.equals(old.getFactoryCode(), supplement.getFactoryCode())
+                            && Objects.equals(old.getCaseId(), supplement.getCaseId())
+                            && "SUPPLEMENT_PLAN".equals(old.getOperationType()) && Objects.equals(old.getContent(), payload),
+                    "补产计划幂等号已被不同请求使用");
+            enrichSupplement(supplement);
+            return supplement;
+        }
+        require(Set.of("DEMAND_CREATED", "MRP_GENERATED").contains(supplement.getStatus()), "补产当前状态不能继续计划");
+        var demand = productDemandService.getById(supplement.getProductDemandId());
+        require(demand != null, "补产产品需求不存在");
+        supplementPlanning.validateBinding(supplement, demand);
+        supplementPlanning.requireNoWithdrawal(supplement);
+        if ("DEMAND_CREATED".equals(supplement.getStatus())) {
+            R<?> result = productDemandService.mrp(new Long[]{demand.getId()});
+            require(result != null && result.isOk(), "补产MRP计划生成失败");
+        } else {
+            require("2".equals(demand.getPlanState()), "补产需求状态与MRP回执不一致");
+            supplementProgress.ownedRoots(supplement, supplementProgress.mrpRows(supplement));
+        }
+        supplement = requireSupplement(command.getSupplementId(), false);
+        require("MRP_GENERATED".equals(supplement.getStatus()), "补产MRP未形成完整根计划回执");
+        var qualityCase = requireCase(supplement.getCaseId(), false);
+        audit(qualityCase, requestId, "SUPPLEMENT_PLAN", qualityCase.getStatus(), qualityCase.getStatus(), payload);
         enrichSupplement(supplement);
         return supplement;
     }
@@ -1544,18 +1574,28 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
     private void syncSupplementFulfillment(PlnIssueCallbackReceiptEntity receipt, PlnIssueEntity issue) {
         List<PlnQualitySupplementDemandEntity> rows = supplementMapper.selectList(
                 new LambdaQueryWrapper<PlnQualitySupplementDemandEntity>()
-                        .eq(PlnQualitySupplementDemandEntity::getSupplementIssueId, issue.getId())
+                        .and(q -> q.eq(PlnQualitySupplementDemandEntity::getSupplementIssueId, issue.getId())
+                                .or(staged -> staged.eq(PlnQualitySupplementDemandEntity::getPlanningModelVersion, 2)
+                                        .eq(PlnQualitySupplementDemandEntity::getProductDemandNo, issue.getSourceDemandNo())
+                                        .eq(PlnQualitySupplementDemandEntity::getProductCode, issue.getProductCode())))
                         .eq(PlnQualitySupplementDemandEntity::getStatus, "MRP_GENERATED")
                         .orderByAsc(PlnQualitySupplementDemandEntity::getId).last("FOR UPDATE"));
         for (PlnQualitySupplementDemandEntity supplement : rows) {
-            if (nz(issue.getFinishNum()).compareTo(nz(supplement.getRequestQuantity())) < 0) continue;
+            BigDecimal completed = nz(issue.getFinishNum());
+            if (Integer.valueOf(2).equals(supplement.getPlanningModelVersion())) {
+                var mrp = supplementProgress.mrpRows(supplement);
+                var roots = supplementProgress.ownedRoots(supplement, mrp);
+                if (roots.stream().noneMatch(root -> Objects.equals(root.getId(), issue.getId()))) continue;
+                completed = supplementProgress.completed(roots);
+            }
+            if (completed.compareTo(nz(supplement.getRequestQuantity())) < 0) continue;
             supplement.setStatus("FULFILLED").setFulfilledTime(LocalDateTime.now());
             require(supplementMapper.updateById(supplement) == 1, "补产完成状态写回失败");
             PlnQualityReplanCaseEntity qualityCase = requireCase(supplement.getCaseId(), false);
             String requestId = "QSUP-FULFILL-" + supplement.getId() + '-'
                     + hash(receipt.getRequestId()).substring(0, 16);
             audit(qualityCase, requestId, "SUPPLEMENT_FULFILL", qualityCase.getStatus(), qualityCase.getStatus(),
-                    "补产计划" + issue.getIssueNo() + "累计完成" + plain(issue.getFinishNum())
+                    "补产计划" + issue.getIssueNo() + "累计完成" + plain(completed)
                             + "，已覆盖补产需求" + plain(supplement.getRequestQuantity()));
         }
     }
@@ -1564,9 +1604,8 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
         Set<Long> issueIds = cases.stream().map(PlnQualityReplanCaseEntity::getIssueId)
                 .filter(Objects::nonNull).collect(Collectors.toSet());
         if (issueIds.isEmpty()) return;
-        Map<Long, List<PlnQualitySupplementDemandEntity>> grouped = supplementMapper.selectList(
-                        new LambdaQueryWrapper<PlnQualitySupplementDemandEntity>()
-                                .in(PlnQualitySupplementDemandEntity::getSourceIssueId, issueIds))
+        Map<Long, List<PlnQualitySupplementDemandEntity>> grouped = supplementMapper.sourceSupplementsForIssues(
+                        TenantContextHolder.getTenantId(), FactoryContextHolder.getFactoryCode(), issueIds)
                 .stream().collect(Collectors.groupingBy(PlnQualitySupplementDemandEntity::getSourceIssueId));
         for (PlnQualityReplanCaseEntity item : cases) {
             SupplementTotals totals = supplementTotals(grouped.getOrDefault(item.getIssueId(), List.of()), null);
@@ -1607,6 +1646,7 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
                     issues.get(supplement.getSupplementIssueId()));
             applyWithdrawalState(supplement, withdrawals.get(supplement.getId()));
         }
+        supplementProgress.enrichAll(supplements);
     }
 
     private void enrichSupplement(PlnQualitySupplementDemandEntity supplement) {
@@ -1617,6 +1657,8 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
         PlnIssueEntity issue = supplement.getSupplementIssueId() == null ? null
                 : issueMapper.selectById(supplement.getSupplementIssueId());
         applyDownstreamState(supplement, mrp, issue);
+        supplementProgress.enrich(supplement, Integer.valueOf(2).equals(supplement.getPlanningModelVersion())
+                && StrUtil.isNotBlank(supplement.getProductDemandNo()) ? supplementProgress.mrpRows(supplement) : mrp);
         PlnQualitySupplementWithdrawalEntity withdrawal = withdrawalMapper.selectOne(
                 new LambdaQueryWrapper<PlnQualitySupplementWithdrawalEntity>()
                         .eq(PlnQualitySupplementWithdrawalEntity::getSupplementId, supplement.getId())
@@ -1659,7 +1701,9 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
             });
             return;
         }
-        if ("FULFILLED".equals(supplement.getStatus())
+        if ("DEMAND_CREATED".equals(supplement.getStatus())) {
+            supplement.setDownstreamStatus("PLANNING_PENDING").setDownstreamMessage("需求已接收，等待MPS / MRP计划");
+        } else if ("FULFILLED".equals(supplement.getStatus())
                 || issue != null && nz(issue.getFinishNum()).compareTo(nz(supplement.getRequestQuantity())) >= 0) {
             supplement.setDownstreamStatus("FULFILLED").setDownstreamMessage("补产数量已完成并回写PLAN");
         } else if (mrp.isEmpty()) {
@@ -1684,9 +1728,8 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
     }
 
     private SupplementTotals supplementTotals(Long issueId, Long excludedId) {
-        return supplementTotals(supplementMapper.selectList(
-                new LambdaQueryWrapper<PlnQualitySupplementDemandEntity>()
-                        .eq(PlnQualitySupplementDemandEntity::getSourceIssueId, issueId)), excludedId);
+        return supplementTotals(supplementMapper.sourceSupplements(TenantContextHolder.getTenantId(),
+                FactoryContextHolder.getFactoryCode(), issueId), excludedId);
     }
 
     private SupplementTotals supplementTotals(List<PlnQualitySupplementDemandEntity> rows, Long excludedId) {
@@ -1694,7 +1737,7 @@ public class PlnQualityLocalReplanServiceImpl implements PlnQualityLocalReplanSe
         BigDecimal pending = BigDecimal.ZERO;
         for (PlnQualitySupplementDemandEntity row : rows) {
             if (Objects.equals(row.getId(), excludedId)) continue;
-            if (Set.of("MRP_GENERATED", "FULFILLED").contains(row.getStatus())) {
+            if (Set.of("DEMAND_CREATED", "MRP_GENERATED", "FULFILLED").contains(row.getStatus())) {
                 covered = covered.add(nz(row.getRequestQuantity()));
             } else if ("SUBMITTED".equals(row.getStatus())) {
                 pending = pending.add(nz(row.getRequestQuantity()));

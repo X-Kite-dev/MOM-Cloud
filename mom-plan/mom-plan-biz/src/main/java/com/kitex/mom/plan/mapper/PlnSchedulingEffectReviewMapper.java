@@ -12,8 +12,8 @@ import java.util.List;
 
 @Mapper
 public interface PlnSchedulingEffectReviewMapper extends BaseMapper<PlnSchedulingEffectReviewEntity> {
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('PLN_SCHEDULING_EFFECT:', #{key}), 0))")
-    void lockKey(@Param("key") String key);
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(CONCAT('PLN_SCHEDULING_EFFECT:', #{key}), 0))")
+    Integer lockKey(@Param("key") String key);
 
     @Select("SELECT * FROM pln_scheduling_effect_review WHERE id=#{id} AND del_flag='0' FOR UPDATE")
     PlnSchedulingEffectReviewEntity lockById(@Param("id") Long id);

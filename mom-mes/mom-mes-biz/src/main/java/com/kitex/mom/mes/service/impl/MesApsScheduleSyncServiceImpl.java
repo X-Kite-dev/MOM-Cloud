@@ -20,8 +20,8 @@ import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
 import com.kitex.mom.mes.mapper.MesTaskMapper;
 import com.kitex.mom.mes.service.MesApsScheduleSyncService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
 import org.springframework.beans.BeanUtils;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -184,8 +184,8 @@ public class MesApsScheduleSyncServiceImpl implements MesApsScheduleSyncService 
         boolean nodeScope = expectedSourceRouteNodeCodes != null;
         List<String> expectedKeys = nodeScope ? expectedSourceRouteNodeCodes : expectedProcessCodes;
         require(expectedProcessCodes != null && expectedKeys != null && !expectedKeys.isEmpty()
-                        && expectedKeys.size() == expectedProcessCodes.size()
-                        && new HashSet<>(expectedKeys).size() == expectedKeys.size(), "原根计划完整范围不合法");
+                && expectedKeys.size() == expectedProcessCodes.size()
+                && new HashSet<>(expectedKeys).size() == expectedKeys.size(), "原根计划完整范围不合法");
         Map<String, MesProduceTaskEntity> byCode = new HashMap<>();
         for (MesProduceTaskEntity row : facts.produceTasks) {
             String key = nodeScope ? row.getSourceRouteNodeCode() : row.getRouteCode();
@@ -257,7 +257,9 @@ public class MesApsScheduleSyncServiceImpl implements MesApsScheduleSyncService 
                         .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().getPlannedNum())));
     }
 
-    /** 仅修改计划属性；实际状态、时间、数量和物料/质量事实均不写。 */
+    /**
+     * 仅修改计划属性；实际状态、时间、数量和物料/质量事实均不写。
+     */
     private boolean updatePlannedFields(MesProduceTaskEntity row) {
         return produceTaskMapper.update(null, new LambdaUpdateWrapper<MesProduceTaskEntity>()
                 .eq(MesProduceTaskEntity::getId, row.getId()).eq(MesProduceTaskEntity::getTenantId, TenantContextHolder.getTenantId())
@@ -284,7 +286,9 @@ public class MesApsScheduleSyncServiceImpl implements MesApsScheduleSyncService 
                 .set(MesProduceTaskEntity::getUpdateTime, LocalDateTime.now())) == 1;
     }
 
-    /** 派工同样显式清空旧计划资源，不覆盖实际派工设备/人员或执行数量。 */
+    /**
+     * 派工同样显式清空旧计划资源，不覆盖实际派工设备/人员或执行数量。
+     */
     private boolean updatePlannedFields(MesTaskArrangeEntity row) {
         return arrangeMapper.update(null, new LambdaUpdateWrapper<MesTaskArrangeEntity>()
                 .eq(MesTaskArrangeEntity::getId, row.getId()).eq(MesTaskArrangeEntity::getTenantId, TenantContextHolder.getTenantId())
@@ -345,7 +349,9 @@ public class MesApsScheduleSyncServiceImpl implements MesApsScheduleSyncService 
         return null;
     }
 
-    /** 精确解析真实任务，再核原节点和新的APS证据；不把同工序的所有物理工单一并移动。 */
+    /**
+     * 精确解析真实任务，再核原节点和新的APS证据；不把同工序的所有物理工单一并移动。
+     */
     private MesProduceTaskEntity resolveUpdate(Facts facts, MesApsLocalScheduleDTO.OperationUpdate update) {
         boolean nodeMode = StrUtil.isNotBlank(update.getSourceRouteNodeCode());
         require(nodeMode ? validNode(update.getSourceRouteNodeCode()) : update.getSourceRouteNodeCode() == null,

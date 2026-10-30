@@ -12,7 +12,9 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 public interface OmsProductionScopeOwnershipMapper {
 
-    /** 未唯一归属当前租户时返回0；不得仅凭工厂/订单号读取无租户列的旧交付表。 */
+    /**
+     * 未唯一归属当前租户时返回0；不得仅凭工厂/订单号读取无租户列的旧交付表。
+     */
     @InterceptorIgnore(tenantLine = "true")
     @Select("""
             SELECT count(*) FROM "mom_plan".oms_order_base b

@@ -86,19 +86,27 @@ public class MesIdentifierBindingGroupEntity extends BaseEntity<MesIdentifierBin
     @Schema(description = "释放工序编码")
     private String releaseRouteCode;
 
-    /** 内容协议独立于永久组业务版本；旧账为NULL，禁止自动迁移。 */
+    /**
+     * 内容协议独立于永久组业务版本；旧账为NULL，禁止自动迁移。
+     */
     @Schema(description = "原生内容协议NODE_BINDING_V2，历史组为空")
     private String policySchemaVersion;
 
-    /** 原生节点所属的工程路线编码，与主工序编码分离。 */
+    /**
+     * 原生节点所属的工程路线编码，与主工序编码分离。
+     */
     @Schema(description = "原生组所属工艺路线编码")
     private String processRouteCode;
 
-    /** 原生唯一绑定节点；主工序相同也不能与释放节点相同。 */
+    /**
+     * 原生唯一绑定节点；主工序相同也不能与释放节点相同。
+     */
     @Schema(description = "绑定节点编码")
     private String bindRouteNodeCode;
 
-    /** 原生唯一释放节点，所有区段路径均须经过。 */
+    /**
+     * 原生唯一释放节点，所有区段路径均须经过。
+     */
     @Schema(description = "释放节点编码")
     private String releaseRouteNodeCode;
 

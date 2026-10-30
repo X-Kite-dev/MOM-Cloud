@@ -8,19 +8,11 @@ import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesReportSourceAssignmentDTO;
-import com.kitex.mom.mes.entity.MesApsBatchAllocationEntity;
-import com.kitex.mom.mes.entity.MesProduceTaskEntity;
-import com.kitex.mom.mes.entity.MesReportSourceAssignmentEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
-import com.kitex.mom.mes.mapper.MesApsBatchAllocationMapper;
-import com.kitex.mom.mes.mapper.MesProduceTaskMapper;
-import com.kitex.mom.mes.mapper.MesReportSourceAssignmentMapper;
-import com.kitex.mom.mes.mapper.MesTaskMapper;
-import com.kitex.mom.mes.mapper.MesTaskReportMapper;
-import com.kitex.mom.mes.service.MesReportSourceAssignmentService;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.ReportModeEnum;
 import com.kitex.mom.mes.exception.MesReportSourceRejectedException;
+import com.kitex.mom.mes.mapper.*;
+import com.kitex.mom.mes.service.MesReportSourceAssignmentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -29,16 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -83,7 +66,7 @@ public class MesReportSourceAssignmentServiceImpl
     public Map<Long, MesReportSourceAssignmentDTO.Preview> taskEvidenceBatch(List<Long> taskIds) {
         String factory = factoryAccess.require("read");
         require(taskIds != null && taskIds.size() <= 5000 && taskIds.stream().allMatch(Objects::nonNull)
-                        && new HashSet<>(taskIds).size() == taskIds.size(), "须提供完整唯一工单范围，最多5000单");
+                && new HashSet<>(taskIds).size() == taskIds.size(), "须提供完整唯一工单范围，最多5000单");
         if (taskIds.isEmpty()) {
             return Map.of();
         }
@@ -158,18 +141,22 @@ public class MesReportSourceAssignmentServiceImpl
         return entity;
     }
 
-    /** 原号重放同时核对完整规范化命令和实名人员，不只比较报工ID。 */
+    /**
+     * 原号重放同时核对完整规范化命令和实名人员，不只比较报工ID。
+     */
     private String requestFingerprint(MesReportSourceAssignmentDTO.Assign command,
-                                     List<MesReportSourceAssignmentDTO.Allocation> chosen, String factory) {
+                                      List<MesReportSourceAssignmentDTO.Allocation> chosen, String factory) {
         return hash(JSONUtil.toJsonStr(Arrays.asList(tenant().toString(), factory,
                 command.getReportId().toString(), command.getExpectedFingerprint(), chosen,
                 command.getEvidenceReference().trim(), command.getReason().trim(), SecurityUtils.getUser().getUsername())));
     }
 
-    /** 只读领域校验与实体组装，不写库、不调用远程命令。 */
+    /**
+     * 只读领域校验与实体组装，不写库、不调用远程命令。
+     */
     private MesReportSourceAssignmentEntity prepareAssignment(MesReportSourceAssignmentDTO.Assign command,
-            List<MesReportSourceAssignmentDTO.Allocation> chosen, String requestFingerprint,
-            MesTaskReportEntity target, MesTaskEntity task, String factory) {
+                                                              List<MesReportSourceAssignmentDTO.Allocation> chosen, String requestFingerprint,
+                                                              MesTaskReportEntity target, MesTaskEntity task, String factory) {
         Facts facts = facts(task, target.getId(), factory);
         require(Boolean.TRUE.equals(facts.view().getEligible())
                         && Objects.equals(facts.view().getFingerprint(), command.getExpectedFingerprint()),
@@ -235,7 +222,9 @@ public class MesReportSourceAssignmentServiceImpl
         return getOne(scope(factory).eq(MesReportSourceAssignmentEntity::getRequestId, requestId));
     }
 
-    /** 完整物理工单有唯一末序且全量报工计数守恒，才可能形成来源完成量。 */
+    /**
+     * 完整物理工单有唯一末序且全量报工计数守恒，才可能形成来源完成量。
+     */
     private Facts facts(MesTaskEntity task, Long targetReportId, String factory) {
         var identityScope = taskMapper.selectList(new LambdaQueryWrapper<MesTaskEntity>()
                 .eq(MesTaskEntity::getTenantId, tenant()).eq(MesTaskEntity::getFactoryCode, factory)
@@ -263,7 +252,9 @@ public class MesReportSourceAssignmentServiceImpl
         return facts(task, targetReportId, factory, terminals, allocations, reports, versions);
     }
 
-    /** 单条与批量都使用同一计算，不建立第二套来源量公式。 */
+    /**
+     * 单条与批量都使用同一计算，不建立第二套来源量公式。
+     */
     private Facts facts(MesTaskEntity task, Long targetReportId, String factory, List<MesProduceTaskEntity> terminals,
                         List<MesApsBatchAllocationEntity> allocations, List<MesTaskReportEntity> reports,
                         List<MesReportSourceAssignmentEntity> versions) {
@@ -355,7 +346,8 @@ public class MesReportSourceAssignmentServiceImpl
             live = live.add(quantity);
             if (allocations.size() <= 1) {
                 current.setAssignmentState("DIRECT");
-                if (allocations.size() == 1) assigned.merge(allocations.get(0).getId().toString(), quantity, BigDecimal::add);
+                if (allocations.size() == 1)
+                    assigned.merge(allocations.get(0).getId().toString(), quantity, BigDecimal::add);
             } else {
                 var record = latest.get(report.getId());
                 if (record == null) {
@@ -466,7 +458,7 @@ public class MesReportSourceAssignmentServiceImpl
             return hash(legacySnapshot); // 保持旧NONE来源核定算法字节级兼容，不追加四个null使旧审批变STALE。
         }
         require(report.getIdentifierBindingId() != null && report.getIdentifierBindingVersion() != null
-                && report.getIdentifierNodeAction() != null && report.getIdentifierBindingSnapshot() != null,
+                        && report.getIdentifierNodeAction() != null && report.getIdentifierBindingSnapshot() != null,
                 "动态报工事实不完整，禁止核定来源");
         return hash(JSONUtil.toJsonStr(Arrays.asList("MES_SOURCE_REPORT_BINDING_V2", legacySnapshot,
                 report.getIdentifierBindingId().toString(), report.getIdentifierBindingVersion(),
@@ -510,7 +502,9 @@ public class MesReportSourceAssignmentServiceImpl
                 .eq(MesReportSourceAssignmentEntity::getFactoryCode, factory);
     }
 
-    /** 数量读侧只加载计算所需字段，避免全工单累计证据在历史版本间二次膨胀。 */
+    /**
+     * 数量读侧只加载计算所需字段，避免全工单累计证据在历史版本间二次膨胀。
+     */
     private LambdaQueryWrapper<MesReportSourceAssignmentEntity> ledgerScope(String factory) {
         return scope(factory).select(MesReportSourceAssignmentEntity::getId, MesReportSourceAssignmentEntity::getTaskId,
                 MesReportSourceAssignmentEntity::getReportId, MesReportSourceAssignmentEntity::getAssignmentVersion,

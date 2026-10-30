@@ -44,7 +44,7 @@ public class MesAutoReportCaptureServiceImpl extends ServiceImpl<MesAutoReportEv
     public void freeze(MesAutoReportEventEntity event, MesAutoReportEventDTO input) {
         String factory = access.require("write");
         require(MesAutoReportCaptureEvidence.VERSION.equals(input.getCaptureVersion())
-                && input.getArrangeCode() != null && !input.getArrangeCode().isBlank(),
+                        && input.getArrangeCode() != null && !input.getArrangeCode().isBlank(),
                 "V2设备事件须明确原派工，不能处理时按设备猜当前工单");
         var matches = arranges.selectList(new LambdaQueryWrapper<MesTaskArrangeEntity>()
                 .eq(MesTaskArrangeEntity::getTenantId, TenantContextHolder.getTenantId())
@@ -56,18 +56,18 @@ public class MesAutoReportCaptureServiceImpl extends ServiceImpl<MesAutoReportEv
         var policy = contract.getIdentifierNodePolicy();
         nodeReadiness.assertReady(nodeReadiness.execution(arrange, contract, com.kitex.mom.mes.enums.MesReportChannelEnum.DEVICE));
         require(!"NONE".equals(policy.getAction()) && "ONE_CODE".equals(contract.getReportMode())
-                && contract.getAllowedTriggers().contains("AUTO_EVENT") && "AUTO".equals(arrange.getWorksiteTypes())
-                && "PRODUCT".equals(arrange.getStatus()) && Objects.equals(event.getDeviceCode(), arrange.getPlannedDeviceCode()),
+                        && contract.getAllowedTriggers().contains("AUTO_EVENT") && "AUTO".equals(arrange.getWorksiteTypes())
+                        && "PRODUCT".equals(arrange.getStatus()) && Objects.equals(event.getDeviceCode(), arrange.getPlannedDeviceCode()),
                 "V2动态采集须为允许设备触发的生产中单件原节点及锁定设备");
         var preview = bindings.preview(arrange.getCode(), event.getTransferCode(), input.getExternalIdentifier());
         if ("BIND".equals(policy.getAction())) {
             require(input.getExpectedBindingId() == null && input.getExpectedBindingVersion() == null
-                    && Objects.equals(event.getTransferCode(), preview.getCanonicalIdentifier()),
+                            && Objects.equals(event.getTransferCode(), preview.getCanonicalIdentifier()),
                     "设备绑定必须提供原内部规范SN及外码，不能在迟到接收时解析可变静态别名");
         } else {
             require(input.getExternalIdentifier() == null
-                    && Objects.equals(preview.getExpectedBindingId(), input.getExpectedBindingId())
-                    && Objects.equals(preview.getExpectedBindingVersion(), input.getExpectedBindingVersion()),
+                            && Objects.equals(preview.getExpectedBindingId(), input.getExpectedBindingId())
+                            && Objects.equals(preview.getExpectedBindingVersion(), input.getExpectedBindingVersion()),
                     "设备原采集实例/版本与该节点不一致；禁止改取当前新占用");
             event.setExpectedBindingId(MesAutoReportCaptureEvidence.instanceId(input.getExpectedBindingId()));
         }
@@ -100,25 +100,35 @@ public class MesAutoReportCaptureServiceImpl extends ServiceImpl<MesAutoReportEv
 
     @Override
     @PreAuthorize("@pms.hasPermission('mesAutoReport:event')")
-    public void authorizeDelivery(MesAutoReportEventEntity event) { verifyOwner(event); }
+    public void authorizeDelivery(MesAutoReportEventEntity event) {
+        verifyOwner(event);
+    }
 
     @Override
     @PreAuthorize("@pms.hasPermission('mesAutoReport:event','mesAutoReport:retry')")
-    public void authorizeProcessing(MesAutoReportEventEntity event) { verifyOwner(event); }
+    public void authorizeProcessing(MesAutoReportEventEntity event) {
+        verifyOwner(event);
+    }
 
     private void verifyOwner(MesAutoReportEventEntity event) {
         String factory = access.require("write");
         MesAutoReportCaptureEvidence.verifyStored(event);
         var actor = SecurityUtils.getUser();
         require(Objects.equals(event.getTenantId(), TenantContextHolder.getTenantId())
-                && Objects.equals(event.getFactoryCode(), factory) && Objects.equals(event.getCaptureActorId(), actor.getId())
-                && Objects.equals(event.getCaptureActorCode(), actor.getUsername()),
+                        && Objects.equals(event.getFactoryCode(), factory) && Objects.equals(event.getCaptureActorId(), actor.getId())
+                        && Objects.equals(event.getCaptureActorCode(), actor.getUsername()),
                 "动态事件须以原采集实名和工厂查证/续投；不能用SYSTEM或其他账号代报原事件");
     }
 
-    /** 原事件只能由受控接收服务入账，领域服务不暴露通用写入口。 */
+    /**
+     * 原事件只能由受控接收服务入账，领域服务不暴露通用写入口。
+     */
     @Override
-    public MesAutoReportEventMapper getBaseMapper() { throw new CheckedException("可信采集禁止通用CRUD，请使用正式设备事件入口"); }
+    public MesAutoReportEventMapper getBaseMapper() {
+        throw new CheckedException("可信采集禁止通用CRUD，请使用正式设备事件入口");
+    }
 
-    private void require(boolean condition, String message) { if (!condition) throw new CheckedException(message); }
+    private void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
 }

@@ -8,6 +8,6 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface PlnIssueCallbackReceiptMapper extends MomBaseMapper<PlnIssueCallbackReceiptEntity> {
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('PLN_ISSUE_CALLBACK:', #{requestId}), 0))")
-    void lockRequest(@Param("requestId") String requestId);
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(CONCAT('PLN_ISSUE_CALLBACK:', #{requestId}), 0))")
+    Integer lockRequest(@Param("requestId") String requestId);
 }

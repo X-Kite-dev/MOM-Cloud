@@ -86,12 +86,16 @@ public class PlnSchedulingTaskDetailEntity extends BaseEntity<PlnSchedulingTaskD
     @Schema(description = "工艺路线编码（快照，用于冲突检测）")
     private String processRouteCode;
 
-    /** 排程开始时已由MDM精确核验的工程版本ID。 */
+    /**
+     * 排程开始时已由MDM精确核验的工程版本ID。
+     */
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     @Schema(description = "排程工程版本ID快照")
     private Long engineeringReleaseId;
 
-    /** 与releaseId共同确定唯一工程原文的SHA256。 */
+    /**
+     * 与releaseId共同确定唯一工程原文的SHA256。
+     */
     @Schema(description = "排程工程版本内容指纹")
     private String engineeringContentHash;
 

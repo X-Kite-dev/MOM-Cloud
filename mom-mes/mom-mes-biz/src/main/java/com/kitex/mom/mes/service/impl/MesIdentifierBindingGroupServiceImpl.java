@@ -27,11 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 真实派工事务中的永久区段冻结及查询。
@@ -53,6 +49,8 @@ public class MesIdentifierBindingGroupServiceImpl
     private final MesTaskMapper taskMapper;
     private final MesProduceTaskMapper produceTaskMapper;
     private final MesIdentifierNodePolicyValidator policyValidator;
+    private final MesProductionTaskMutex productionMutex;
+    private final MesInspectionRevisionHold revisionHolds;
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
@@ -60,26 +58,25 @@ public class MesIdentifierBindingGroupServiceImpl
         String factory = factoryAccess.require("write");
         require(StrUtil.isNotBlank(taskCode) && taskCode.length() <= 100
                 && taskCode.chars().noneMatch(Character::isISOControl), "派工工单号缺失或格式不正确");
-        // JSON数组避免命名空间或编码含分隔符时串锁；Long先转文本再进入Hutool快照。
-        String key = JSONUtil.toJsonStr(List.of("MES_NODE_TASK_LOCK_V1", tenant().toString(), factory, taskCode));
-        require(Integer.valueOf(1).equals(baseMapper.lockTaskBusinessKey(key)), "未取得派工工单业务锁");
+        productionMutex.lock(taskCode);
+        revisionHolds.requireOpen(taskCode);
     }
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public MesIdentifierNodePolicyDTO freezeForDispatch(MesTaskEntity task, MesTaskArrangeEntity arrange,
-                                                       MesIdentifierNodePolicyDTO policy) {
+                                                        MesIdentifierNodePolicyDTO policy) {
         String factory = factoryAccess.require("write");
         require(task != null && task.getId() != null && arrange != null && arrange.getId() == null
-                        && policy != null, "永久区段只允许冻结新派工，不能重写历史派工");
+                && policy != null, "永久区段只允许冻结新派工，不能重写历史派工");
         require(Objects.equals(task.getTenantId(), tenant()) && Objects.equals(task.getFactoryCode(), factory)
-                        && Objects.equals(arrange.getTenantId(), tenant())
-                        && Objects.equals(arrange.getFactoryCode(), factory)
-                        && Objects.equals(arrange.getTaskCode(), task.getCode()), "派工与工单必须属于当前实际租户工厂");
+                && Objects.equals(arrange.getTenantId(), tenant())
+                && Objects.equals(arrange.getFactoryCode(), factory)
+                && Objects.equals(arrange.getTaskCode(), task.getCode()), "派工与工单必须属于当前实际租户工厂");
         lockDispatchTask(task.getCode());
         MesTaskEntity actualTask = taskByCode(task.getCode(), factory);
         require(Objects.equals(actualTask.getId(), task.getId())
-                && Objects.equals(actualTask.getProcessRouteSnapshot(), task.getProcessRouteSnapshot()),
+                        && Objects.equals(actualTask.getProcessRouteSnapshot(), task.getProcessRouteSnapshot()),
                 "工单身份或原路线来源已变化，请重新派工");
         List<MesIdentifierBindingGroupEntity> groups = groups(actualTask.getId(), factory);
         if ("NONE".equals(policy.getAction())) {
@@ -152,7 +149,9 @@ public class MesIdentifierBindingGroupServiceImpl
         return group;
     }
 
-    /** 原永久账不更新；动作不参与组定义指纹，三个角色仍必须共享全部输入规则。 */
+    /**
+     * 原永久账不更新；动作不参与组定义指纹，三个角色仍必须共享全部输入规则。
+     */
     private void assertSameGroup(MesIdentifierBindingGroupEntity group, MesTaskEntity task,
                                  MesIdentifierNodePolicyValidator.FrozenGroupFacts facts) {
         var policy = facts.policy();
@@ -173,7 +172,9 @@ public class MesIdentifierBindingGroupServiceImpl
                 "工单永久区段定义、实际工序图或原路线已变化，禁止覆盖；须核查原工单并另行受控处理");
     }
 
-    /** 历史快照的角色、具体节点、组ID/版本及全部依据都必须仍指向原账。 */
+    /**
+     * 历史快照的角色、具体节点、组ID/版本及全部依据都必须仍指向原账。
+     */
     private void assertHistoricalContract(MesTaskArrangeEntity old, MesIdentifierBindingGroupEntity group,
                                           MesIdentifierNodePolicyDTO current) {
         JsonNode contract = json(old.getExecutionPolicySnapshot(), "区段历史派工缺少完整冻结契约");
@@ -199,7 +200,9 @@ public class MesIdentifierBindingGroupServiceImpl
                 "历史派工未冻结同一永久区段或具体节点，不可用新模板补齐/覆盖旧事实");
     }
 
-    /** 指纹不是允许改公开字段的令牌；历史输入规则也须逐字段匹配原定义。 */
+    /**
+     * 指纹不是允许改公开字段的令牌；历史输入规则也须逐字段匹配原定义。
+     */
     private boolean definitionMatches(MesIdentifierBindingGroupEntity group, JsonNode node) {
         JsonNode definition = json(group.getDefinitionSnapshot(), "永久区段公开定义依据已损坏");
         var fields = definition.fields();
@@ -214,7 +217,9 @@ public class MesIdentifierBindingGroupServiceImpl
         return definition.isObject();
     }
 
-    /** 只在派工事务中追加一次；SQL提交约束还要求同事务存在引用本组的正式派工。 */
+    /**
+     * 只在派工事务中追加一次；SQL提交约束还要求同事务存在引用本组的正式派工。
+     */
     private MesIdentifierBindingGroupEntity appendGroup(MesTaskEntity task,
                                                         MesIdentifierNodePolicyValidator.FrozenGroupFacts facts,
                                                         String factory) {
@@ -263,7 +268,9 @@ public class MesIdentifierBindingGroupServiceImpl
         return routes;
     }
 
-    /** 原生组旧主工序列只留实际描述，不能用其决定角色。 */
+    /**
+     * 原生组旧主工序列只留实际描述，不能用其决定角色。
+     */
     private String masterAt(MesIdentifierNodePolicyDTO policy, String nodeCode) {
         var matches = policy.getFrozenNodes().stream().filter(node -> nodeCode.equals(node.getSourceRouteNodeCode())).toList();
         require(matches.size() == 1, "永久区段绑定/释放节点不唯一");
@@ -312,13 +319,17 @@ public class MesIdentifierBindingGroupServiceImpl
         }
     }
 
-    /** 禁止从此服务取得Mapper/链式CRUD或不带实际组织的通用查询。内部只使用受保护字段。 */
+    /**
+     * 禁止从此服务取得Mapper/链式CRUD或不带实际组织的通用查询。内部只使用受保护字段。
+     */
     @Override
     public MesIdentifierBindingGroupMapper getBaseMapper() {
         throw new CheckedException("永久区段仅允许领域冻结和隔离查询，禁止通用CRUD/Mapper入口");
     }
 
-    /** 批量实现可直接访问SqlSession，须显式封闭而不能只覆盖save/updateById。 */
+    /**
+     * 批量实现可直接访问SqlSession，须显式封闭而不能只覆盖save/updateById。
+     */
     @Override
     public boolean saveBatch(Collection<MesIdentifierBindingGroupEntity> entities, int batchSize) {
         throw new CheckedException("永久区段只能在真实派工事务中逐组冻结");

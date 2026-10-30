@@ -10,11 +10,16 @@ import lombok.RequiredArgsConstructor;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.time.LocalDateTime;
 import java.util.Objects;
-import static com.kitex.mom.mdm.sop.MdmSopSupport.*;
 
-/** 永久命令账；业务写入和回执写入必须处于同一个调用方事务。 */
+import static com.kitex.mom.mdm.sop.MdmSopSupport.hash;
+import static com.kitex.mom.mdm.sop.MdmSopSupport.require;
+
+/**
+ * 永久命令账；业务写入和回执写入必须处于同一个调用方事务。
+ */
 @Component
 @RequiredArgsConstructor
 public class MdmSopJournal {
@@ -22,8 +27,6 @@ public class MdmSopJournal {
     private final MdmSopSupport support;
     private final SqlSessionTemplate session;
     private final MdmSopRequestClaimService claims;
-
-    public record Attempt(String requestId, String action, String commandHash, MdmFormalSopDTO.Receipt previous) { }
 
     public Attempt begin(String requestId, String action, Object command) {
         require(requestId != null && requestId.matches("[A-Za-z0-9_-]{16,64}"), "SOP操作需要16至64位永久请求号");
@@ -44,7 +47,7 @@ public class MdmSopJournal {
     }
 
     public MdmFormalSopDTO.Receipt finish(Attempt attempt, Long versionId, String targetId,
-                                         String status, String resultHash, Object before) {
+                                          String status, String resultHash, Object before) {
         var receipt = new MdmFormalSopDTO.Receipt().setRequestId(attempt.requestId()).setAction(attempt.action())
                 .setCommandHash(attempt.commandHash()).setTargetId(targetId).setStatus(status)
                 .setResultHash(resultHash).setOperatedAt(LocalDateTime.now());
@@ -58,7 +61,9 @@ public class MdmSopJournal {
         return receipt;
     }
 
-    /** 行锁等待已在途的业务事务；只取消尚未执行的原请求，不撤销任何已提交业务。 */
+    /**
+     * 行锁等待已在途的业务事务；只取消尚未执行的原请求，不撤销任何已提交业务。
+     */
     @Transactional(rollbackFor = Exception.class)
     public MdmFormalSopDTO.Receipt cancel(String requestId) {
         String factory = support.access(true);
@@ -93,7 +98,9 @@ public class MdmSopJournal {
         return receipt;
     }
 
-    /** 只能恢复当前实名人员的原请求，不泄露他人操作载荷。 */
+    /**
+     * 只能恢复当前实名人员的原请求，不泄露他人操作载荷。
+     */
     public MdmFormalSopDTO.Receipt receipt(String requestId) {
         support.access(false);
         var operation = mapper.selectOne(scope().eq(MdmSopOperationEntity::getRequestId, requestId)
@@ -113,5 +120,8 @@ public class MdmSopJournal {
         return new LambdaQueryWrapper<MdmSopOperationEntity>()
                 .eq(MdmSopOperationEntity::getTenantId, support.tenant())
                 .eq(MdmSopOperationEntity::getFactoryCode, support.access(false));
+    }
+
+    public record Attempt(String requestId, String action, String commandHash, MdmFormalSopDTO.Receipt previous) {
     }
 }

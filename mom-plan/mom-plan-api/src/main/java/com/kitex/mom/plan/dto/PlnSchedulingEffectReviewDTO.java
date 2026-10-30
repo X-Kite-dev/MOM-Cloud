@@ -9,9 +9,12 @@ import lombok.experimental.Accessors;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 已发布APS候选方案的MES执行效果回评命令与视图。 */
+/**
+ * 已发布APS候选方案的MES执行效果回评命令与视图。
+ */
 public final class PlnSchedulingEffectReviewDTO {
-    private PlnSchedulingEffectReviewDTO() {}
+    private PlnSchedulingEffectReviewDTO() {
+    }
 
     @Data
     public static class Query {
@@ -41,7 +44,9 @@ public final class PlnSchedulingEffectReviewDTO {
         private List<PlnSchedulingEffectObservationEntity> observations;
     }
 
-    /** actualSnapshot 中的逐工序证据结构，字段定义固定并随 scoreFormulaVersion 版本化。 */
+    /**
+     * actualSnapshot 中的逐工序证据结构，字段定义固定并随 scoreFormulaVersion 版本化。
+     */
     @Data
     @Accessors(chain = true)
     public static class OperationEvidence {
@@ -49,6 +54,15 @@ public final class PlnSchedulingEffectReviewDTO {
         private String issueNo;
         private String productCode;
         private String productName;
+        @Schema(description = "本次冻结APS工序主键，文本；历史观察不补填")
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        private String schedulingOperationId;
+        @Schema(description = "本次原冻结路线节点；不能用当前MDM路线补造")
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        private String sourceRouteNodeCode;
+        @Schema(description = "本次MES真实任务的出生节点，历史观察不补填")
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        private String mesSourceRouteNodeCode;
         private String processCode;
         private String processName;
         private Integer operationSeq;
@@ -83,7 +97,9 @@ public final class PlnSchedulingEffectReviewDTO {
         private DurationEvidence durationEvidence;
     }
 
-    /** 生产段分钟独立证据，不改变开完工评分，不声明纯加工、停机或人工人时。 */
+    /**
+     * 生产段分钟独立证据，不改变开完工评分，不声明纯加工、停机或人工人时。
+     */
     @Data
     @Accessors(chain = true)
     public static class DurationEvidence {

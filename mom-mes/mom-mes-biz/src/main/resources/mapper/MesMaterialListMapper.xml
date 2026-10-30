@@ -97,7 +97,7 @@
                    WHEN 'PICKING' THEN '领料中'
                    WHEN 'COMPLETED' THEN '完成'
                    ELSE ml.status
-                   END                                        as task_status_name,
+                   END                                          as task_status_name,
                mt.plan_start_date,
                mt.plan_end_date,
                COALESCE(detail_stats.material_count, 0)         as material_count,

@@ -51,6 +51,7 @@ public final class QmsBatchQualityTraceDTO {
         private Integer returnedRecordCount;
         private List<QualityRecord> records = new ArrayList<>();
         private List<String> dataGaps = new ArrayList<>();
+        private List<String> limitations = new ArrayList<>();
         private List<String> evidenceRefs = new ArrayList<>();
         private Boolean truncated;
     }

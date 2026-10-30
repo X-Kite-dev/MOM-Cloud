@@ -110,7 +110,9 @@ public final class MesReportReverseRequestDTO {
         private LocalDateTime reportTime;
     }
 
-    /** 原申请正文中的只读节点范围，长整型ID以文本传输。 */
+    /**
+     * 原申请正文中的只读节点范围，长整型ID以文本传输。
+     */
     @Data
     @Accessors(chain = true)
     public static class NodeScope {

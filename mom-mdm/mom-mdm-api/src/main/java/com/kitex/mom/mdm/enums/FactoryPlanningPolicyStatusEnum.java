@@ -2,7 +2,9 @@ package com.kitex.mom.mdm.enums;
 
 import java.util.Arrays;
 
-/** 工厂计划协同策略版本状态。 */
+/**
+ * 工厂计划协同策略版本状态。
+ */
 public enum FactoryPlanningPolicyStatusEnum {
     DRAFT,
     PENDING_EFFECTIVE,

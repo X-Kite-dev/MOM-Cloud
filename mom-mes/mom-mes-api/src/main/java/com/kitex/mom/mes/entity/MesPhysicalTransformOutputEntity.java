@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
 
-/** 正式转换输出事实；仅GOOD生成可用库存，SCRAP/MISSING保留原事实但不伪造库存。 */
+/**
+ * 正式转换输出事实；仅GOOD生成可用库存，SCRAP/MISSING保留原事实但不伪造库存。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

@@ -16,15 +16,23 @@ import java.util.List;
  */
 public interface PlnFormalPlanContractService extends IService<PlnFormalPlanContractEntity> {
 
-    /** 核验并幂等接收 ERP 权威计划。 */
+    /**
+     * 核验并幂等接收 ERP 权威计划。
+     */
     PlnFormalPlanContractDTO importErpPlan(PlnErpPlanImportCommand command);
 
-    /** 将已经落库并通过权威复核的 MOM MRP 批次发布为统一正式合同。 */
+    /**
+     * 将已经落库并通过权威复核的 MOM MRP 批次发布为统一正式合同。
+     */
     List<PlnFormalPlanContractDTO> publishMomMrpContract(String mrpRunNo, String requestId);
 
-    /** 核验 ERP 建单回执并生成带 ERP 生产订单号的正式合同新版本。 */
+    /**
+     * 核验 ERP 建单回执并生成带 ERP 生产订单号的正式合同新版本。
+     */
     PlnFormalPlanContractDTO receiveErpProductionOrders(PlnErpProductionOrderReceiptCommand command);
 
-    /** 读取当前工厂可用于 APS/MES 的已核验合同。 */
+    /**
+     * 读取当前工厂可用于 APS/MES 的已核验合同。
+     */
     PlnFormalPlanContractDTO getVerifiedContract(String contractNo, Integer contractVersion);
 }

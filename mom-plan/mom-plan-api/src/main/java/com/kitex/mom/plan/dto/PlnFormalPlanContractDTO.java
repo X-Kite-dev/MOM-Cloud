@@ -8,7 +8,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 对下游公开的已核验正式计划合同；所有雪花主键按字符串输出。 */
+/**
+ * 对下游公开的已核验正式计划合同；所有雪花主键按字符串输出。
+ */
 @Data
 @Schema(description = "正式计划合同")
 public class PlnFormalPlanContractDTO {
@@ -27,7 +29,9 @@ public class PlnFormalPlanContractDTO {
     private LocalDateTime verifiedTime;
     private List<Line> lines;
 
-    /** 合同明细保留父子行关系，支持多层自制件和其采购/外协需求。 */
+    /**
+     * 合同明细保留父子行关系，支持多层自制件和其采购/外协需求。
+     */
     @Data
     public static class Line {
         private String id;

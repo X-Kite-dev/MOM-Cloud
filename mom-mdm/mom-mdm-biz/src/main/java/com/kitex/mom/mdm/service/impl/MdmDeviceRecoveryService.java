@@ -11,6 +11,7 @@ import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.dto.MdmDeviceRecoveryCommand;
 import com.kitex.mom.mdm.dto.MdmDeviceRecoveryEventEvidence;
+import com.kitex.mom.mdm.dto.MdmRepairAgentEvidence;
 import com.kitex.mom.mdm.entity.MdmDeviceEntity;
 import com.kitex.mom.mdm.entity.MdmDeviceRecoveryReceipt;
 import com.kitex.mom.mdm.entity.MdmFactoryModelEntity;
@@ -30,6 +31,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -200,6 +202,74 @@ public class MdmDeviceRecoveryService {
     public MdmDeviceRecoveryReceipt byVerification(Long id) {
         String f = access("read");
         return receipts.selectOne(scope(f).eq(MdmDeviceRecoveryReceipt::getVerificationId, id));
+    }
+
+    /**
+     * 面向维修Agent的最小只读投影：任务、验证版本、设备编码和当前工厂必须全部吻合。
+     * 不创建恢复回执，也不把MDM资格误当作MES派工复产批准。
+     */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public MdmRepairAgentEvidence.Result agentEvidence(MdmRepairAgentEvidence.Query query) {
+        String factory = access("read");
+        require(query != null && factory.equals(query.getFactoryCode())
+                && text(query.getDeviceCode(), 100), "维修设备资格查询须使用当前实际工厂和精确设备编码");
+        Long taskId = positiveId(query.getRepairTaskId(), "维修任务主键");
+        Long verificationId = positiveId(query.getVerificationId(), "维修验证版本主键");
+        MdmDeviceEntity current = device(query.getDeviceCode(), factory, false);
+        var result = new MdmRepairAgentEvidence.Result()
+                .setFactoryCode(factory).setRepairTaskId(taskId.toString())
+                .setVerificationId(verificationId.toString()).setDeviceCode(current.getDeviceCode())
+                .setDeviceId(current.getId().toString()).setDeviceState(current.getDeviceState())
+                .setDeviceUsable(current.getDeviceUsable()).setDeviceEnabled(current.getStatus())
+                .setQualificationVerified(false).setObservedAt(LocalDateTime.now());
+        result.getEvidenceRefs().add("MDM:mdm_device:" + current.getId());
+        MdmDeviceRecoveryReceipt receipt = receipts.selectOne(scope(factory)
+                .eq(MdmDeviceRecoveryReceipt::getDeviceCode, current.getDeviceCode())
+                .orderByDesc(MdmDeviceRecoveryReceipt::getId).last("LIMIT 1"));
+        if (receipt == null) {
+            result.getDataGaps().add("当前设备尚无MDM正式资格恢复回执");
+        } else {
+            result.setRecoveryReceiptId(receipt.getId().toString()).setRecoveredAt(receipt.getCreateTime());
+            result.getEvidenceRefs().add("MDM:mdm_device_recovery_receipt:" + receipt.getId());
+            boolean sameSource = false;
+            try {
+                var version = JSON.readTree(receipt.getSourceJson()).path("version");
+                sameSource = Objects.equals(receipt.getDeviceId(), current.getId())
+                        && Objects.equals(receipt.getVerificationId(), verificationId)
+                        && taskId.toString().equals(version.path("taskId").asText())
+                        && current.getDeviceCode().equals(version.path("deviceCode").asText())
+                        && hash(receipt.getSourceJson()).equals(receipt.getSourceFingerprint())
+                        && Boolean.TRUE.equals(receipt.getTrialConfirmed())
+                        && Boolean.TRUE.equals(receipt.getSafetyConfirmed())
+                        && Boolean.TRUE.equals(receipt.getProductionHandoverConfirmed())
+                        && receipt.getActorId() != null && receipt.getCreateTime() != null;
+            } catch (RuntimeException malformed) {
+                result.getDataGaps().add("MDM恢复回执来源无法完整核验");
+            } catch (com.fasterxml.jackson.core.JsonProcessingException malformed) {
+                result.getDataGaps().add("MDM恢复回执来源无法完整解析");
+            }
+            if (!sameSource) result.getDataGaps().add("最新MDM恢复回执不属于本维修任务及验证版本，或回执不完整");
+            boolean currentEligible = Boolean.TRUE.equals(current.getStatus())
+                    && "1".equals(current.getDeviceUsable())
+                    && Set.of("0", "4", "5").contains(Objects.toString(current.getDeviceState(), ""));
+            if (!currentEligible) result.getDataGaps().add("MDM当前设备状态不满足可用资格");
+            result.setQualificationVerified(sameSource && currentEligible);
+        }
+        result.setFactFingerprint(hash(json(Arrays.asList(result.getFactoryCode(), result.getRepairTaskId(),
+                result.getVerificationId(), result.getDeviceCode(), result.getDeviceId(),
+                result.getDeviceState(), result.getDeviceUsable(), result.getDeviceEnabled(),
+                result.getRecoveryReceiptId(), result.getRecoveredAt(), result.getQualificationVerified(),
+                result.getDataGaps()))));
+        return result;
+    }
+
+    private Long positiveId(String value, String label) {
+        require(value != null && value.matches("[1-9][0-9]{0,18}"), label + "无效");
+        try {
+            return Long.valueOf(value);
+        } catch (NumberFormatException overflow) {
+            throw new CheckedException(label + "超出数据库范围");
+        }
     }
 
     private TpmRepairRecoveryEvidence proof(Long id, String f) {

@@ -66,6 +66,18 @@ public class WmsMaterialInoutFlowController {
         wrapper.in(CollUtil.isNotEmpty(wmsInoutFlow.getWarehouseCode()), WmsInoutFlowEntity::getWarehouseCode, wmsInoutFlow.getWarehouseCode())
                 .like(StrUtil.isNotBlank(wmsInoutFlow.getBillNo()), WmsInoutFlowEntity::getBillNo, wmsInoutFlow.getBillNo())
                 .like(StrUtil.isNotBlank(wmsInoutFlow.getMatCode()), WmsInoutFlowEntity::getMatCode, wmsInoutFlow.getMatCode())
+                .eq(StrUtil.isNotBlank(wmsInoutFlow.getMatBatch()), WmsInoutFlowEntity::getMatBatch, wmsInoutFlow.getMatBatch())
+                .eq(StrUtil.isNotBlank(wmsInoutFlow.getMatBarcode()), WmsInoutFlowEntity::getMatBarcode, wmsInoutFlow.getMatBarcode())
+                .eq(wmsInoutFlow.getSourceInBillDetailId() != null, WmsInoutFlowEntity::getSourceInBillDetailId,
+                        wmsInoutFlow.getSourceInBillDetailId())
+                .eq(wmsInoutFlow.getSourceStockId() != null, WmsInoutFlowEntity::getSourceStockId,
+                        wmsInoutFlow.getSourceStockId())
+                .eq(StrUtil.isNotBlank(wmsInoutFlow.getStockOwnerType()), WmsInoutFlowEntity::getStockOwnerType,
+                        wmsInoutFlow.getStockOwnerType())
+                .eq(StrUtil.isNotBlank(wmsInoutFlow.getStockOwnerCode()), WmsInoutFlowEntity::getStockOwnerCode,
+                        wmsInoutFlow.getStockOwnerCode())
+                .eq(StrUtil.isNotBlank(wmsInoutFlow.getSourceBusinessNo()), WmsInoutFlowEntity::getSourceBusinessNo,
+                        wmsInoutFlow.getSourceBusinessNo())
                 .like(StrUtil.isNotBlank(wmsInoutFlow.getMatName()), WmsInoutFlowEntity::getMatName, wmsInoutFlow.getMatName())
                 .like(StrUtil.isNotBlank(wmsInoutFlow.getSiteCode()), WmsInoutFlowEntity::getSiteCode, wmsInoutFlow.getSiteCode())
                 .eq(StrUtil.isNotBlank(wmsInoutFlow.getOperateType()), WmsInoutFlowEntity::getOperateType, wmsInoutFlow.getOperateType())

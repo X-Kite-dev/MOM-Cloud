@@ -6,7 +6,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** WMS正式销售出库对OMS交付行的来源精确、永久幂等回传。 */
+/**
+ * WMS正式销售出库对OMS交付行的来源精确、永久幂等回传。
+ */
 public class OmsDeliveryEventCommand {
     @Data
     @Accessors(chain = true)
@@ -22,7 +24,9 @@ public class OmsDeliveryEventCommand {
         private String productCode;
         private BigDecimal shippedNum;
         private LocalDateTime shippedTime;
-        /** NORMAL计入订单净交付；REPLACEMENT只增加可核验实物流，不重复增加原订单净交付。 */
+        /**
+         * NORMAL计入订单净交付；REPLACEMENT只增加可核验实物流，不重复增加原订单净交付。
+         */
         private String shipmentType;
         private Long resolutionCaseId;
     }
@@ -38,7 +42,9 @@ public class OmsDeliveryEventCommand {
         private LocalDateTime completedTime;
     }
 
-    /** OMS交付行当前数量与永久收件事件合计，供WMS独立核对。 */
+    /**
+     * OMS交付行当前数量与永久收件事件合计，供WMS独立核对。
+     */
     @Data
     @Accessors(chain = true)
     public static class LineLedger {

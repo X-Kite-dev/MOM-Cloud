@@ -2,11 +2,12 @@ package com.kitex.mom.mdm.feign;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
-import com.kitex.common.feign.annotation.NoToken;
 import com.kitex.common.feign.annotation.InternalCall;
+import com.kitex.common.feign.annotation.NoToken;
 import com.kitex.mom.mdm.Constants;
-import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.dto.MdmMaterialMeasureDTO;
+import com.kitex.mom.mdm.dto.MdmMaterialWarningConfigDTO;
+import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.cloud.openfeign.SpringQueryMap;
 import org.springframework.web.bind.annotation.*;
@@ -16,7 +17,17 @@ import java.util.List;
 @FeignClient(contextId = "remoteMaterialService", value = Constants.Name)
 public interface RemoteMaterialService {
 
-    /** 实名内部生产采集按实际工厂观察基本计量，精确时间使用文本，不调用匿名详情接口。 */
+    /**
+     * 后台预警按明确租户工厂读取当前参数；不返回完整物料档案。
+     */
+    @InternalCall
+    @GetMapping("/mdmMaterial/internal/warning-configurations")
+    R<List<MdmMaterialWarningConfigDTO>> warningConfigurations(@RequestParam("tenantId") Long tenantId,
+                                                               @RequestParam("factoryCode") String factoryCode);
+
+    /**
+     * 实名内部生产采集按实际工厂观察基本计量，精确时间使用文本，不调用匿名详情接口。
+     */
     @InternalCall(userTokenRequired = true)
     @GetMapping("/mdmMaterial/internal/production-measure")
     R<MdmMaterialMeasureDTO> productionMeasure(@RequestParam("materialCode") String materialCode);

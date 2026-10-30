@@ -13,15 +13,12 @@ import com.kitex.mom.mdm.service.impl.MdmFormalSopServiceImpl;
 import com.kitex.mom.mdm.support.MdmRouteNodeResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
+
 import static com.kitex.mom.mdm.sop.MdmSopSupport.*;
 
 /**
@@ -80,7 +77,7 @@ public class MdmFormalSopSourceService {
         List<MdmFormalSopDTO.Node> ordered = new ArrayList<>(query.getNodes());
         for (var node : ordered) {
             require(node != null && node.getRouteCode() != null && node.getRouteNodeCode() != null
-                            && !node.getRouteNodeCode().isBlank(), "正式SOP解析须明确稳定路线节点");
+                    && !node.getRouteNodeCode().isBlank(), "正式SOP解析须明确稳定路线节点");
             require(unique.add(node.getRouteCode() + "\0" + node.getRouteNodeCode()), "正式SOP解析节点不能重复");
         }
         ordered.sort(Comparator.comparing(MdmFormalSopDTO.Node::getRouteCode)
@@ -108,7 +105,8 @@ public class MdmFormalSopSourceService {
                                 + "已退役、撤回或指纹变化，请先修正正式绑定再下达");
                 item.getSources().add(project(version));
             }
-            if (scoped.isEmpty()) item.getGaps().add("NO_FORMAL_SOP_BINDING：该节点未声明正式SOP，旧附件仍是LEGACY_REFERENCE");
+            if (scoped.isEmpty())
+                item.getGaps().add("NO_FORMAL_SOP_BINDING：该节点未声明正式SOP，旧附件仍是LEGACY_REFERENCE");
             result.add(item);
         }
         return new MdmFormalSopDTO.Manifest().setTenantId(support.tenant().toString()).setFactoryCode(factory)
@@ -116,7 +114,9 @@ public class MdmFormalSopSourceService {
                 .setManifestHash(hash("FORMAL_SOP_MANIFEST_V1", support.tenant(), factory, result));
     }
 
-    /** 下载精确正式版原件；调用方菜单/业务权限仍由控制器负责。 */
+    /**
+     * 下载精确正式版原件；调用方菜单/业务权限仍由控制器负责。
+     */
     public OriginalContent download(String originalId, String versionId, String contentHash) {
         support.access(false);
         var original = original(id(originalId, "原件ID"));
@@ -131,8 +131,6 @@ public class MdmFormalSopSourceService {
         return new OriginalContent(original.getFileName(), original.getMediaType(), storage.readVerified(original));
     }
 
-    public record OriginalContent(String fileName, String mediaType, byte[] bytes) { }
-
     private void validateFormal(MdmSopVersionEntity version, boolean verifyBytes) {
         require(Set.of("RELEASED", "RETIRED", "WITHDRAWN").contains(version.getStatus())
                         && version.getReviewedBy() != null && version.getReviewedTime() != null
@@ -142,8 +140,8 @@ public class MdmFormalSopSourceService {
                 "该SOP没有完整正式批准证明或内容已损坏");
         var original = original(version.getOriginalId());
         require(Objects.equals(original.getSha256(), version.getOriginalHash())
-                        && Objects.equals(original.getByteSize(), version.getOriginalSize())
-                        && Objects.equals(original.getMediaType(), version.getMediaType()), "SOP版本与原件证明不一致");
+                && Objects.equals(original.getByteSize(), version.getOriginalSize())
+                && Objects.equals(original.getMediaType(), version.getMediaType()), "SOP版本与原件证明不一致");
         if (verifyBytes) storage.readVerified(original);
     }
 
@@ -179,5 +177,8 @@ public class MdmFormalSopSourceService {
     private LambdaQueryWrapper<MdmSopVersionEntity> versionScope() {
         return new LambdaQueryWrapper<MdmSopVersionEntity>().eq(MdmSopVersionEntity::getTenantId, support.tenant())
                 .eq(MdmSopVersionEntity::getFactoryCode, support.access(false));
+    }
+
+    public record OriginalContent(String fileName, String mediaType, byte[] bytes) {
     }
 }

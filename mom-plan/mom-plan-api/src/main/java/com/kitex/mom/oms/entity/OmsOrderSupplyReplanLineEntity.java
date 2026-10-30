@@ -13,7 +13,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** OMS订单变更供应级联逐MRP执行行及永久回执。 */
+/**
+ * OMS订单变更供应级联逐MRP执行行及永久回执。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

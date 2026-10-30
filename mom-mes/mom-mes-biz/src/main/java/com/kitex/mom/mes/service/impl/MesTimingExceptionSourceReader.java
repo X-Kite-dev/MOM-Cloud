@@ -20,7 +20,7 @@ public class MesTimingExceptionSourceReader {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED, rollbackFor = Exception.class)
     public MesProcessTimingGuard.Decision inspect(MesTaskArrangeEntity arrange, String mode, String identifier,
-                                                 String originalDependency) {
+                                                  String originalDependency) {
         return timing.inspect(arrange, ReportModeEnum.valueOf(mode), identifier, originalDependency);
     }
 }

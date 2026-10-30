@@ -11,12 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
-import java.util.HashSet;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 
@@ -44,7 +39,9 @@ public class MesPhysicalPositionSurveyPrecheckService {
         return validateLocked(rawJson, body, bundle);
     }
 
-    /** 仅消费服务器在本次真实写域/工单/来源锁内读取的包，不开放客户端bundle参数入口。 */
+    /**
+     * 仅消费服务器在本次真实写域/工单/来源锁内读取的包，不开放客户端bundle参数入口。
+     */
     MesPhysicalPositionSurveyDTO.Preview validateLocked(String rawJson, MesPhysicalPositionSurveyDTO.Body body,
                                                         MesPhysicalTransformSourceBundleDTO bundle) {
         require(TransactionSynchronizationManager.isActualTransactionActive(), "位置预检必须沿本次服务器来源锁事务调用");
@@ -72,7 +69,7 @@ public class MesPhysicalPositionSurveyPrecheckService {
             require(MesPhysicalTransformSourceFreezeService.SOURCE_VERSION.equals(entry.getSourceVersion())
                     && input.getExpectedFingerprint().equals(entry.getSourceFingerprint()), "原位置来源指纹已改变，请重新观察");
             require(entry.getPolicyConfiguration() != null && !MesPhysicalTransformPolicyValidator.NONE.equals(entry.getPolicyConfiguration())
-                    && entry.getStandardId() != null && entry.getStandardFingerprint() != null,
+                            && entry.getStandardId() != null && entry.getStandardFingerprint() != null,
                     "原派工缺真实冻结工程，不能用当前布局给旧NONE补转换依据");
             var policy = codec.policy(entry.getPolicyConfiguration());
             require("DEPANEL".equals(policy.getOperationType()) && "PANEL".equals(policy.getInputObjectType())
@@ -86,11 +83,11 @@ public class MesPhysicalPositionSurveyPrecheckService {
             var sourceRaw = codec.objectDocument(entry.getSourceSnapshot(), MesPhysicalPositionSurveyCodec.MAX_DOCUMENT);
             var origin = codec.objectDocument(sourceRaw.path("originSnapshot").textValue(), MesPhysicalPositionSurveyCodec.MAX_DOCUMENT);
             require("EFFECTIVE".equals(sourceRaw.path("report").path("status").textValue())
-                    && fact.getIdentifier().equals(sourceRaw.path("report").path("transferCode").textValue()),
+                            && fact.getIdentifier().equals(sourceRaw.path("report").path("transferCode").textValue()),
                     "母件原报工已失效或规范标识不属于实际来源");
             require("WIP".equals(origin.path("stock").path("matDetailType").textValue())
-                    && Objects.equals(fact.getMaterialCode(), sourceRaw.path("report").path("matCode").textValue())
-                    && Objects.equals(fact.getUnit(), sourceRaw.path("report").path("reportUnit").textValue()),
+                            && Objects.equals(fact.getMaterialCode(), sourceRaw.path("report").path("matCode").textValue())
+                            && Objects.equals(fact.getUnit(), sourceRaw.path("report").path("reportUnit").textValue()),
                     "位置来源不是有原冻结物料/单位的真实在制库存，不能用未知旧单位解释实物");
             BigDecimal nativeQuantity = codec.quantity(fact.getQuantity(), false, "真实母件库存量");
             nativeTotal = nativeTotal.add(nativeQuantity);
@@ -121,8 +118,8 @@ public class MesPhysicalPositionSurveyPrecheckService {
                 layoutCode = currentLayout;
             } else {
                 require(Objects.equals(canonical, fact.getIdentifier()) && Objects.equals(material, fact.getMaterialCode())
-                        && configuration.equals(entry.getPolicyConfiguration()) && standardId.equals(entry.getStandardId())
-                        && standardSha.equals(entry.getStandardFingerprint()) && layoutCode.equals(currentLayout),
+                                && configuration.equals(entry.getPolicyConfiguration()) && standardId.equals(entry.getStandardId())
+                                && standardSha.equals(entry.getStandardFingerprint()) && layoutCode.equals(currentLayout),
                         "一个母件的来源标识/物料/原完整工程不同，不能借同码合并多个对象");
             }
             BigDecimal amount = nativeQuantity.multiply(codec.quantity(policy.getEquivalenceFactor(), false, "原工程当量"));

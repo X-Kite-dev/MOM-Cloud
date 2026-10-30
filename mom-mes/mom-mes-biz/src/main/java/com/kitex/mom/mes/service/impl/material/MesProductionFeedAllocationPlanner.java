@@ -11,15 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Function;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
@@ -103,7 +95,7 @@ public class MesProductionFeedAllocationPlanner {
                     }
                     require(candidate.substitute()
                                     ? Boolean.TRUE.equals(feed.getSubstituteFlag())
-                                      && feed.getSubstituteRatio() != null && feed.getSubstituteRatio().compareTo(ratio) == 0
+                                    && feed.getSubstituteRatio() != null && feed.getSubstituteRatio().compareTo(ratio) == 0
                                     : !Boolean.TRUE.equals(feed.getSubstituteFlag()) && ratio.compareTo(BigDecimal.ONE) == 0,
                             "原投料冻结替代比例与本次原BOM策略不同，不能重新解释已投物料");
                     var measure = measurements.computeIfAbsent(feed.getMatCode(), materialReader);
@@ -131,7 +123,9 @@ public class MesProductionFeedAllocationPlanner {
         return new Plan(scope, processed, List.copyOf(outputs), List.copyOf(consumptions), List.copyOf(attributions));
     }
 
-    /** 每条实际投料份额只分配一次；每个产出按自己的原需求取量，不按总产量比例舍入。 */
+    /**
+     * 每条实际投料份额只分配一次；每个产出按自己的原需求取量，不按总产量比例舍入。
+     */
     private void attribute(List<OutputDemand> outputs, Map<String, BigDecimal> outputRemaining,
                            FeedConsumption consumption, List<OutputAttribution> result) {
         BigDecimal requirementLeft = consumption.requirementQuantity();
@@ -175,7 +169,9 @@ public class MesProductionFeedAllocationPlanner {
         return result;
     }
 
-    /** 只更新独立游标，不能提前修改实体usedNum，让后续必要CAS拿不到真实before。 */
+    /**
+     * 只更新独立游标，不能提前修改实体usedNum，让后续必要CAS拿不到真实before。
+     */
     private List<Cursor> feeds(Scope scope, List<MesWarehouseFeedEntity> locked) {
         var result = new ArrayList<Cursor>();
         var ids = new HashSet<Long>();
@@ -184,12 +180,12 @@ public class MesProductionFeedAllocationPlanner {
             require(feed != null && feed.getId() != null && feed.getId() > 0 && ids.add(feed.getId()),
                     "投料主键缺失或重复，不能两次使用同一来源余额");
             require(Objects.equals(feed.getTenantId(), scope.tenantId())
-                    && Objects.equals(feed.getFactoryCode(), scope.factoryCode())
-                    && Objects.equals(feed.getTaskCode(), scope.taskCode())
-                    && Objects.equals(feed.getProduceTaskCode(), scope.produceTaskCode())
-                    && Objects.equals(feed.getArrangeCode(), scope.arrangeCode())
-                    && Boolean.FALSE.equals(feed.getIsLock())
-                    && (feed.getMatValidEndDate() == null || !feed.getMatValidEndDate().isBefore(today)),
+                            && Objects.equals(feed.getFactoryCode(), scope.factoryCode())
+                            && Objects.equals(feed.getTaskCode(), scope.taskCode())
+                            && Objects.equals(feed.getProduceTaskCode(), scope.produceTaskCode())
+                            && Objects.equals(feed.getArrangeCode(), scope.arrangeCode())
+                            && Boolean.FALSE.equals(feed.getIsLock())
+                            && (feed.getMatValidEndDate() == null || !feed.getMatValidEndDate().isBefore(today)),
                     "投料不是本次实际组织/原工单工序派工的可用来源");
             BigDecimal total = amount(feed.getFeedNum(), true, "原实际投料总量");
             BigDecimal used = amount(Objects.requireNonNullElse(feed.getUsedNum(), BigDecimal.ZERO), true, "原投料已用量");
@@ -213,10 +209,10 @@ public class MesProductionFeedAllocationPlanner {
     private void validateMeasurement(Scope scope, MesWarehouseFeedEntity feed, MdmMaterialMeasureDTO material,
                                      String requirementUnit, boolean substitute) {
         require(material != null && Boolean.TRUE.equals(material.getEnabled())
-                && Objects.equals(material.getTenantId(), scope.tenantId().toString())
-                && Objects.equals(material.getFactoryCode(), scope.factoryCode())
-                && Objects.equals(material.getMaterialCode(), feed.getMatCode())
-                && Objects.equals(material.getBasicUnit(), feed.getMatUnit()),
+                        && Objects.equals(material.getTenantId(), scope.tenantId().toString())
+                        && Objects.equals(material.getFactoryCode(), scope.factoryCode())
+                        && Objects.equals(material.getMaterialCode(), feed.getMatCode())
+                        && Objects.equals(material.getBasicUnit(), feed.getMatUnit()),
                 "投料原单位与实际启用物料不一致，禁止隐式换算");
         codec.code(feed.getMatUnit(), "实际投料原单位", 100);
         codec.id(material.getMaterialId());
@@ -228,8 +224,8 @@ public class MesProductionFeedAllocationPlanner {
                             MesMaterialSubstituteResolver.Candidate candidate) {
         return Objects.equals(feed.getMatCode(), candidate.actualMatCode())
                 && (feed.getRequirementMatCode() != null && !feed.getRequirementMatCode().isBlank()
-                    ? Objects.equals(feed.getRequirementMatCode(), required)
-                    : !candidate.substitute() && Objects.equals(feed.getMatCode(), required));
+                ? Objects.equals(feed.getRequirementMatCode(), required)
+                : !candidate.substitute() && Objects.equals(feed.getMatCode(), required));
     }
 
     private BigDecimal available(List<Cursor> feeds, String required,
@@ -251,22 +247,30 @@ public class MesProductionFeedAllocationPlanner {
         return codec.quantity(codec.amount(value), allowZero, name);
     }
 
-    /** 本次产出种类，不与报工对象模式或触发来源混为同一枚举。 */
+    /**
+     * 本次产出种类，不与报工对象模式或触发来源混为同一枚举。
+     */
     public enum OutputKind {
         GOOD,
         NG
     }
 
-    /** 实际事务调用者的原组织/工单/工序/派工/生产单位，不从客户端权限声明构造。 */
+    /**
+     * 实际事务调用者的原组织/工单/工序/派工/生产单位，不从客户端权限声明构造。
+     */
     public record Scope(Long tenantId, String factoryCode, String taskCode, String produceTaskCode,
                         String arrangeCode, String productionUnit) {
     }
 
-    /** 明确的一份正量产出；key由上层真实生产协议与原来源建立，零量产出不得伪建。 */
+    /**
+     * 明确的一份正量产出；key由上层真实生产协议与原来源建立，零量产出不得伪建。
+     */
     public record OutputDemand(String outputKey, OutputKind kind, BigDecimal quantity, String productionUnit) {
     }
 
-    /** 实际feed耗量/需求当量、冻结比例及本次真实before/after，尚未持久化。 */
+    /**
+     * 实际feed耗量/需求当量、冻结比例及本次真实before/after，尚未持久化。
+     */
     public record FeedConsumption(Long feedId, String requirementMatCode, String requirementUnit,
                                   String matCode, String matUnit, BigDecimal consumeQuantity,
                                   BigDecimal requirementQuantity, BigDecimal substituteRatio, boolean substitute,
@@ -274,18 +278,24 @@ public class MesProductionFeedAllocationPlanner {
                                   Long materialId, String materialUpdatedAt) {
     }
 
-    /** 每份产出认领的真实feed份额；实际单位和原需求单位分别保存，不能用生产单位代替。 */
+    /**
+     * 每份产出认领的真实feed份额；实际单位和原需求单位分别保存，不能用生产单位代替。
+     */
     public record OutputAttribution(String outputKey, OutputKind kind, Long feedId, String requirementMatCode,
                                     String requirementUnit, String matCode, String matUnit,
                                     BigDecimal consumeQuantity, BigDecimal requirementQuantity) {
     }
 
-    /** 不可变计算结果；没有APPLIED、库存或质量批准含义，调用者仍须保存并证明完整真实事务。 */
+    /**
+     * 不可变计算结果；没有APPLIED、库存或质量批准含义，调用者仍须保存并证明完整真实事务。
+     */
     public record Plan(Scope scope, BigDecimal processedQuantity, List<OutputDemand> outputs,
                        List<FeedConsumption> consumptions, List<OutputAttribution> attributions) {
     }
 
-    /** 与输入实体分离的本次分配余额，后续需求共用而不能重复分配。 */
+    /**
+     * 与输入实体分离的本次分配余额，后续需求共用而不能重复分配。
+     */
     private static final class Cursor {
         private final MesWarehouseFeedEntity feed;
         private final BigDecimal total;

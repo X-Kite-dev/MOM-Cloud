@@ -13,7 +13,9 @@ import java.util.List;
 public class MdmToolingCandidateDTO {
     private Long requirementId;
     private String routeCode;
-    /** 此候选满足的具体路线节点；保留processCode供旧能力匹配消费者使用。 */
+    /**
+     * 此候选满足的具体路线节点；保留processCode供旧能力匹配消费者使用。
+     */
     private String routeNodeCode;
     private String processCode;
     private MdmProcedureToolingRequirementEntity requirementSnapshot;

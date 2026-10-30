@@ -13,7 +13,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** ERP 生产订单映射的永久幂等回执与合同升级证据。 */
+/**
+ * ERP 生产订单映射的永久幂等回执与合同升级证据。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

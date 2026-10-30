@@ -15,7 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Collection;
 import java.util.List;
 
-/** 精确实例的完整不可变操作链查询，不按外码将多次占用拼成一条假历史。 */
+/**
+ * 精确实例的完整不可变操作链查询，不按外码将多次占用拼成一条假历史。
+ */
 @Service
 @RequiredArgsConstructor
 public class MesIdentifierBindingOperationServiceImpl
@@ -40,14 +42,22 @@ public class MesIdentifierBindingOperationServiceImpl
     }
 
     @Override
-    public MesIdentifierBindingOperationMapper getBaseMapper() { throw new CheckedException("节点操作永久账禁止通用CRUD"); }
+    public MesIdentifierBindingOperationMapper getBaseMapper() {
+        throw new CheckedException("节点操作永久账禁止通用CRUD");
+    }
 
     @Override
-    public boolean saveBatch(Collection<MesIdentifierBindingOperationEntity> rows, int size) { throw new CheckedException("节点操作禁止独立批量追加"); }
+    public boolean saveBatch(Collection<MesIdentifierBindingOperationEntity> rows, int size) {
+        throw new CheckedException("节点操作禁止独立批量追加");
+    }
 
     @Override
-    public boolean saveOrUpdateBatch(Collection<MesIdentifierBindingOperationEntity> rows, int size) { throw new CheckedException("节点操作永久账禁止批量覆盖"); }
+    public boolean saveOrUpdateBatch(Collection<MesIdentifierBindingOperationEntity> rows, int size) {
+        throw new CheckedException("节点操作永久账禁止批量覆盖");
+    }
 
     @Override
-    public boolean updateBatchById(Collection<MesIdentifierBindingOperationEntity> rows, int size) { throw new CheckedException("节点操作永久账禁止批量更新"); }
+    public boolean updateBatchById(Collection<MesIdentifierBindingOperationEntity> rows, int size) {
+        throw new CheckedException("节点操作永久账禁止批量更新");
+    }
 }

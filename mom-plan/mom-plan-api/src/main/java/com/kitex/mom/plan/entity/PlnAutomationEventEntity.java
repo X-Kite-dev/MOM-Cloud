@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 可重放、可追责的制造异常事件收件箱。 */
+/**
+ * 可重放、可追责的制造异常事件收件箱。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

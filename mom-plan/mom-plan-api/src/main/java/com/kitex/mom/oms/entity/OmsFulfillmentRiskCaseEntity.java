@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** OMS交付行履约风险案件；风险恢复只进入待关闭，须复核权威事实后销案。 */
+/**
+ * OMS交付行履约风险案件；风险恢复只进入待关闭，须复核权威事实后销案。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

@@ -1,8 +1,8 @@
 package com.kitex.mom.plan.service.aps.collector;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.kitex.common.core.exception.CheckedException;
@@ -15,7 +15,9 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
-/** APS 采集器的规范序列化与故障关闭公共能力。 */
+/**
+ * APS 采集器的规范序列化与故障关闭公共能力。
+ */
 abstract class AbstractApsResourceCollector implements PlnApsResourceCollector {
 
     protected final ObjectMapper objectMapper;
@@ -25,8 +27,8 @@ abstract class AbstractApsResourceCollector implements PlnApsResourceCollector {
     }
 
     protected PlnApsResourceEvidence evidence(boolean critical, String status, String version,
-                                               LocalDateTime observedAt, Map<String, Object> summary,
-                                               List<String> refs, List<PlnApsResourceEvidence.Gap> gaps) {
+                                              LocalDateTime observedAt, Map<String, Object> summary,
+                                              List<String> refs, List<PlnApsResourceEvidence.Gap> gaps) {
         String fingerprint = stableFingerprint(Map.of(
                 "module", module(), "status", status, "version", version,
                 "summary", summary, "refs", refs, "gaps", gaps));
@@ -35,8 +37,8 @@ abstract class AbstractApsResourceCollector implements PlnApsResourceCollector {
     }
 
     protected PlnApsResourceEvidence unavailable(boolean critical, String code, String category,
-                                                  String sourceType, String title, Exception error,
-                                                  String route) {
+                                                 String sourceType, String title, Exception error,
+                                                 String route) {
         String description = error == null ? title : title + "：" + safeMessage(error);
         String severity = critical ? "BLOCKER" : "WARNING";
         var gap = new PlnApsResourceEvidence.Gap(code, category, severity, sourceType, null,
@@ -62,7 +64,9 @@ abstract class AbstractApsResourceCollector implements PlnApsResourceCollector {
         }
     }
 
-    /** 采集时刻只用于审计展示，不得导致业务事实未变化却误判快照失效。 */
+    /**
+     * 采集时刻只用于审计展示，不得导致业务事实未变化却误判快照失效。
+     */
     protected String stableFingerprint(Object value) {
         JsonNode tree = objectMapper.valueToTree(value);
         stripVolatileTime(tree);

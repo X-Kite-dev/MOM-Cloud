@@ -18,16 +18,16 @@ import com.kitex.mom.mes.enums.*;
 import com.kitex.mom.mes.event.FeedRecordSaveEvent;
 import com.kitex.mom.mes.extension.MesReportExtensionChain;
 import com.kitex.mom.mes.extension.MesReportExtensionContext;
-import com.kitex.mom.mes.mapper.MesTaskReportMapper;
 import com.kitex.mom.mes.mapper.MesReportReverseRequestMapper;
+import com.kitex.mom.mes.mapper.MesTaskReportMapper;
 import com.kitex.mom.mes.process.ProcessOperationFactory;
 import com.kitex.mom.mes.service.*;
 import com.kitex.mom.mes.support.MesQualityEvidenceSupport;
 import lombok.AllArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -77,6 +77,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
     private final MesReworkIdentifierUsageService reworkIdentifiers;
     private final MesTerminalExecutionGuard terminalExecutionGuard;
     private final MesProductionMaterialOperationService productionMaterials;
+    private final MesStartMaterialBindingReader materialBindings;
     private final MesProcessTimingGuard processTimingGuard;
     private final MesErpPostingOutboxService erpPostingOutbox;
 
@@ -169,6 +170,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
                     ? "退回路线仅允许使用生产中或已完成的原派工任务，暂停/关闭任务须先受控恢复"
                     : "生产任务未在进行中，请先对任务开工");
         }
+        MesProduceTaskEntity reportParent = requireReportParents(arrange, task, routeReturn);
         executionTemplateService.validateReport(arrange, params, channel);
         reworkMaterialPlans.assertReady(task);
         prepareReportContext(params, arrange, task, reportMode, channel);
@@ -216,21 +218,31 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         if (!Boolean.TRUE.equals(gate.getAllowed())) {
             throw new CheckedException("质量门阻断报工：" + gate.getMessage());
         }
+        boolean qualityNotRequired = "NONE".equals(gate.getGateMode())
+                && (gate.getItems() == null || gate.getItems().isEmpty());
+        boolean qualityReleased = qualityNotRequired || Boolean.TRUE.equals(gate.getPassed());
+        String gateStatus;
+        if ("REWORK".equals(task.getResourceType())) {
+            gateStatus = "PENDING";
+        } else if (qualityNotRequired) {
+            gateStatus = "NONE";
+        } else if (Boolean.TRUE.equals(gate.getPassed())) {
+            gateStatus = "PASSED";
+        } else if ("WARN".equals(gate.getGateMode()) && StrUtil.startWith(gate.getMessage(), "质量门预警")) {
+            gateStatus = "WARN";
+        } else {
+            gateStatus = "PENDING";
+        }
         params.setQualityGateMode(gate.getGateMode());
-        params.setQualityGateStatus("REWORK".equals(task.getResourceType()) ? "PENDING"
-                : ("WARN".equals(gate.getGateMode()) && gate.getMessage().startsWith("质量门预警")
-                ? "WARN" : ("NONE".equals(gate.getGateMode()) ? "NONE" : "PASSED")));
+        params.setQualityGateStatus(gateStatus);
         params.setQualityGateMessage(gate.getMessage());
         MesQualityEvidenceSupport.Evidence qualityEvidence = MesQualityEvidenceSupport.capture(gate);
         params.setQualityTaskIds(qualityEvidence.taskIdsJson());
         params.setQualityEvidenceFingerprint(qualityEvidence.fingerprint());
         params.setQualityEvidenceSnapshot(qualityEvidence.snapshotJson());
-        boolean qualityReleased = Boolean.TRUE.equals(gate.getPassed());
-        params.setQualityQuantityStatus(qualityReleased
-                ? ("NONE".equals(gate.getGateMode()) || gate.getItems() == null || gate.getItems().isEmpty()
-                ? QualityQuantityStatusEnum.NOT_REQUIRED.name()
-                : QualityQuantityStatusEnum.RELEASED.name())
-                : QualityQuantityStatusEnum.PENDING.name());
+        params.setQualityQuantityStatus(qualityNotRequired ? QualityQuantityStatusEnum.NOT_REQUIRED.name()
+                : (qualityReleased ? QualityQuantityStatusEnum.RELEASED.name()
+                : QualityQuantityStatusEnum.PENDING.name()));
         params.setQualityReleasedNum(qualityReleased ? params.getPassNum() : BigDecimal.ZERO);
         params.setQualityPendingNum(qualityReleased ? BigDecimal.ZERO : params.getPassNum());
         params.setQualityRejectedNum(BigDecimal.ZERO);
@@ -305,7 +317,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         if (!routeReturn) {
             updateArrangeCompletedQuantity(arrange, report.getReportNum(), report.getQualityReleasedNum());
             // 更新生产工单状态
-            updateTask(arrange, task, report);
+            updateTask(arrange, task, report, reportParent.getId());
         }
 
         // 成功过站履历必须和报工、物料消耗、产出及数量回写原子提交。
@@ -321,52 +333,56 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         params.setReportId(report.getId());
     }
 
-    /** 原报告必须实际落库且保留原单位/模式/标识和精确数量，才能继续耗料与计数。 */
+    /**
+     * 原报告必须实际落库且保留原单位/模式/标识和精确数量，才能继续耗料与计数。
+     */
     private void verifySavedReport(MesTaskReportEntity expected) {
         var saved = getById(expected.getId());
         require(saved != null && Objects.equals(saved.getTenantId(), expected.getTenantId())
-                && Objects.equals(saved.getFactoryCode(), expected.getFactoryCode())
-                && Objects.equals(saved.getRequestId(), expected.getRequestId())
-                && Objects.equals(saved.getTaskCode(), expected.getTaskCode())
-                && Objects.equals(saved.getProduceTaskCode(), expected.getProduceTaskCode())
-                && Objects.equals(saved.getArrangeCode(), expected.getArrangeCode())
-                && Objects.equals(saved.getMatCode(), expected.getMatCode())
-                && Objects.equals(saved.getReportUnit(), expected.getReportUnit())
-                && Objects.equals(saved.getReportMode(), expected.getReportMode())
-                && Objects.equals(saved.getTimingAcceptedAt(), expected.getTimingAcceptedAt())
-                && Objects.equals(saved.getTimingEvidenceJson(), expected.getTimingEvidenceJson())
-                && Objects.equals(saved.getTransferCode(), expected.getTransferCode())
-                && Objects.equals(saved.getSubmittedIdentifier(), expected.getSubmittedIdentifier())
-                && Objects.equals(saved.getIdentifierMappingId(), expected.getIdentifierMappingId())
-                && Objects.equals(saved.getIdentifierType(), expected.getIdentifierType())
-                && Objects.equals(saved.getIdentifierResolutionSnapshot(), expected.getIdentifierResolutionSnapshot())
-                && Objects.equals(saved.getExecutionKind(), expected.getExecutionKind())
-                && Objects.equals(saved.getStatus(), expected.getStatus())
-                && sameNullableAmount(saved.getReportNum(), expected.getReportNum())
-                && sameNullableAmount(saved.getEffectiveReportNum(), expected.getEffectiveReportNum())
-                && sameNullableAmount(saved.getCorrectedReportNum(), expected.getCorrectedReportNum())
-                && sameNullableAmount(saved.getQualityReleasedNum(), expected.getQualityReleasedNum())
-                && sameNullableAmount(saved.getQualityPendingNum(), expected.getQualityPendingNum())
-                && sameNullableAmount(saved.getQualityRejectedNum(), expected.getQualityRejectedNum()),
+                        && Objects.equals(saved.getFactoryCode(), expected.getFactoryCode())
+                        && Objects.equals(saved.getRequestId(), expected.getRequestId())
+                        && Objects.equals(saved.getTaskCode(), expected.getTaskCode())
+                        && Objects.equals(saved.getProduceTaskCode(), expected.getProduceTaskCode())
+                        && Objects.equals(saved.getArrangeCode(), expected.getArrangeCode())
+                        && Objects.equals(saved.getMatCode(), expected.getMatCode())
+                        && Objects.equals(saved.getReportUnit(), expected.getReportUnit())
+                        && Objects.equals(saved.getReportMode(), expected.getReportMode())
+                        && Objects.equals(saved.getTimingAcceptedAt(), expected.getTimingAcceptedAt())
+                        && Objects.equals(saved.getTimingEvidenceJson(), expected.getTimingEvidenceJson())
+                        && Objects.equals(saved.getTransferCode(), expected.getTransferCode())
+                        && Objects.equals(saved.getSubmittedIdentifier(), expected.getSubmittedIdentifier())
+                        && Objects.equals(saved.getIdentifierMappingId(), expected.getIdentifierMappingId())
+                        && Objects.equals(saved.getIdentifierType(), expected.getIdentifierType())
+                        && Objects.equals(saved.getIdentifierResolutionSnapshot(), expected.getIdentifierResolutionSnapshot())
+                        && Objects.equals(saved.getExecutionKind(), expected.getExecutionKind())
+                        && Objects.equals(saved.getStatus(), expected.getStatus())
+                        && sameNullableAmount(saved.getReportNum(), expected.getReportNum())
+                        && sameNullableAmount(saved.getEffectiveReportNum(), expected.getEffectiveReportNum())
+                        && sameNullableAmount(saved.getCorrectedReportNum(), expected.getCorrectedReportNum())
+                        && sameNullableAmount(saved.getQualityReleasedNum(), expected.getQualityReleasedNum())
+                        && sameNullableAmount(saved.getQualityPendingNum(), expected.getQualityPendingNum())
+                        && sameNullableAmount(saved.getQualityRejectedNum(), expected.getQualityRejectedNum()),
                 "GOOD原报告关联、单位或精确数量回读不一致，禁止继续计产");
     }
 
-    /** 报工/装箱履历是本事务的必要事实，不允许保存失败后仍累计数量并接受原号。 */
+    /**
+     * 报工/装箱履历是本事务的必要事实，不允许保存失败后仍累计数量并接受原号。
+     */
     private void saveRequiredReportRecord(MesTaskReportRecordEntity expected) {
         expected.setTenantId(TenantContextHolder.getTenantId());
         require(recordService.save(expected), "GOOD操作履历必要写失败，整次报工回滚");
         var saved = recordService.getById(expected.getId());
         require(saved != null && Objects.equals(saved.getTenantId(), expected.getTenantId())
-                && Objects.equals(saved.getFactoryCode(), expected.getFactoryCode())
-                && Objects.equals(saved.getReportId(), expected.getReportId())
-                && Objects.equals(saved.getTaskCode(), expected.getTaskCode())
-                && Objects.equals(saved.getProduceTaskCode(), expected.getProduceTaskCode())
-                && Objects.equals(saved.getArrangeCode(), expected.getArrangeCode())
-                && Objects.equals(saved.getType(), expected.getType())
-                && Objects.equals(saved.getTriggerType(), expected.getTriggerType())
-                && Objects.equals(saved.getWorkerCode(), expected.getWorkerCode())
-                && Objects.equals(saved.getContent(), expected.getContent())
-                && sameNullableAmount(saved.getReportNum(), expected.getReportNum()),
+                        && Objects.equals(saved.getFactoryCode(), expected.getFactoryCode())
+                        && Objects.equals(saved.getReportId(), expected.getReportId())
+                        && Objects.equals(saved.getTaskCode(), expected.getTaskCode())
+                        && Objects.equals(saved.getProduceTaskCode(), expected.getProduceTaskCode())
+                        && Objects.equals(saved.getArrangeCode(), expected.getArrangeCode())
+                        && Objects.equals(saved.getType(), expected.getType())
+                        && Objects.equals(saved.getTriggerType(), expected.getTriggerType())
+                        && Objects.equals(saved.getWorkerCode(), expected.getWorkerCode())
+                        && Objects.equals(saved.getContent(), expected.getContent())
+                        && sameNullableAmount(saved.getReportNum(), expected.getReportNum()),
                 "GOOD操作履历关联或原数量回读不一致，整次报工回滚");
     }
 
@@ -536,21 +552,41 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         }
     }
 
+    /**
+     * 调用前已有原工单业务锁和根/派工行锁；新报告只认精确实际父工序。
+     */
+    private MesProduceTaskEntity requireReportParents(MesTaskArrangeEntity arrange, MesTaskEntity task,
+                                                      boolean approvedReturn) {
+        // 质量来源以实际任务单号识别；同厂重复单号必须先治理，不能按根工单挑一条绕过歧义。
+        var parents = produceTaskService.list(new LambdaQueryWrapper<MesProduceTaskEntity>()
+                .eq(MesProduceTaskEntity::getTenantId, arrange.getTenantId())
+                .eq(MesProduceTaskEntity::getFactoryCode, arrange.getFactoryCode())
+                .eq(MesProduceTaskEntity::getCode, arrange.getProduceTaskCode())
+                .last("LIMIT 2 FOR UPDATE"));
+        require(parents != null && parents.size() == 1, "报工工序任务单号缺失或重复，请先治理实际父工序");
+        MesProduceTaskEntity parent = parents.get(0);
+        MesReportParentStateGuard.validate(arrange, task, parent, approvedReturn);
+        return parent;
+    }
+
     private void updateArrangeCompletedQuantity(MesTaskArrangeEntity arrange, BigDecimal reportNum,
                                                 BigDecimal releasedNum) {
         BigDecimal before = arrange.getCompleteNum();
         BigDecimal after = Objects.requireNonNullElse(before, BigDecimal.ZERO).add(reportNum);
         LambdaUpdateWrapper<MesTaskArrangeEntity> wrapper = Wrappers.lambdaUpdate();
-        wrapper.eq(MesTaskArrangeEntity::getId, arrange.getId());
+        wrapper.eq(MesTaskArrangeEntity::getId, arrange.getId())
+                .eq(MesTaskArrangeEntity::getTenantId, arrange.getTenantId())
+                .eq(MesTaskArrangeEntity::getFactoryCode, arrange.getFactoryCode())
+                .eq(MesTaskArrangeEntity::getTaskCode, arrange.getTaskCode());
         if (before == null) {
             wrapper.isNull(MesTaskArrangeEntity::getCompleteNum);
         } else {
             wrapper.eq(MesTaskArrangeEntity::getCompleteNum, before);
         }
-        BigDecimal releasedBefore = Objects.requireNonNullElse(arrange.getQualityReleasedNum(), BigDecimal.ZERO);
+        // 同事务内可能已放行历史待检量，只增本次放行量，不能覆盖当前数据库值。
         boolean updated = arrangeService.update(wrapper.set(MesTaskArrangeEntity::getCompleteNum, after)
-                .set(MesTaskArrangeEntity::getQualityReleasedNum, releasedBefore.add(
-                        Objects.requireNonNullElse(releasedNum, BigDecimal.ZERO))));
+                .setSql("quality_released_num = COALESCE(quality_released_num, 0) + {0}",
+                        Objects.requireNonNullElse(releasedNum, BigDecimal.ZERO)));
         if (!updated) {
             throw new CheckedException("报工数量已被其他操作更新，请刷新任务后重试");
         }
@@ -562,11 +598,19 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
      *
      * @param arrange
      */
-    private void updateTask(MesTaskArrangeEntity arrange, MesTaskEntity task, MesTaskReportEntity report) {
-        MesProduceTaskEntity produceTask = produceTaskService.getOne(new LambdaQueryWrapper<MesProduceTaskEntity>().eq(MesProduceTaskEntity::getCode, arrange.getProduceTaskCode()));
+    private void updateTask(MesTaskArrangeEntity arrange, MesTaskEntity task, MesTaskReportEntity report,
+                            Long parentId) {
+        // 质量同步可能更新父质量量；按锁定的精确原行重读，不能回写检查前的旧实体。
+        MesProduceTaskEntity produceTask = produceTaskService.getOne(new LambdaQueryWrapper<MesProduceTaskEntity>()
+                .eq(MesProduceTaskEntity::getTenantId, arrange.getTenantId())
+                .eq(MesProduceTaskEntity::getFactoryCode, arrange.getFactoryCode())
+                .eq(MesProduceTaskEntity::getTaskCode, arrange.getTaskCode())
+                .eq(MesProduceTaskEntity::getCode, arrange.getProduceTaskCode())
+                .eq(MesProduceTaskEntity::getId, parentId).last("FOR UPDATE"));
         if (produceTask == null) {
             throw new CheckedException("未找到派工任务对应的工序任务");
         }
+        MesReportParentStateGuard.validate(arrange, task, produceTask, false);
         BigDecimal produceBefore = produceTask.getCompleteNum();
         BigDecimal produceAfter = Objects.requireNonNullElse(produceBefore, BigDecimal.ZERO).add(report.getReportNum());
         BigDecimal releasedBefore = Objects.requireNonNullElse(produceTask.getQualityReleasedNum(), BigDecimal.ZERO);
@@ -598,17 +642,14 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
 
         // 末尾工序的本次合格数进入待入库量，不能重复累计派工单历史完成总量。
         if (Objects.nonNull(arrange.getLastRoute()) && arrange.getLastRoute()) {
-            BigDecimal stockBefore = task.getUnInStockNum();
-            BigDecimal stockAfter = Objects.requireNonNullElse(stockBefore, BigDecimal.ZERO)
-                    .add(Objects.requireNonNullElse(report.getQualityReleasedNum(), BigDecimal.ZERO));
             LambdaUpdateWrapper<MesTaskEntity> taskWrapper = Wrappers.lambdaUpdate();
-            taskWrapper.eq(MesTaskEntity::getId, task.getId());
-            if (stockBefore == null) {
-                taskWrapper.isNull(MesTaskEntity::getUnInStockNum);
-            } else {
-                taskWrapper.eq(MesTaskEntity::getUnInStockNum, stockBefore);
-            }
-            if (!taskService.update(taskWrapper.set(MesTaskEntity::getUnInStockNum, stockAfter))) {
+            taskWrapper.eq(MesTaskEntity::getId, task.getId())
+                    .eq(MesTaskEntity::getTenantId, task.getTenantId())
+                    .eq(MesTaskEntity::getFactoryCode, task.getFactoryCode())
+                    .eq(MesTaskEntity::getCode, task.getCode());
+            // 质量同步可能刚增加历史放行量；根行已锁定，按当前值原子增加本次量。
+            if (!taskService.update(taskWrapper.setSql("un_in_stock_num = COALESCE(un_in_stock_num, 0) + {0}",
+                    Objects.requireNonNullElse(report.getQualityReleasedNum(), BigDecimal.ZERO)))) {
                 throw new CheckedException("工单待入库数量已被其他操作更新，请刷新任务后重试");
             }
         }
@@ -657,6 +698,8 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
             throw new CheckedException("生产任务未在进行中，请先对任务开工");
         }
 
+        materialBindings.assertNgAccounting(arrange, params.getMaterialAccountingMode());
+
         ReportModeEnum reportMode = ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType());
         if (reportMode.isIdentifierRequired() && StrUtil.isBlank(params.getTransferCode())) {
             throw new CheckedException("当前报工模式必须提供条码或流转卡");
@@ -669,6 +712,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         if (task == null) {
             throw new CheckedException("未找到派工任务对应的生产工单");
         }
+        requireReportParents(arrange, task, false);
         // 五对象模式均复用同一静态解析器，包括可选批次码；保留params原始正文用于原号与时间例外。
         // 新NG的规范码用于全部生产事实，原始输入及实际映射单独留证；动态节点已在上方明确拒绝。
         String originalIdentifier = MesNgIdentificationCodec.original(params.getTransferCode());
@@ -722,7 +766,8 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
                 com.kitex.mom.mdm.support.MdmProcessTimingPolicy.encodeEvidence(params));
 
         // 真实NG和耗用仍在同一原生产事务，没有历史补建或假GOOD报告。
-        if ("FEED".equals(params.getMaterialAccountingMode())) productionMaterials.recordFeed(unqualified, arrange, task);
+        if ("FEED".equals(params.getMaterialAccountingMode()))
+            productionMaterials.recordFeed(unqualified, arrange, task);
 
         // 保存操作记录
         MesTaskReportRecordEntity record = new MesTaskReportRecordEntity();
@@ -779,7 +824,9 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
 
     }
 
-    /** 不良原号恢复只核原业务与身份；历史兼容和新严格标识分开，不访问当前计量主数据。 */
+    /**
+     * 不良原号恢复只核原业务与身份；历史兼容和新严格标识分开，不访问当前计量主数据。
+     */
     private boolean replayUnqualifiedReport(MesTaskReportUnqualifiedVO params, String factory) {
         var existing = unqualifiedService.getOne(new LambdaQueryWrapper<MesTaskReportUnqualifiedEntity>()
                 .eq(MesTaskReportUnqualifiedEntity::getTenantId, TenantContextHolder.getTenantId())
@@ -812,7 +859,8 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void feed(MesTaskReportFeedVO params) {
-        if (params == null || StrUtil.isBlank(params.getArrangeCode())) throw new CheckedException("投料记录必须有真实派工单");
+        if (params == null || StrUtil.isBlank(params.getArrangeCode()))
+            throw new CheckedException("投料记录必须有真实派工单");
         String factory = factoryAccess.require("write");
         // BEFORE_COMMIT投料事件可能来自已持有库存行锁的旧链，此处只校验真实归属，不能补取工单锁。
         MesTaskArrangeEntity arrange = arrangeService.getOne(new LambdaQueryWrapper<MesTaskArrangeEntity>()

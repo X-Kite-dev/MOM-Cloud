@@ -151,14 +151,16 @@ public class PlnMpsRemainingFieldReader {
         return result;
     }
 
-    /** 正式版本存在与当前兑现可核验是两件事；待核仍保留冻结版本/正量日桶，不假称无分期。 */
+    /**
+     * 正式版本存在与当前兑现可核验是两件事；待核仍保留冻结版本/正量日桶，不假称无分期。
+     */
     private void publishedIdentity(PlnMpsRemainingFieldDTO.Row row, PlnMpsRemainingCommitmentEntity record,
                                    List<PlnMpsRemainingCommitmentLineEntity> lines) {
         baseline(record); // 核验不可变基线正文与结构数量/身份，不能只凭指针名称展示正式版本。
         require(lines != null && !lines.isEmpty() && lines.size() <= 100 && lines.stream().allMatch(line ->
                         Objects.equals(line.getMpsLineId(), record.getMpsLineId()) && Objects.equals(line.getProductUnit(), record.getProductUnit())
-                        && Objects.equals(line.getCapacityResourceCode(), record.getCapacityResourceCode())
-                        && line.getQuantity() != null && line.getQuantity().signum() > 0 && line.getPromisedDate() != null),
+                                && Objects.equals(line.getCapacityResourceCode(), record.getCapacityResourceCode())
+                                && line.getQuantity() != null && line.getQuantity().signum() > 0 && line.getPromisedDate() != null),
                 "内部日桶缺失或身份/单位漂移");
         require(lines.stream().map(PlnMpsRemainingCommitmentLineEntity::getQuantity).reduce(BigDecimal.ZERO, BigDecimal::add)
                 .compareTo(record.getRemainingQuantity()) == 0, "冻结内部日桶与原R不守恒");

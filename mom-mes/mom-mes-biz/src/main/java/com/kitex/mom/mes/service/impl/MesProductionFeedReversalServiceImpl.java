@@ -7,25 +7,8 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
-import com.kitex.mom.mes.entity.MesProductionFeedBatchEntity;
-import com.kitex.mom.mes.entity.MesProductionFeedConsumptionEntity;
-import com.kitex.mom.mes.entity.MesProductionFeedReversalEntity;
-import com.kitex.mom.mes.entity.MesProductionFeedReversalOutputEntity;
-import com.kitex.mom.mes.entity.MesProductionFeedRestoreLineEntity;
-import com.kitex.mom.mes.entity.MesProductionFeedRestoreShareEntity;
-import com.kitex.mom.mes.entity.MesProductionFeedShareEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesWarehouseFeedEntity;
-import com.kitex.mom.mes.mapper.MesProductionFeedConsumptionMapper;
-import com.kitex.mom.mes.mapper.MesProductionFeedOutputMapper;
-import com.kitex.mom.mes.mapper.MesProductionFeedReversalMapper;
-import com.kitex.mom.mes.mapper.MesProductionFeedReversalOutputMapper;
-import com.kitex.mom.mes.mapper.MesProductionFeedRestoreLineMapper;
-import com.kitex.mom.mes.mapper.MesProductionFeedRestoreShareMapper;
-import com.kitex.mom.mes.mapper.MesProductionFeedShareMapper;
-import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
-import com.kitex.mom.mes.mapper.MesTerminalExecutionCommandMapper;
-import com.kitex.mom.mes.mapper.MesWarehouseFeedMapper;
+import com.kitex.mom.mes.entity.*;
+import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.MesProductionFeedReversalService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -34,15 +17,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.TreeMap;
+import java.util.*;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 
@@ -271,12 +246,14 @@ public class MesProductionFeedReversalServiceImpl
         return verified(reversal);
     }
 
-    /** 回放仅核永久原事实，不以当前包装/质量/余额改变已经执行的回执。 */
+    /**
+     * 回放仅核永久原事实，不以当前包装/质量/余额改变已经执行的回执。
+     */
     private MesProductionFeedReversalEntity verified(MesProductionFeedReversalEntity reversal) {
         require(reversal != null && COMMAND_VERSION.equals(reversal.getCommandVersion())
-                && EVIDENCE_VERSION.equals(reversal.getEvidenceVersion()) && "MATERIAL_RESTORED".equals(reversal.getStatus())
-                && Objects.equals(reversal.getCommandFingerprint(), codec.fingerprint(COMMAND_VERSION, reversal.getCommandSnapshot()))
-                && Objects.equals(reversal.getEvidenceFingerprint(), codec.fingerprint(EVIDENCE_VERSION, reversal.getEvidenceSnapshot())),
+                        && EVIDENCE_VERSION.equals(reversal.getEvidenceVersion()) && "MATERIAL_RESTORED".equals(reversal.getStatus())
+                        && Objects.equals(reversal.getCommandFingerprint(), codec.fingerprint(COMMAND_VERSION, reversal.getCommandSnapshot()))
+                        && Objects.equals(reversal.getEvidenceFingerprint(), codec.fingerprint(EVIDENCE_VERSION, reversal.getEvidenceSnapshot())),
                 "逐产出耗料纠正原版本或SHA不一致");
         var original = evidence.restoreDocument(reversal.getEvidenceSnapshot());
         var observed = header(reversal);
@@ -390,7 +367,9 @@ public class MesProductionFeedReversalServiceImpl
         return value == null ? null : value.toString();
     }
 
-    /** 审计只取当前真实本人；created_xid和feedMutationId仅由PG写入。 */
+    /**
+     * 审计只取当前真实本人；created_xid和feedMutationId仅由PG写入。
+     */
     private void stamp(BaseEntity<?> entity, Long tenant, String factory, Long actor) {
         entity.setTenantId(tenant);
         entity.setCreateBy(actor.toString());

@@ -6,18 +6,17 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
+
 import io.swagger.v3.oas.annotations.media.Schema;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-
 /**
- * <p>
  * 质检任务生成记录 实体类
- * </p>
  *
  * @author kitex
  * @since 2024-02-06
@@ -27,7 +26,7 @@ import java.time.LocalDateTime;
 @TenantTable
 @Accessors(chain = true)
 @Schema(description = "质检任务生成记录")
-@TableName("mes_inspection_gen_record")
+@TableName(value = "mes_inspection_gen_record", schema = "mom_mes")
 public class MesInspectionGenRecordEntity extends BaseEntity<MesInspectionGenRecordEntity> {
 
     /**
@@ -155,4 +154,35 @@ public class MesInspectionGenRecordEntity extends BaseEntity<MesInspectionGenRec
     @TableField(fill = FieldFill.INSERT)
     private String factoryCode;
 
-} 
+    /**
+     * 首收件同事务锁存，阻止后续旧pull越过事件应用。可空以保持旧夹具真实NULL。
+     */
+    private Boolean qualityEventManaged;
+
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Boolean qualityEventControlled;
+
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Long qualityEventId;
+
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Long qualityEventSequence;
+
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String qualityEventFingerprint;
+
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Long qualityEventVersion;
+
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String qualityEventState;
+
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Long qualityBlockedEventId;
+
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String qualityEventMessage;
+
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private java.util.Date qualityEventAppliedAt;
+}

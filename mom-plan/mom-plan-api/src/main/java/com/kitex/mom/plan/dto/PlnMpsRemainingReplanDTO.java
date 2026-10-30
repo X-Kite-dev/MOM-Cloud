@@ -7,7 +7,9 @@ import lombok.experimental.Accessors;
 
 import java.util.List;
 
-/** 业务端剩余工序重排契约，不使用模型、不重算或改写既有生产数量。 */
+/**
+ * 业务端剩余工序重排契约，不使用模型、不重算或改写既有生产数量。
+ */
 public final class PlnMpsRemainingReplanDTO {
     private PlnMpsRemainingReplanDTO() {
     }

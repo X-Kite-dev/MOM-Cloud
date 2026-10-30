@@ -10,13 +10,19 @@ import lombok.Data;
 @Data
 @Schema(description = "真实不良报工原计量与来源回执")
 public class MesProductionNgSourceDTO {
-    /** 独立标识证据，不扩展历史SOURCE_V1正文；三个字段全NULL表示旧历史。 */
+    /**
+     * 独立标识证据，不扩展历史SOURCE_V1正文；三个字段全NULL表示旧历史。
+     */
     @Schema(description = "原不良双标识证据版本，历史为空")
     private String identificationVersion;
-    /** 固定12字段原文，包含文本映射ID/版本与原始、规范标识。 */
+    /**
+     * 固定12字段原文，包含文本映射ID/版本与原始、规范标识。
+     */
     @Schema(description = "原不良双标识完整证据")
     private String identificationSnapshot;
-    /** SHA必须与上述完整原字符串及独立版本一致。 */
+    /**
+     * SHA必须与上述完整原字符串及独立版本一致。
+     */
     @Schema(description = "原不良双标识SHA-256")
     private String identificationFingerprint;
     /**

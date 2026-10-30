@@ -1,24 +1,24 @@
 package com.kitex.mom.mes.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.IdWorker;
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.kitex.mom.mes.dto.MesUnqualifiedTimingRecordDTO;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mes.dto.MesProductionNgSourceDTO;
+import com.kitex.mom.mes.dto.MesUnqualifiedTimingRecordDTO;
+import com.kitex.mom.mes.entity.MesProductionNgCaptureEntity;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
 import com.kitex.mom.mes.entity.MesTaskReportUnqualifiedEntity;
 import com.kitex.mom.mes.enums.ReportModeEnum;
-import com.kitex.mom.mes.mapper.MesTaskReportUnqualifiedMapper;
 import com.kitex.mom.mes.mapper.MesProductionNgCaptureMapper;
-import com.kitex.mom.mes.entity.MesProductionNgCaptureEntity;
-import com.kitex.mom.mes.service.MesTaskReportUnqualifiedService;
+import com.kitex.mom.mes.mapper.MesTaskReportUnqualifiedMapper;
 import com.kitex.mom.mes.service.MesProductionMaterialOperationService;
 import com.kitex.mom.mes.service.MesProductionMaterialReversalService;
+import com.kitex.mom.mes.service.MesTaskReportUnqualifiedService;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -51,6 +51,16 @@ public class MesTaskReportUnqualifiedServiceImpl
     private final MesProductionNgCaptureMapper inventoryCaptures;
     private final MesProcessTimingGuard processTimingGuard;
     private final MesReportNodeGate reportNodeGate;
+
+    private static String searchValue(String value) {
+        if (value == null || value.isBlank()) return null;
+        require(value.length() <= 200, "查询条件最多200字符");
+        return value.trim();
+    }
+
+    private static String textTime(LocalDateTime value) {
+        return value == null ? null : value.toString();
+    }
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
@@ -132,10 +142,10 @@ public class MesTaskReportUnqualifiedServiceImpl
                     .eq(MesProductionNgCaptureEntity::getSourceUnqualifiedReportId, row.getId()));
             if (capture != null) {
                 require(Objects.equals(capture.getRequestId(), row.getRequestId())
-                        && Objects.equals(capture.getActorId(), row.getCapturedActorId())
-                        && "ISOLATED".equals(capture.getStatus())
-                        && "MES_PRODUCTION_NG_INVENTORY_V1".equals(capture.getEvidenceVersion())
-                        && capture.getStockId() != null && capture.getInflowId() != null && capture.getCaseId() != null,
+                                && Objects.equals(capture.getActorId(), row.getCapturedActorId())
+                                && "ISOLATED".equals(capture.getStatus())
+                                && "MES_PRODUCTION_NG_INVENTORY_V1".equals(capture.getEvidenceVersion())
+                                && capture.getStockId() != null && capture.getInflowId() != null && capture.getCaseId() != null,
                         "实际NG隔离原链接不完整，不能回落为未库存化");
                 result.setInventoryCapture(new MesProductionNgSourceDTO.InventoryLink(capture.getId().toString(),
                         capture.getStockId().toString(), capture.getInflowId().toString(), capture.getCaseId().toString(),
@@ -165,7 +175,7 @@ public class MesTaskReportUnqualifiedServiceImpl
     @Override
     @Transactional(readOnly = true)
     public IPage<MesUnqualifiedTimingRecordDTO> timingPage(long current, long size, String taskCode,
-                                                         String arrangeCode, String identifier) {
+                                                           String arrangeCode, String identifier) {
         require(current >= 1 && current <= 1_000_000 && size >= 1 && size <= 100, "不良证据分页范围无效，每页最多100条");
         String factory = factoryAccess.require("read");
         String task = searchValue(taskCode), arrange = searchValue(arrangeCode), code = searchValue(identifier);
@@ -179,20 +189,12 @@ public class MesTaskReportUnqualifiedServiceImpl
             // 分页不把完整SOURCE原文交给页面，但必须先核原行与来源/双标识SHA，不能仅验显示投影。
             sourceCodec.verify(row);
             return new MesUnqualifiedTimingRecordDTO(
-                row.getId().toString(), row.getRequestId(), row.getTenantId().toString(), row.getFactoryCode(),
-                row.getTaskCode(), row.getArrangeCode(), row.getProduceTaskCode(), row.getMatCode(), row.getMatName(),
-                row.getTransferCode(), row.getUnqualifiedNum() == null ? null : row.getUnqualifiedNum().toPlainString(),
-                row.getReportUnit(), row.getType(), row.getWorkerName(), textTime(row.getReportTime()),
-                textTime(row.getTimingAcceptedAt()), row.getTimingEvidenceJson(), row.getSubmittedIdentifier(),
-                row.getIdentificationVersion(), row.getIdentificationSnapshot(), row.getIdentificationFingerprint());
+                    row.getId().toString(), row.getRequestId(), row.getTenantId().toString(), row.getFactoryCode(),
+                    row.getTaskCode(), row.getArrangeCode(), row.getProduceTaskCode(), row.getMatCode(), row.getMatName(),
+                    row.getTransferCode(), row.getUnqualifiedNum() == null ? null : row.getUnqualifiedNum().toPlainString(),
+                    row.getReportUnit(), row.getType(), row.getWorkerName(), textTime(row.getReportTime()),
+                    textTime(row.getTimingAcceptedAt()), row.getTimingEvidenceJson(), row.getSubmittedIdentifier(),
+                    row.getIdentificationVersion(), row.getIdentificationSnapshot(), row.getIdentificationFingerprint());
         });
     }
-
-    private static String searchValue(String value) {
-        if (value == null || value.isBlank()) return null;
-        require(value.length() <= 200, "查询条件最多200字符");
-        return value.trim();
-    }
-
-    private static String textTime(LocalDateTime value) { return value == null ? null : value.toString(); }
 }

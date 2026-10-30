@@ -9,10 +9,12 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
-import java.time.LocalDateTime;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
-/** 权威资源异常对一张正式生产计划形成的局部重排案件。 */
+/**
+ * 权威资源异常对一张正式生产计划形成的局部重排案件。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -31,7 +33,9 @@ public class PlnResourceReplanCaseEntity extends BaseEntity<PlnResourceReplanCas
     private String resourceName;
     private String evidenceSourceType;
     private String evidenceSourceNo;
-    /** 恢复优化候选所依据的已发布资源异常案件及MDM资格恢复回执。 */
+    /**
+     * 恢复优化候选所依据的已发布资源异常案件及MDM资格恢复回执。
+     */
     private Long recoverySourceCaseId;
     private Long recoverySourceReceiptId;
     private LocalDateTime eventStartTime;
@@ -66,14 +70,18 @@ public class PlnResourceReplanCaseEntity extends BaseEntity<PlnResourceReplanCas
     private String applicantName;
     private LocalDateTime proposedTime;
     private LocalDateTime expiresTime;
-    /** PROPOSED、SELECTED、SUPERSEDED、STALE、PUBLISHED、EXPIRED、CANCELLED、ROLLED_BACK。 */
+    /**
+     * PROPOSED、SELECTED、SUPERSEDED、STALE、PUBLISHED、EXPIRED、CANCELLED、ROLLED_BACK。
+     */
     private String status;
     private String publishRequestId;
     private String publisherCode;
     private String publisherName;
     private LocalDateTime publishedTime;
     private String mesPublishedFingerprint;
-    /** A3发布后真正锁定在原正式任务上的工序指纹；旧案为空时不允许凭空确认原排程未漂移。 */
+    /**
+     * A3发布后真正锁定在原正式任务上的工序指纹；旧案为空时不允许凭空确认原排程未漂移。
+     */
     private String publishedScheduleFingerprint;
     private String cancelRequestId;
     private String cancelReason;
@@ -86,7 +94,9 @@ public class PlnResourceReplanCaseEntity extends BaseEntity<PlnResourceReplanCas
     private String rolledBackByName;
     private LocalDateTime rolledBackTime;
     private String mesRollbackFingerprint;
-    /** 最新一次MDM设备资格恢复对已发布排程的人工复核状态；历史周期保留在不可变操作账。 */
+    /**
+     * 最新一次MDM设备资格恢复对已发布排程的人工复核状态；历史周期保留在不可变操作账。
+     */
     private Long recoveryReviewEventId;
     private Long recoveryReceiptId;
     private String recoveryReviewStatus;

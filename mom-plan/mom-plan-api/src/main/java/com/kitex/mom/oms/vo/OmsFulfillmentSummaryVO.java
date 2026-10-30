@@ -9,7 +9,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 单一OMS交付行的跨PLAN/MRP/MES/PMS/WMS履约摘要。 */
+/**
+ * 单一OMS交付行的跨PLAN/MRP/MES/PMS/WMS履约摘要。
+ */
 @Data
 @Schema(description = "订单交付行履约摘要")
 public class OmsFulfillmentSummaryVO implements Serializable {
@@ -46,15 +48,21 @@ public class OmsFulfillmentSummaryVO implements Serializable {
     private Integer mesTaskCount;
     private Integer purchasePlanCount;
     private Integer deliverPlanCount;
-    /** NOT_STARTED、PLANNING、SUPPLYING、PRODUCING、READY_TO_DELIVER、DELIVERING、COMPLETED、BLOCKED。 */
+    /**
+     * NOT_STARTED、PLANNING、SUPPLYING、PRODUCING、READY_TO_DELIVER、DELIVERING、COMPLETED、BLOCKED。
+     */
     private String overallStatus;
-    /** NORMAL、WARNING、CRITICAL、UNKNOWN。 */
+    /**
+     * NORMAL、WARNING、CRITICAL、UNKNOWN。
+     */
     private String riskLevel;
     private String planDataStatus;
     private String mesDataStatus;
     private String pmsDataStatus;
     private String wmsDataStatus;
-    /** AVAILABLE、NOT_STARTED、UNAVAILABLE、INCONSISTENT。 */
+    /**
+     * AVAILABLE、NOT_STARTED、UNAVAILABLE、INCONSISTENT。
+     */
     private String qualityDeliverabilityStatus;
     private List<String> riskMessages;
     private LocalDateTime calculatedTime;

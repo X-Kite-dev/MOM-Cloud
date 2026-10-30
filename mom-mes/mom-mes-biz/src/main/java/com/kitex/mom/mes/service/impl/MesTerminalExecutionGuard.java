@@ -21,7 +21,9 @@ public class MesTerminalExecutionGuard {
     private final MesTerminalExecutionCommandMapper mapper;
     private final ThreadLocal<Permit> current = new ThreadLocal<>();
 
-    /** 在原入口已经取得稳定工单锁/派工行锁之后调用。安全控制暂停不调用此门。 */
+    /**
+     * 在原入口已经取得稳定工单锁/派工行锁之后调用。安全控制暂停不调用此门。
+     */
     public void assertUnoccupied(MesTaskArrangeEntity arrange) {
         var rows = mapper.pending(arrange.getTenantId(), arrange.getFactoryCode(), arrange.getId());
         if (rows.isEmpty()) return;
@@ -35,7 +37,9 @@ public class MesTerminalExecutionGuard {
         throw new CheckedException("该派工存在移动执行未决原号，请查询原回执；不得另号执行或用当前状态销账");
     }
 
-    /** 仅移动执行服务在锁内建立，退出必清理；禁止嵌套或异步传递。 */
+    /**
+     * 仅移动执行服务在锁内建立，退出必清理；禁止嵌套或异步传递。
+     */
     public <T> T execute(MesTerminalExecutionCommandEntity command, AtomicBoolean remoteRisk, Supplier<T> action) {
         if (current.get() != null) throw new CheckedException("移动执行上下文禁止嵌套");
         current.set(new Permit(command, remoteRisk));
@@ -46,13 +50,17 @@ public class MesTerminalExecutionGuard {
         }
     }
 
-    /** 在生产远端写之前标记，即使远端异常/空回执被旧逻辑吞掉也不能判定安全回滚。 */
+    /**
+     * 在生产远端写之前标记，即使远端异常/空回执被旧逻辑吞掉也不能判定安全回滚。
+     */
     public void beforeProductionRemoteWrite() {
         Permit permit = current.get();
         if (permit != null) permit.remoteRisk().set(true);
     }
 
-    /** 用于收紧旧返工回传吞异常行为，仅影响本移动执行事务。 */
+    /**
+     * 用于收紧旧返工回传吞异常行为，仅影响本移动执行事务。
+     */
     public boolean isMobileExecution() {
         return current.get() != null;
     }

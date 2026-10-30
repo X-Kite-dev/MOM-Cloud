@@ -15,8 +15,8 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -24,13 +24,19 @@ import java.util.Map;
  */
 public final class MdmProcessParameterStandardDTO {
 
-    /** 原主工序内容协议；数据库历史NULL与此值同义。 */
+    /**
+     * 原主工序内容协议；数据库历史NULL与此值同义。
+     */
     public static final String LEGACY_PROCESS_V1 = "LEGACY_PROCESS_V1";
 
-    /** 节点化标准内容协议，独立于业务versionNo。 */
+    /**
+     * 节点化标准内容协议，独立于业务versionNo。
+     */
     public static final String NODE_V2 = "NODE_V2";
 
-    /** 新工单冻结协议，保留源内容协议和精确路线节点。 */
+    /**
+     * 新工单冻结协议，保留源内容协议和精确路线节点。
+     */
     public static final String ROUTE_NODE_V2 = "ROUTE_NODE_V2";
 
     private MdmProcessParameterStandardDTO() {

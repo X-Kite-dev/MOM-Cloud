@@ -12,7 +12,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 计划业务模块受保护的MES批量只读契约。 */
+/**
+ * 计划业务模块受保护的MES批量只读契约。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/mesPlanExecution")

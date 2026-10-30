@@ -39,18 +39,19 @@ public class WmsInventoryHealthQueryService {
         }
 
         WmsAgentFactoryAccessService.Scope scope = factoryAccessService.requireRead(query.getFactoryCode());
+        String warehouseCode = StrUtil.isBlank(query.getWarehouseCode()) ? null : query.getWarehouseCode().trim();
         LocalDateTime observedAt = LocalDateTime.now();
         LocalDate today = observedAt.toLocalDate();
         LocalDate nearExpiryEnd = today.plusDays(nearExpiryDays);
         LocalDateTime slowBefore = observedAt.minusDays(slowMovingDays);
 
         WmsInventoryHealthRow.Summary summaryRow = inventoryHealthMapper.selectSummary(
-                scope.tenantId(), scope.factoryCode(), today, nearExpiryEnd, slowBefore);
+                scope.tenantId(), scope.factoryCode(), warehouseCode, today, nearExpiryEnd, slowBefore);
         List<WmsInventoryHealthDTO.UnitSummary> unitSummaries = inventoryHealthMapper.selectUnitSummaries(
-                        scope.tenantId(), scope.factoryCode(), today, nearExpiryEnd, slowBefore).stream()
+                        scope.tenantId(), scope.factoryCode(), warehouseCode, today, nearExpiryEnd, slowBefore).stream()
                 .map(this::mapUnit).toList();
         List<WmsInventoryHealthRow.ExceptionStock> collected = inventoryHealthMapper.selectExceptions(
-                scope.tenantId(), scope.factoryCode(), today, nearExpiryEnd, slowBefore, limit + 1);
+                scope.tenantId(), scope.factoryCode(), warehouseCode, today, nearExpiryEnd, slowBefore, limit + 1);
         boolean truncated = collected.size() > limit;
         List<WmsInventoryHealthDTO.ExceptionStock> exceptions = collected.stream()
                 .limit(limit).map(this::mapException).toList();
@@ -58,20 +59,35 @@ public class WmsInventoryHealthQueryService {
         return new WmsInventoryHealthDTO.Evidence()
                 .setToolCode(TOOL_CODE)
                 .setMetricDefinition("实物量按实时库存行统计；可用量为通过锁定/效期/质量校验后的实物量，逐行扣除活动生产预留与销售发货预留并截断为非负；所有数量按库存单位分别汇总")
-                .setFactoryCode(scope.factoryCode()).setObservedDate(today).setObservedAt(observedAt)
+                .setFactoryCode(scope.factoryCode()).setWarehouseCode(warehouseCode)
+                .setObservedDate(today).setObservedAt(observedAt)
                 .setNearExpiryDays(nearExpiryDays).setSlowMovingDays(slowMovingDays)
                 .setSummary(mapSummary(summaryRow)).setUnitSummaries(unitSummaries)
                 .setExceptionStocks(exceptions).setTruncated(truncated)
-                .setDataGaps(List.of(
-                        "库存健康可用量尚未扣除物料安全库存，因此不能直接作为跨仓可调拨量；正式调拨仍由WMS调拨服务重新校验安全库存",
-                        "没有统一单位换算关系时禁止跨单位合计，MISSING_UNIT数量必须先补齐主数据",
-                        "本场景读取实时库存，不把拣货区、调拨在途和未完成入库单数量并入实物库存",
-                        "呆滞判断使用库存标记或当前阈值下的入库库龄，不替代企业物料分类和周转策略"))
+                .setDataGaps(List.of())
+                .setLimitations(buildLimitations(truncated, limit, warehouseCode))
                 .setEvidenceRefs(List.of(
                         "mom_wms.wms_live_stock(tenant_id,factory_code,warehouse_code,site_code,mat_code,mat_batch,mat_unit,mat_num)",
                         "mom_wms.wms_material_reservation[_detail](active production reservation)",
                         "mom_wms.wms_sales_stock_reservation[_detail](active shipment reservation)",
                         "mom_wms.wms_live_stock(status,quality_status,quality_result,mat_valid_end_date,in_time)"));
+    }
+
+    /**
+     * 能力边界不会把一份完整的工厂库存快照误标成缺数。
+     */
+    private List<String> buildLimitations(boolean truncated, int limit, String warehouseCode) {
+        List<String> limitations = new java.util.ArrayList<>(List.of(
+                "库存健康可用量尚未扣除物料安全库存，因此不能直接作为跨仓可调拨量；正式调拨仍由WMS调拨服务重新校验安全库存",
+                "没有统一单位换算关系时禁止跨单位合计，MISSING_UNIT数量必须先补齐主数据",
+                "本场景读取实时库存，不把拣货区、调拨在途和未完成入库单数量并入实物库存",
+                "有效期缺失的库存行无法判断临期或过期，不计入对应预警行数",
+                "呆滞判断使用库存标记或当前阈值下的入库库龄；入库时间缺失且未标记呆滞的库存行无法按库龄判断，不计入已识别呆滞行；本指标不替代企业物料分类和周转策略"));
+        if (truncated) {
+            limitations.add("异常库存明细仅展示风险排序前" + limit + "行；汇总指标仍覆盖当前"
+                    + (warehouseCode == null ? "工厂" : "仓库") + "全部实时库存行");
+        }
+        return List.copyOf(limitations);
     }
 
     private WmsInventoryHealthDTO.Summary mapSummary(WmsInventoryHealthRow.Summary row) {
@@ -86,7 +102,11 @@ public class WmsInventoryHealthQueryService {
                 .setSlowMovingRowCount(row.getSlowMovingRowCount()).setNegativeRowCount(row.getNegativeRowCount())
                 .setOverReservedRowCount(row.getOverReservedRowCount())
                 .setMissingUnitRowCount(row.getMissingUnitRowCount())
-                .setMissingLocationRowCount(row.getMissingLocationRowCount());
+                .setMissingLocationRowCount(row.getMissingLocationRowCount())
+                .setExceptionRowCount(row.getExceptionRowCount())
+                .setIntegrityRiskRowCount(row.getIntegrityRiskRowCount())
+                .setDispositionReviewRowCount(row.getDispositionReviewRowCount())
+                .setEarlyWarningRowCount(row.getEarlyWarningRowCount());
     }
 
     private WmsInventoryHealthDTO.UnitSummary mapUnit(WmsInventoryHealthRow.Unit row) {

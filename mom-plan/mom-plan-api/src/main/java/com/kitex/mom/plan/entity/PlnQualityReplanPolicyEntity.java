@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** 质量偏差触发排程处置的版本化策略。 */
+/**
+ * 质量偏差触发排程处置的版本化策略。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -21,19 +23,27 @@ import java.time.LocalDateTime;
 public class PlnQualityReplanPolicyEntity extends BaseEntity<PlnQualityReplanPolicyEntity> {
     private String policyCode;
     private String policyName;
-    /** 为空表示工厂通用策略，产品专属策略优先。 */
+    /**
+     * 为空表示工厂通用策略，产品专属策略优先。
+     */
     private String productCode;
-    /** ANY：任一阈值命中；ALL：所有已配置阈值均命中。 */
+    /**
+     * ANY：任一阈值命中；ALL：所有已配置阈值均命中。
+     */
     private String thresholdMode;
     private BigDecimal minAtRiskQuantity;
-    /** 0~100百分比。 */
+    /**
+     * 0~100百分比。
+     */
     private BigDecimal minDeviationRate;
     private BigDecimal minScrapQuantity;
     private Integer freezeMinutes;
     private Integer maxDelayMinutes;
     private Integer priority;
     private Integer policyVersion;
-    /** DRAFT、ACTIVE、RETIRED。 */
+    /**
+     * DRAFT、ACTIVE、RETIRED。
+     */
     private String status;
     private LocalDateTime effectiveFrom;
     private LocalDateTime effectiveTo;

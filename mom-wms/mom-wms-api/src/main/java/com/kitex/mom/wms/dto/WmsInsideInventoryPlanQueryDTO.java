@@ -12,40 +12,44 @@ import lombok.Data;
 @Data
 @Schema(description = "仓库盘点计划查询DTO")
 public class WmsInsideInventoryPlanQueryDTO {
+	@com.fasterxml.jackson.annotation.JsonIgnore
+	private Long tenantId;
+	@com.fasterxml.jackson.annotation.JsonIgnore
+	private String factoryCode;
 
-    /**
-     * 盘点编号
-     */
-    @Schema(description = "盘点编号")
-    private String planNo;
+	/**
+	 * 盘点编号
+	 */
+	@Schema(description = "盘点编号")
+	private String planNo;
 
-    /**
-     * 仓库编号
-     */
-    @Schema(description = "仓库编号")
-    private String warehouseCode;
+	/**
+	 * 仓库编号
+	 */
+	@Schema(description = "仓库编号")
+	private String warehouseCode;
 
-    /**
-     * 物料编码
-     */
-    @Schema(description = "物料编码")
-    private String matCode;
+	/**
+	 * 物料编码
+	 */
+	@Schema(description = "物料编码")
+	private String matCode;
 
-    /**
-     * 物料名称
-     */
-    @Schema(description = "物料名称")
-    private String matName;
+	/**
+	 * 物料名称
+	 */
+	@Schema(description = "物料名称")
+	private String matName;
 
-    /**
-     * 状态：0正在执行中/1 已结束
-     */
-    @Schema(description = "状态：0正在执行中/1 已结束")
-    private String status;
+	/**
+	 * 状态：0正在执行中/1 已结束
+	 */
+	@Schema(description = "状态：0正在执行中/1 已结束")
+	private String status;
 
-    /**
-     * 盘点损益处理状态：0 待处理/ 1已处理
-     */
-    @Schema(description = "盘点损益处理状态：0 待处理/ 1已处理")
-    private String handleState;
+	/**
+	 * 盘点损益处理状态：0 待处理/ 1已处理
+	 */
+	@Schema(description = "盘点损益处理状态：0 待处理/ 1已处理")
+	private String handleState;
 }

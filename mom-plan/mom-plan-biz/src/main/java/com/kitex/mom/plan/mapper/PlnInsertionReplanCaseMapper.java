@@ -8,6 +8,6 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface PlnInsertionReplanCaseMapper extends BaseMapper<PlnInsertionReplanCaseEntity> {
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('PLN_INSERTION_REPLAN_CASE:', #{key}), 0))")
-    void lockKey(@Param("key") String key);
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(CONCAT('PLN_INSERTION_REPLAN_CASE:', #{key}), 0))")
+    Integer lockKey(@Param("key") String key);
 }

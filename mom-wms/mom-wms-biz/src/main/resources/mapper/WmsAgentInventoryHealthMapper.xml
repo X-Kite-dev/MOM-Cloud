@@ -31,8 +31,11 @@
             GROUP BY d.live_stock_id
         ), stock_base AS (
             SELECT s.id AS stock_id, s.warehouse_code, s.warehouse_name, s.site_code, s.site_name,
-                   s.mat_code, s.mat_name, s.mat_batch, s.mat_unit, s.quality_status,
-                   s.quality_result, s.status AS lock_status, s.in_time,
+                   s.container_code,
+                   s.mat_code, s.mat_name, s.mat_batch, s.mat_barcode, s.mat_unit,
+                   s.supplier_code, s.supplier_name, s.quality_status,
+                   s.quality_result, s.quality_hold_no, s.quality_source_type, s.quality_source_id,
+                   s.status AS lock_status, s.in_time, s.update_time AS stock_updated_at,
                    s.mat_valid_end_date AS valid_end_date,
                    COALESCE(s.mat_num, 0)::numeric AS physical_num,
                    COALESCE(pr.reserved_num, 0)::numeric AS production_reserved_num,
@@ -49,8 +52,8 @@
                        AND (
                            BTRIM(COALESCE(s.quality_result, ''))
                                IN ('QUALIFIED', 'EXEMPTION', 'RELEASE', 'RECEIVE', 'CONCESSION')
-                           OR ((NULLIF(BTRIM(COALESCE(s.is_quality_test, '')), '') IS NULL
-                                   OR BTRIM(s.is_quality_test) = '0')
+                           OR ((NULLIF(BTRIM(COALESCE(s.is_quality_test::text, '')), '') IS NULL
+                                   OR BTRIM(s.is_quality_test::text) = '0')
                                AND NULLIF(BTRIM(COALESCE(s.quality_result, '')), '') IS NULL)
                        )
                    ) AS quality_ok
@@ -59,6 +62,9 @@
             LEFT JOIN sales_reserved sr ON sr.live_stock_id = s.id
             WHERE s.tenant_id = #{tenantId} AND s.factory_code = #{factoryCode}
               AND s.del_flag = '0' AND COALESCE(s.mat_num, 0) &lt;&gt; 0
+            <if test="warehouseCode != null and warehouseCode != ''">
+                AND s.warehouse_code = #{warehouseCode}
+            </if>
         ), stock_health AS (
             SELECT b.*,
                    (NOT b.locked AND NOT b.expired AND b.quality_ok) AS usable,
@@ -88,7 +94,18 @@
                COUNT(*) FILTER (WHERE NULLIF(BTRIM(COALESCE(mat_unit, '')), '') IS NULL)
                    AS missing_unit_row_count,
                COUNT(*) FILTER (WHERE NULLIF(BTRIM(COALESCE(site_code, '')), '') IS NULL)
-                   AS missing_location_row_count
+                   AS missing_location_row_count,
+               COUNT(*) FILTER (WHERE physical_num &lt; 0
+                   OR production_reserved_num + sales_reserved_num &gt; usable_physical_num
+                   OR locked OR NOT quality_ok OR expired OR near_expiry OR slow_moving
+                   OR NULLIF(BTRIM(COALESCE(mat_unit, '')), '') IS NULL
+                   OR NULLIF(BTRIM(COALESCE(site_code, '')), '') IS NULL) AS exception_row_count,
+               COUNT(*) FILTER (WHERE physical_num &lt; 0
+                   OR production_reserved_num + sales_reserved_num &gt; usable_physical_num
+                   OR NULLIF(BTRIM(COALESCE(mat_unit, '')), '') IS NULL
+                   OR NULLIF(BTRIM(COALESCE(site_code, '')), '') IS NULL) AS integrity_risk_row_count,
+               COUNT(*) FILTER (WHERE locked OR NOT quality_ok OR expired) AS disposition_review_row_count,
+               COUNT(*) FILTER (WHERE near_expiry OR slow_moving) AS early_warning_row_count
         FROM stock_health
     </select>
 
@@ -143,5 +160,33 @@
                  WHEN near_expiry THEN 6 WHEN slow_moving THEN 7 ELSE 8 END,
             valid_end_date NULLS LAST, in_time, stock_id
         LIMIT #{limit}
+    </select>
+
+    <!-- 与工厂库存健康共用同一活动预留、质量、锁定和效期口径；无异常行也可精确查询。 -->
+    <select id="selectStockById"
+            resultType="com.kitex.mom.wms.agent.model.WmsInventoryHealthRow$ExceptionStock">
+        <include refid="stockHealthCte"/>
+        SELECT stock_id, warehouse_code, warehouse_name, site_code, site_name, container_code,
+               mat_code, mat_name, mat_batch, mat_barcode, mat_unit,
+               supplier_code, supplier_name, physical_num,
+               production_reserved_num, sales_reserved_num, available_num,
+               quality_status, quality_result, quality_hold_no, quality_source_type,
+               quality_source_id, lock_status, locked, quality_ok, expired,
+               near_expiry, slow_moving, in_time, valid_end_date, stock_updated_at,
+               CONCAT_WS(',',
+                   CASE WHEN physical_num &lt; 0 THEN 'NEGATIVE_STOCK' END,
+                   CASE WHEN production_reserved_num + sales_reserved_num &gt; usable_physical_num
+                        THEN 'OVER_RESERVED' END,
+                   CASE WHEN locked THEN 'LOCKED' END,
+                   CASE WHEN NOT quality_ok THEN 'QUALITY_RESTRICTED' END,
+                   CASE WHEN expired THEN 'EXPIRED' END,
+                   CASE WHEN near_expiry THEN 'NEAR_EXPIRY' END,
+                   CASE WHEN slow_moving THEN 'SLOW_MOVING' END,
+                   CASE WHEN NULLIF(BTRIM(COALESCE(mat_unit, '')), '') IS NULL THEN 'MISSING_UNIT' END,
+                   CASE WHEN NULLIF(BTRIM(COALESCE(site_code, '')), '') IS NULL THEN 'MISSING_LOCATION' END
+               ) AS exception_codes
+        FROM stock_health
+        WHERE stock_id = #{stockId}
+        LIMIT 1
     </select>
 </mapper>

@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** PLAN接收MES状态及数量回传的永久幂等凭证。 */
+/**
+ * PLAN接收MES状态及数量回传的永久幂等凭证。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

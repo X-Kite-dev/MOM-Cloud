@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** PMS采购驳回/取消等供给终止事件在PLAN侧的永久幂等回执。 */
+/**
+ * PMS采购驳回/取消等供给终止事件在PLAN侧的永久幂等回执。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

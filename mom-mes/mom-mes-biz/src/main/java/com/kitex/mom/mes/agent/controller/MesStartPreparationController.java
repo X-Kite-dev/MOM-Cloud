@@ -11,14 +11,18 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
-/** 开工准备独立入口，和正式开工命令完全分离；所有入口共用原派工查看权限。 */
+/**
+ * 开工准备独立入口，和正式开工命令完全分离；所有入口共用原派工查看权限。
+ */
 @RestController
 @RequiredArgsConstructor
 @PreAuthorize("@pms.hasPermission('mesTaskArrange:show')")
 public class MesStartPreparationController {
     private final MesStartPreparationQueryService service;
 
-    /** 分页选择真实派工，不复用报工行的主键。 */
+    /**
+     * 分页选择真实派工，不复用报工行的主键。
+     */
     @GetMapping("/mesTask/arrange/start-preparation/candidates")
     public R<Map<String, Object>> candidates(@RequestParam(defaultValue = "1") long current,
                                              @RequestParam(defaultValue = "20") long size,
@@ -36,7 +40,9 @@ public class MesStartPreparationController {
         return R.ok(service.receipt(requestId));
     }
 
-    /** 工具观察也必须持有真实用户和原业务权限，不以内部请求头代替授权。 */
+    /**
+     * 工具观察也必须持有真实用户和原业务权限，不以内部请求头代替授权。
+     */
     @Inner
     @PostMapping("/mesAgentQuery/internal/start-preparation")
     public R<Map<String, Object>> query(@Valid @RequestBody MesStartPreparationDTO.Query query) {

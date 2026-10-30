@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 资源异常局部重排的不可变操作履历。 */
+/**
+ * 资源异常局部重排的不可变操作履历。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -24,7 +26,9 @@ public class PlnResourceReplanOperationEntity extends BaseEntity<PlnResourceRepl
     private String beforeStatus;
     private String afterStatus;
     private String content;
-    /** 人工恢复复核命令的冻结指纹，供永久请求号重放核对。 */
+    /**
+     * 人工恢复复核命令的冻结指纹，供永久请求号重放核对。
+     */
     private String commandFingerprint;
     private String operatorCode;
     private String operatorName;

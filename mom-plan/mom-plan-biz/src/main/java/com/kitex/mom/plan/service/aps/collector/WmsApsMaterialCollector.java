@@ -10,7 +10,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** 采集库存、预留、质量限制和库存数据完整性证据。 */
+/**
+ * 采集库存、预留、质量限制和库存数据完整性证据。
+ */
 @Component
 public class WmsApsMaterialCollector extends AbstractApsResourceCollector {
 
@@ -21,8 +23,15 @@ public class WmsApsMaterialCollector extends AbstractApsResourceCollector {
         this.service = service;
     }
 
-    @Override public String module() { return "WMS"; }
-    @Override public int order() { return 30; }
+    @Override
+    public String module() {
+        return "WMS";
+    }
+
+    @Override
+    public int order() {
+        return 30;
+    }
 
     @Override
     public PlnApsResourceEvidence collect(PlnApsResourceCollectionContext context) {

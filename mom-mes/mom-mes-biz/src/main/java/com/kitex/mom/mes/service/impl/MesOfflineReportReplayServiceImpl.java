@@ -6,7 +6,9 @@ import com.kitex.mom.mes.mapper.MesOfflineReportReplayMapper;
 import com.kitex.mom.mes.service.MesOfflineReportReplayService;
 import org.springframework.stereotype.Service;
 
-/** 弱网报工重放审计账标准服务实现。 */
+/**
+ * 弱网报工重放审计账标准服务实现。
+ */
 @Service
 public class MesOfflineReportReplayServiceImpl
         extends ServiceImpl<MesOfflineReportReplayMapper, MesOfflineReportReplayEntity>

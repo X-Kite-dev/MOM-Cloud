@@ -30,7 +30,9 @@ public class MesExecutionTaskLock {
     private final MesTaskArrangeMapper arrangeMapper;
     private final MesTaskReportMapper reportMapper;
 
-    /** 按派工编码定位并锁其真实工单，不能由客户端taskCode决定锁目标。 */
+    /**
+     * 按派工编码定位并锁其真实工单，不能由客户端taskCode决定锁目标。
+     */
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public MesTaskArrangeEntity arrange(String code) {
         String factory = factoryAccess.require("write");
@@ -43,7 +45,9 @@ public class MesExecutionTaskLock {
         return rows.get(0);
     }
 
-    /** 退派按精确派工ID定位真实工单。 */
+    /**
+     * 退派按精确派工ID定位真实工单。
+     */
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public MesTaskArrangeEntity arrange(Long id) {
         String factory = factoryAccess.require("write");
@@ -55,7 +59,9 @@ public class MesExecutionTaskLock {
         return row;
     }
 
-    /** 冲销前以原报工真实工单为锁目标，不先锁报工行。 */
+    /**
+     * 冲销前以原报工真实工单为锁目标，不先锁报工行。
+     */
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public MesTaskReportEntity report(Long id) {
         String factory = factoryAccess.require("write");
@@ -67,7 +73,9 @@ public class MesExecutionTaskLock {
         return row;
     }
 
-    /** 锁行后发现身份变化直接回滚，不在持有行锁时改取另一个工单锁。 */
+    /**
+     * 锁行后发现身份变化直接回滚，不在持有行锁时改取另一个工单锁。
+     */
     public void assertArrange(MesTaskArrangeEntity before, MesTaskArrangeEntity locked) {
         require(before != null && locked != null && Objects.equals(before.getId(), locked.getId())
                 && Objects.equals(before.getTaskCode(), locked.getTaskCode())

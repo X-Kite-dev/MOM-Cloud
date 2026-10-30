@@ -101,7 +101,9 @@ public class MdmProcessParameterStandardController {
         return R.ok(service.resolveReleased(query));
     }
 
-    /** 节点感知消费者专用，不以旧主工序接口暗中降级。 */
+    /**
+     * 节点感知消费者专用，不以旧主工序接口暗中降级。
+     */
     @PostMapping("/internal/resolve-nodes")
     @Inner
     public R<MdmProcessParameterStandardDTO.FrozenCatalog> resolveNodes(

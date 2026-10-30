@@ -9,6 +9,8 @@ import com.kitex.mom.mes.entity.MesTaskEntity;
 public interface MesProductionOrderService extends IService<MesProductionOrderEntity> {
     Boolean schedule(MesProductionOrderDTO query);
 
-    /** 以正式合同为边界幂等登记 MES 生产订单主记录。 */
+    /**
+     * 以正式合同为边界幂等登记 MES 生产订单主记录。
+     */
     MesProductionOrderEntity recordReceivedOrder(MesTaskReceiveDTO receive, MesTaskEntity task);
 }

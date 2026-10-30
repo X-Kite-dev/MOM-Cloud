@@ -1,8 +1,8 @@
 package com.kitex.mom.plan.service;
 
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.plan.dto.PlnSchedulingRunDTO;
 import com.kitex.mom.plan.entity.PlnSchedulingTaskEntity;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskMapper;
 import com.kitex.mom.plan.service.impl.PlnSchedulingJobServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -10,95 +10,49 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
 import java.time.LocalDate;
-import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class PlnSchedulingAutoTriggerTest {
 
     @Mock
-    private PlnSchedulingEngineService plnSchedulingEngineService;
-
-    @Mock
-    private PlnSchedulingTaskMapper plnSchedulingTaskMapper;
+    private PlnSchedulingEngineService engine;
 
     @InjectMocks
-    private PlnSchedulingJobServiceImpl plnSchedulingJobService;
+    private PlnSchedulingJobServiceImpl jobs;
 
     @Test
-    void should_create_task_when_mrp_completed_event_received() {
-        when(plnSchedulingEngineService.run(any(PlnSchedulingRunDTO.class))).thenReturn(Boolean.TRUE);
-
-        LocalDate scheduleDate = LocalDate.now();
-        Boolean result = plnSchedulingJobService.onMrpCompleted("DAY", scheduleDate);
-
-        assertTrue(result);
-        ArgumentCaptor<PlnSchedulingRunDTO> dtoCaptor = ArgumentCaptor.forClass(PlnSchedulingRunDTO.class);
-        verify(plnSchedulingEngineService).run(dtoCaptor.capture());
-        PlnSchedulingRunDTO captured = dtoCaptor.getValue();
-        assertTrue("simulate".equals(captured.getMode()));
-        assertTrue("AUTO".equals(captured.getTriggerType()));
-        assertTrue("DAY".equals(captured.getCycleType()));
-        assertTrue(scheduleDate.equals(captured.getScheduleDate()));
+    void should_create_simulation_when_mrp_completed_event_received() {
+        when(engine.run(any(PlnSchedulingRunDTO.class))).thenReturn(true);
+        var date = LocalDate.now();
+        assertTrue(jobs.onMrpCompleted("DAY", date));
+        var command = ArgumentCaptor.forClass(PlnSchedulingRunDTO.class);
+        verify(engine).run(command.capture());
+        assertEquals("simulate", command.getValue().getMode());
+        assertEquals("AUTO", command.getValue().getTriggerType());
+        assertEquals("DAY", command.getValue().getCycleType());
+        assertEquals(date, command.getValue().getScheduleDate());
     }
 
     @Test
-    void should_retry_failed_tasks() {
-        PlnSchedulingTaskEntity task = new PlnSchedulingTaskEntity();
-        task.setId(1L);
-        task.setTaskNo("TASK-1");
-        task.setCycleType("DAY");
-        task.setScheduleDate(LocalDate.now());
-        task.setTaskStatus("FAILED");
-
-        when(plnSchedulingTaskMapper.selectList(any())).thenReturn(List.of(task));
-        when(plnSchedulingEngineService.run(any(PlnSchedulingRunDTO.class))).thenReturn(Boolean.TRUE);
-
-        Boolean result = plnSchedulingJobService.retryFailedTasks();
-
-        assertTrue(result);
-        verify(plnSchedulingEngineService).run(any(PlnSchedulingRunDTO.class));
-        verify(plnSchedulingTaskMapper).updateById(any(PlnSchedulingTaskEntity.class));
+    void legacy_bulk_retry_without_frozen_commands_cannot_expand_the_source_range() {
+        assertFalse(jobs.retryFailedTasks());
+        verifyZeroInteractions(engine);
     }
 
     @Test
-    void should_return_false_when_retry_failed_task_run_returns_false() {
-        PlnSchedulingTaskEntity task = new PlnSchedulingTaskEntity();
-        task.setId(2L);
-        task.setTaskNo("TASK-2");
-        task.setCycleType("DAY");
-        task.setScheduleDate(LocalDate.now());
-        task.setTaskStatus("FAILED");
-
-        when(plnSchedulingTaskMapper.selectList(any())).thenReturn(List.of(task));
-        when(plnSchedulingEngineService.run(any(PlnSchedulingRunDTO.class))).thenReturn(Boolean.FALSE);
-
-        Boolean result = plnSchedulingJobService.retryFailedTasks();
-
-        assertFalse(result);
-    }
-
-    @Test
-    void should_not_retry_when_reach_retry_limit() {
-        PlnSchedulingTaskEntity task = new PlnSchedulingTaskEntity();
+    void legacy_single_retry_is_rejected_and_keeps_original_failure_evidence() {
+        var task = new PlnSchedulingTaskEntity();
         task.setId(3L);
         task.setTaskNo("TASK-3");
-        task.setCycleType("DAY");
-        task.setScheduleDate(LocalDate.now());
         task.setTaskStatus("FAILED");
-        task.setRemark("RETRY_COUNT=3，重试失败");
-
-        when(plnSchedulingTaskMapper.selectList(any())).thenReturn(List.of(task));
-
-        Boolean result = plnSchedulingJobService.retryFailedTasks();
-
-        assertFalse(result);
+        task.setRemark("RETRY_COUNT=3，原失败原因");
+        assertThrows(CheckedException.class, () -> jobs.retryFailedTask(task));
+        assertEquals("FAILED", task.getTaskStatus());
+        assertEquals("RETRY_COUNT=3，原失败原因", task.getRemark());
+        verifyZeroInteractions(engine);
     }
 }

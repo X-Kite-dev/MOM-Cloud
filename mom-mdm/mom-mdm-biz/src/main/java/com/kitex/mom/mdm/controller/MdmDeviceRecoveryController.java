@@ -3,6 +3,7 @@ package com.kitex.mom.mdm.controller;
 import com.kitex.common.core.util.R;
 import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.mdm.dto.MdmDeviceRecoveryCommand;
+import com.kitex.mom.mdm.dto.MdmRepairAgentEvidence;
 import com.kitex.mom.mdm.service.impl.MdmDeviceRecoveryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -36,6 +37,16 @@ public class MdmDeviceRecoveryController {
     @PreAuthorize("@pms.hasPermission('mdm_deviceRecovery_release')")
     public R<?> byVerification(@PathVariable Long id) {
         return R.ok(service.byVerification(id));
+    }
+
+    /**
+     * 只读返回同维修任务的MDM当前资格；查看权不等于设备恢复操作权。
+     */
+    @Inner
+    @PostMapping("/agent-evidence")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmDevice_view')")
+    public R<MdmRepairAgentEvidence.Result> agentEvidence(@RequestBody MdmRepairAgentEvidence.Query query) {
+        return R.ok(service.agentEvidence(query));
     }
 
     @Inner

@@ -13,7 +13,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-/** 智能 APS 到 MES 的下达状态、立即发送和人工重试接口。 */
+/**
+ * 智能 APS 到 MES 的下达状态、立即发送和人工重试接口。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/plnApsDispatch")

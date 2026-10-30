@@ -7,7 +7,9 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
-/** 恢复永久账与实际目录/原号事务锁；目录和锁查询不读取其他组织业务数据。 */
+/**
+ * 恢复永久账与实际目录/原号事务锁；目录和锁查询不读取其他组织业务数据。
+ */
 @Mapper
 public interface MesProductionMaterialReversalMapper extends MomBaseMapper<MesProductionMaterialReversalEntity> {
     @InterceptorIgnore(tenantLine = "true", dataPermission = "true")

@@ -14,7 +14,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-/** ERP 与 MOM 两种来源统一发布的不可变正式计划合同明细。 */
+/**
+ * ERP 与 MOM 两种来源统一发布的不可变正式计划合同明细。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

@@ -2,12 +2,7 @@ package com.kitex.mom.mdm.agent.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonInclude;
-import jakarta.validation.constraints.Max;
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.*;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -22,7 +17,9 @@ public final class MdmProcessKnowledgeDTO {
     private MdmProcessKnowledgeDTO() {
     }
 
-    /** 有界分页摘要查询；terms按OR匹配，空条件只查询当前授权工厂的正式源。 */
+    /**
+     * 有界分页摘要查询；terms按OR匹配，空条件只查询当前授权工厂的正式源。
+     */
     public record SearchQuery(
             @NotBlank @Size(max = 100) String factoryCode,
             @Size(max = 100) String keyword,
@@ -34,7 +31,9 @@ public final class MdmProcessKnowledgeDTO {
     ) {
     }
 
-    /** 精确版本核验；不能自动回退旧版或替换成最新版本。 */
+    /**
+     * 精确版本核验；不能自动回退旧版或替换成最新版本。
+     */
     public record VerifyQuery(
             @NotBlank @Size(max = 100) String factoryCode,
             @NotBlank @Pattern(regexp = "[1-9][0-9]{0,18}") String standardId,
@@ -54,7 +53,9 @@ public final class MdmProcessKnowledgeDTO {
     ) {
     }
 
-    /** 摘要是发现候选的元数据；使用参数正文前仍须精确核验。 */
+    /**
+     * 摘要是发现候选的元数据；使用参数正文前仍须精确核验。
+     */
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record SourceSummary(
             String sourceSystem,
@@ -77,7 +78,9 @@ public final class MdmProcessKnowledgeDTO {
     ) {
     }
 
-    /** 不可用时source必须为null，正文、节点、关系及引用全部为空。 */
+    /**
+     * 不可用时source必须为null，正文、节点、关系及引用全部为空。
+     */
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record SourceDetail(
             boolean available,
@@ -113,7 +116,9 @@ public final class MdmProcessKnowledgeDTO {
     ) {
     }
 
-    /** 工序节点身份仅为路线内编码，objectId为空，不冒充全局工序主键。 */
+    /**
+     * 工序节点身份仅为路线内编码，objectId为空，不冒充全局工序主键。
+     */
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record SourceNode(
             String id,
@@ -124,7 +129,9 @@ public final class MdmProcessKnowledgeDTO {
     ) {
     }
 
-    /** 关系由核验后的实际结构生成，引用绑定租户、工厂、标准版本和内容指纹。 */
+    /**
+     * 关系由核验后的实际结构生成，引用绑定租户、工厂、标准版本和内容指纹。
+     */
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record SourceRelation(
             String fromId,

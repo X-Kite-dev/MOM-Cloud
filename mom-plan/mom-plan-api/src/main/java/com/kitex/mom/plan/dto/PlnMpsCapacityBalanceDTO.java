@@ -18,13 +18,19 @@ public class PlnMpsCapacityBalanceDTO {
     @Data
     @Accessors(chain = true)
     public static class Result {
-        /** PASS、PROPOSED、UNRESOLVED或UNVERIFIED。 */
+        /**
+         * PASS、PROPOSED、UNRESOLVED或UNVERIFIED。
+         */
         private String status;
         private String mode;
         private BigDecimal maxLoadRate;
-        /** 本次采用的正式生产批量策略目录指纹。 */
+        /**
+         * 本次采用的正式生产批量策略目录指纹。
+         */
         private String lotPolicyEvidenceFingerprint;
-        /** 尚未配置正式生产批量策略、继续沿用精确需求量的产品。 */
+        /**
+         * 尚未配置正式生产批量策略、继续沿用精确需求量的产品。
+         */
         private List<String> productsWithoutLotPolicy;
         private PlnMpsCapacityDTO.Preview original;
         private List<String> messages;
@@ -34,16 +40,24 @@ public class PlnMpsCapacityBalanceDTO {
     @Data
     @Accessors(chain = true)
     public static class Proposal {
-        /** LOT_SIZING_ONLY、MIN_CHANGE_FORWARD、DELIVERY_FIRST或QUALIFIED_RESOURCE_BALANCE。 */
+        /**
+         * LOT_SIZING_ONLY、MIN_CHANGE_FORWARD、DELIVERY_FIRST或QUALIFIED_RESOURCE_BALANCE。
+         */
         private String strategy;
         private String strategyName;
         private Boolean feasible;
         private Integer changedBucketCount;
-        /** 相对默认/原选产线发生显式资源调整的建议桶数。 */
+        /**
+         * 相对默认/原选产线发生显式资源调整的建议桶数。
+         */
         private Integer resourceChangedBucketCount;
-        /** 建议方案中按产线产品族顺序估算的换型次数。 */
+        /**
+         * 建议方案中按产线产品族顺序估算的换型次数。
+         */
         private Integer changeoverCount;
-        /** 建议方案的产线级换型占用分钟。 */
+        /**
+         * 建议方案的产线级换型占用分钟。
+         */
         private BigDecimal changeoverMinutes;
         private Integer splitBucketCount;
         private BigDecimal pulledInQuantity;
@@ -70,7 +84,9 @@ public class PlnMpsCapacityBalanceDTO {
         private LocalDate originalDate;
         private LocalDate plannedDate;
         private Integer mrpPriority;
-        /** KEEP、PULL_IN或DELAY。 */
+        /**
+         * KEEP、PULL_IN或DELAY。
+         */
         private String action;
         private String resourceCode;
         private Long lotPolicyId;

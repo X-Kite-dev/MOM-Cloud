@@ -9,7 +9,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 一次批量订单变更复核的原子命令账，整批成功才落库。 */
+/**
+ * 一次批量订单变更复核的原子命令账，整批成功才落库。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

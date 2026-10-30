@@ -341,9 +341,11 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
         }
     }
 
-    /** 新合同仅从原完整实际图取后裔，不把同主工序另一节点当作当前或下游。 */
+    /**
+     * 新合同仅从原完整实际图取后裔，不把同主工序另一节点当作当前或下游。
+     */
     private void ensureNoNodeDownstreamReport(MesTaskReportEntity report, MesTaskArrangeEntity arrange,
-                                            List<MesProduceTaskEntity> processTasks) {
+                                              List<MesProduceTaskEntity> processTasks) {
         MesFrozenExecutionGraph graph = MesFrozenExecutionGraph.of(processTasks);
         MesProduceTaskEntity current = graph.current(arrange);
         assertReportArrangement(report, arrange);
@@ -708,7 +710,8 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
                 .set(MesTaskArrangeEntity::getCompleteNum, arrangeBefore.subtract(reportNum))
                 .set(MesTaskArrangeEntity::getQualityReleasedNum, arrangeQualityBefore.subtract(releasedNum));
         if (MesProduceTaskStatusEnum.FINISH.name().equals(arrange.getStatus())) {
-            arrangeWrapper.set(MesTaskArrangeEntity::getStatus, MesProduceTaskStatusEnum.PRODUCT.name())
+            // 审批只恢复可执行资格；本人沿原开工入口重新核门禁并记录新RUN。
+            arrangeWrapper.set(MesTaskArrangeEntity::getStatus, MesProduceTaskStatusEnum.PAUSE.name())
                     .set(MesTaskArrangeEntity::getFinishTime, null)
                     .set(MesTaskArrangeEntity::getFinishHour, null);
         }
@@ -864,7 +867,7 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
         }
 
         MesTaskReportRecordEntity record = new MesTaskReportRecordEntity();
-        BeanUtils.copyProperties(report, record);
+        BeanUtils.copyProperties(report, record, "id");
         record.setReportId(report.getId());
         record.setType(ReportRecordTypeEnum.QUANTITY_CORRECTION.name());
         record.setStatus(ReportStatusEnum.EFFECTIVE.name());
@@ -883,7 +886,9 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
                 + "完成聚合报工部分纠正，原有效数量：" + before + "，本次纠正：" + correctionQuantity
                 + "，剩余有效：" + after + "，申请ID：" + Objects.toString(reverseRequestId, "-")
                 + "，证据：" + StrUtil.blankToDefault(evidenceFingerprint, "-") + "，原因：" + reason);
-        recordService.save(record);
+        if (!recordService.save(record)) {
+            throw new CheckedException("部分纠正履历保存失败，反向库存及数量全部回滚");
+        }
     }
 
     /**

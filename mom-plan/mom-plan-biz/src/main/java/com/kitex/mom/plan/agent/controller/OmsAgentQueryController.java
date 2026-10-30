@@ -24,7 +24,9 @@ public class OmsAgentQueryController {
     private final OmsDeliveryPromiseQueryService service;
     private final OmsProductionScopeQueryService productionScopeService;
 
-    /** 订单生产范围同时受OMS查询权限及MES工单权限约束。 */
+    /**
+     * 订单生产范围同时受OMS查询权限及MES工单权限约束。
+     */
     @Inner(value = false)
     @PostMapping("/internal/production-scope")
     @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_view')")
@@ -35,6 +37,7 @@ public class OmsAgentQueryController {
 
     @Inner(value = false)
     @PostMapping("/internal/delivery-promise")
+    @PreAuthorize("@pms.hasPermission('oms_omsOrderBaseTrack_view')")
     public R<OmsDeliveryPromiseDTO.Evidence> deliveryPromise(
             @Valid @RequestBody OmsDeliveryPromiseDTO.Query query) {
         return R.ok(service.query(query));

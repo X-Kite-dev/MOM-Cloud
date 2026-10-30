@@ -7,38 +7,45 @@ import com.kitex.mom.mes.dto.MesPhysicalTransformSourceBundleDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
-import java.util.TreeMap;
-import java.util.TreeSet;
+import java.util.*;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 
-/** 占用入口严格解析与服务器冻结正文；不把客户端观察包直接变成永久占用。 */
+/**
+ * 占用入口严格解析与服务器冻结正文；不把客户端观察包直接变成永久占用。
+ */
 @Component
 @RequiredArgsConstructor
 public class MesPhysicalTransformSourceHoldCodec {
     public static final String VERSION = "MES_PHYSICAL_SOURCE_HOLD_V1";
-    /** 完整外层原字符串的UTF-16容量；超界拒绝，不能截断来源图。 */
+    /**
+     * 完整外层原字符串的UTF-16容量；超界拒绝，不能截断来源图。
+     */
     public static final int MAX_SNAPSHOT = 64 * 1024 * 1024;
-    /** 身份全集硬边界；不以分页/首项代替实际完整来源。 */
+    /**
+     * 身份全集硬边界；不以分页/首项代替实际完整来源。
+     */
     public static final int MAX_IDENTITIES = 100000;
     private static final Set<String> TYPES = Set.of("STOCK_ID", "REPORT_ID", "IDENTIFIER", "TASK_CODE",
             "PRODUCE_TASK_CODE", "ARRANGE_ID", "ARRANGE_CODE");
+    /**
+     * DEPANEL占用阶段唯一允许保留的待决项；正式执行仍必须绑定异人确认的位置原账。
+     */
+    private static final String POSITION_PENDING = "当前尚无永久母件实际位置及合格/报废/缺位余额账，批准布局不能代替实物位置";
     private final MesPhysicalTransformCodec codec;
     private final MesPhysicalTransformPlanner planner;
 
-    /** DEPANEL占用阶段唯一允许保留的待决项；正式执行仍必须绑定异人确认的位置原账。 */
-    private static final String POSITION_PENDING = "当前尚无永久母件实际位置及合格/报废/缺位余额账，批准布局不能代替实物位置";
-
-    /** 恰好一个文本SHA，拒绝reason/来源包/资格标记或number隐式强转。 */
+    /**
+     * 恰好一个文本SHA，拒绝reason/来源包/资格标记或number隐式强转。
+     */
     public String acquireFingerprint(String raw) {
         var root = exact(raw, Set.of("expectedFingerprint"));
         return fingerprint(text(root, "expectedFingerprint"));
     }
 
-    /** 取消必须原hold SHA及明确原因，不复用原command seal或客户端状态。 */
+    /**
+     * 取消必须原hold SHA及明确原因，不复用原command seal或客户端状态。
+     */
     public Cancel cancel(String raw) {
         var root = exact(raw, Set.of("expectedHoldFingerprint", "reason"));
         String reason = text(root, "reason");
@@ -46,7 +53,9 @@ public class MesPhysicalTransformSourceHoldCodec {
         return new Cancel(fingerprint(text(root, "expectedHoldFingerprint")), reason);
     }
 
-    /** 本方法只消费服务器在真实原号/来源锁内取得的包，并沿原真实政策核全部当量。 */
+    /**
+     * 本方法只消费服务器在真实原号/来源锁内取得的包，并沿原真实政策核全部当量。
+     */
     public Frozen freeze(String commandId, String requestId, String commandFingerprint,
                          MesPhysicalTransformCommandDTO.BodyV2 body, MesPhysicalTransformSourceBundleDTO bundle) {
         require(body.getExpectedTenantId().equals(bundle.getTenantId())
@@ -105,19 +114,21 @@ public class MesPhysicalTransformSourceHoldCodec {
         return new Frozen(snapshot, codec.fingerprint(VERSION, snapshot), identities);
     }
 
-    /** 原冻结完整身份集合，恢复只验原SHA/结构，不查询新模板或重新计算原来源。 */
+    /**
+     * 原冻结完整身份集合，恢复只验原SHA/结构，不查询新模板或重新计算原来源。
+     */
     public List<List<String>> storedIdentities(String snapshot, String sha) {
         require(snapshot != null && sha != null && sha.equals(codec.fingerprint(VERSION, snapshot)), "永久来源冻结全文SHA损坏，禁止猜恢复结果");
         var root = codec.objectDocument(snapshot, MAX_SNAPSHOT);
         var fields = new TreeSet<String>();
         root.fieldNames().forEachRemaining(fields::add);
         require(fields.equals(Set.of("version", "tenantId", "factoryCode", "actorUserId", "actorCode", "commandId",
-                "requestId", "commandFingerprint", "sourceBundleSnapshot", "sourceBundleFingerprint", "calculationSnapshot", "identities")),
+                        "requestId", "commandFingerprint", "sourceBundleSnapshot", "sourceBundleFingerprint", "calculationSnapshot", "identities")),
                 "永久冻结正文存在缺失或未知字段");
         require(VERSION.equals(text(root, "version")) && root.path("identities").isArray(), "永久占用版本/身份集合损坏");
         var bundle = codec.objectDocument(text(root, "sourceBundleSnapshot"), MAX_SNAPSHOT);
         require(text(root, "sourceBundleFingerprint").equals(codec.fingerprint(MesPhysicalTransformSourceFreezeService.BUNDLE_VERSION,
-                text(root, "sourceBundleSnapshot"))) && MesPhysicalTransformSourceFreezeService.BUNDLE_VERSION.equals(text(bundle, "version")),
+                        text(root, "sourceBundleSnapshot"))) && MesPhysicalTransformSourceFreezeService.BUNDLE_VERSION.equals(text(bundle, "version")),
                 "永久来源包原算法/全文SHA不一致");
         for (String field : List.of("tenantId", "factoryCode", "actorUserId", "actorCode")) {
             require(text(root, field).equals(text(bundle, field)), "永久占用与原来源包owner不一致");
@@ -201,11 +212,15 @@ public class MesPhysicalTransformSourceHoldCodec {
         return value;
     }
 
-    /** 严格取消原SHA和原原因，不设置客户端owner。 */
+    /**
+     * 严格取消原SHA和原原因，不设置客户端owner。
+     */
     public record Cancel(String fingerprint, String reason) {
     }
 
-    /** 服务器生成的完整冻结原文及身份，不是客户端提交DTO。 */
+    /**
+     * 服务器生成的完整冻结原文及身份，不是客户端提交DTO。
+     */
     public record Frozen(String snapshot, String fingerprint, List<List<String>> identities) {
     }
 }

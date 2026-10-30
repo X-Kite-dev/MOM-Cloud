@@ -2,11 +2,11 @@ package com.kitex.mom.plan.service.aps.collector;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.util.R;
-import com.kitex.mom.mdm.feign.RemoteFactoryModelService;
-import com.kitex.mom.mdm.feign.RemoteCalendarService;
-import com.kitex.mom.mdm.feign.RemoteMdmRouteEngineeringService;
 import com.kitex.mom.mdm.dto.MdmRouteEngineeringDTO;
 import com.kitex.mom.mdm.entity.MdmCalendarEntity;
+import com.kitex.mom.mdm.feign.RemoteCalendarService;
+import com.kitex.mom.mdm.feign.RemoteFactoryModelService;
+import com.kitex.mom.mdm.feign.RemoteMdmRouteEngineeringService;
 import com.kitex.mom.mdm.vo.MdmFactoryModelTreeVO;
 import org.springframework.stereotype.Component;
 
@@ -15,7 +15,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** 采集当前工厂的组织资源树；工程包精确取证在具体产品进入计算前继续复核。 */
+/**
+ * 采集当前工厂的组织资源树；工程包精确取证在具体产品进入计算前继续复核。
+ */
 @Component
 public class MdmApsResourceCollector extends AbstractApsResourceCollector {
 
@@ -32,8 +34,15 @@ public class MdmApsResourceCollector extends AbstractApsResourceCollector {
         this.routeEngineeringService = routeEngineeringService;
     }
 
-    @Override public String module() { return "MDM"; }
-    @Override public int order() { return 20; }
+    @Override
+    public String module() {
+        return "MDM";
+    }
+
+    @Override
+    public int order() {
+        return 20;
+    }
 
     @Override
     public PlnApsResourceEvidence collect(PlnApsResourceCollectionContext context) {

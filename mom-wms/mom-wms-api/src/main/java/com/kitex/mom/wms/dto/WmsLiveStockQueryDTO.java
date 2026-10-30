@@ -25,6 +25,9 @@ public class WmsLiveStockQueryDTO {
     @Schema(description = "精确库存行主键")
     private Long stockId;
 
+    @Schema(description = "出库选择器是否按实时库存行返回，不汇总批次")
+    private Boolean exactStock;
+
     /**
      * 出库通知单号
      */
@@ -48,6 +51,18 @@ public class WmsLiveStockQueryDTO {
      */
     @Schema(description = "物料批次")
     private String matBatch;
+
+    @Schema(description = "条码或序列号，精确匹配")
+    private String matBarcode;
+
+    @Schema(description = "库存货权：OWNED/CUSTOMER_SUPPLIED/CONSIGNED")
+    private String stockOwnerType;
+
+    @Schema(description = "库存归属方编码")
+    private String stockOwnerCode;
+
+    @Schema(description = "首次入库来源业务单号")
+    private String sourceBusinessNo;
 
     /**
      * 仓库编码

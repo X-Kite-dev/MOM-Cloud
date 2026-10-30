@@ -23,11 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * APS 正式排程到 MES 的逐计划发送器。
@@ -49,7 +45,44 @@ public class PlnApsMesDispatchWorker {
     private final PlatformTransactionManager transactionManager;
     private final ObjectMapper objectMapper;
 
-    /** 立即处理当前租户工厂内的一条 Outbox。 */
+    private static int backoffMinutes(int attempts) {
+        return Math.min(240, 1 << Math.min(7, Math.max(0, attempts - 1)));
+    }
+
+    private static Long parseId(String value) {
+        try {
+            Long id = Long.valueOf(value);
+            require(id > 0, "生产计划主键必须为正整数");
+            return id;
+        } catch (NumberFormatException ex) {
+            throw new CheckedException("生产计划主键格式不正确");
+        }
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    private static String message(Throwable error) {
+        return StrUtil.blankToDefault(error.getMessage(), error.getClass().getSimpleName());
+    }
+
+    private static String abbreviate(String value) {
+        return value == null || value.length() <= 1000 ? value : value.substring(0, 1000);
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
+    /**
+     * 立即处理当前租户工厂内的一条 Outbox。
+     */
     public PlnApsMesDispatchDTO.DispatchView process(Long outboxId) {
         processCore(outboxId);
         PlnApsMesDispatchOutboxEntity row = outboxMapper.selectById(outboxId);
@@ -171,7 +204,9 @@ public class PlnApsMesDispatchWorker {
                 stateRequest(row, "FINISH"), abbreviate(dispatchReason(row)));
     }
 
-    /** 解析、指纹或历史回执损坏时必须释放租约并留下人工可处理事实。 */
+    /**
+     * 解析、指纹或历史回执损坏时必须释放租约并留下人工可处理事实。
+     */
     private void safelyTerminateClaim(PlnApsMesDispatchOutboxEntity claimed, String lease, RuntimeException error) {
         try {
             transaction(false).executeWithoutResult(status -> {
@@ -227,7 +262,8 @@ public class PlnApsMesDispatchWorker {
     private List<PlnApsMesDispatchDTO.ItemReceipt> previousReceipts(String json) {
         if (StrUtil.isBlank(json)) return new ArrayList<>();
         try {
-            return new ArrayList<>(objectMapper.readValue(json, new TypeReference<List<PlnApsMesDispatchDTO.ItemReceipt>>() { }));
+            return new ArrayList<>(objectMapper.readValue(json, new TypeReference<List<PlnApsMesDispatchDTO.ItemReceipt>>() {
+            }));
         } catch (Exception ex) {
             throw new CheckedException("MES下达历史回执损坏，禁止在未知成功范围上重试");
         }
@@ -241,7 +277,7 @@ public class PlnApsMesDispatchWorker {
     }
 
     private PlnApsMesDispatchDTO.ItemReceipt failed(PlnApsMesDispatchDTO.PlanItem item,
-                                                     String status, String message) {
+                                                    String status, String message) {
         return new PlnApsMesDispatchDTO.ItemReceipt().setDispatchKey(item.getDispatchKey())
                 .setIssueId(item.getIssueId()).setIssueNo(item.getIssueNo())
                 .setIssueIds(item.getIssueIds()).setIssueNos(item.getIssueNos())
@@ -262,40 +298,5 @@ public class PlnApsMesDispatchWorker {
         } catch (Exception ex) {
             throw new CheckedException("MES下达回执无法序列化");
         }
-    }
-
-    private static int backoffMinutes(int attempts) {
-        return Math.min(240, 1 << Math.min(7, Math.max(0, attempts - 1)));
-    }
-
-    private static Long parseId(String value) {
-        try {
-            Long id = Long.valueOf(value);
-            require(id > 0, "生产计划主键必须为正整数");
-            return id;
-        } catch (NumberFormatException ex) {
-            throw new CheckedException("生产计划主键格式不正确");
-        }
-    }
-
-    private static String sha256(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException(ex);
-        }
-    }
-
-    private static String message(Throwable error) {
-        return StrUtil.blankToDefault(error.getMessage(), error.getClass().getSimpleName());
-    }
-
-    private static String abbreviate(String value) {
-        return value == null || value.length() <= 1000 ? value : value.substring(0, 1000);
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
     }
 }

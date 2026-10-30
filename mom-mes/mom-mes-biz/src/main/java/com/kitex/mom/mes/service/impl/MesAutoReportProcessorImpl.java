@@ -3,8 +3,8 @@ package com.kitex.mom.mes.service.impl;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.common.core.exception.CheckedException;
-import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
 import com.kitex.mom.mes.entity.MesAutoReportEventEntity;
 import com.kitex.mom.mes.entity.MesAutoReportRuleEntity;
@@ -16,11 +16,7 @@ import com.kitex.mom.mes.enums.MesProduceTaskStatusEnum;
 import com.kitex.mom.mes.enums.WorksiteTypeEnum;
 import com.kitex.mom.mes.mapper.MesAutoReportEventMapper;
 import com.kitex.mom.mes.mapper.MesAutoReportRuleMapper;
-import com.kitex.mom.mes.service.MesAutoReportProcessor;
-import com.kitex.mom.mes.service.MesAutoReportCaptureService;
-import com.kitex.mom.mes.service.MesExecutionTemplateService;
-import com.kitex.mom.mes.service.MesTaskArrangeService;
-import com.kitex.mom.mes.service.MesTaskReportService;
+import com.kitex.mom.mes.service.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -238,7 +234,8 @@ public class MesAutoReportProcessorImpl implements MesAutoReportProcessor {
                     .eq(MesTaskArrangeEntity::getTenantId, event.getTenantId())
                     .eq(MesTaskArrangeEntity::getFactoryCode, event.getFactoryCode())
                     .eq(MesTaskArrangeEntity::getCode, event.getRequestedArrangeCode()).last("LIMIT 2"));
-            if (requested.size() != 1) throw new CheckedException("原指定派工未唯一归属事件租户/工厂，禁止取第一条猜归属");
+            if (requested.size() != 1)
+                throw new CheckedException("原指定派工未唯一归属事件租户/工厂，禁止取第一条猜归属");
             MesTaskArrangeEntity arrange = requested.get(0);
             validateArrange(arrange, event, rule);
             return arrange;

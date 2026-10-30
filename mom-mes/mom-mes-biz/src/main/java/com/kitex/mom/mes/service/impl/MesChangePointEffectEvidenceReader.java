@@ -17,13 +17,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * 变化点改善的确定性原始证据读取器。
@@ -40,7 +34,26 @@ public class MesChangePointEffectEvidenceReader {
     private final MesChangePointHandleMapper handleMapper;
     private final MesTaskReportMapper reportMapper;
 
-    /** 新来源单发起时冻结完整原始范围；不对缺失该快照的历史单据补造依据。 */
+    public static String hash(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception exception) {
+            throw new CheckedException("变化点复测证据指纹生成失败", exception);
+        }
+    }
+
+    private static String decimal(BigDecimal value) {
+        return value == null ? null : value.toPlainString();
+    }
+
+    private static String time(LocalDateTime value) {
+        return value == null ? null : value.toString();
+    }
+
+    /**
+     * 新来源单发起时冻结完整原始范围；不对缺失该快照的历史单据补造依据。
+     */
     public String captureBaseline(String factory, String dimension, String group,
                                   LocalDateTime start, LocalDateTime end) {
         List<MesChangePointHandleEntity> events = events(factory, dimension, group, start, end);
@@ -139,7 +152,7 @@ public class MesChangePointEffectEvidenceReader {
     }
 
     private List<MesChangePointHandleEntity> events(String factory, String dimension, String group,
-                                                  LocalDateTime start, LocalDateTime end) {
+                                                    LocalDateTime start, LocalDateTime end) {
         LambdaQueryWrapper<MesChangePointHandleEntity> query = eventScope(factory, start, end);
         switch (dimension) {
             case "CATEGORY" -> query.eq(MesChangePointHandleEntity::getCategory, group);
@@ -155,13 +168,13 @@ public class MesChangePointEffectEvidenceReader {
             default -> throw new CheckedException("变化点复测分组维度无效");
         }
         query.select(MesChangePointHandleEntity::getId, MesChangePointHandleEntity::getEventCode,
-                MesChangePointHandleEntity::getProductCode, MesChangePointHandleEntity::getLineCode,
-                MesChangePointHandleEntity::getConfigCode, MesChangePointHandleEntity::getCategory,
-                MesChangePointHandleEntity::getLossCategory, MesChangePointHandleEntity::getStatus,
-                MesChangePointHandleEntity::getTriggerTime, MesChangePointHandleEntity::getAffectedWipQty,
-                MesChangePointHandleEntity::getReworkWipQty, MesChangePointHandleEntity::getScrapWipQty,
-                MesChangePointHandleEntity::getLossAmount, MesChangePointHandleEntity::getAutoPauseRequired,
-                MesChangePointHandleEntity::getProductionPaused, MesChangePointHandleEntity::getPauseOutcome)
+                        MesChangePointHandleEntity::getProductCode, MesChangePointHandleEntity::getLineCode,
+                        MesChangePointHandleEntity::getConfigCode, MesChangePointHandleEntity::getCategory,
+                        MesChangePointHandleEntity::getLossCategory, MesChangePointHandleEntity::getStatus,
+                        MesChangePointHandleEntity::getTriggerTime, MesChangePointHandleEntity::getAffectedWipQty,
+                        MesChangePointHandleEntity::getReworkWipQty, MesChangePointHandleEntity::getScrapWipQty,
+                        MesChangePointHandleEntity::getLossAmount, MesChangePointHandleEntity::getAutoPauseRequired,
+                        MesChangePointHandleEntity::getProductionPaused, MesChangePointHandleEntity::getPauseOutcome)
                 .orderByAsc(MesChangePointHandleEntity::getId).last("LIMIT " + (LIMIT + 1));
         List<MesChangePointHandleEntity> events = handleMapper.selectList(query);
         requireWithinLimit(events.size(), "变化点");
@@ -169,7 +182,7 @@ public class MesChangePointEffectEvidenceReader {
     }
 
     private LambdaQueryWrapper<MesChangePointHandleEntity> eventScope(String factory, LocalDateTime start,
-                                                                    LocalDateTime end) {
+                                                                      LocalDateTime end) {
         return new LambdaQueryWrapper<MesChangePointHandleEntity>()
                 .eq(MesChangePointHandleEntity::getTenantId, tenant())
                 .eq(MesChangePointHandleEntity::getFactoryCode, factory)
@@ -219,23 +232,7 @@ public class MesChangePointEffectEvidenceReader {
         }
     }
 
-    public static String hash(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception exception) {
-            throw new CheckedException("变化点复测证据指纹生成失败", exception);
-        }
-    }
-
-    private static String decimal(BigDecimal value) {
-        return value == null ? null : value.toPlainString();
-    }
-
-    private static String time(LocalDateTime value) {
-        return value == null ? null : value.toString();
-    }
-
     public record Observation(String snapshot, String fingerprint, List<String> gaps,
-                              long reportSamples, long events, long unclearedEvents) { }
+                              long reportSamples, long events, long unclearedEvents) {
+    }
 }

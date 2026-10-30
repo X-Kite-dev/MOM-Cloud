@@ -14,22 +14,8 @@ import com.kitex.mom.plan.constant.IssueStatusEnum;
 import com.kitex.mom.plan.constant.PlanStatusEnum;
 import com.kitex.mom.plan.dto.PlanMrpSupplyWithdrawalDTO;
 import com.kitex.mom.plan.dto.PlnDemandReplanEvidenceDTO;
-import com.kitex.mom.plan.entity.PlanMatMrpEntity;
-import com.kitex.mom.plan.entity.PlnIssueEntity;
-import com.kitex.mom.plan.entity.PlnProductDemandChangeEntity;
-import com.kitex.mom.plan.entity.PlnProductDemandEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingBatchAllocationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingBatchEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity;
-import com.kitex.mom.plan.mapper.PlanMatMrpMapper;
-import com.kitex.mom.plan.mapper.PlnIssueMapper;
-import com.kitex.mom.plan.mapper.PlnProductDemandChangeMapper;
-import com.kitex.mom.plan.mapper.PlnProductDemandMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingBatchAllocationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingBatchMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingOperationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskDetailMapper;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.PlanMatMrpService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -37,17 +23,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -74,18 +50,24 @@ public class PlnDemandReplanCoordinator {
     private final RemoteMesTaskService remoteMesTaskService;
     private final ObjectMapper objectMapper;
 
-    /** 冻结当前需求全部可撤回下游事实；没有下游时返回 DIRECT。 */
+    /**
+     * 冻结当前需求全部可撤回下游事实；没有下游时返回 DIRECT。
+     */
     public PlnDemandReplanEvidenceDTO.Evidence preview(Long demandId, Long previousMpsLineId) {
         return capture(demandId, previousMpsLineId, null, true, null);
     }
 
-    /** 冻结跨期拆量需求的全部旧MPS桶，任何一个桶缺失都不得继续换版。 */
+    /**
+     * 冻结跨期拆量需求的全部旧MPS桶，任何一个桶缺失都不得继续换版。
+     */
     public PlnDemandReplanEvidenceDTO.Evidence preview(Long demandId, List<Long> previousMpsLineIds) {
         List<Long> ids = normalizeLineIds(previousMpsLineIds);
         return capture(demandId, ids.isEmpty() ? null : ids.get(0), ids, true, null);
     }
 
-    /** 重新采集并校验审批时证据，防止使用已经漂移的候选发布。 */
+    /**
+     * 重新采集并校验审批时证据，防止使用已经漂移的候选发布。
+     */
     public PlnDemandReplanEvidenceDTO.Evidence verify(String frozenSnapshot) {
         PlnDemandReplanEvidenceDTO.Evidence frozen = parse(frozenSnapshot);
         PlnDemandReplanEvidenceDTO.Evidence current = capture(frozen.getDemandId(),
@@ -151,7 +133,7 @@ public class PlnDemandReplanCoordinator {
                 "MPS执行时MRP集合已变化：" + frozen.getDemandNo());
         for (PlanMatMrpEntity row : mrpRows) {
             require(Boolean.TRUE.equals(mrpService.releaseForWithdrawal(row.getId(),
-                    limit(key + "-MRP-" + row.getId(), 64), cause)),
+                            limit(key + "-MRP-" + row.getId(), 64), cause)),
                     "MRP[" + row.getId() + "]库存预留释放失败");
             // 旧行即将在同一事务内被安全删除重算；先清除已核验的旧MPS来源，满足通用MRP重算门禁。
             require(mrpMapper.update(null, new LambdaUpdateWrapper<PlanMatMrpEntity>()
@@ -195,15 +177,17 @@ public class PlnDemandReplanCoordinator {
                         + "条旧根计划并释放WMS/APS/MES事实");
     }
 
-    /** 将冻结证据序列化保存到 MPS 候选行。 */
+    /**
+     * 将冻结证据序列化保存到 MPS 候选行。
+     */
     public String snapshot(PlnDemandReplanEvidenceDTO.Evidence evidence) {
         return json(evidence);
     }
 
     private PlnDemandReplanEvidenceDTO.Evidence capture(Long demandId, Long previousMpsLineId,
-                                                         List<Long> previousMpsLineIds,
-                                                         boolean previewRemote,
-                                                         PlnDemandReplanEvidenceDTO.Evidence frozen) {
+                                                        List<Long> previousMpsLineIds,
+                                                        boolean previewRemote,
+                                                        PlnDemandReplanEvidenceDTO.Evidence frozen) {
         PlnProductDemandEntity demand = requireDemand(demandId, true);
         requireFactory(demand.getFactoryCode());
         require(demand.getNeedNum() != null && demand.getNeedNum().signum() > 0
@@ -222,7 +206,7 @@ public class PlnDemandReplanCoordinator {
         if ("DIRECT".equals(mode)) {
             require(issueMapper.selectCount(new LambdaQueryWrapper<PlnIssueEntity>()
                             .and(q -> q.eq(PlnIssueEntity::getSourceDemandNo, demand.getDemandNo())
-                                    .or().and(legacy -> legacy.isNull(PlnIssueEntity::getSourceDemandNo)
+                                    .or(legacy -> legacy.isNull(PlnIssueEntity::getSourceDemandNo)
                                             .eq(PlnIssueEntity::getIssueNo, demand.getDemandNo())))) == 0,
                     "需求没有MRP但已有生产计划，禁止直接发布MPS");
         }
@@ -441,7 +425,7 @@ public class PlnDemandReplanCoordinator {
     private List<PlnIssueEntity> activeRootIssues(String demandNo, String productCode, boolean lock) {
         LambdaQueryWrapper<PlnIssueEntity> allQuery = new LambdaQueryWrapper<PlnIssueEntity>()
                 .and(q -> q.eq(PlnIssueEntity::getSourceDemandNo, demandNo)
-                        .or().and(legacy -> legacy.isNull(PlnIssueEntity::getSourceDemandNo)
+                        .or(legacy -> legacy.isNull(PlnIssueEntity::getSourceDemandNo)
                                 .eq(PlnIssueEntity::getIssueNo, demandNo)))
                 .orderByAsc(PlnIssueEntity::getId);
         if (lock) allQuery.last("FOR UPDATE");
@@ -487,7 +471,7 @@ public class PlnDemandReplanCoordinator {
     }
 
     private MesPlanWithdrawalDTO.Command mesCommand(PlnIssueEntity issue, boolean preview, String requestId,
-                                                     String expectedEvidence, String reason) {
+                                                    String expectedEvidence, String reason) {
         MesPlanWithdrawalDTO.Command command = new MesPlanWithdrawalDTO.Command();
         command.setRequestId(requestId);
         command.setIssueId(issue.getId());

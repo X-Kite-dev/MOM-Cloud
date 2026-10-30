@@ -15,7 +15,7 @@
         feed.mat_code,
         feed.reservation_no,
         feed.requirement_mat_code,
-        MAX(feed.substitute_flag) as substitute_flag,
+        BOOL_OR(feed.substitute_flag) as substitute_flag,
         MAX(feed.substitute_ratio) as substitute_ratio,
         MAX(feed.mat_name) as mat_name,
         MAX(feed.mat_spec) as mat_spec,
@@ -28,18 +28,18 @@
         MAX(feed.status) as status,
         (SUM(COALESCE(feed.feed_num, 0)) - SUM(COALESCE(feed.used_num, 0))) as leftNum,
         MAX(feed.update_time) as lastUsedTime,
-        MAX(feed.is_lock) as is_lock,
+        BOOL_OR(feed.is_lock) as is_lock,
         MAX(feed.factory_code) as factory_code
         FROM
         mes_warehouse_feed feed
         LEFT JOIN
         mes_task task on feed.task_code = task.code
-            AND feed.factory_code = task.factory_code
-            AND task.del_flag = '0'
+        AND feed.factory_code = task.factory_code
+        AND task.del_flag = '0'
         LEFT JOIN
         mes_produce_task produceTask on feed.produce_task_code = produceTask.code
-            AND feed.factory_code = produceTask.factory_code
-            AND produceTask.del_flag = '0'
+        AND feed.factory_code = produceTask.factory_code
+        AND produceTask.del_flag = '0'
         <where>
             1 = 1
             AND feed.del_flag = '0'
@@ -92,7 +92,7 @@
         feed.mat_code,
         feed.reservation_no,
         feed.requirement_mat_code,
-        MAX(feed.substitute_flag) as substitute_flag,
+        BOOL_OR(feed.substitute_flag) as substitute_flag,
         MAX(feed.substitute_ratio) as substitute_ratio,
         MAX(feed.mat_name) as mat_name,
         MAX(feed.mat_spec) as mat_spec,
@@ -105,18 +105,18 @@
         MAX(feed.status) as status,
         (SUM(COALESCE(feed.feed_num, 0)) - SUM(COALESCE(feed.used_num, 0))) as leftNum,
         MAX(feed.update_time) as lastUsedTime,
-        MAX(feed.is_lock) as is_lock,
+        BOOL_OR(feed.is_lock) as is_lock,
         MAX(feed.factory_code) as factory_code
         FROM
         mes_warehouse_feed feed
         LEFT JOIN
         mes_task task on feed.task_code = task.code
-            AND feed.factory_code = task.factory_code
-            AND task.del_flag = '0'
+        AND feed.factory_code = task.factory_code
+        AND task.del_flag = '0'
         LEFT JOIN
         mes_produce_task produceTask on feed.produce_task_code = produceTask.code
-            AND feed.factory_code = produceTask.factory_code
-            AND produceTask.del_flag = '0'
+        AND feed.factory_code = produceTask.factory_code
+        AND produceTask.del_flag = '0'
         <where>
             1 = 1
             AND feed.del_flag = '0'

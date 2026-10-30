@@ -11,6 +11,11 @@ mom:
 server:
   port: 32001
 
+xxl:
+  job:
+    executor:
+      port: ${MOM_WMS_XXL_JOB_EXECUTOR_PORT:9101}
+
 spring:
   application:
     name: kitex-mom-wms

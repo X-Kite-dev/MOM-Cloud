@@ -11,7 +11,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
-/** 固定只读永久回执核查入口；UNKNOWN不能作为自动重试写入的依据。 */
+/**
+ * 固定只读永久回执核查入口；UNKNOWN不能作为自动重试写入的依据。
+ */
 @RestController
 @RequestMapping("/planAgentCommand")
 public class PlanAgentCommandReceiptController {

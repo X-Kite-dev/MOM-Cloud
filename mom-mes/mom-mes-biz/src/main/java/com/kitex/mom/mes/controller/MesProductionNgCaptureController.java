@@ -9,14 +9,11 @@ import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
-/** 明确新生产不良的实物采集；不以原普通不良申报权限默认授予库存化权限。 */
+/**
+ * 明确新生产不良的实物采集；不以原普通不良申报权限默认授予库存化权限。
+ */
 @RestController
 @RequestMapping("/mesProductionNg")
 @RequiredArgsConstructor

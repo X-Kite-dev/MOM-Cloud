@@ -16,10 +16,14 @@ import java.util.List;
  */
 public interface MesProcessProcedureService extends IService<MesProcessProcedureMoldEntity> {
 
-    /** 精确节点的维护快照，包含原父图版本及真实绑定。 */
+    /**
+     * 精确节点的维护快照，包含原父图版本及真实绑定。
+     */
     MesRouteMoldConfigurationDTO configuration(Long id);
 
-    /** 按稳定节点读取当前工程模具，不能回退主工序匹配。 */
+    /**
+     * 按稳定节点读取当前工程模具，不能回退主工序匹配。
+     */
     List<MesProcessProcedureMoldEntity> getMoldByNode(String routeCode, String routeNodeCode);
 
 
@@ -31,7 +35,9 @@ public interface MesProcessProcedureService extends IService<MesProcessProcedure
      */
     List<MesProcessProcedureMoldEntity> getMold(Long id);
 
-    /** 旧编码入口也须先证明当前工厂路线中的主工序唯一，不能合并重复节点的模具。 */
+    /**
+     * 旧编码入口也须先证明当前工厂路线中的主工序唯一，不能合并重复节点的模具。
+     */
     List<MesProcessProcedureMoldEntity> getMoldByCode(String routeCode, String processCode);
 
     /**

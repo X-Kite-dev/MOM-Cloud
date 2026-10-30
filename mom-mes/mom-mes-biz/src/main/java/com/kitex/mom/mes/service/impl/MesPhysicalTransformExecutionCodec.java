@@ -9,7 +9,9 @@ import java.util.TreeSet;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 
-/** 正式执行确认的严格文本协议；不接库存、工程、计算结果或客户端成功状态。 */
+/**
+ * 正式执行确认的严格文本协议；不接库存、工程、计算结果或客户端成功状态。
+ */
 @Component
 @RequiredArgsConstructor
 public class MesPhysicalTransformExecutionCodec {
@@ -44,7 +46,8 @@ public class MesPhysicalTransformExecutionCodec {
         codec.reason(root.path("reason").textValue());
         result.setReason(root.path("reason").textValue());
         if (!result.getPositionSurveyId().isEmpty()) codec.id(result.getPositionSurveyId());
-        if (!result.getPositionSurveyFingerprint().isEmpty()) sha(result.getPositionSurveyFingerprint(), "原位置采集SHA");
+        if (!result.getPositionSurveyFingerprint().isEmpty())
+            sha(result.getPositionSurveyFingerprint(), "原位置采集SHA");
         return result;
     }
 

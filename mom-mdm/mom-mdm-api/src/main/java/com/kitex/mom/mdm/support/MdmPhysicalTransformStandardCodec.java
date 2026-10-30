@@ -2,11 +2,7 @@ package com.kitex.mom.mdm.support;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.StreamReadFeature;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.MapperFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
@@ -20,7 +16,9 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.Set;
 
-/** 转换工程标准严格文本协议；无Spring状态，可供MDM发布和MES原内容核验共用。 */
+/**
+ * 转换工程标准严格文本协议；无Spring状态，可供MDM发布和MES原内容核验共用。
+ */
 public final class MdmPhysicalTransformStandardCodec {
     public static final String VERSION = "MES_PHYSICAL_ENGINEERING_V1";
     private static final ObjectMapper JSON = JsonMapper.builder(JsonFactory.builder()
@@ -36,7 +34,9 @@ public final class MdmPhysicalTransformStandardCodec {
     private MdmPhysicalTransformStandardCodec() {
     }
 
-    /** 根和嵌套重复键、尾随内容均拒绝，原文不能由宽松解析器修补。 */
+    /**
+     * 根和嵌套重复键、尾随内容均拒绝，原文不能由宽松解析器修补。
+     */
     public static JsonNode object(String raw, int limit) {
         require(raw != null && !raw.isBlank() && raw.length() <= limit, "工程JSON为空或超过容量");
         try {
@@ -50,7 +50,9 @@ public final class MdmPhysicalTransformStandardCodec {
         }
     }
 
-    /** 草稿只接受十五项公开文本；显式复制仍核原版本，期望组织不作为归属来源。 */
+    /**
+     * 草稿只接受十五项公开文本；显式复制仍核原版本，期望组织不作为归属来源。
+     */
     public static MdmPhysicalTransformStandardDTO.Draft draft(String raw) {
         JsonNode root = object(raw, 512 * 1024);
         texts(root, Set.of("expectedTenantId", "expectedFactoryCode", "id", "copySourceId", "expectedFingerprint", "expectedOperationId", "standardNo", "standardName", "materialCode",
@@ -58,7 +60,9 @@ public final class MdmPhysicalTransformStandardCodec {
         return convert(root, MdmPhysicalTransformStandardDTO.Draft.class);
     }
 
-    /** 状态动作只接受七项文本；每次绑定期望组织、原内容SHA及原动作身份。 */
+    /**
+     * 状态动作只接受七项文本；每次绑定期望组织、原内容SHA及原动作身份。
+     */
     public static MdmPhysicalTransformStandardDTO.Action action(String raw) {
         JsonNode root = object(raw, 16 * 1024);
         texts(root, Set.of("expectedTenantId", "expectedFactoryCode", "id", "expectedFingerprint", "expectedOperationId", "action", "reason"));
@@ -71,7 +75,9 @@ public final class MdmPhysicalTransformStandardCodec {
         return command;
     }
 
-    /** 原派工或内部响应的工程证据：完整已发布身份及十五文本字段正文，不从当前MDM补造。 */
+    /**
+     * 原派工或内部响应的工程证据：完整已发布身份及十五文本字段正文，不从当前MDM补造。
+     */
     public static JsonNode verifyFrozen(MdmPhysicalTransformStandardDTO.Frozen frozen) {
         require(frozen != null && VERSION.equals(frozen.getVersion()), "缺少或未知已冻结工程版本");
         id(frozen.getStandardId());
@@ -103,7 +109,9 @@ public final class MdmPhysicalTransformStandardCodec {
         return body;
     }
 
-    /** 九字段与MES数学政策一致；当前不将NONE登记为工程标准。 */
+    /**
+     * 九字段与MES数学政策一致；当前不将NONE登记为工程标准。
+     */
     public static String policy(String raw) {
         JsonNode root = object(raw, 256 * 1024);
         Set<String> stringKeys = Set.of("version", "operationType", "inputObjectType", "outputObjectType",
@@ -130,8 +138,9 @@ public final class MdmPhysicalTransformStandardCodec {
             require(position.isTextual(), "工程位置编码必须是文本");
             require(positions.add(code(position.textValue(), 100, "工程位置")), "工程位置不能重复");
         }
-        if (panel) require(factor.stripTrailingZeros().scale() <= 0 && factor.compareTo(BigDecimal.valueOf(positions.size())) <= 0,
-                "拆板一母单位须为完整SN当量且不超过完整位置数量");
+        if (panel)
+            require(factor.stripTrailingZeros().scale() <= 0 && factor.compareTo(BigDecimal.valueOf(positions.size())) <= 0,
+                    "拆板一母单位须为完整SN当量且不超过完整位置数量");
         require(!"SN".equals(root.path("inputObjectType").textValue()) || !root.path("partialInputAllowed").booleanValue(),
                 "SN不允许部分投入");
         require(!panel || !root.path("partialInputAllowed").booleanValue() || factor.compareTo(BigDecimal.ONE) == 0,
@@ -140,7 +149,9 @@ public final class MdmPhysicalTransformStandardCodec {
         return snapshot(root);
     }
 
-    /** 无浮点/指数/符号/舍入的精确数量。 */
+    /**
+     * 无浮点/指数/符号/舍入的精确数量。
+     */
     public static BigDecimal quantity(String value) {
         require(value != null && value.length() <= 40 && value.matches("(0|[1-9][0-9]*)(\\.[0-9]{1,8})?"), "工程数量须为普通正十进制文本");
         BigDecimal amount = new BigDecimal(value);
@@ -148,7 +159,9 @@ public final class MdmPhysicalTransformStandardCodec {
         return amount;
     }
 
-    /** 精确表示，不截断到数据库猜测精度。 */
+    /**
+     * 精确表示，不截断到数据库猜测精度。
+     */
     public static String amount(BigDecimal value) {
         BigDecimal normalized = value.stripTrailingZeros();
         require(normalized.precision() + Math.max(0, -normalized.scale()) <= 28 && Math.max(0, normalized.scale()) <= 8,
@@ -156,7 +169,9 @@ public final class MdmPhysicalTransformStandardCodec {
         return normalized.toPlainString();
     }
 
-    /** 正Long文本，不接受客户端JSON number。 */
+    /**
+     * 正Long文本，不接受客户端JSON number。
+     */
     public static Long id(String value) {
         require(value != null && value.matches("[1-9][0-9]{0,18}"), "工程身份必须为正Long文本");
         try {
@@ -166,7 +181,9 @@ public final class MdmPhysicalTransformStandardCodec {
         }
     }
 
-    /** 原编码首尾空白及控制字符拒绝，不清洗标识。 */
+    /**
+     * 原编码首尾空白及控制字符拒绝，不清洗标识。
+     */
     public static String code(String value, int limit, String label) {
         require(value != null && !value.isBlank() && value.length() <= limit
                 && !edgeBlank(value.codePointAt(0)) && !edgeBlank(value.codePointBefore(value.length()))
@@ -174,13 +191,17 @@ public final class MdmPhysicalTransformStandardCodec {
         return value;
     }
 
-    /** 明确保留人工说明，不静默裁剪。 */
+    /**
+     * 明确保留人工说明，不静默裁剪。
+     */
     public static void reason(String value) {
         require(value != null && !value.isBlank() && value.length() <= 1000
                 && value.codePoints().noneMatch(c -> c <= 31 || c >= 127 && c <= 159), "工程原因必须明确且不超过1000位/不含控制字符");
     }
 
-    /** 稳定工程正文；不受服务全局Long序列化或日期输出配置影响。 */
+    /**
+     * 稳定工程正文；不受服务全局Long序列化或日期输出配置影响。
+     */
     public static String snapshot(Object value) {
         try {
             return JSON.writeValueAsString(value);
@@ -189,7 +210,9 @@ public final class MdmPhysicalTransformStandardCodec {
         }
     }
 
-    /** 领域回读使用树比较，不将两份完整履历再转义成第三层字符串而引入隐藏总容量。 */
+    /**
+     * 领域回读使用树比较，不将两份完整履历再转义成第三层字符串而引入隐藏总容量。
+     */
     public static com.fasterxml.jackson.databind.node.ObjectNode entityFacts(Object value) {
         try {
             JsonNode root = JSON.valueToTree(value);
@@ -202,7 +225,9 @@ public final class MdmPhysicalTransformStandardCodec {
         }
     }
 
-    /** 全文版本域SHA，不从当前依赖修补旧发布正文。 */
+    /**
+     * 全文版本域SHA，不从当前依赖修补旧发布正文。
+     */
     public static String fingerprint(String version, String raw) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")

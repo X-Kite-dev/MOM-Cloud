@@ -7,9 +7,14 @@ import com.kitex.mom.mes.agent.service.MesFormalSopEvidenceService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-/** 工单原冻结正式SOP专用合同，不改变既有旧附件引用的V1/V2语义。 */
+/**
+ * 工单原冻结正式SOP专用合同，不改变既有旧附件引用的V1/V2语义。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/mesAgentKnowledge")

@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 事件接收、路由、执行、失败和人工接管的不可变履历。 */
+/**
+ * 事件接收、路由、执行、失败和人工接管的不可变履历。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

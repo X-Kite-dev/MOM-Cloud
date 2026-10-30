@@ -39,6 +39,14 @@ public class WmsQualityStatusOperationEntity extends BaseEntity<WmsQualityStatus
     private BigDecimal requestedQuantity;
     private BigDecimal affectedQuantity;
     private String affectedStockIds;
+    /** 本次处置已完整记录拆分；历史事务默认false，不能用于整行无余量证明。 */
+    private Boolean splitRecorded;
+    /** 本次处置新建的余量库存行ID，逗号分隔；无拆分时为空。 */
+    private String splitRemainderStockIds;
+    /** 原库存行、余量库存行及拆分数量的同事务映射；历史事务不补造。 */
+    private String splitLineageJson;
+    /** 实际完成库存拆分/状态写入的时间，不随仓库后续执行更新。 */
+    private LocalDateTime splitRecordedAt;
     private String status;
     private String reason;
     private String resultMessage;

@@ -21,8 +21,8 @@ import com.kitex.mom.mes.service.*;
 import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
 import com.kitex.mom.mes.util.MesReportReverseNodeEvidence;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -497,7 +497,9 @@ public class MesReportReverseRequestServiceImpl
         return correctionEvidence(reportId, factory, lock, requestedMode, null);
     }
 
-    /** 已存申请按原协议重采；首次预览/提交没有客户端可控的降级版本。 */
+    /**
+     * 已存申请按原协议重采；首次预览/提交没有客户端可控的降级版本。
+     */
     private CorrectionEvidence correctionEvidence(Long reportId, String factory, boolean lock,
                                                   String requestedMode, String originalVersion) {
         EvidenceSnapshot anchor = evidence(reportId, factory, lock);
@@ -622,7 +624,9 @@ public class MesReportReverseRequestServiceImpl
         }
     }
 
-    /** 计算锚点报工在当前工艺DAG中的同标识有效下游报工。 */
+    /**
+     * 计算锚点报工在当前工艺DAG中的同标识有效下游报工。
+     */
     private ChainPlan chainPlan(MesTaskReportEntity anchorReport, String factory, String originalVersion) {
         MesTaskArrangeEntity anchorArrange = arrangeService.getOne(new LambdaQueryWrapper<MesTaskArrangeEntity>()
                 .eq(MesTaskArrangeEntity::getTenantId, anchorReport.getTenantId())
@@ -641,7 +645,7 @@ public class MesReportReverseRequestServiceImpl
         List<Map<String, String>> executionNodes = nodeEvidence
                 ? MesReportReverseNodeEvidence.executionNodes(tasks) : List.of();
         require(nodeEvidence || (tasks.stream().map(MesProduceTaskEntity::getRouteCode).distinct().count() == tasks.size()
-                && tasks.stream().allMatch(item -> StrUtil.isNotBlank(item.getRouteCode()))),
+                        && tasks.stream().allMatch(item -> StrUtil.isNotBlank(item.getRouteCode()))),
                 "实际工艺DAG含重复/缺失工序编码，禁止吞并节点后执行链式撤回");
         Map<String, MesProduceTaskEntity> byRoute = nodeEvidence ? Map.of() : tasks.stream()
                 .filter(item -> StrUtil.isNotBlank(item.getRouteCode()))
@@ -792,11 +796,11 @@ public class MesReportReverseRequestServiceImpl
         });
 
         Map<String, MesTaskArrangeEntity> arrangeByCode = arrangeService.list(
-                new LambdaQueryWrapper<MesTaskArrangeEntity>()
-                        .eq(MesTaskArrangeEntity::getTenantId, anchorReport.getTenantId())
-                        .eq(MesTaskArrangeEntity::getFactoryCode, factory)
-                        .in(MesTaskArrangeEntity::getCode,
-                                downstreamReports.stream().map(MesTaskReportEntity::getArrangeCode).distinct().toList()))
+                        new LambdaQueryWrapper<MesTaskArrangeEntity>()
+                                .eq(MesTaskArrangeEntity::getTenantId, anchorReport.getTenantId())
+                                .eq(MesTaskArrangeEntity::getFactoryCode, factory)
+                                .in(MesTaskArrangeEntity::getCode,
+                                        downstreamReports.stream().map(MesTaskReportEntity::getArrangeCode).distinct().toList()))
                 .stream().collect(java.util.stream.Collectors.toMap(MesTaskArrangeEntity::getCode,
                         item -> item, (left, right) -> {
                             throw new CheckedException("下游实际派工编码不唯一，禁止取首条推断范围");
@@ -1026,7 +1030,8 @@ public class MesReportReverseRequestServiceImpl
     }
 
     private record EvidenceSnapshot(MesTaskReportEntity report, List<String> blockers,
-                                    String fingerprint, String json, MesIdentifierBindingInverseCoordinator.Evidence dynamic) {
+                                    String fingerprint, String json,
+                                    MesIdentifierBindingInverseCoordinator.Evidence dynamic) {
     }
 
     private record ChainCandidate(MesTaskReportEntity report, MesTaskArrangeEntity arrange, int depth) {

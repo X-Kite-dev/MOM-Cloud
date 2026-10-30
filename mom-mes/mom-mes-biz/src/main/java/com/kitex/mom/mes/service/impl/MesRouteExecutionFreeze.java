@@ -7,22 +7,20 @@ import com.kitex.mom.mdm.support.MdmRouteNodeTimingPolicy;
 import com.kitex.mom.mes.dto.MdmProcessRouteWorkingDTO;
 import com.kitex.mom.mes.entity.MesProduceTaskEntity;
 
-import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
-/** 新下达的完整节点执行合同；只使用本次原路线快照，不查询当前工程来补历史。 */
+/**
+ * 新下达的完整节点执行合同；只使用本次原路线快照，不查询当前工程来补历史。
+ */
 final class MesRouteExecutionFreeze {
     static final String VERSION = "NODE_EXECUTION_V1";
 
     private MesRouteExecutionFreeze() {
     }
 
-    /** 旧唯一图在本次下达时无损投影；未知工程属性、附件与正式SOP原文保留。 */
+    /**
+     * 旧唯一图在本次下达时无损投影；未知工程属性、附件与正式SOP原文保留。
+     */
     static String prepare(String snapshot, List<MdmProcessRouteWorkingDTO> routes) {
         if (routes.stream().allMatch(row -> row.getRouteNodeCode() == null)) return snapshot;
         Map<String, String> nodeProcesses = new LinkedHashMap<>();

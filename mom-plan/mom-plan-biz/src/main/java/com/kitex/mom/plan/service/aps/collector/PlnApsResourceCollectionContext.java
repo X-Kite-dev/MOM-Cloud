@@ -3,7 +3,9 @@ package com.kitex.mom.plan.service.aps.collector;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 当前租户工厂内一次 APS 资源取证的不可变范围。 */
+/**
+ * 当前租户工厂内一次 APS 资源取证的不可变范围。
+ */
 public record PlnApsResourceCollectionContext(
         Long tenantId,
         String factoryCode,
@@ -22,7 +24,9 @@ public record PlnApsResourceCollectionContext(
         String formalPlanContractId,
         String formalPlanContractFingerprint) {
 
-    /** 服务端已核验的案件来源，不接收浏览器自报编码。 */
+    /**
+     * 服务端已核验的案件来源，不接收浏览器自报编码。
+     */
     public record SourceRef(String type, Long id, String code, String version, String fingerprint) {
     }
 }

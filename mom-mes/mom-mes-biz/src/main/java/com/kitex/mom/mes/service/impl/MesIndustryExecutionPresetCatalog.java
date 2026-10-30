@@ -34,7 +34,9 @@ public class MesIndustryExecutionPresetCatalog {
             "验证重复扫码、同请求重试、跨工厂拒绝及缺料或质量阻断，核对报工、实际消耗、WIP、库存和进度。",
             "按真实场景核对异常、原号恢复及受控纠正；当前不支持的专用过程必须明确待建或扩展，不能以普通报工成功作为全部适配通过。");
 
-    /** 返回可编辑草稿起点及当前能力边界，不形成行业专用执行策略。 */
+    /**
+     * 返回可编辑草稿起点及当前能力边界，不形成行业专用执行策略。
+     */
     public List<MesIndustryExecutionPresetDTO> list() {
         return List.of(
                 industry("GENERAL_DISCRETE", "通用离散制造", "按批量、单件和周转批组合实施",
@@ -244,7 +246,9 @@ public class MesIndustryExecutionPresetCatalog {
         );
     }
 
-    /** 将行业专用核对项附加到公共要求；说明清单不复制到执行模板或冻结契约。 */
+    /**
+     * 将行业专用核对项附加到公共要求；说明清单不复制到执行模板或冻结契约。
+     */
     private MesIndustryExecutionPresetDTO industry(String code, String name, String description,
                                                    List<String> productionForms,
                                                    List<String> configurationChecklist,
@@ -256,14 +260,18 @@ public class MesIndustryExecutionPresetCatalog {
                 withCommon(COMMON_VERIFICATION_CHECKLIST, verificationChecklist), uncoveredCapabilities);
     }
 
-    /** 返回不可变说明目录，避免调用方修改共享公共清单。 */
+    /**
+     * 返回不可变说明目录，避免调用方修改共享公共清单。
+     */
     private List<String> withCommon(List<String> common, List<String> specific) {
         List<String> combined = new ArrayList<>(common);
         combined.addAll(specific);
         return List.copyOf(combined);
     }
 
-    /** 只赋当前执行模板已有字段；默认分批、禁止超报并开放工站及移动端。 */
+    /**
+     * 只赋当前执行模板已有字段；默认分批、禁止超报并开放工站及移动端。
+     */
     private MesIndustryExecutionPresetDTO.Scenario scenario(
             String code, String name, String description, String mode, List<String> triggers,
             boolean partial, boolean over, boolean device, boolean tooling, String resolveMode) {

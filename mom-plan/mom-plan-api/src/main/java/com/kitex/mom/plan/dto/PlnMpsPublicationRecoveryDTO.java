@@ -8,7 +8,9 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-/** MPS发布跨账核对视图。只读证据不代表新审批，也不直接修改MES现场事实。 */
+/**
+ * MPS发布跨账核对视图。只读证据不代表新审批，也不直接修改MES现场事实。
+ */
 @Data
 @Accessors(chain = true)
 public class PlnMpsPublicationRecoveryDTO {

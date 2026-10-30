@@ -9,6 +9,6 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 public interface WmsTransferRoutePolicyMapper extends BaseMapper<WmsTransferRoutePolicyEntity> {
 
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(#{lockKey}, 0))")
-    void lockPolicyDimension(@Param("lockKey") String lockKey);
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(#{lockKey}, 0))")
+    int lockPolicyDimension(@Param("lockKey") String lockKey);
 }

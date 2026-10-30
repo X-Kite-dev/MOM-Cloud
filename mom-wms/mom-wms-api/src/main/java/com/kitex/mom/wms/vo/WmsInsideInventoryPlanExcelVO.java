@@ -45,6 +45,9 @@ public class WmsInsideInventoryPlanExcelVO implements Serializable {
     @ExcelProperty("仓库名称")
     private String warehouseName;
 
+    @ExcelProperty("盘点方式")
+    private String stockFreezeMode;
+
     /**
      * 状态：0 新建/ 1正在执行中/2 已结束
      */

@@ -36,23 +36,33 @@ public class MesIdentifierNodePolicyDTO {
     @Schema(description = "外码命名空间，最长100字符")
     private String externalNamespace;
 
-    /** 独立内容协议；NULL保留旧主工序策略，不能替旧采集补版本或空数组。 */
+    /**
+     * 独立内容协议；NULL保留旧主工序策略，不能替旧采集补版本或空数组。
+     */
     @Schema(description = "策略内容协议：NODE_BINDING_V2；历史策略为空")
     private String policySchemaVersion;
 
-    /** 原生节点所在工程路线，不与节点的主工序routeCode混用。 */
+    /**
+     * 原生节点所在工程路线，不与节点的主工序routeCode混用。
+     */
     @Schema(description = "原生策略所属工艺路线编码")
     private String processRouteCode;
 
-    /** 原生区段唯一绑定节点的稳定身份。 */
+    /**
+     * 原生区段唯一绑定节点的稳定身份。
+     */
     @Schema(description = "绑定节点编码，最长64字符")
     private String bindRouteNodeCode;
 
-    /** 原生全部使用节点；NULL仅供旧协议，不能初始化空列表改变旧JSON。 */
+    /**
+     * 原生全部使用节点；NULL仅供旧协议，不能初始化空列表改变旧JSON。
+     */
     @Schema(description = "原生区段全部使用节点编码")
     private List<String> useRouteNodeCodes;
 
-    /** 原生区段全部分支最终通过的释放节点。 */
+    /**
+     * 原生区段全部分支最终通过的释放节点。
+     */
     @Schema(description = "释放节点编码，成功过站后才释放外码")
     private String releaseRouteNodeCode;
 
@@ -172,15 +182,21 @@ public class MesIdentifierNodePolicyDTO {
         @Schema(description = "全部直接后序工序")
         private List<String> successorCodes;
 
-        /** 明确原生协议下的稳定节点，历史五字段快照不补造。 */
+        /**
+         * 明确原生协议下的稳定节点，历史五字段快照不补造。
+         */
         @Schema(description = "来源工程节点编码，历史协议为空")
         private String sourceRouteNodeCode;
 
-        /** 完整实际图的直接前序节点；原生数组权威，旧工序投影只作兼容描述。 */
+        /**
+         * 完整实际图的直接前序节点；原生数组权威，旧工序投影只作兼容描述。
+         */
         @Schema(description = "原生直接前序节点编码")
         private List<String> predecessorNodeCodes;
 
-        /** 完整实际图的直接后序节点。 */
+        /**
+         * 完整实际图的直接后序节点。
+         */
         @Schema(description = "原生直接后序节点编码")
         private List<String> successorNodeCodes;
     }

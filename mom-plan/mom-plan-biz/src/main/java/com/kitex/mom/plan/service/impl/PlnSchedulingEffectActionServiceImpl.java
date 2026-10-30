@@ -45,6 +45,10 @@ public class PlnSchedulingEffectActionServiceImpl
     private final PlnSchedulingEffectObservationMapper observationMapper;
     private final ObjectMapper objectMapper;
 
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public PlnSchedulingEffectActionEntity reconcile(PlnSchedulingEffectReviewEntity review,
@@ -114,7 +118,7 @@ public class PlnSchedulingEffectActionServiceImpl
     @Transactional(rollbackFor = Exception.class)
     public void confirm(PlnSchedulingEffectActionEntity action, Long caseId, String actor) {
         require(action != null && action.getId() != null && caseId != null && caseId > 0
-                        && StrUtil.isNotBlank(actor), "偏差行动确认必须包含行动、案件和真实操作人");
+                && StrUtil.isNotBlank(actor), "偏差行动确认必须包含行动、案件和真实操作人");
         PlnSchedulingEffectActionEntity locked = baseMapper.lockById(action.getId());
         require(locked != null && "PENDING".equals(locked.getActionStatus()), "偏差行动已变化，请刷新后重试");
         PlnSchedulingEffectReviewEntity review = reviewMapper.selectById(locked.getReviewId());
@@ -185,9 +189,5 @@ public class PlnSchedulingEffectActionServiceImpl
                 + Objects.requireNonNullElse(observation.getMaximumAbsoluteFinishDeviationMinutes(), 0L)
                 + "分钟，延期计划=" + Objects.requireNonNullElse(observation.getLateIssueCount(), 0)
                 + "；待授权计划员确认，尚未选案、发布或下达MES";
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
     }
 }

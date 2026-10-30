@@ -21,19 +21,15 @@ import com.kitex.mom.mes.mapper.MesChangePointImprovementOperationMapper;
 import com.kitex.mom.mes.service.MesChangePointImprovementService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 冻结变化点Pareto权威基线，并形成可可靠链接到QMS CAPA/8D的来源单。
@@ -192,7 +188,7 @@ public class MesChangePointImprovementServiceImpl
         require(StrUtil.isNotBlank(command.getTriggerReason()) && command.getTriggerReason().length() <= 1000,
                 "触发原因不能为空且不能超过1000字符");
         require(inRiskRange(command.getSeverity()) && inRiskRange(command.getOccurrence())
-                        && inRiskRange(command.getDetection()), "严重度、发生度和探测度必须在1到10之间");
+                && inRiskRange(command.getDetection()), "严重度、发生度和探测度必须在1到10之间");
         require(StrUtil.isNotBlank(command.getCoordinatorCode()) && command.getCoordinatorCode().length() <= 100
                         && StrUtil.isNotBlank(command.getCoordinatorName()) && command.getCoordinatorName().length() <= 200,
                 "CAPA协调人不能为空或长度超限");

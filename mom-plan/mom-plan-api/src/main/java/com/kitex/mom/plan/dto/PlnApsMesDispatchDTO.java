@@ -7,7 +7,9 @@ import lombok.experimental.Accessors;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 智能 APS 正式排程异步下达 MES 的不可变载荷和逐项回执。 */
+/**
+ * 智能 APS 正式排程异步下达 MES 的不可变载荷和逐项回执。
+ */
 public final class PlnApsMesDispatchDTO {
 
     private PlnApsMesDispatchDTO() {

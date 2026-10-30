@@ -20,7 +20,9 @@ public record PlnApsResourceEvidence(
         List<Gap> gaps,
         String contentFingerprint) {
 
-    /** 结构化数据缺口及其原业务处理入口。 */
+    /**
+     * 结构化数据缺口及其原业务处理入口。
+     */
     public record Gap(String code, String category, String severity, String sourceType,
                       String sourceCode, String title, String description,
                       String resolutionRoute, Map<String, Object> resolutionParams) {

@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** 质量偏差达到阈值后形成的排程处置案件。 */
+/**
+ * 质量偏差达到阈值后形成的排程处置案件。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -37,16 +39,22 @@ public class PlnQualityReplanCaseEntity extends BaseEntity<PlnQualityReplanCaseE
     private BigDecimal irreversibleLossQuantity;
     private BigDecimal atRiskQuantity;
     private BigDecimal deviationRate;
-    /** 报废导致的补产数量；局部重排不能替代补产闭环。 */
+    /**
+     * 报废导致的补产数量；局部重排不能替代补产闭环。
+     */
     private BigDecimal requiredSupplementQuantity;
     private String qualityMetricsSnapshot;
     private String qualityEvidenceFingerprint;
-    /** 多候选中的派生案件指向质量事实根案件；根案件自身为空。 */
+    /**
+     * 多候选中的派生案件指向质量事实根案件；根案件自身为空。
+     */
     private Long sourceCaseId;
     private Long scenarioId;
     private LocalDateTime firstTriggeredTime;
     private LocalDateTime latestTriggeredTime;
-    /** PENDING_ASSESSMENT、SUPPLEMENT_REQUIRED、PROPOSED、SELECTED、SUPERSEDED、STALE、PUBLISHED、EXPIRED、CANCELLED、ROLLED_BACK、RECOVERED。 */
+    /**
+     * PENDING_ASSESSMENT、SUPPLEMENT_REQUIRED、PROPOSED、SELECTED、SUPERSEDED、STALE、PUBLISHED、EXPIRED、CANCELLED、ROLLED_BACK、RECOVERED。
+     */
     private String status;
     private String assessRequestId;
     private String assessRequestSnapshot;

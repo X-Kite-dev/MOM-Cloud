@@ -12,7 +12,9 @@ import org.apache.ibatis.annotations.Mapper;
 @Mapper
 public interface MesIdentifierNodeDeploymentMapper {
 
-    /** 返回精确缺项JSON数组；只有数组确实为空才证明结构前置匹配。 */
+    /**
+     * 返回精确缺项JSON数组；只有数组确实为空才证明结构前置匹配。
+     */
     @InterceptorIgnore(tenantLine = "true", dataPermission = "true")
     String missingControls();
 }

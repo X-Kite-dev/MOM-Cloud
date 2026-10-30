@@ -10,9 +10,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.util.Objects;
 
-/** 回滚后保存真实超时观察。独立事务只写观察，不重试报工、不持原生产行锁、不制造报工事实。 */
+/**
+ * 回滚后保存真实超时观察。独立事务只写观察，不重试报工、不持原生产行锁、不制造报工事实。
+ */
 @Service
 @RequiredArgsConstructor
 public class MesTimingExceptionRecorder {

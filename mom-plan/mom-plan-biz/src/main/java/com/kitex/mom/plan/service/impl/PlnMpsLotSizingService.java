@@ -16,15 +16,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * MPS生产批量策略解析与数量约束。
@@ -71,7 +63,9 @@ public class PlnMpsLotSizingService {
                 response.getData().getEvidenceFingerprint());
     }
 
-    /** 正式提交和复核均调用，防止页面绕过和策略换版后的陈旧批准。 */
+    /**
+     * 正式提交和复核均调用，防止页面绕过和策略换版后的陈旧批准。
+     */
     public Catalog validate(String factoryCode, List<PlnMpsLineEntity> lines) {
         Catalog catalog = load(factoryCode, lines.stream().map(PlnMpsLineEntity::getProductCode).toList());
         List<String> violations = new ArrayList<>();
@@ -204,7 +198,9 @@ public class PlnMpsLotSizingService {
         return List.copyOf(result);
     }
 
-    /** 换算为整批单位，所有可行区间运算保持整数精确性。 */
+    /**
+     * 换算为整批单位，所有可行区间运算保持整数精确性。
+     */
     private BigInteger units(BigDecimal quantity, BigDecimal multiple) {
         return quantity.divide(multiple, 0, RoundingMode.UNNECESSARY).toBigIntegerExact();
     }

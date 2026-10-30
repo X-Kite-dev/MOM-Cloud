@@ -13,11 +13,15 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.util.Objects;
 import java.util.Set;
+
 import static com.kitex.mom.mdm.sop.MdmSopSupport.*;
 
-/** 同一节点/SOP版本族受控替换，明确解绑，不触碰旧附件或其他节点。 */
+/**
+ * 同一节点/SOP版本族受控替换，明确解绑，不触碰旧附件或其他节点。
+ */
 @Service
 @RequiredArgsConstructor
 public class MdmFormalSopBindingService {

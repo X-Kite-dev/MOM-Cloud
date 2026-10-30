@@ -15,7 +15,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
@@ -34,7 +33,9 @@ public class MesIdentifierNodeReadiness {
     private final MesIdentifierNodeDeploymentMapper deployment;
     private final PermissionService permissions;
 
-    /** 当前实际服务账号的系统目录诊断，不自动授权或执行数据库升级。 */
+    /**
+     * 当前实际服务账号的系统目录诊断，不自动授权或执行数据库升级。
+     */
     public MesIdentifierNodeReadinessDTO deployment() {
         var result = identity().setScope("DEPLOYMENT");
         try {
@@ -58,7 +59,9 @@ public class MesIdentifierNodeReadiness {
         return finish(result);
     }
 
-    /** 发布只核本模板，不要求其他角色已发布而造成第一个模板永远发不出。 */
+    /**
+     * 发布只核本模板，不要求其他角色已发布而造成第一个模板永远发不出。
+     */
     public MesIdentifierNodeReadinessDTO publication(MesExecutionContractDTO contract) {
         var result = deployment().setScope("PUBLISH").setAction(contract.getIdentifierNodePolicy().getAction());
         result.getAllowedChannels().clear();
@@ -73,20 +76,25 @@ public class MesIdentifierNodeReadiness {
         return finish(result);
     }
 
-    /** 动态派工仍需原派工权限；完整区段和实际角色由同事务冻结及批次校验负责。 */
+    /**
+     * 动态派工仍需原派工权限；完整区段和实际角色由同事务冻结及批次校验负责。
+     */
     public void requireDispatch(MesExecutionContractDTO contract) {
         var result = deployment().setScope("DISPATCH").setAction(contract.getIdentifierNodePolicy().getAction());
         shape(contract, result);
-        if (!permissions.hasPermission("mesTaskArrange:arrange")) result.getBlockedReasons().add("当前账号没有派工权限");
+        if (!permissions.hasPermission("mesTaskArrange:arrange"))
+            result.getBlockedReasons().add("当前账号没有派工权限");
         if (java.util.Arrays.stream(MesReportChannelEnum.values()).noneMatch(channel -> contractAllows(contract, channel))) {
             result.getBlockedReasons().add("该节点没有可用的在线执行渠道");
         }
         assertReady(finish(result));
     }
 
-    /** 精确原派工、当前实名与可信渠道的决定；提交仍重核全部原实例及生产事实。 */
+    /**
+     * 精确原派工、当前实名与可信渠道的决定；提交仍重核全部原实例及生产事实。
+     */
     public MesIdentifierNodeReadinessDTO execution(MesTaskArrangeEntity arrange, MesExecutionContractDTO contract,
-                                                  MesReportChannelEnum channel) {
+                                                   MesReportChannelEnum channel) {
         var result = deployment().setScope("REPORT").setArrangeCode(arrange.getCode())
                 .setAction(contract.getIdentifierNodePolicy().getAction()).setChannel(channel.name());
         result.getAllowedChannels().clear();
@@ -107,7 +115,8 @@ public class MesIdentifierNodeReadiness {
             }
         }
         for (MesReportChannelEnum candidate : MesReportChannelEnum.values()) {
-            if (permitted(candidate) && contractAllows(contract, candidate)) result.getAllowedChannels().add(candidate.name());
+            if (permitted(candidate) && contractAllows(contract, candidate))
+                result.getAllowedChannels().add(candidate.name());
         }
         if (!result.getAllowedChannels().contains(channel.name())) {
             result.getBlockedReasons().add("当前账号权限或原冻结契约未允许" + channel.name() + "渠道");
@@ -116,7 +125,8 @@ public class MesIdentifierNodeReadiness {
             result.getBlockedReasons().add("该派工未处于可准备/执行状态；暂停、关闭或完工须先受控处理");
         }
         BigDecimal remaining = contract.getRemainingQuantity();
-        if (remaining == null || remaining.compareTo(BigDecimal.ONE) < 0) result.getBlockedReasons().add("原派工剩余可报数量不足一件");
+        if (remaining == null || remaining.compareTo(BigDecimal.ONE) < 0)
+            result.getBlockedReasons().add("原派工剩余可报数量不足一件");
         if (!Boolean.TRUE.equals(contract.getPartialReportAllowed())
                 && (remaining == null || remaining.compareTo(BigDecimal.ONE) != 0)) {
             result.getBlockedReasons().add("该单件节点禁止分批但剩余量不是一件，请按实际派工量配置分批策略");
@@ -124,7 +134,9 @@ public class MesIdentifierNodeReadiness {
         return finish(result);
     }
 
-    /** 统一失败消息保留精确对象，不能再仅返回“建设中”。 */
+    /**
+     * 统一失败消息保留精确对象，不能再仅返回“建设中”。
+     */
     public void assertReady(MesIdentifierNodeReadinessDTO result) {
         if (!Boolean.TRUE.equals(result.getReady())) {
             throw new CheckedException(String.join("；", result.getBlockedReasons())
@@ -140,7 +152,8 @@ public class MesIdentifierNodeReadiness {
 
     private void shape(MesExecutionContractDTO contract, MesIdentifierNodeReadinessDTO result) {
         MesIdentifierNodePolicyValidator.nativePolicy(contract.getIdentifierNodePolicy());
-        if (!"ONE_CODE".equals(contract.getReportMode())) result.getBlockedReasons().add("动态节点只支持ONE_CODE单件对象");
+        if (!"ONE_CODE".equals(contract.getReportMode()))
+            result.getBlockedReasons().add("动态节点只支持ONE_CODE单件对象");
         if (!Set.of("BIND", "USE", "RELEASE").contains(Objects.toString(contract.getIdentifierNodePolicy().getAction(), ""))) {
             result.getBlockedReasons().add("动态节点动作未识别，不回落普通报工");
         }

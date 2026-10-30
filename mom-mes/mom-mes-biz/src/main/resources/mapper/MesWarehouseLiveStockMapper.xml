@@ -7,16 +7,16 @@
         SELECT
         stock.bill_no,
         (SELECT MAX(picking.task_code)
-           FROM mes_warehouse_picking_bill picking
-          WHERE picking.bill_no = stock.bill_no
-            AND picking.factory_code = stock.factory_code
-            AND picking.tenant_id IS NOT DISTINCT FROM stock.tenant_id
-            AND picking.del_flag = '0') AS task_code,
+        FROM mes_warehouse_picking_bill picking
+        WHERE picking.bill_no = stock.bill_no
+        AND picking.factory_code = stock.factory_code
+        AND picking.tenant_id IS NOT DISTINCT FROM stock.tenant_id
+        AND picking.del_flag = '0') AS task_code,
         stock.mat_code,
         stock.reservation_no,
         stock.requirement_mat_code,
         MAX(stock.requirement_mat_name) AS requirement_mat_name,
-        MAX(stock.substitute_flag) AS substitute_flag,
+        BOOL_OR(stock.substitute_flag) AS substitute_flag,
         MAX(stock.substitute_ratio) AS substitute_ratio,
         MAX(stock.mat_name) AS mat_name,
         MAX(stock.mat_spec) AS mat_spec,
@@ -42,13 +42,13 @@
             </if>
             <if test="query.taskCode != '' and query.taskCode != null ">
                 AND EXISTS (
-                    SELECT 1
-                    FROM mes_warehouse_picking_bill picking
-                    WHERE picking.bill_no = stock.bill_no
-                      AND picking.factory_code = stock.factory_code
-                      AND picking.tenant_id IS NOT DISTINCT FROM stock.tenant_id
-                      AND picking.task_code = #{query.taskCode}
-                      AND picking.del_flag = '0'
+                SELECT 1
+                FROM mes_warehouse_picking_bill picking
+                WHERE picking.bill_no = stock.bill_no
+                AND picking.factory_code = stock.factory_code
+                AND picking.tenant_id IS NOT DISTINCT FROM stock.tenant_id
+                AND picking.task_code = #{query.taskCode}
+                AND picking.del_flag = '0'
                 )
             </if>
             <if test="query.matName != '' and query.matName != null ">

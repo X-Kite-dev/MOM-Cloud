@@ -1,7 +1,6 @@
 package com.kitex.mom.mes.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.kitex.admin.api.feign.RemoteParamService;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mes.dto.MesWarehouseFeedCommandDTO;
@@ -33,12 +32,15 @@ public class MesWarehouseFeedPreparationReader {
     private final MesTaskMapper tasks;
     private final MesWarehouseLiveStockService stocks;
     private final RemoteMaterialService materials;
-    private final RemoteParamService parameters;
+    private final MesMaterialConsumptionModeResolver consumptionModes;
     private final MesPhysicalTransformCodec codec;
     private final MesTerminalExecutionGuard terminals;
     private final MesReworkMaterialPlanService reworkPlans;
+    private final MesMaterialSourceEligibility sourceEligibility;
 
-    /** 在命令服务已核身份/261部署且新建只读一致事务内读取；跨服务计量并非分布式原子快照。 */
+    /**
+     * 在命令服务已核身份/261部署且新建只读一致事务内读取；跨服务计量并非分布式原子快照。
+     */
     public MesWarehouseFeedPreparationDTO.Observation read(MesWarehouseFeedPreparationDTO.Query query,
                                                            MesWarehouseFeedCommandDTO.Context context) {
         require(query != null, "须明确投料准备条件");
@@ -63,14 +65,18 @@ public class MesWarehouseFeedPreparationReader {
                 .eq(MesTaskEntity::getCode, arrange.getTaskCode()).last("LIMIT 2"));
         require(parents.size() == 1, "派工的实际父工单缺失或不唯一");
         var task = parents.get(0);
+        var route = com.kitex.mom.mes.util.MesTaskUtils.getCurrentProcess(task.getProcessRouteSnapshot(),
+                arrange.getRouteCode(), arrange.getSourceRouteNodeCode());
+        require(route.getMdmProcessProcedureMatList() != null, "原冻结工序未声明物料需求，不能准备投料");
+        var demandCodes = route.getMdmProcessProcedureMatList().stream().filter(Objects::nonNull)
+                .map(com.kitex.mom.mes.dto.ProcessProcedureDTO.ProcessProcedureMatDTO::getMaterialCode).collect(java.util.stream.Collectors.toSet());
         require(Set.of("DISPATCH", "PRODUCT").contains(Objects.toString(task.getStatus(), ""))
-                && Set.of("UN_RECEIVE", "RECEIVE", "PRODUCT", "PAUSE").contains(Objects.toString(arrange.getStatus(), "")),
+                        && Set.of("UN_RECEIVE", "RECEIVE", "PRODUCT", "PAUSE").contains(Objects.toString(arrange.getStatus(), "")),
                 "当前工单或派工状态不允许新增投料");
         terminals.assertUnoccupied(arrange);
         reworkPlans.assertReady(task);
-        var parameter = parameters.getByKey("BACK_FLUSH");
-        require(parameter != null && parameter.isOk() && "0".equals(parameter.getData()),
-                "手工投料配置未明确或已启用倒冲，不能准备重复扣库");
+        require(consumptionModes.resolve(arrange) == MesMaterialConsumptionModeResolver.Mode.FEED,
+                "原派工固定为倒冲模式，不能准备手工投料重复扣库");
         var response = materials.productionMeasure(query.getMaterialCode());
         var measure = response == null ? null : response.getData();
         require(response != null && response.isOk() && measure != null && Boolean.TRUE.equals(measure.getEnabled())
@@ -80,10 +86,16 @@ public class MesWarehouseFeedPreparationReader {
         codec.code(measure.getBasicUnit(), "实际基本单位", 100);
         codec.code(arrange.getProduceTaskCode(), "实际工序任务", 100);
         var bindings = MesMaterialSubstituteResolver.feedBindings(task.getBomSnapshot(), query.getMaterialCode(),
-                query.getRequirementMaterialCode()).stream()
+                        query.getRequirementMaterialCode()).stream()
+                .filter(b -> demandCodes.contains(b.requirementMatCode()))
                 .map(b -> new MesWarehouseFeedPreparationDTO.Binding(b.requirementMatCode(), b.actualMatCode(),
                         codec.amount(b.ratio()), b.substitute(), b.allowMixed(), b.strategy())).toList();
         require(bindings.size() <= 1000, "BOM绑定超过1000项，须明确需求而非截断候选");
+        require(!bindings.isEmpty(), "投料物料未绑定本派工冻结工序需求");
+        // 即使当前没有库存也先校验完整冻结来源，不能把坏正文呈现为零个候选。
+        for (var binding : bindings)
+            sourceEligibility.constrain(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>(),
+                    task, binding.requirementMaterialCode(), binding.actualMaterialCode(), new java.math.BigDecimal(binding.ratio()));
         var filter = new MesWarehouseLiveStockInoutDTO();
         filter.setMatCode(query.getMaterialCode());
         filter.setFactoryCode(context.factoryCode());
@@ -93,7 +105,11 @@ public class MesWarehouseFeedPreparationReader {
         filter.setSiteCode(query.getSourceSiteCode());
         filter.setSupplierCode(query.getSupplierCode());
         filter.setReservationNo(query.getReservationNo());
-        var candidates = stocks.previewFeedSources(filter);
+        var candidates = stocks.previewFeedSources(filter).stream().filter(stock -> bindings.stream()
+                        .anyMatch(binding -> sourceEligibility.eligible(task, stock, binding.requirementMaterialCode(),
+                                new java.math.BigDecimal(binding.ratio()))))
+                .filter(stock -> stock.getProduceTaskCode() == null || stock.getProduceTaskCode().isEmpty()
+                        || arrange.getProduceTaskCode().equals(stock.getProduceTaskCode())).toList();
         require(candidates.stream().allMatch(s -> Objects.equals(s.getMatUnit(), measure.getBasicUnit())),
                 "实际计量和来源库存单位观察发生变化，请重新读取，不进行隐式换算");
         var sources = candidates.stream().map(s -> new MesWarehouseFeedPreparationDTO.Source(s.getId().toString(),
@@ -108,7 +124,9 @@ public class MesWarehouseFeedPreparationReader {
                 measure.getMaterialId(), measure.getMaterialCode(), measure.getBasicUnit(), measure.getUpdatedAt(), bindings, sources);
     }
 
-    /** 空值代表不筛选；非空编码不修剪、不把NULL谱系转换成空文本。 */
+    /**
+     * 空值代表不筛选；非空编码不修剪、不把NULL谱系转换成空文本。
+     */
     private void optional(String value, String name, int limit) {
         if (value != null && !value.isEmpty()) codec.code(value, name, limit);
     }

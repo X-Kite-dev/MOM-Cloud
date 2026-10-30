@@ -18,7 +18,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/** 独立时间证明读侧，只附加观察，不依赖MPS/RCCP或更改既有评分和计划范围指纹。 */
+/**
+ * 独立时间证明读侧，只附加观察，不依赖MPS/RCCP或更改既有评分和计划范围指纹。
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -27,7 +29,7 @@ public class PlnSchedulingDurationEvidenceReader {
     private final RemoteMesOperationDurationService mesDuration;
 
     public void enrich(List<PlnSchedulingOperationEntity> planned,
-            List<PlnSchedulingEffectReviewDTO.OperationEvidence> actual, String factory) {
+                       List<PlnSchedulingEffectReviewDTO.OperationEvidence> actual, String factory) {
         List<String> codes = actual.stream().map(PlnSchedulingEffectReviewDTO.OperationEvidence::getMesProduceTaskCode)
                 .filter(StrUtil::isNotBlank).distinct().toList();
         if (codes.isEmpty()) {
@@ -58,7 +60,10 @@ public class PlnSchedulingDurationEvidenceReader {
         }
         for (var row : actual) {
             var targets = planned.stream().filter(op -> Objects.equals(op.getIssueNo(), row.getIssueNo())
-                    && Objects.equals(op.getProcessCode(), row.getProcessCode())).toList();
+                    && Objects.equals(op.getProcessCode(), row.getProcessCode())
+                    && (row.getSchedulingOperationId() == null || Objects.equals(String.valueOf(op.getId()), row.getSchedulingOperationId())
+                    && Objects.equals(op.getSourceRouteNodeCode(), row.getSourceRouteNodeCode())
+                    && Objects.equals(op.getOperationSeq(), row.getOperationSeq()))).toList();
             var sources = bundle.getOperations().stream().filter(source -> Objects.equals(source.getProduceTaskCode(),
                     row.getMesProduceTaskCode())).toList();
             if (targets.size() != 1 || sources.size() != 1) {
@@ -70,15 +75,16 @@ public class PlnSchedulingDurationEvidenceReader {
     }
 
     private PlnSchedulingEffectReviewDTO.DurationEvidence evaluate(PlnSchedulingOperationEntity plan,
-            PlnSchedulingEffectReviewDTO.OperationEvidence actual, MesOperationDurationDTO.Operation source) {
+                                                                   PlnSchedulingEffectReviewDTO.OperationEvidence actual, MesOperationDurationDTO.Operation source) {
         var proof = new PlnSchedulingEffectReviewDTO.DurationEvidence().setEvidenceVersion(VERSION)
                 .setSourceFingerprint(source.getEvidenceFingerprint()).setSourceSnapshot(JSONUtil.toJsonStr(source));
         var changeover = source.getChangeoverEvidence();
         proof.setChangeoverStatus(changeover == null ? "UNBOUND" : changeover.getStatus())
                 .setChangeoverGaps(changeover == null ? List.of("未提供新归属证明，不猜配历史") : changeover.getGaps());
         if (changeover != null && "VERIFIED".equals(changeover.getStatus()) && changeover.getSeconds() != null) {
-            try { proof.setActualToolingChangeoverMinutes(minutes(changeover.getSeconds())); }
-            catch (RuntimeException exception) {
+            try {
+                proof.setActualToolingChangeoverMinutes(minutes(changeover.getSeconds()));
+            } catch (RuntimeException exception) {
                 proof.setChangeoverStatus("DATA_GAP").setChangeoverGaps(List.of("归属原秒数不可完整解析"));
             }
         }
@@ -126,9 +132,11 @@ public class PlnSchedulingDurationEvidenceReader {
         }
     }
 
-    /** 只提取本次计划精确对应的原下达组成，缺失或异常均未知，不读取当前MDM参数。 */
+    /**
+     * 只提取本次计划精确对应的原下达组成，缺失或异常均未知，不读取当前MDM参数。
+     */
     private List<String> plannedMinutes(PlnSchedulingOperationEntity plan, MesOperationDurationDTO.Operation source,
-            PlnSchedulingEffectReviewDTO.DurationEvidence proof) {
+                                        PlnSchedulingEffectReviewDTO.DurationEvidence proof) {
         List<String> gaps = new ArrayList<>();
         try {
             MesApsOperationSnapshotDTO frozen = JSONUtil.toBean(source.getApsOperationSnapshot(), MesApsOperationSnapshotDTO.class);
@@ -168,11 +176,16 @@ public class PlnSchedulingDurationEvidenceReader {
         return gaps;
     }
 
-    /** 比较原下达冻结身份；不读取现在的运行参数来冒充原发布基线。 */
+    /**
+     * 比较原下达冻结身份；不读取现在的运行参数来冒充原发布基线。
+     */
     private boolean matches(PlnSchedulingOperationEntity plan, MesApsOperationSnapshotDTO frozen) {
         return frozen != null && Objects.equals(frozen.getId(), plan.getId()) && Objects.equals(frozen.getTaskId(), plan.getTaskId())
                 && Objects.equals(frozen.getProductCode(), plan.getProductCode())
                 && Objects.equals(frozen.getProcessCode(), plan.getProcessCode())
+                && (StrUtil.isBlank(plan.getSourceRouteNodeCode())
+                || Objects.equals(frozen.getSourceRouteNodeCode(), plan.getSourceRouteNodeCode())
+                && Objects.equals(frozen.getOperationSeq(), plan.getOperationSeq()))
                 && Objects.equals(frozen.getResourceType(), plan.getResourceType())
                 && Objects.equals(frozen.getResourceCode(), plan.getResourceCode())
                 && Objects.equals(frozen.getScheduledStartTime(), plan.getScheduledStartTime())
@@ -182,8 +195,11 @@ public class PlnSchedulingDurationEvidenceReader {
     }
 
     private boolean equalQuantity(String first, String second) {
-        try { return first != null && second != null && new BigDecimal(first).compareTo(new BigDecimal(second)) == 0; }
-        catch (NumberFormatException ex) { return false; }
+        try {
+            return first != null && second != null && new BigDecimal(first).compareTo(new BigDecimal(second)) == 0;
+        } catch (NumberFormatException ex) {
+            return false;
+        }
     }
 
     private String minutes(String seconds) {

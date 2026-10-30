@@ -28,7 +28,9 @@ public class PlnApsMesDispatchProcessor {
     private final PlnApsMesDispatchOutboxMapper outboxMapper;
     private final PlnApsMesDispatchWorker worker;
 
-    /** 处理一批到期任务，单条失败不阻断其他工厂。 */
+    /**
+     * 处理一批到期任务，单条失败不阻断其他工厂。
+     */
     public int processDue(int limit) {
         int batchSize = Math.max(1, Math.min(limit, 200));
         LocalDateTime now = LocalDateTime.now();

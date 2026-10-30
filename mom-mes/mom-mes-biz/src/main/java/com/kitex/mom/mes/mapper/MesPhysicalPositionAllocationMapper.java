@@ -10,7 +10,9 @@ import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
-/** 原位置至全部真实库存的当量边；不是转换扣减或产出分配；永久查询不以逻辑删除隐藏原历史。 */
+/**
+ * 原位置至全部真实库存的当量边；不是转换扣减或产出分配；永久查询不以逻辑删除隐藏原历史。
+ */
 @Mapper
 public interface MesPhysicalPositionAllocationMapper extends BaseMapper<MesPhysicalPositionAllocationEntity> {
     /**
@@ -28,7 +30,9 @@ public interface MesPhysicalPositionAllocationMapper extends BaseMapper<MesPhysi
     int insertFrozenRows(@Param("rowsJson") String rowsJson, @Param("tenantId") String tenantId,
                          @Param("factoryCode") String factoryCode, @Param("surveyId") String surveyId);
 
-    /** 原主账全部子事实，服务层核实际工厂和完整集合，不分页截断。 */
+    /**
+     * 原主账全部子事实，服务层核实际工厂和完整集合，不分页截断。
+     */
     @InterceptorIgnore(dataPermission = "true")
     @Select("SELECT * FROM mes_physical_position_allocation WHERE tenant_id=#{tenantId} AND survey_id=#{surveyId} ORDER BY id")
     List<MesPhysicalPositionAllocationEntity> permanentRows(@Param("tenantId") Long tenantId, @Param("surveyId") Long surveyId);

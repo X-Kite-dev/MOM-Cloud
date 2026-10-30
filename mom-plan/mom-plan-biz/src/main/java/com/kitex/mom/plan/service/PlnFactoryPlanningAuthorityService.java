@@ -10,9 +10,13 @@ import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyDTO;
  */
 public interface PlnFactoryPlanningAuthorityService {
 
-    /** 读取并校验当前租户、当前工厂唯一生效的计划协同策略。 */
+    /**
+     * 读取并校验当前租户、当前工厂唯一生效的计划协同策略。
+     */
     MdmFactoryPlanningPolicyDTO requireCurrentPolicy(String factoryCode);
 
-    /** 再次读取当前策略并核对被冻结的版本和内容摘要。 */
+    /**
+     * 再次读取当前策略并核对被冻结的版本和内容摘要。
+     */
     MdmFactoryPlanningPolicyDTO revalidate(MdmFactoryPlanningPolicyDTO expected);
 }

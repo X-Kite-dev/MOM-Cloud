@@ -32,12 +32,28 @@ public class MesProductionFeedEvidenceCodec {
     private final ObjectMapper batchReader = reader(MAX_BATCH_DOCUMENT);
     private final ObjectMapper restoreReader = reader(MAX_RESTORE_DOCUMENT);
 
-    /** 原262固定32Mi协议；不被Jackson默认20,000,000字符的单字符串限制截断。 */
+    /**
+     * 仅提高这两份已显式有界协议的单字符串上限；深度/数字约束保持Jackson默认值。
+     */
+    private static ObjectMapper reader(int maxDocument) {
+        var factory = JsonFactory.builder().streamReadConstraints(StreamReadConstraints.builder()
+                .maxStringLength(maxDocument).build()).build();
+        return new ObjectMapper(factory)
+                .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+                .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    }
+
+    /**
+     * 原262固定32Mi协议；不被Jackson默认20,000,000字符的单字符串限制截断。
+     */
     public JsonNode batchDocument(String raw) {
         return object(raw, MAX_BATCH_DOCUMENT, batchReader);
     }
 
-    /** 恢复原文读取仍严格拒绝重复字段、尾随内容、空对象类型和超量正文。 */
+    /**
+     * 恢复原文读取仍严格拒绝重复字段、尾随内容、空对象类型和超量正文。
+     */
     public JsonNode restoreDocument(String raw) {
         return object(raw, MAX_RESTORE_DOCUMENT, restoreReader);
     }
@@ -59,7 +75,9 @@ public class MesProductionFeedEvidenceCodec {
         return raw;
     }
 
-    /** 保留原文字段名与空字符串语法计算开销，不能遗漏56,000个槽位的字段名/引号。 */
+    /**
+     * 保留原文字段名与空字符串语法计算开销，不能遗漏56,000个槽位的字段名/引号。
+     */
     private void checkRows(Map<String, Object> header, String field, String originalField, int maxRows) {
         Object value = header.get(field);
         require(value instanceof List<?>, "恢复完整" + field + "必须是数组");
@@ -73,16 +91,6 @@ public class MesProductionFeedEvidenceCodec {
             require(writer.snapshot(fields).length() <= MAX_ROW_OVERHEAD, "恢复固定行新增字段超过容量合同，未恢复耗料");
         }
         header.put(field, List.of());
-    }
-
-    /** 仅提高这两份已显式有界协议的单字符串上限；深度/数字约束保持Jackson默认值。 */
-    private static ObjectMapper reader(int maxDocument) {
-        var factory = JsonFactory.builder().streamReadConstraints(StreamReadConstraints.builder()
-                .maxStringLength(maxDocument).build()).build();
-        return new ObjectMapper(factory)
-                .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
-                .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-                .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
     }
 
     private JsonNode object(String raw, int maxLength, ObjectMapper json) {

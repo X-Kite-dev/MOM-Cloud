@@ -36,11 +36,26 @@ public class MesApsSourceQuantityServiceImpl implements MesApsSourceQuantityServ
     private final MesApsBatchAllocationMapper allocationMapper;
     private final MesApsSourceQuantityEventMapper eventMapper;
     private final RemotePlnIssueService remotePlnIssueService;
+    private final MesSourceQuantityPlanOutbox planOutbox;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void record(MesTaskEntity sourceTask, String requestId, MesSourceQuantityKind kind,
                        BigDecimal quantityDelta, String sourceReference, String content) {
+        recordQuantities(sourceTask, requestId, kind, quantityDelta, sourceReference, content, false);
+    }
+
+    @Override
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY, rollbackFor = Exception.class)
+    public void recordDeferred(MesTaskEntity sourceTask, String requestId, MesSourceQuantityKind kind,
+                               BigDecimal quantityDelta, String sourceReference, String content) {
+        if (kind != MesSourceQuantityKind.QUALITY_REJECTED)
+            throw new CheckedException("正式检验来源通知仅处理质量判退事实");
+        recordQuantities(sourceTask, requestId, kind, quantityDelta, sourceReference, content, true);
+    }
+
+    private void recordQuantities(MesTaskEntity sourceTask, String requestId, MesSourceQuantityKind kind,
+                                  BigDecimal quantityDelta, String sourceReference, String content, boolean deferred) {
         if (sourceTask == null || sourceTask.getId() == null || StrUtil.isBlank(sourceTask.getCode())) {
             throw new CheckedException("执行偏差归集缺少原生产工单");
         }
@@ -60,6 +75,7 @@ public class MesApsSourceQuantityServiceImpl implements MesApsSourceQuantityServ
             if (existing.stream().anyMatch(item -> !Objects.equals(item.getRequestFingerprint(), fingerprint))) {
                 throw new CheckedException("执行偏差归集请求号已使用且载荷不一致：" + request);
             }
+            if (deferred) planOutbox.requireExisting(sourceTask, request, fingerprint);
             return;
         }
 
@@ -77,8 +93,8 @@ public class MesApsSourceQuantityServiceImpl implements MesApsSourceQuantityServ
             BigDecimal currentTotal = legacyTotal(sourceTask.getId(), kind);
             BigDecimal afterTotal = currentTotal.add(quantityDelta);
             validateLegacyTotals(sourceTask, kind, afterTotal);
-            eventMapper.insert(event(sourceTask, request, fingerprint, kind, null, sourceTask.getPlanNo(),
-                    quantityDelta, afterTotal, sourceReference, content));
+            persist(event(sourceTask, request, fingerprint, kind, null, sourceTask.getPlanNo(),
+                    quantityDelta, afterTotal, sourceReference, content), deferred);
             callbacks.add(callback(sourceTask, request, kind, null, sourceTask.getPlanNo(), quantityDelta, content));
         } else {
             BigDecimal allocatedTotal = allocations.stream().map(MesApsBatchAllocationEntity::getAllocatedQuantity)
@@ -107,19 +123,26 @@ public class MesApsSourceQuantityServiceImpl implements MesApsSourceQuantityServ
                 }
                 assigned = assigned.add(target);
                 if (delta.signum() != 0) {
-                    eventMapper.insert(event(sourceTask, request, fingerprint, kind, allocation.getIssueId(),
-                            allocation.getIssueNo(), delta, target, sourceReference, content));
+                    persist(event(sourceTask, request, fingerprint, kind, allocation.getIssueId(),
+                            allocation.getIssueNo(), delta, target, sourceReference, content), deferred);
                     callbacks.add(callback(sourceTask, request, kind, allocation.getIssueId(),
                             allocation.getIssueNo(), delta, content));
                 }
             }
         }
-        if (!callbacks.isEmpty()) {
+        if (deferred) {
+            planOutbox.enqueue(sourceTask, request, fingerprint, callbacks);
+        } else if (!callbacks.isEmpty()) {
             R<Boolean> result = remotePlnIssueService.edit(callbacks);
             if (result == null || !Boolean.TRUE.equals(result.getData())) {
                 throw new CheckedException("执行偏差归集回写PLAN失败：" + sourceTask.getCode());
             }
         }
+    }
+
+    private void persist(MesApsSourceQuantityEventEntity event, boolean deferred) {
+        if (eventMapper.insert(event) != 1 && deferred)
+            throw new CheckedException("来源数量事实未保存，已整体回滚");
     }
 
     private void validateTotals(List<MesApsBatchAllocationEntity> allocations, MesSourceQuantityKind kind,

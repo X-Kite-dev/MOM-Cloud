@@ -58,6 +58,7 @@ public class MesDispatchReturnServiceImpl
     private final MesExecutionTaskLock taskLock;
     private final MesIdentifierBindingGroupService bindingGroups;
     private final MesTerminalExecutionGuard terminalExecutionGuard;
+    private final MesDispatchCorrectionMapper correctionMapper;
 
     private static void require(boolean condition, String message) {
         if (!condition) {
@@ -145,6 +146,8 @@ public class MesDispatchReturnServiceImpl
         require(Objects.equals(snapshot.fingerprint(), command.getExpectedEvidenceFingerprint().trim()),
                 "派工事实已变化，请刷新退派预览后重新提交");
         require(activeRequest(command.getArrangeId(), true) == null, "该派工已有待审核退派申请");
+        require(correctionMapper.pending(snapshot.arrange().getTenantId(), factory, command.getArrangeId()) == 0,
+                "该派工已有待审核修正申请");
 
         MomUser user = actor();
         LocalDateTime now = LocalDateTime.now();
@@ -271,6 +274,8 @@ public class MesDispatchReturnServiceImpl
         if (arrange == null || arrange.getId() == null) {
             return;
         }
+        require(correctionMapper.pending(arrange.getTenantId(), arrange.getFactoryCode(), arrange.getId()) == 0,
+                "派工存在待审核修正申请，不能接收或开工");
         MesDispatchReturnRequestEntity pending = activeRequest(arrange.getId(), false);
         if (pending != null) {
             throw new CheckedException("派工存在待审核退派申请[" + pending.getRequestNo() + "]，不能开工");
@@ -301,6 +306,33 @@ public class MesDispatchReturnServiceImpl
             saveOperation(request, operationRequestId, operationFingerprint, "SUPERSEDE_BY_PLAN",
                     "SUBMITTED", "SUPERSEDED", request.getResultMessage(), null, "SYSTEM", "系统", now);
         }
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
+    public void retireForCorrection(Long correctionId, String expectedSourceFingerprint) {
+        String factory = factoryAccess.require("write");
+        Long tenant = TenantContextHolder.getTenantId();
+        var owner = correctionMapper.request(tenant, factory, correctionId);
+        require(owner != null, "缺少当前实际组织的精确修正申请");
+        bindingGroups.lockDispatchTask(owner.getTaskCode());
+        var correction = correctionMapper.lockedRequest(tenant, factory, correctionId);
+        require(correction != null && "SUBMITTED".equals(correction.getStatus())
+                && Objects.equals(owner.getTaskCode(), correction.getTaskCode()), "原修正申请已变化");
+        var user = actor();
+        require(!Objects.equals(correction.getApplicantId(), user.getId())
+                && !Objects.equals(correction.getApplicantCode(), user.getUsername()), "修正申请人与审批人必须分离");
+        require(Objects.equals(correction.getSourceFingerprint(), expectedSourceFingerprint), "退派依据不属于原修正申请");
+        EvidenceSnapshot current = evidence(correction.getArrangeId(), factory, true);
+        terminalExecutionGuard.assertUnoccupied(current.arrange());
+        require(current.blockers().isEmpty(), String.join("；", current.blockers()));
+        require(Objects.equals(current.fingerprint(), correction.getSourceFingerprint())
+                        && Objects.equals(current.arrange().getTaskCode(), correction.getTaskCode())
+                        && Objects.equals(current.arrange().getProduceTaskCode(), correction.getProduceTaskCode()),
+                "原修正派工事实已变化");
+        require(activeRequest(correction.getArrangeId(), true) == null, "存在另一待审退派申请");
+        require(correctionMapper.workpieceFacts(tenant, factory, correction.getArrangeId()) == 0, "原派工已有工件时间事实");
+        executeReturn(current, LocalDateTime.now());
     }
 
     private Map<String, Object> executeReturn(EvidenceSnapshot snapshot, LocalDateTime handledTime) {
@@ -424,17 +456,17 @@ public class MesDispatchReturnServiceImpl
                                   long segmentCount, List<MesToolingExecutionEntity> toolings,
                                   long activeChangeoverCount) {
         List<String> blockers = new ArrayList<>();
-        if (!MesProduceTaskStatusEnum.RECEIVE.name().equals(arrange.getStatus())) {
-            blockers.add("只有已接收且未开工的派工可以申请退派，当前状态=" + arrange.getStatus());
+        if (!Set.of("UN_RECEIVE", "RECEIVE").contains(arrange.getStatus())) {
+            blockers.add("只有未接收或已接收且未开工的派工可以申请退派，当前状态=" + arrange.getStatus());
         }
-        if (StrUtil.isBlank(arrange.getActualWorksiteCode())) {
+        if ("RECEIVE".equals(arrange.getStatus()) && StrUtil.isBlank(arrange.getActualWorksiteCode())) {
             blockers.add("派工缺少接收时确认的实际工位");
         }
         if (arrange.getStartTime() != null || arrange.getFinishTime() != null || positive(arrange.getCompleteNum())
                 || positive(arrange.getQualityReleasedNum()) || positive(arrange.getUnPassNum())) {
             blockers.add("派工已形成开工、完工或生产质量数量事实");
         }
-        if (!MesProduceTaskStatusEnum.RECEIVE.name().equals(produceTask.getStatus())
+        if (!Set.of("UN_RECEIVE", "RECEIVE").contains(produceTask.getStatus())
                 || produceTask.getStartTime() != null || produceTask.getFinishTime() != null
                 || positive(produceTask.getCompleteNum()) || positive(produceTask.getQualityReleasedNum())
                 || positive(produceTask.getUnPassNum())) {

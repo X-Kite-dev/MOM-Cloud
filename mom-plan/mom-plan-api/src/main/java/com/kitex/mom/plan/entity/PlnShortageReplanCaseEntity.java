@@ -55,7 +55,9 @@ public class PlnShortageReplanCaseEntity extends BaseEntity<PlnShortageReplanCas
     @Schema(description = "候选仿真排程任务主键")
     private Long proposalTaskId;
 
-    /** 复用APS统一多候选情景头，候选任务与缺料差异方案均归属该情景。 */
+    /**
+     * 复用APS统一多候选情景头，候选任务与缺料差异方案均归属该情景。
+     */
     @Schema(description = "APS 多候选情景主键")
     private Long scenarioId;
 

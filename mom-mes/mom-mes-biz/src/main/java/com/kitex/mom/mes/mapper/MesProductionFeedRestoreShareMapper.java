@@ -10,10 +10,14 @@ import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
-/** 一条原产出份额的全额恢复认领；不修改旧share；一条固定JSON INSERT提交完整集合。 */
+/**
+ * 一条原产出份额的全额恢复认领；不修改旧share；一条固定JSON INSERT提交完整集合。
+ */
 @Mapper
 public interface MesProductionFeedRestoreShareMapper extends BaseMapper<MesProductionFeedRestoreShareEntity> {
-    /** 全部原集合一次必要写，真实scope/成员/数量及mutation由数据库独立核。 */
+    /**
+     * 全部原集合一次必要写，真实scope/成员/数量及mutation由数据库独立核。
+     */
     @InterceptorIgnore(tenantLine = "true", dataPermission = "true")
     @Insert("INSERT INTO \"mom_mes\".mes_production_feed_restore_share (id,tenant_id,factory_code,reversal_id,batch_id,"
             + "original_share_id,output_id,consumption_id,restore_line_id,consume_num,requirement_num,original_share_snapshot,"
@@ -28,10 +32,12 @@ public interface MesProductionFeedRestoreShareMapper extends BaseMapper<MesProdu
     int insertFrozenRows(@Param("rowsJson") String rowsJson, @Param("tenantId") String tenantId,
                          @Param("factoryCode") String factoryCode, @Param("reversalId") String reversalId);
 
-    /** 精确原账所有子行，不分页、不用逻辑删除隐藏永久原事实。 */
+    /**
+     * 精确原账所有子行，不分页、不用逻辑删除隐藏永久原事实。
+     */
     @InterceptorIgnore(tenantLine = "true", dataPermission = "true")
     @Select("SELECT * FROM \"mom_mes\".mes_production_feed_restore_share WHERE tenant_id=#{tenantId} AND "
             + "factory_code=#{factoryCode} AND reversal_id=#{reversalId} ORDER BY id")
     List<MesProductionFeedRestoreShareEntity> permanentRows(@Param("tenantId") Long tenantId, @Param("factoryCode") String factoryCode,
-            @Param("reversalId") Long reversalId);
+                                                            @Param("reversalId") Long reversalId);
 }

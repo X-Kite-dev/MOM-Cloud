@@ -28,6 +28,15 @@ import java.time.LocalDateTime;
 @Schema(description = "出库单明细")
 public class WmsOutBillDetailEntity extends BaseEntity<WmsOutBillDetailEntity> {
 
+    @Schema(description = "指定出库库存货权：OWNED/CUSTOMER_SUPPLIED/CONSIGNED")
+    private String stockOwnerType;
+
+    @Schema(description = "指定出库库存的归属方编码")
+    private String stockOwnerCode;
+
+    @Schema(description = "指定出库库存的首次入库来源业务单号快照")
+    private String sourceBusinessNo;
+
     /**
      * 受控出库锁定的实时库存行；采购退供等场景禁止改用其他库存。
      */

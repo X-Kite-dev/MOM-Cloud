@@ -17,6 +17,10 @@ public final class WmsStockAvailability {
     }
 
     public static boolean isUsable(WmsLiveStockEntity stock) {
+        return WmsStockOwnership.isCompanyOwned(stock) && isPhysicallyUsable(stock);
+    }
+
+    public static boolean isPhysicallyUsable(WmsLiveStockEntity stock) {
         if (stock == null || stock.getStatus() == null || stock.getStatus() != 0) {
             return false;
         }
@@ -29,7 +33,7 @@ public final class WmsStockAvailability {
             return false;
         }
         String result = StrUtil.trim(stock.getQualityResult());
-        if (AVAILABLE_QUALITY_RESULTS.contains(result)) {
+        if (result != null && AVAILABLE_QUALITY_RESULTS.contains(result)) {
             return true;
         }
         boolean qualityRequired = StrUtil.isNotBlank(stock.getIsQualityTest())

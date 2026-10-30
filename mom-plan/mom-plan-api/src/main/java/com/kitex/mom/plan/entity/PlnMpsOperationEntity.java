@@ -9,7 +9,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** MPS政策、候选与发布的不可变操作履历。 */
+/**
+ * MPS政策、候选与发布的不可变操作履历。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

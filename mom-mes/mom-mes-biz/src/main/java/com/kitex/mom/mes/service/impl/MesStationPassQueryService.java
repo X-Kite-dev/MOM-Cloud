@@ -7,11 +7,7 @@ import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
-import com.kitex.mom.mes.entity.MesProduceTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
-import com.kitex.mom.mes.entity.MesTravelerEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.MesProduceTaskStatusEnum;
 import com.kitex.mom.mes.enums.ReportModeEnum;
 import com.kitex.mom.mes.mapper.MesTravelerMapper;
@@ -54,7 +50,9 @@ public class MesStationPassQueryService {
         return preview(transferCode, false, false);
     }
 
-    /** 载具报工提交前使用当前报工人权限重算候选，但不签发逐件离线凭证。 */
+    /**
+     * 载具报工提交前使用当前报工人权限重算候选，但不签发逐件离线凭证。
+     */
     public Map<String, Object> previewCarrierReportMember(String transferCode) {
         return preview(transferCode, false, true);
     }
@@ -93,8 +91,8 @@ public class MesStationPassQueryService {
         List<MesTaskArrangeEntity> arrangements;
         if (firstScan) {
             arrangements = arrangeService.list(new LambdaQueryWrapper<MesTaskArrangeEntity>()
-                    .eq(MesTaskArrangeEntity::getTenantId, TenantContextHolder.getTenantId())
-                    .eq(MesTaskArrangeEntity::getFactoryCode, factory)
+                            .eq(MesTaskArrangeEntity::getTenantId, TenantContextHolder.getTenantId())
+                            .eq(MesTaskArrangeEntity::getFactoryCode, factory)
                             .eq(MesTaskArrangeEntity::getStatus, MesProduceTaskStatusEnum.PRODUCT.name())
                             .orderByAsc(MesTaskArrangeEntity::getRouteOrder))
                     .stream().filter(item -> !requireAssigned || split(item.getWorkerCode()).contains(user.getUsername()))
@@ -195,12 +193,12 @@ public class MesStationPassQueryService {
             MesTaskReportEntity passed = identifierAllowed && nodeBlockReason == null
                     ? reports.stream().filter(report -> routeReturn
                             ? MesPredecessorPassEvidence.effective(report)
-                                    && Objects.equals(report.getTenantId(), arrange.getTenantId())
-                                    && Objects.equals(report.getFactoryCode(), arrange.getFactoryCode())
-                                    && Objects.equals(report.getTaskCode(), arrange.getTaskCode())
-                                    && Objects.equals(report.getTransferCode(), canonicalIdentifier)
-                                    && Objects.equals(report.getProduceTaskCode(), arrange.getProduceTaskCode())
-                                    && Objects.equals(report.getRouteReturnId(), identifierPreview.getRouteReturnId())
+                            && Objects.equals(report.getTenantId(), arrange.getTenantId())
+                            && Objects.equals(report.getFactoryCode(), arrange.getFactoryCode())
+                            && Objects.equals(report.getTaskCode(), arrange.getTaskCode())
+                            && Objects.equals(report.getTransferCode(), canonicalIdentifier)
+                            && Objects.equals(report.getProduceTaskCode(), arrange.getProduceTaskCode())
+                            && Objects.equals(report.getRouteReturnId(), identifierPreview.getRouteReturnId())
                             : MesPredecessorPassEvidence.matches(report, actualCurrent, canonicalIdentifier))
                     .reduce((left, right) -> right).orElse(null) : null;
             boolean identifierPredecessorGate = reportMode == ReportModeEnum.ONE_CODE

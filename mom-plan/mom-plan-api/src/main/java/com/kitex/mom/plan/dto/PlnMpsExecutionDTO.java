@@ -6,7 +6,9 @@ import lombok.experimental.Accessors;
 
 import java.util.List;
 
-/** MPS日桶执行兑现与明确处置路由，所有数量采用十进制文本，主键不转浮点。 */
+/**
+ * MPS日桶执行兑现与明确处置路由，所有数量采用十进制文本，主键不转浮点。
+ */
 public final class PlnMpsExecutionDTO {
     private PlnMpsExecutionDTO() {
     }
@@ -129,7 +131,9 @@ public final class PlnMpsExecutionDTO {
         private String planSnapshot;
     }
 
-    /** PLAN边界投影，不让PLAN API反向依赖MES API形成模块循环。 */
+    /**
+     * PLAN边界投影，不让PLAN API反向依赖MES API形成模块循环。
+     */
     @Data
     @Accessors(chain = true)
     public static class SourceLink {
@@ -209,7 +213,9 @@ public final class PlnMpsExecutionDTO {
 
     }
 
-    /** PLAN边界自己的事件类型，避免PLAN API反向依赖MES API。 */
+    /**
+     * PLAN边界自己的事件类型，避免PLAN API反向依赖MES API。
+     */
     @Data
     @Accessors(chain = true)
     public static class ProductionEvent {

@@ -5,34 +5,48 @@
 
     <select id="appPage" resultType="com.kitex.mom.wms.entity.WmsInsideInventoryPlanEntity">
         select a.id,
+        a.tenant_id,
         a.plan_no,
         a.warehouse_code,
         a.warehouse_name,
         a.status,
-        a.bill_type,
         a.factory_code,
         a.handle_state,
+        a.stock_freeze_mode,
+        a.cancel_reason,
+        a.cancel_by,
+        a.cancel_time,
         a.create_time,
         a.update_time,
         a.create_by,
         a.update_by,
         a.del_flag
         from wms_inside_inventory_plan a
-        left join wms_inside_inventory_plan_detail b on a.id = b.plan_id
-        where a.del_flag = '0'
+        where a.del_flag = '0' AND a.tenant_id = #{params.tenantId} AND a.factory_code = #{params.factoryCode}
         <if test="params.planNo != null and params.planNo != ''">
             and a.plan_no like concat('%', #{params.planNo}, '%')
         </if>
         <if test="params.warehouseCode != null and params.warehouseCode != ''">
             and a.warehouse_code = #{params.warehouseCode}
         </if>
-        <if test="params.matCode != null and params.matCode != ''">
-            and b.mat_code like concat('%', #{params.matCode}, '%')
+        <if test="params.status != null and params.status != ''">
+            and a.status = #{params.status}
         </if>
-        <if test="params.matName != null and params.matName != ''">
-            and b.mat_name like concat('%', #{params.matName}, '%')
+        <if test="params.handleState != null and params.handleState != ''">
+            and a.handle_state = #{params.handleState}
         </if>
-        GROUP BY id
-        order by a.create_time desc, a.status asc
+        <if test="(params.matCode != null and params.matCode != '') or (params.matName != null and params.matName != '')">
+            and exists (
+                select 1 from wms_inside_inventory_plan_detail b
+                where b.plan_id = a.id AND b.tenant_id = a.tenant_id AND b.factory_code = a.factory_code AND b.del_flag = '0'
+                <if test="params.matCode != null and params.matCode != ''">
+                    and b.mat_code like concat('%', #{params.matCode}, '%')
+                </if>
+                <if test="params.matName != null and params.matName != ''">
+                    and b.mat_name like concat('%', #{params.matName}, '%')
+                </if>
+            )
+        </if>
+        order by a.create_time desc, a.id desc
     </select>
 </mapper>

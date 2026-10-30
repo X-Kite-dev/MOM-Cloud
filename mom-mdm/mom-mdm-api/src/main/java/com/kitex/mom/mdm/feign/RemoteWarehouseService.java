@@ -2,6 +2,7 @@ package com.kitex.mom.mdm.feign;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
+import com.kitex.common.feign.annotation.InternalCall;
 import com.kitex.common.feign.annotation.NoToken;
 import com.kitex.mom.mdm.Constants;
 import com.kitex.mom.mdm.entity.MdmWarehouseEntity;
@@ -37,6 +38,13 @@ public interface RemoteWarehouseService {
     @NoToken
     @GetMapping("/mdmWarehouse/productEnabled")
     R<List<MdmWarehouseEntity>> getEnabledProductWarehouses();
+
+    /**
+     * 菜单生命周期使用全部未删除仓库，包含停用状态，必须限定实际租户/工厂。
+     */
+    @InternalCall
+    @GetMapping("/mdmWarehouse/menuConfigurationWarehouses")
+    R<List<MdmWarehouseEntity>> getMenuConfigurationWarehouses();
 
     /**
      * 根据编码获取仓库

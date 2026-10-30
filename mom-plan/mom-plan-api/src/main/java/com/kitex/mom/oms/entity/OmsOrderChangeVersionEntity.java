@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** OMS订单变更不可覆盖的版本头与前后事实。 */
+/**
+ * OMS订单变更不可覆盖的版本头与前后事实。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -26,7 +28,9 @@ public class OmsOrderChangeVersionEntity extends BaseEntity<OmsOrderChangeVersio
     private String beforeSnapshot;
     private String proposedSnapshot;
     private String afterSnapshot;
-    /** SUBMITTED、APPROVED、REJECTED、CANCELLED、SUPERSEDED。 */
+    /**
+     * SUBMITTED、APPROVED、REJECTED、CANCELLED、SUPERSEDED。
+     */
     private String status;
     private String applicantCode;
     private String applicantName;

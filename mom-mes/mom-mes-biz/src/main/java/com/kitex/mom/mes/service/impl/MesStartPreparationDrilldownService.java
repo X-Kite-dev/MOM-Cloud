@@ -23,7 +23,9 @@ public class MesStartPreparationDrilldownService {
     private final MesTaskArrangeMapper arrangeMapper;
     private final MesActualFactoryAccessService factoryAccess;
 
-    /** 只读取身份，不获取生产锁、不改变派工或形成开工事实。 */
+    /**
+     * 只读取身份，不获取生产锁、不改变派工或形成开工事实。
+     */
     public MesTaskArrangeEntity require(Long arrangeId, String arrangeCode, String taskCode) {
         String factory = factoryAccess.require("read");
         if (arrangeId == null || arrangeId <= 0) {

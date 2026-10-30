@@ -9,7 +9,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import static com.kitex.mom.mdm.sop.MdmSopSupport.require;
 
-/** 两个编制入口共用不可变原件写入；只清理由当前事务明确回滚的新对象。 */
+/**
+ * 两个编制入口共用不可变原件写入；只清理由当前事务明确回滚的新对象。
+ */
 @Component
 @RequiredArgsConstructor
 public class MdmSopOriginalWriter {

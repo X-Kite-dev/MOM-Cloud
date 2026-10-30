@@ -8,8 +8,13 @@ import lombok.EqualsAndHashCode;
 
 import java.time.LocalDateTime;
 
-/** MES维修后实际复工的PLAN观察账；不替代MES批准或PLAN复核决定。 */
-@Data @EqualsAndHashCode(callSuper = true) @TenantTable @TableName("pln_repair_resume_observation")
+/**
+ * MES维修后实际复工的PLAN观察账；不替代MES批准或PLAN复核决定。
+ */
+@Data
+@EqualsAndHashCode(callSuper = true)
+@TenantTable
+@TableName("pln_repair_resume_observation")
 public class PlnRepairResumeObservation extends BaseEntity<PlnRepairResumeObservation> {
     private String factoryCode;
     private Long inboxId;
@@ -26,7 +31,9 @@ public class PlnRepairResumeObservation extends BaseEntity<PlnRepairResumeObserv
     private String deviceCode;
     private LocalDateTime resumedTime;
     private String sourceFingerprint;
-    /** MATCHED / NO_PLAN / NO_RECOVERY_CASE / CASE_PENDING / CASE_RESOLVED。 */
+    /**
+     * MATCHED / NO_PLAN / NO_RECOVERY_CASE / CASE_PENDING / CASE_RESOLVED。
+     */
     private String matchStatus;
     private String planScheduleFingerprint;
     private String mesExecutionFingerprint;

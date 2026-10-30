@@ -5,16 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.mdm.entity.MdmProcessRouteWorkingEntity;
 
-import java.util.ArrayDeque;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 独立路线节点图的规范化、旧唯一图编辑投影及画布引用重写。
@@ -30,7 +21,9 @@ public final class MdmRouteNodeGraphSupport {
     private MdmRouteNodeGraphSupport() {
     }
 
-    /** 协调后行携带本次客户端键；返回临时键到持久身份的完整映射。 */
+    /**
+     * 协调后行携带本次客户端键；返回临时键到持久身份的完整映射。
+     */
     public static Map<String, String> normalize(List<MdmProcessRouteWorkingEntity> rows) {
         require(rows.size() <= 500, "单条路线最多维护500个节点");
         Map<String, String> keys = new LinkedHashMap<>();
@@ -98,7 +91,9 @@ public final class MdmRouteNodeGraphSupport {
         return keys;
     }
 
-    /** V2保存后，只有一对一主工序图才生成旧生产合同；重复图旧字段留空。 */
+    /**
+     * V2保存后，只有一对一主工序图才生成旧生产合同；重复图旧字段留空。
+     */
     private static void projectLegacy(List<MdmProcessRouteWorkingEntity> rows, boolean required) {
         Set<String> processes = new HashSet<>();
         boolean unique = rows.stream().allMatch(row -> processes.add(row.getProcessCode()));
@@ -114,7 +109,9 @@ public final class MdmRouteNodeGraphSupport {
         }
     }
 
-    /** 旧生产详情与选路共用此门；新工程读取不调用，不能静默选第一同名节点。 */
+    /**
+     * 旧生产详情与选路共用此门；新工程读取不调用，不能静默选第一同名节点。
+     */
     public static void requireLegacyExecutable(String version, List<MdmProcessRouteWorkingEntity> rows) {
         Set<String> processes = new HashSet<>();
         require(rows.stream().allMatch(row -> processes.add(row.getProcessCode())),
@@ -126,7 +123,9 @@ public final class MdmRouteNodeGraphSupport {
         }
     }
 
-    /** 仅供工程编辑：把旧唯一主工序图显式投影到已存在的真实节点，不写数据库。 */
+    /**
+     * 仅供工程编辑：把旧唯一主工序图显式投影到已存在的真实节点，不写数据库。
+     */
     public static Map<String, String> projectLegacyForEditing(List<MdmProcessRouteWorkingEntity> rows) {
         Map<String, String> processNodes = new LinkedHashMap<>();
         for (MdmProcessRouteWorkingEntity row : rows) {
@@ -148,7 +147,7 @@ public final class MdmRouteNodeGraphSupport {
      * input/output只为视觉端点，不进入工艺节点，也不能成为中间跳转。
      */
     public static JsonNode canonicalCanvas(JsonNode snapshot, List<MdmProcessRouteWorkingEntity> rows,
-            Map<String, String> keys) {
+                                           Map<String, String> keys) {
         if (snapshot == null || snapshot.isNull()) {
             require(rows.isEmpty(), "非空路线必须提供画布");
             return null;

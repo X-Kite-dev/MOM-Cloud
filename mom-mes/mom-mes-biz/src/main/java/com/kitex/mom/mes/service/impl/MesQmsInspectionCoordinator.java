@@ -17,7 +17,9 @@ public class MesQmsInspectionCoordinator {
     private final MesQmsInspectionCommandService commands;
     private final RemoteProcedureService remoteProcedureService;
 
-    /** 使用相同原号可安全重放；QMS端会按完整参数摘要返回同一任务。 */
+    /**
+     * 使用相同原号可安全重放；QMS端会按完整参数摘要返回同一任务。
+     */
     public Long create(InspectionProcedureCreateParam command, String factoryCode) {
         var registered = commands.register(command, factoryCode);
         if ("QMS_CONFIRMED".equals(registered.getStatus())) {

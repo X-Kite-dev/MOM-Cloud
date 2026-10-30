@@ -1,8 +1,7 @@
 package com.kitex.mom.mes.service.impl;
 
-import cn.hutool.core.util.StrUtil;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.kitex.mom.mes.entity.MesPlanCompletionReopenOutboxEntity;
+import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.mom.mes.mapper.MesPlanCompletionReopenOperationMapper;
 import com.kitex.mom.mes.mapper.MesPlanCompletionReopenOutboxMapper;
 import lombok.RequiredArgsConstructor;
@@ -11,34 +10,64 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.Objects;
-import java.util.Set;
+import java.util.List;
 
-/** 在独立事务中保存完工重新打开事件的退避或死信结果。 */
+import static com.kitex.mom.mes.service.impl.MesPlanCompletionCodec.require;
+
+/**
+ * 单独事务保存原事件失败账，不删除或改变原载荷。
+ */
 @Service
 @RequiredArgsConstructor
 public class MesPlanCompletionReopenEventFailureService {
-
     private final MesPlanCompletionReopenOutboxMapper outboxMapper;
     private final MesPlanCompletionReopenOperationMapper operationMapper;
 
     @Transactional(rollbackFor = Exception.class, propagation = Propagation.REQUIRES_NEW)
     public void mark(Long id, RuntimeException error) {
-        MesPlanCompletionReopenOutboxEntity row = outboxMapper.selectOne(
-                new LambdaQueryWrapper<MesPlanCompletionReopenOutboxEntity>()
-                        .eq(MesPlanCompletionReopenOutboxEntity::getId, id).last("FOR UPDATE"));
-        if (row == null || !Set.of("PENDING", "RETRY_WAIT").contains(row.getStatus())) return;
-        int attempts = Objects.requireNonNullElse(row.getAttemptCount(), 0) + 1;
+        String factory = FactoryContextHolder.getFactoryCode();
+        Long tenant = MesPlanCompletionOutboxService.scope(factory);
+        require(id != null && id > 0, "反向完成原件主键无效");
+        var row = outboxMapper.locked(tenant, factory, id);
+        if (row == null || !List.of("PENDING", "RETRY_WAIT").contains(row.getStatus())) return;
+        require(
+                row.getAttemptCount() != null
+                        && row.getAttemptCount() >= 0
+                        && row.getAttemptCount() < 100,
+                "反向完成失败次数无效");
+        int attempt = row.getAttemptCount() + 1;
         String before = row.getStatus();
-        row.setAttemptCount(attempts).setStatus(attempts >= 5 ? "DEAD_LETTER" : "RETRY_WAIT")
-                .setNextAttemptTime(attempts >= 5 ? null : LocalDateTime.now()
-                        .plusSeconds(Math.min(3600, 30L * (1L << Math.min(6, attempts - 1)))))
-                .setLastError(StrUtil.sub(error.getClass().getSimpleName() + ": "
-                        + Objects.toString(error.getMessage(), "失败"), 0, 500));
-        if (outboxMapper.updateById(row) != 1) {
-            throw new IllegalStateException("MES完工重新打开事件失败状态保存失败");
-        }
-        MesPlanCompletionReopenEventService.record(operationMapper, row, "FAILED", before,
-                row.getStatus(), attempts, null, row.getLastError());
+        String state = attempt >= 5 ? "DEAD_LETTER" : "RETRY_WAIT";
+        LocalDateTime next =
+                attempt >= 5
+                        ? null
+                        : LocalDateTime.now()
+                        .plusSeconds(
+                                Math.min(3600, 30L * (1L << Math.min(6, attempt - 1))));
+        String message =
+                error instanceof CheckedException
+                        ? error.getMessage()
+                        : "远端连接或处理异常：" + error.getClass().getSimpleName();
+        if (message == null) message = "PLAN反向完成收件结果未知";
+        message = message.substring(0, Math.min(500, message.length()));
+        require(
+                outboxMapper.state(
+                        tenant,
+                        factory,
+                        id,
+                        before,
+                        state,
+                        attempt,
+                        next,
+                        row.getDeliveredTime(),
+                        row.getPlanInboxId(),
+                        row.getPlanEventNo(),
+                        row.getPlanEventStatus(),
+                        message,
+                        row.getRetryRequestId())
+                        == 1,
+                "反向完成失败账保存失败");
+        MesPlanCompletionReopenEventService.record(
+                operationMapper, row, "FAILED", before, state, attempt, null, message);
     }
 }

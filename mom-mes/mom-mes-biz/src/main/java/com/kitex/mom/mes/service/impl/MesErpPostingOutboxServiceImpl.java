@@ -7,11 +7,8 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
-import com.kitex.mom.mes.entity.MesErpPostingOutboxEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
-import com.kitex.mom.mes.entity.MesTaskReportFeedEntity;
-import com.kitex.mom.mes.entity.MesTaskReportUnqualifiedEntity;
+import com.kitex.mom.mdm.enums.ProductionOrderSyncModeEnum;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.mapper.MesErpPostingOutboxMapper;
 import com.kitex.mom.mes.service.MesErpPostingOutboxService;
 import com.kitex.mom.plan.dto.PlnErpPostingEnvelope;
@@ -27,13 +24,35 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
-/** 在MES业务事务内捕获已成立执行事实，不同步调用PLAN或ERP。 */
+/**
+ * 在MES业务事务内捕获已成立执行事实，不同步调用PLAN或ERP。
+ */
 @Service
 @RequiredArgsConstructor
 public class MesErpPostingOutboxServiceImpl
         extends ServiceImpl<MesErpPostingOutboxMapper, MesErpPostingOutboxEntity>
         implements MesErpPostingOutboxService {
     private final ObjectMapper objectMapper;
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new IllegalStateException("SHA-256不可用", ex);
+        }
+    }
+
+    private static boolean isFingerprint(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static String text(Long value) {
+        return value == null ? null : value.toString();
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -88,6 +107,14 @@ public class MesErpPostingOutboxServiceImpl
                         && task.getFormalPlanContractVersion() != null
                         && isFingerprint(task.getFormalPlanContractFingerprint()),
                 "MES执行事实缺少接单时冻结的策略或正式计划合同，禁止形成ERP凭证");
+        require(ProductionOrderSyncModeEnum.isValid(task.getProductionOrderSyncMode()),
+                "MES执行事实的生产订单执行模式不可核验");
+        if (ProductionOrderSyncModeEnum.isLocalOnly(task.getProductionOrderSyncMode())) {
+            require("MOM_MRP".equals(task.getMrpAuthority())
+                            && StrUtil.isBlank(task.getErpProductionOrderNo()),
+                    "MOM独立执行的工单不能混用ERP权威或ERP生产订单");
+            return;
+        }
         PlnErpPostingEnvelope envelope = new PlnErpPostingEnvelope()
                 .setContractVersion("MOM_ERP_POSTING_V1").setRequestId("MES-ERP-" + sourceNo)
                 .setEventType(eventType).setSourceModule("MES").setSourceDocumentNo(sourceNo)
@@ -141,9 +168,12 @@ public class MesErpPostingOutboxServiceImpl
         payload.put("productCode", task.getMatCode());
         return payload;
     }
-    private String json(Object value) { try { return objectMapper.writeValueAsString(value); } catch (Exception ex) { throw new CheckedException("MES ERP凭证无法规范序列化"); } }
-    private static String sha256(String value) { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); } catch (Exception ex) { throw new IllegalStateException("SHA-256不可用", ex); } }
-    private static boolean isFingerprint(String value) { return value != null && value.matches("[0-9a-f]{64}"); }
-    private static String text(Long value) { return value == null ? null : value.toString(); }
-    private static void require(boolean condition, String message) { if (!condition) throw new CheckedException(message); }
+
+    private String json(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception ex) {
+            throw new CheckedException("MES ERP凭证无法规范序列化");
+        }
+    }
 }

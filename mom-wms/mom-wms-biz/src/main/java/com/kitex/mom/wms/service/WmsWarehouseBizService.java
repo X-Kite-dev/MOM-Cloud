@@ -8,5 +8,10 @@ import java.util.List;
 
 public interface WmsWarehouseBizService extends IService<WmsWarehouseBizEntity> {
 
-    boolean updateAll(List<WmsWarehouseBizCheckVO> list);
+	/**
+	 * 显式配置为空，区别于未配置的历史仓库。
+	 */
+	String NO_BUSINESS = "__NONE__";
+
+	boolean updateAll(List<WmsWarehouseBizCheckVO> list);
 }

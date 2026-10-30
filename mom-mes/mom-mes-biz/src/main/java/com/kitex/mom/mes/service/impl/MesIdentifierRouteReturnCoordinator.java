@@ -10,21 +10,10 @@ import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesIdentifierRouteReturnCommand;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
-import com.kitex.mom.mes.entity.MesIdentifierRouteOperationEntity;
-import com.kitex.mom.mes.entity.MesIdentifierRouteReturnEntity;
-import com.kitex.mom.mes.entity.MesProduceTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.ReportModeEnum;
 import com.kitex.mom.mes.enums.ReportStatusEnum;
-import com.kitex.mom.mes.mapper.MesIdentifierRouteOperationMapper;
-import com.kitex.mom.mes.mapper.MesIdentifierRouteReturnMapper;
-import com.kitex.mom.mes.mapper.MesProduceTaskMapper;
-import com.kitex.mom.mes.mapper.MesTaskMapper;
-import com.kitex.mom.mes.mapper.MesTaskReportMapper;
-import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
-import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
+import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.util.MesRouteReturnNodeEvidence;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -35,14 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -71,7 +53,9 @@ public class MesIdentifierRouteReturnCoordinator {
     private final com.kitex.mom.mes.service.MesIdentifierBindingGroupService bindingGroups;
     private final MesExecutionTaskLock taskLock;
 
-    /** 查询指定标识当前路线事实及可退回目标，供管理端申请前核对。 */
+    /**
+     * 查询指定标识当前路线事实及可退回目标，供管理端申请前核对。
+     */
     public Map<String, Object> preview(String taskCode, String identifier) {
         String factory = factoryAccess.require("read");
         Basis basis = basis(factory, taskCode, identifier);
@@ -79,7 +63,7 @@ public class MesIdentifierRouteReturnCoordinator {
         List<Map<String, Object>> targets = basis.nodeEvidence() == null ? basis.passedRoutes().stream()
                 .filter(route -> route.getRouteOrder() < basis.source().getRouteOrder()).map(this::routeMap).toList()
                 : MesRouteReturnNodeEvidence.targets(basis.nodeEvidence()).stream()
-                        .map(MesRouteReturnNodeEvidence::routeMap).toList();
+                .map(MesRouteReturnNodeEvidence::routeMap).toList();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("task", basis.task());
         result.put("identifier", basis.identifier());
@@ -91,7 +75,9 @@ public class MesIdentifierRouteReturnCoordinator {
         return result;
     }
 
-    /** 申请、批准、驳回和撤回，均保存永久幂等回执。 */
+    /**
+     * 申请、批准、驳回和撤回，均保存永久幂等回执。
+     */
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> execute(MesIdentifierRouteReturnCommand command) {
         String factory = factoryAccess.require("write");
@@ -254,7 +240,9 @@ public class MesIdentifierRouteReturnCoordinator {
         prepareExecution(command, arrange, task, mode, true);
     }
 
-    /** 预览只读路线、不取行锁；实际提交仍在报工事务中重新核对。 */
+    /**
+     * 预览只读路线、不取行锁；实际提交仍在报工事务中重新核对。
+     */
     public void previewExecution(MesTaskReportVO command, MesTaskArrangeEntity arrange, MesTaskEntity task,
                                  ReportModeEnum mode) {
         prepareExecution(command, arrange, task, mode, false);
@@ -310,7 +298,9 @@ public class MesIdentifierRouteReturnCoordinator {
         command.setIdentifierRouteVersion(active.getVersionNo());
     }
 
-    /** 恢复工序成功后，在同一事务内关闭本次标识路线版本。 */
+    /**
+     * 恢复工序成功后，在同一事务内关闭本次标识路线版本。
+     */
     public void completeIfResume(MesTaskReportVO command, MesTaskArrangeEntity arrange, MesTaskReportEntity report) {
         if (!ROUTE_RETURN.equals(command.getExecutionKind()) || command.getRouteReturnId() == null) {
             return;
@@ -329,7 +319,7 @@ public class MesIdentifierRouteReturnCoordinator {
             require(current.nodeEvidence() != null, "恢复节点缺少原完整执行图");
             current.nodeEvidence().graph().current(arrange);
             require(MesRouteReturnNodeEvidence.ready(routeReturn, current.nodeEvidence(), loopReports(routeReturn),
-                    arrangements(arrange.getFactoryCode(), routeReturn.getTaskCode())).isEmpty(),
+                            arrangements(arrange.getFactoryCode(), routeReturn.getTaskCode())).isEmpty(),
                     "批准片段尚未全部重走完成，不能提前恢复正常路线");
         } else if (!Objects.equals(routeReturn.getResumeRouteCode(), arrange.getRouteCode())) {
             return;
@@ -362,7 +352,9 @@ public class MesIdentifierRouteReturnCoordinator {
         return basis(factory, taskCode, identifier, false);
     }
 
-    /** 原待审申请只由其持久协议决定重采方式，部署不能强制改写旧SHA。 */
+    /**
+     * 原待审申请只由其持久协议决定重采方式，部署不能强制改写旧SHA。
+     */
     private Basis basis(String factory, String taskCode, String identifier, boolean legacyApproval) {
         require(StrUtil.isNotBlank(taskCode) && taskCode.trim().length() <= 100, "生产工单号不能为空或过长");
         require(StrUtil.isNotBlank(identifier) && identifier.trim().length() <= 200, "生产标识不能为空或过长");
@@ -409,7 +401,9 @@ public class MesIdentifierRouteReturnCoordinator {
                 .eq(MesTaskArrangeEntity::getFactoryCode, factory).eq(MesTaskArrangeEntity::getTaskCode, taskCode));
     }
 
-    /** 不隐藏本轮失效/越界报告；原批准不允许把异常履历忽略后重做。 */
+    /**
+     * 不隐藏本轮失效/越界报告；原批准不允许把异常履历忽略后重做。
+     */
     private List<MesTaskReportEntity> loopReports(MesIdentifierRouteReturnEntity routeReturn) {
         return reportMapper.selectList(new LambdaQueryWrapper<MesTaskReportEntity>()
                 .eq(MesTaskReportEntity::getTenantId, routeReturn.getTenantId())
@@ -439,7 +433,7 @@ public class MesIdentifierRouteReturnCoordinator {
     }
 
     private LambdaQueryWrapper<MesTaskReportEntity> effectiveReportScope(String factory, String taskCode,
-                                                                          String identifier) {
+                                                                         String identifier) {
         return new LambdaQueryWrapper<MesTaskReportEntity>()
                 .eq(MesTaskReportEntity::getFactoryCode, factory).eq(MesTaskReportEntity::getTaskCode, taskCode)
                 .eq(MesTaskReportEntity::getTransferCode, identifier)

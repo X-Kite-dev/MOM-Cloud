@@ -11,6 +11,9 @@ import java.util.List;
 
 public interface WmsInsideInventoryPlanService extends MPJDeepService<WmsInsideInventoryPlanEntity> {
 
+    /** 当前数据库是否已启用实盘期间库存冻结守卫。 */
+    Boolean countFreezeAvailable();
+
     /**
      * 新增仓库盘点计划
      *

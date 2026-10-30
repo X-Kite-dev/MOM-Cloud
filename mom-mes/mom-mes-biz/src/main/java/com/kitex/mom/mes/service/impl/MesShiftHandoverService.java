@@ -15,11 +15,11 @@ import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.mapper.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Isolation;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
@@ -132,7 +132,7 @@ public class MesShiftHandoverService {
         if ("SUBMIT".equals(action)) {
             var formal = formalSources.resolve(f, c);
             require(formal.fingerprint().equals(c.getExpectedFormalFingerprint())
-                    && formal.windowStart().equals(c.getWindowStart()) && formal.windowEnd().equals(c.getWindowEnd()),
+                            && formal.windowStart().equals(c.getWindowStart()) && formal.windowEnd().equals(c.getWindowEnd()),
                     "班次、接班资格、现场声明或在制观察已变化，请重新预览确认");
             String key = hash(json(Arrays.asList(c.getWindowStart(), c.getWindowEnd(), c.getArrangeCodes())));
             handovers.lockKey("MES-SHIFT-SCOPE:" + TenantContextHolder.getTenantId() + ":" + f + ":" + key);
@@ -195,7 +195,9 @@ public class MesShiftHandoverService {
         return commands.succeed("HANDOVER", f, c.getRequestId(), Map.of("handover", h, "operation", op, "replayed", false));
     }
 
-    /** 响应丢失时只读找原请求，不重做业务、不换号推断失败。 */
+    /**
+     * 响应丢失时只读找原请求，不重做业务、不换号推断失败。
+     */
     public Object requestReceipt(String requestId) {
         String factory = access.require("read");
         require(requestId != null && requestId.matches("[A-Za-z0-9_-]{16,64}"), "请求号无效");
@@ -207,7 +209,9 @@ public class MesShiftHandoverService {
         return Map.of("handover", required(original.getHandoverId(), factory, false), "operation", original, "replayed", true);
     }
 
-    /** 仅封存尚未执行的原号；已提交时返回真正成功回执，不反向修改交班状态。 */
+    /**
+     * 仅封存尚未执行的原号；已提交时返回真正成功回执，不反向修改交班状态。
+     */
     public Object cancelUnexecuted(String requestId) {
         return commands.cancel("HANDOVER", access.require("write"), requestId);
     }

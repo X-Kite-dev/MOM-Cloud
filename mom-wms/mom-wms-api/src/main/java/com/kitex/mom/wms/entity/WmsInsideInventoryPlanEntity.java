@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -43,9 +44,9 @@ public class WmsInsideInventoryPlanEntity extends BaseEntity<WmsInsideInventoryP
     private String warehouseName;
 
     /**
-     * 状态：0 新建/ 1正在执行中/2 已结束
+     * 状态：0 待录入/1 已录入/2 已作废
      */
-    @Schema(description = "状态：0正在执行中/1 已结束")
+    @Schema(description = "状态：0 待录入/1 已录入/2 已作废")
     private String status;
 
     /**
@@ -56,10 +57,25 @@ public class WmsInsideInventoryPlanEntity extends BaseEntity<WmsInsideInventoryP
     private String factoryCode;
 
     /**
-     * 盘点损益处理状态：0 待处理/ 1已处理
+     * 盘点损益处理状态：0 待处理/1 已处理/2 已作废
      */
-    @Schema(description = "盘点损益处理状态：0 待处理/ 1已处理")
+    @Schema(description = "盘点损益处理状态：0 待处理/1 已处理/2 已作废")
     private String handleState;
+
+    @Schema(description = "库存写入模式：SNAPSHOT动态盘点；FREEZE_COUNT实盘录入期间冻结选定范围")
+    private String stockFreezeMode;
+
+    @Schema(description = "作废原因")
+    private String cancelReason;
+
+    @Schema(description = "作废请求号")
+    private String cancelRequestId;
+
+    @Schema(description = "作废操作人")
+    private String cancelBy;
+
+    @Schema(description = "作废时间")
+    private LocalDateTime cancelTime;
 
     @TableField(exist = false)
     private List<WmsInsideInventoryPlanDetailEntity> wmsInsideInventoryPlanDetailList;

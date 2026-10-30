@@ -53,4 +53,7 @@ public class WmsLiveStockQuerySumDTO {
     @Schema(description = "容器编码")
     private String containerCode;
 
+    @Schema(description = "现场扫描的原始条码；序列号库存必须与实物条码精确一致")
+    private String matBarcode;
+
 }

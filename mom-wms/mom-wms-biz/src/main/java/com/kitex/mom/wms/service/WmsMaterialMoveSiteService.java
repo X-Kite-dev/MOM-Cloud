@@ -2,6 +2,7 @@ package com.kitex.mom.wms.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.wms.dto.WmsMaterialMoveSiteAddDTO;
+import com.kitex.mom.wms.dto.WmsMaterialMoveSiteQueryDTO;
 import com.kitex.mom.wms.dto.app.WmsMaterialMoveSiteAppDTO;
 import com.kitex.mom.wms.entity.WmsMaterialMoveSiteEntity;
 import com.kitex.mom.wms.vo.WmsMaterialMoveSiteExcelVO;
@@ -29,9 +30,9 @@ public interface WmsMaterialMoveSiteService extends IService<WmsMaterialMoveSite
     /**
      * 导出excel 表格
      *
-     * @param wmsMaterialMoveSite 查询条件
+     * @param query 查询条件
      * @param ids                 导出指定ID
      * @return excel 文件流
      */
-    List<WmsMaterialMoveSiteExcelVO> export(WmsMaterialMoveSiteEntity wmsMaterialMoveSite, Long[] ids);
+    List<WmsMaterialMoveSiteExcelVO> export(WmsMaterialMoveSiteQueryDTO query, Long[] ids);
 }

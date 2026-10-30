@@ -394,10 +394,10 @@ public class PlnOperationSchedulingServiceImpl implements PlnOperationScheduling
         Map<String, BigDecimal> toolingLifeReservations = loadToolingLifeReservations(
                 proposalTaskId, null, originalTaskId, issue.getId());
         List<PlnSchedulingOperationEntity> preferred = operationMapper.selectList(
-                        new LambdaQueryWrapper<PlnSchedulingOperationEntity>()
-                                .eq(PlnSchedulingOperationEntity::getTaskId, originalTaskId)
-                                .eq(PlnSchedulingOperationEntity::getIssueId, issue.getId())
-                                .orderByAsc(PlnSchedulingOperationEntity::getOperationSeq));
+                new LambdaQueryWrapper<PlnSchedulingOperationEntity>()
+                        .eq(PlnSchedulingOperationEntity::getTaskId, originalTaskId)
+                        .eq(PlnSchedulingOperationEntity::getIssueId, issue.getId())
+                        .orderByAsc(PlnSchedulingOperationEntity::getOperationSeq));
         if (preferred.isEmpty()) throw new CheckedException("局部重排缺少原正式工序快照");
         PlanOutcome outcome = planIssue(proposalTaskId, issue, startTime, inputs, bookings,
                 toolingLifeReservations, new LocalReplanChoicePolicy(strategy, preferred));
@@ -2617,11 +2617,11 @@ public class PlnOperationSchedulingServiceImpl implements PlnOperationScheduling
             MdmProcessRouteWorkingVO working = orderFallback.get(index);
             List<String> values = nodeGraph ? normalizeRouteCodes(working.getPreRouteNodeCodes())
                     : explicitGraph ? normalizeRouteCodes(working.getPreRouteCode()).stream().map(process -> {
-                        List<MdmProcessRouteWorkingVO> matches = byProcess.get(process);
-                        if (matches == null || matches.size() != 1)
-                            throw new CheckedException("旧前置工序不能唯一对应节点：" + process);
-                        return matches.get(0).getRouteNodeCode();
-                    }).toList()
+                List<MdmProcessRouteWorkingVO> matches = byProcess.get(process);
+                if (matches == null || matches.size() != 1)
+                    throw new CheckedException("旧前置工序不能唯一对应节点：" + process);
+                return matches.get(0).getRouteNodeCode();
+            }).toList()
                     : index == 0 ? List.of() : List.of(orderFallback.get(index - 1).getRouteNodeCode());
             if (nodeGraph && values.size() != working.getPreRouteNodeCodes().length)
                 throw new CheckedException("路线前置节点存在空值或重复值");
@@ -3005,7 +3005,8 @@ public class PlnOperationSchedulingServiceImpl implements PlnOperationScheduling
             route.setProcedureSnapshot(graph.path("procedureSnapshot").isMissingNode()
                     ? null : graph.path("procedureSnapshot"));
             List<MdmProcessRouteWorkingVO> workings = OBJECT_MAPPER.convertValue(procedures,
-                    new TypeReference<List<MdmProcessRouteWorkingVO>>() { });
+                    new TypeReference<List<MdmProcessRouteWorkingVO>>() {
+                    });
             Map<String, JsonNode> byNode = new LinkedHashMap<>();
             for (JsonNode frozen : frozenNodes) {
                 String nodeCode = frozen.path("routeNodeCode").asText();
@@ -3023,7 +3024,8 @@ public class PlnOperationSchedulingServiceImpl implements PlnOperationScheduling
                     throw new CheckedException("工程版本路线节点与执行资源快照不一致");
                 }
                 working.setMdmProcessProcedureWorkList(OBJECT_MAPPER.convertValue(frozen.path("works"),
-                        new TypeReference<List<MdmProcessProcedureWorkVO>>() { }));
+                        new TypeReference<List<MdmProcessProcedureWorkVO>>() {
+                        }));
             }
             if (!seen.equals(byNode.keySet())) {
                 throw new CheckedException("工程版本节点执行资源范围不完整");

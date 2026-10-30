@@ -7,12 +7,16 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 工序投料汇合后的物料开工下界。 */
+/**
+ * 工序投料汇合后的物料开工下界。
+ */
 @Data
 @Accessors(chain = true)
 public class PlnOperationMaterialConstraintDTO {
     private String routeCode;
-    /** null表示旧主工序合同；新快照冻结真实稳定节点。 */
+    /**
+     * null表示旧主工序合同；新快照冻结真实稳定节点。
+     */
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private String sourceRouteNodeCode;
     private String processCode;

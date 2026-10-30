@@ -75,6 +75,55 @@ public class PlnApsCaseServiceImpl extends ServiceImpl<PlnApsCaseMapper, PlnApsC
     private final PlnApsWorkflowGuard workflowGuard;
     private final ObjectMapper objectMapper;
 
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    private static String caseNo(Long id) {
+        String value = id.toString();
+        return "APS-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + '-'
+                + value.substring(Math.max(0, value.length() - 8));
+    }
+
+    private static Long parseId(String id, String label) {
+        try {
+            Long value = Long.valueOf(id);
+            require(value > 0, label + "必须为正整数");
+            return value;
+        } catch (NumberFormatException ex) {
+            throw new CheckedException(label + "格式不正确");
+        }
+    }
+
+    private static boolean isFingerprint(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static String upper(String value) {
+        return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private static String trim(String value) {
+        return value == null ? null : value.trim();
+    }
+
+    private static String text(Long value) {
+        return value == null ? null : value.toString();
+    }
+
+    private static String value(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public PlnApsCaseDTO launch(PlnApsCaseCommand.Launch command) {
@@ -484,9 +533,9 @@ public class PlnApsCaseServiceImpl extends ServiceImpl<PlnApsCaseMapper, PlnApsC
     }
 
     private PlnApsCaseDTO bindReferenceTransition(Long caseId, Long referenceId, String referenceType,
-                                                   String action, String requestId,
-                                                   String expectedCaseFingerprint, String reason,
-                                                   ReferenceBinder binder) {
+                                                  String action, String requestId,
+                                                  String expectedCaseFingerprint, String reason,
+                                                  ReferenceBinder binder) {
         require(StrUtil.isNotBlank(requestId) && requestId.length() <= MAX_REQUEST_LENGTH,
                 "APS案件操作请求号不能为空且不能超过100个字符");
         require(isFingerprint(expectedCaseFingerprint), "APS案件操作必须携带有效的期望上下文指纹");
@@ -728,13 +777,13 @@ public class PlnApsCaseServiceImpl extends ServiceImpl<PlnApsCaseMapper, PlnApsC
             return null;
         }
         return new LinkedHashSet<>(sourceMapper.selectList(new LambdaQueryWrapper<PlnApsCaseSourceEntity>()
-                .select(PlnApsCaseSourceEntity::getCaseId)
-                .eq(PlnApsCaseSourceEntity::getTenantId, scope.tenantId())
-                .eq(PlnApsCaseSourceEntity::getFactoryCode, scope.factoryCode())
-                .eq(StrUtil.isNotBlank(query.getSourceType()), PlnApsCaseSourceEntity::getSourceType,
-                        upper(query.getSourceType()))
-                .like(StrUtil.isNotBlank(query.getSourceCode()), PlnApsCaseSourceEntity::getSourceCode,
-                        query.getSourceCode()))
+                        .select(PlnApsCaseSourceEntity::getCaseId)
+                        .eq(PlnApsCaseSourceEntity::getTenantId, scope.tenantId())
+                        .eq(PlnApsCaseSourceEntity::getFactoryCode, scope.factoryCode())
+                        .eq(StrUtil.isNotBlank(query.getSourceType()), PlnApsCaseSourceEntity::getSourceType,
+                                upper(query.getSourceType()))
+                        .like(StrUtil.isNotBlank(query.getSourceCode()), PlnApsCaseSourceEntity::getSourceCode,
+                                query.getSourceCode()))
                 .stream().map(PlnApsCaseSourceEntity::getCaseId).toList());
     }
 
@@ -754,7 +803,9 @@ public class PlnApsCaseServiceImpl extends ServiceImpl<PlnApsCaseMapper, PlnApsC
         return new Scope(tenantId, factoryCode);
     }
 
-    /** 模块内部工作器作用域；不伪造登录用户，也不绕过租户和工厂边界。 */
+    /**
+     * 模块内部工作器作用域；不伪造登录用户，也不绕过租户和工厂边界。
+     */
     private Scope requireInternalScope() {
         Long tenantId = TenantContextHolder.getTenantId();
         String factoryCode = FactoryContextHolder.getFactoryCode();
@@ -935,53 +986,9 @@ public class PlnApsCaseServiceImpl extends ServiceImpl<PlnApsCaseMapper, PlnApsC
         }
     }
 
-    private static String sha256(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException(ex);
-        }
-    }
-
-    private static String caseNo(Long id) {
-        String value = id.toString();
-        return "APS-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + '-'
-                + value.substring(Math.max(0, value.length() - 8));
-    }
-
-    private static Long parseId(String id, String label) {
-        try {
-            Long value = Long.valueOf(id);
-            require(value > 0, label + "必须为正整数");
-            return value;
-        } catch (NumberFormatException ex) {
-            throw new CheckedException(label + "格式不正确");
-        }
-    }
-
-    private static boolean isFingerprint(String value) {
-        return value != null && value.matches("[0-9a-f]{64}");
-    }
-
-    private static String upper(String value) {
-        return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
-    }
-
-    private static String trim(String value) {
-        return value == null ? null : value.trim();
-    }
-
-    private static String text(Long value) {
-        return value == null ? null : value.toString();
-    }
-
-    private static String value(String value) {
-        return value == null ? "" : value;
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
+    @FunctionalInterface
+    private interface ReferenceBinder {
+        void bind(PlnApsCaseEntity entity, Long referenceId);
     }
 
     private record Scope(Long tenantId, String factoryCode) {
@@ -991,10 +998,5 @@ public class PlnApsCaseServiceImpl extends ServiceImpl<PlnApsCaseMapper, PlnApsC
     }
 
     private record PreviousSourceCase(PlnApsCaseEntity caseEntity, PlnApsCaseSourceEntity source) {
-    }
-
-    @FunctionalInterface
-    private interface ReferenceBinder {
-        void bind(PlnApsCaseEntity entity, Long referenceId);
     }
 }

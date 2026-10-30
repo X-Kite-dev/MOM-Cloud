@@ -14,23 +14,9 @@ import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesIdentifierBindingPreviewDTO;
 import com.kitex.mom.mes.dto.MesIdentifierNodePolicyDTO;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
-import com.kitex.mom.mes.entity.MesIdentifierBindingEntity;
-import com.kitex.mom.mes.entity.MesIdentifierBindingGroupEntity;
-import com.kitex.mom.mes.entity.MesIdentifierBindingOperationEntity;
-import com.kitex.mom.mes.entity.MesIdentifierMappingEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.ReportModeEnum;
-import com.kitex.mom.mes.mapper.MesIdentifierBindingGroupMapper;
-import com.kitex.mom.mes.mapper.MesIdentifierBindingMapper;
-import com.kitex.mom.mes.mapper.MesIdentifierBindingOperationMapper;
-import com.kitex.mom.mes.mapper.MesIdentifierMappingMapper;
-import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
-import com.kitex.mom.mes.mapper.MesTaskMapper;
-import com.kitex.mom.mes.mapper.MesTaskReportMapper;
-import com.kitex.mom.mes.mapper.MesAutoReportEventMapper;
-import com.kitex.mom.mes.entity.MesAutoReportEventEntity;
+import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.MesExecutionTemplateService;
 import com.kitex.mom.mes.service.MesIdentifierBindingService;
 import com.kitex.mom.mes.service.MesIdentifierMappingService;
@@ -43,12 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.Collection;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 动态外码统一报工协调器。
@@ -113,8 +94,8 @@ public class MesIdentifierBindingServiceImpl
                 ? verifyDeviceCapture(command, arrange, policy, captured) : null;
         if ("INTEGRATION".equals(captured.channel())) {
             require(command.getSourceEventId() != null && !command.getSourceEventId().isBlank()
-                    && command.getSourceEventId().length() <= 100 && command.getSourceEventTime() != null
-                    && command.getSourceEventTime().getNano() == 0,
+                            && command.getSourceEventId().length() <= 100 && command.getSourceEventTime() != null
+                            && command.getSourceEventTime().getNano() == 0,
                     "动态集成报工须提供稳定原事件号及发生时间，与原号原正文一起保留");
         }
         require(command.getCarrierOperationId() == null && command.getCarrierCode() == null
@@ -131,7 +112,9 @@ public class MesIdentifierBindingServiceImpl
         return prepared;
     }
 
-    /** 仅核对正式落库采集事实，不采信HTTP隐藏字段、不晚取事件锁造成反向锁序。 */
+    /**
+     * 仅核对正式落库采集事实，不采信HTTP隐藏字段、不晚取事件锁造成反向锁序。
+     */
     private MesAutoReportEventEntity verifyDeviceCapture(MesTaskReportVO command, MesTaskArrangeEntity arrange,
                                                          MesIdentifierNodePolicyDTO policy,
                                                          MesReportCommandService.CapturedCommand captured) {
@@ -143,24 +126,26 @@ public class MesIdentifierBindingServiceImpl
         var event = rows.get(0);
         MesAutoReportCaptureEvidence.verifyStored(event);
         require("RECEIVED".equals(event.getStatus()) && Objects.equals(command.getRequestId(), "AUTO_EVENT:" + event.getId())
-                && Objects.equals(event.getCaptureActorId(), captured.actorId())
-                && Objects.equals(event.getCaptureActorCode(), captured.actorCode())
-                && Objects.equals(event.getRequestedArrangeCode(), arrange.getCode())
-                && Objects.equals(event.getCapturePolicySnapshot(), JSONUtil.toJsonStr(policy))
-                && Objects.equals(event.getSourceEventTime(), command.getSourceEventTime())
-                && Objects.equals(event.getDeviceCode(), command.getDeviceCode())
-                && Objects.equals(event.getTransferCode(), command.getTransferCode())
-                && Objects.equals(event.getExternalIdentifier(), command.getExternalIdentifier())
-                && Objects.equals(event.getExpectedBindingId() == null ? null : event.getExpectedBindingId().toString(), command.getExpectedBindingId())
-                && Objects.equals(event.getExpectedBindingVersion(), command.getExpectedBindingVersion())
-                && Objects.equals(JSONUtil.parseObj(event.getCaptureRuleSnapshot()).getStr("worksiteCode"), command.getWorksiteCode())
-                && Objects.equals(command.getOperatorCode(), "DEVICE:" + event.getDeviceCode())
-                && Objects.equals(command.getOperatorName(), "设备自动报工[" + event.getDeviceCode() + "]"),
+                        && Objects.equals(event.getCaptureActorId(), captured.actorId())
+                        && Objects.equals(event.getCaptureActorCode(), captured.actorCode())
+                        && Objects.equals(event.getRequestedArrangeCode(), arrange.getCode())
+                        && Objects.equals(event.getCapturePolicySnapshot(), JSONUtil.toJsonStr(policy))
+                        && Objects.equals(event.getSourceEventTime(), command.getSourceEventTime())
+                        && Objects.equals(event.getDeviceCode(), command.getDeviceCode())
+                        && Objects.equals(event.getTransferCode(), command.getTransferCode())
+                        && Objects.equals(event.getExternalIdentifier(), command.getExternalIdentifier())
+                        && Objects.equals(event.getExpectedBindingId() == null ? null : event.getExpectedBindingId().toString(), command.getExpectedBindingId())
+                        && Objects.equals(event.getExpectedBindingVersion(), command.getExpectedBindingVersion())
+                        && Objects.equals(JSONUtil.parseObj(event.getCaptureRuleSnapshot()).getStr("worksiteCode"), command.getWorksiteCode())
+                        && Objects.equals(command.getOperatorCode(), "DEVICE:" + event.getDeviceCode())
+                        && Objects.equals(command.getOperatorName(), "设备自动报工[" + event.getDeviceCode() + "]"),
                 "正式设备报工与原采集实名/节点/原码/实例版本不一致，禁止重新解释");
         return event;
     }
 
-    /** 同一事务内构造报工时冻结动态事实，不让HTTP隐藏字段或后续静态映射覆盖。 */
+    /**
+     * 同一事务内构造报工时冻结动态事实，不让HTTP隐藏字段或后续静态映射覆盖。
+     */
     @Override
     public void stampReport(Prepared prepared, MesTaskReportEntity report) {
         if (prepared == null) return;
@@ -176,12 +161,12 @@ public class MesIdentifierBindingServiceImpl
         String factory = factoryAccess.require("write");
         MesIdentifierBindingEntity binding = prepared.binding();
         require(report != null && report.getId() != null && "EFFECTIVE".equals(report.getStatus())
-                && Objects.equals(report.getTenantId(), tenant()) && Objects.equals(report.getFactoryCode(), factory)
-                && Objects.equals(report.getRequestId(), captured.requestId())
-                && Objects.equals(report.getIdentifierBindingId(), binding.getId())
-                && Objects.equals(report.getTransferCode(), binding.getCanonicalIdentifier())
-                && Objects.equals(report.getIdentifierNodeAction(), prepared.action())
-                && Objects.equals(report.getIdentifierBindingSnapshot(), prepared.evidenceSnapshot()),
+                        && Objects.equals(report.getTenantId(), tenant()) && Objects.equals(report.getFactoryCode(), factory)
+                        && Objects.equals(report.getRequestId(), captured.requestId())
+                        && Objects.equals(report.getIdentifierBindingId(), binding.getId())
+                        && Objects.equals(report.getTransferCode(), binding.getCanonicalIdentifier())
+                        && Objects.equals(report.getIdentifierNodeAction(), prepared.action())
+                        && Objects.equals(report.getIdentifierBindingSnapshot(), prepared.evidenceSnapshot()),
                 "动态节点准备结果与实际报工不一致，整笔回滚");
         LocalDateTime now = LocalDateTime.now();
         if ("BIND".equals(prepared.action())) {
@@ -265,8 +250,8 @@ public class MesIdentifierBindingServiceImpl
     public void assertLegacyCorrectionAllowed(MesTaskReportEntity report) {
         String factory = factoryAccess.require("write");
         require(report != null && report.getIdentifierBindingId() == null
-                && report.getIdentifierBindingVersion() == null && report.getIdentifierNodeAction() == null
-                && report.getIdentifierBindingSnapshot() == null,
+                        && report.getIdentifierBindingVersion() == null && report.getIdentifierNodeAction() == null
+                        && report.getIdentifierBindingSnapshot() == null,
                 "动态完整冲销须沿原操作与异岗补偿账；禁止数量部分纠正或旧裸入口只改产量留下占用");
         require(Objects.equals(report.getTenantId(), tenant()) && Objects.equals(report.getFactoryCode(), factory),
                 "原报工不属于当前实际租户工厂");
@@ -291,7 +276,9 @@ public class MesIdentifierBindingServiceImpl
         return rows.stream().map(MesIdentifierBindingEntity::getCanonicalIdentifier).distinct().toList();
     }
 
-    /** 绑定预览和执行共享解析；执行才需要采集ID/版本并锁行，预览不产生任何永久事实。 */
+    /**
+     * 绑定预览和执行共享解析；执行才需要采集ID/版本并锁行，预览不产生任何永久事实。
+     */
     private Prepared resolve(MesTaskReportVO command, MesTaskArrangeEntity arrange, MesTaskEntity task,
                              ReportModeEnum mode, MesIdentifierNodePolicyDTO policy,
                              MesIdentifierBindingGroupEntity group, String factory, boolean executing) {
@@ -309,7 +296,7 @@ public class MesIdentifierBindingServiceImpl
             assertNotExternalHistory(factory, submitted);
             assertNotExternalHistory(factory, canonical);
             require(baseMapper.selectCount(scope(factory).eq(MesIdentifierBindingEntity::getExternalNamespace,
-                    group.getExternalNamespace()).eq(MesIdentifierBindingEntity::getExternalCode, external)
+                            group.getExternalNamespace()).eq(MesIdentifierBindingEntity::getExternalCode, external)
                     .eq(MesIdentifierBindingEntity::getStatus, "ACTIVE")) == 0, "该命名空间外码仍在占用，不能绑定另一件产品");
             require(baseMapper.selectCount(scope(factory).eq(MesIdentifierBindingEntity::getBindingGroupId, group.getId())
                     .eq(MesIdentifierBindingEntity::getCanonicalIdentifier, canonical)
@@ -330,7 +317,7 @@ public class MesIdentifierBindingServiceImpl
             if (executing) {
                 Long expectedId = id(command.getExpectedBindingId());
                 require(command.getExpectedBindingVersion() != null && command.getExpectedBindingVersion() > 0
-                        && command.getExpectedBindingVersion() % 2 == 1,
+                                && command.getExpectedBindingVersion() % 2 == 1,
                         "缺少有效采集生命周期版本，请重新只读预览");
                 binding = baseMapper.selectOne(scope(factory).eq(MesIdentifierBindingEntity::getId, expectedId));
                 require(binding != null, "原采集实例不属于当前租户工厂");
@@ -391,7 +378,9 @@ public class MesIdentifierBindingServiceImpl
         return new Prepared(action, binding, JSONUtil.toJsonStr(evidence), before, after);
     }
 
-    /** 指纹还要逐项核定公开规则和具体节点，不把指纹值当可改变公开定义的令牌。 */
+    /**
+     * 指纹还要逐项核定公开规则和具体节点，不把指纹值当可改变公开定义的令牌。
+     */
     private MesIdentifierBindingGroupEntity frozenGroup(MesIdentifierNodePolicyDTO policy,
                                                         MesTaskArrangeEntity arrange, MesTaskEntity task, String factory) {
         require(Set.of("BIND", "USE", "RELEASE").contains(policy.getAction()), "冻结节点动作未知");
@@ -401,17 +390,17 @@ public class MesIdentifierBindingServiceImpl
                 .eq(MesIdentifierBindingGroupEntity::getFactoryCode, factory)
                 .eq(MesIdentifierBindingGroupEntity::getId, id(policy.getBindingGroupId())));
         require(group != null && "FROZEN".equals(group.getStatus()) && "ONE_CODE".equals(group.getReportMode())
-                && Objects.equals(group.getTaskId(), task.getId()) && Objects.equals(group.getTaskCode(), task.getCode())
-                && Objects.equals(group.getPolicySchemaVersion(), policy.getPolicySchemaVersion())
-                && Objects.equals(group.getProcessRouteCode(), policy.getProcessRouteCode())
-                && Objects.equals(group.getBindRouteNodeCode(), policy.getBindRouteNodeCode())
-                && Objects.equals(group.getReleaseRouteNodeCode(), policy.getReleaseRouteNodeCode())
-                && (!nativeNodes || ("NODE_EXECUTION_V1".equals(arrange.getRouteExecutionSchemaVersion())
-                && Objects.equals(task.getProcessRouteCode(), group.getProcessRouteCode())))
-                && Objects.equals(group.getVersionNo(), policy.getBindingGroupVersion())
-                && Objects.equals(group.getDefinitionFingerprint(), policy.getDefinitionFingerprint())
-                && Objects.equals(group.getGraphFingerprint(), policy.getGraphFingerprint())
-                && Objects.equals(group.getSourceRouteFingerprint(), policy.getSourceRouteFingerprint()),
+                        && Objects.equals(group.getTaskId(), task.getId()) && Objects.equals(group.getTaskCode(), task.getCode())
+                        && Objects.equals(group.getPolicySchemaVersion(), policy.getPolicySchemaVersion())
+                        && Objects.equals(group.getProcessRouteCode(), policy.getProcessRouteCode())
+                        && Objects.equals(group.getBindRouteNodeCode(), policy.getBindRouteNodeCode())
+                        && Objects.equals(group.getReleaseRouteNodeCode(), policy.getReleaseRouteNodeCode())
+                        && (!nativeNodes || ("NODE_EXECUTION_V1".equals(arrange.getRouteExecutionSchemaVersion())
+                        && Objects.equals(task.getProcessRouteCode(), group.getProcessRouteCode())))
+                        && Objects.equals(group.getVersionNo(), policy.getBindingGroupVersion())
+                        && Objects.equals(group.getDefinitionFingerprint(), policy.getDefinitionFingerprint())
+                        && Objects.equals(group.getGraphFingerprint(), policy.getGraphFingerprint())
+                        && Objects.equals(group.getSourceRouteFingerprint(), policy.getSourceRouteFingerprint()),
                 "具体派工未冻结此实际工单的原永久区段，不能读新模板补造");
         JsonNode original = json(group.getDefinitionSnapshot());
         JsonNode actual = json(JSONUtil.toJsonStr(policy));
@@ -453,14 +442,16 @@ public class MesIdentifierBindingServiceImpl
             require(Objects.equals(memberPolicy.getBindingGroupId(), policy.getBindingGroupId()), "原同批后续工序未冻结同一换码区段");
             frozenGroup(memberPolicy, member, task, factory);
             require(Set.of("UN_RECEIVE", "RECEIVE", "PRODUCT").contains(Objects.toString(member.getStatus(), ""))
-                    && contract.getRemainingQuantity() != null && contract.getRemainingQuantity().compareTo(BigDecimal.ONE) >= 0
-                    && (Boolean.TRUE.equals(contract.getPartialReportAllowed())
-                    || contract.getRemainingQuantity().compareTo(BigDecimal.ONE) == 0),
+                            && contract.getRemainingQuantity() != null && contract.getRemainingQuantity().compareTo(BigDecimal.ONE) >= 0
+                            && (Boolean.TRUE.equals(contract.getPartialReportAllowed())
+                            || contract.getRemainingQuantity().compareTo(BigDecimal.ONE) == 0),
                     "原动态区段工序" + node.getRouteCode() + "已暂停/关闭/完工、数量不足或禁止逐件分批，禁止先绑定");
         }
     }
 
-    /** 同厂存在不同内部含义的静态外码时明确拒绝，不以优先级静默选一个产品。 */
+    /**
+     * 同厂存在不同内部含义的静态外码时明确拒绝，不以优先级静默选一个产品。
+     */
     private void assertStaticAgreement(String factory, String external, String canonical) {
         List<MesIdentifierMappingEntity> mappings = mappingMapper.selectList(new LambdaQueryWrapper<MesIdentifierMappingEntity>()
                 .eq(MesIdentifierMappingEntity::getTenantId, tenant()).eq(MesIdentifierMappingEntity::getFactoryCode, factory)
@@ -478,7 +469,7 @@ public class MesIdentifierBindingServiceImpl
     private void lockIdentifiers(String factory, List<String> identifiers) {
         identifiers.stream().map(value -> MesIdentifierBindingLock.key(tenant(), factory, value)).distinct().sorted()
                 .forEach(key -> require(Integer.valueOf(1).equals(baseMapper.lockIdentity(key)),
-                "未取得现场标识业务锁"));
+                        "未取得现场标识业务锁"));
     }
 
     private MesTaskArrangeEntity uniqueArrange(String code, String factory) {
@@ -492,8 +483,8 @@ public class MesIdentifierBindingServiceImpl
 
     private void assertScope(MesTaskArrangeEntity arrange, MesTaskEntity task, String factory) {
         require(arrange != null && task != null && Objects.equals(arrange.getTenantId(), tenant())
-                && Objects.equals(task.getTenantId(), tenant()) && Objects.equals(arrange.getFactoryCode(), factory)
-                && Objects.equals(task.getFactoryCode(), factory) && Objects.equals(arrange.getTaskCode(), task.getCode()),
+                        && Objects.equals(task.getTenantId(), tenant()) && Objects.equals(arrange.getFactoryCode(), factory)
+                        && Objects.equals(task.getFactoryCode(), factory) && Objects.equals(arrange.getTaskCode(), task.getCode()),
                 "动态节点与真实工单/派工不属于当前实际租户工厂");
     }
 
@@ -515,8 +506,8 @@ public class MesIdentifierBindingServiceImpl
         String value = identifier(input, "绑定外码");
         int characters = value.codePointCount(0, value.length());
         require(policy.getExternalCodeMinLength() != null && policy.getExternalCodeMaxLength() != null
-                && characters >= policy.getExternalCodeMinLength() && characters <= policy.getExternalCodeMaxLength()
-                && (policy.getExternalCodePrefix() == null || value.startsWith(policy.getExternalCodePrefix())),
+                        && characters >= policy.getExternalCodeMinLength() && characters <= policy.getExternalCodeMaxLength()
+                        && (policy.getExternalCodePrefix() == null || value.startsWith(policy.getExternalCodePrefix())),
                 "外码不符合原冻结的字面前缀/长度规则");
         return value;
     }
@@ -526,23 +517,31 @@ public class MesIdentifierBindingServiceImpl
         String value = input.trim();
         // 与PostgreSQL varchar/length一致按Unicode码点计数，禁止未配对代理字符被UTF8替换后串锁。
         require(value.codePointCount(0, value.length()) <= 200 && value.chars().noneMatch(Character::isISOControl)
-                && value.codePoints().noneMatch(code -> code >= 0xD800 && code <= 0xDFFF),
+                        && value.codePoints().noneMatch(code -> code >= 0xD800 && code <= 0xDFFF),
                 label + "须为不超过200个Unicode字符的完整无控制字符文本");
         return value;
     }
 
     private Long id(String input) {
         require(input != null && input.matches("[1-9][0-9]{0,18}"), "具体实例/永久组ID必须为完整正整数文本");
-        try { return Long.valueOf(input); }
-        catch (NumberFormatException exception) { throw new CheckedException("实例/永久组ID超出Long范围"); }
+        try {
+            return Long.valueOf(input);
+        } catch (NumberFormatException exception) {
+            throw new CheckedException("实例/永久组ID超出Long范围");
+        }
     }
 
     private JsonNode json(String value) {
-        try { return SNAPSHOT_JSON.readTree(value); }
-        catch (IOException | IllegalArgumentException exception) { throw new CheckedException("永久换码依据JSON损坏，禁止猜测执行"); }
+        try {
+            return SNAPSHOT_JSON.readTree(value);
+        } catch (IOException | IllegalArgumentException exception) {
+            throw new CheckedException("永久换码依据JSON损坏，禁止猜测执行");
+        }
     }
 
-    private Long tenant() { return TenantContextHolder.getTenantId(); }
+    private Long tenant() {
+        return TenantContextHolder.getTenantId();
+    }
 
     private LambdaQueryWrapper<MesIdentifierBindingEntity> scope(String factory) {
         return new LambdaQueryWrapper<MesIdentifierBindingEntity>().eq(MesIdentifierBindingEntity::getTenantId, tenant())
@@ -555,18 +554,28 @@ public class MesIdentifierBindingServiceImpl
         row.setDelFlag("0");
     }
 
-    /** 领域对象不能由通用CRUD、链式操作或独立事务修改占用。 */
+    /**
+     * 领域对象不能由通用CRUD、链式操作或独立事务修改占用。
+     */
     @Override
-    public MesIdentifierBindingMapper getBaseMapper() { throw new CheckedException("活动外码禁止通用CRUD，请使用统一报工与只读预览"); }
+    public MesIdentifierBindingMapper getBaseMapper() {
+        throw new CheckedException("活动外码禁止通用CRUD，请使用统一报工与只读预览");
+    }
 
     @Override
-    public boolean saveBatch(Collection<MesIdentifierBindingEntity> rows, int size) { throw new CheckedException("活动外码禁止批量独立占用"); }
+    public boolean saveBatch(Collection<MesIdentifierBindingEntity> rows, int size) {
+        throw new CheckedException("活动外码禁止批量独立占用");
+    }
 
     @Override
-    public boolean saveOrUpdateBatch(Collection<MesIdentifierBindingEntity> rows, int size) { throw new CheckedException("活动外码禁止批量覆盖"); }
+    public boolean saveOrUpdateBatch(Collection<MesIdentifierBindingEntity> rows, int size) {
+        throw new CheckedException("活动外码禁止批量覆盖");
+    }
 
     @Override
-    public boolean updateBatchById(Collection<MesIdentifierBindingEntity> rows, int size) { throw new CheckedException("活动外码禁止批量迁移"); }
+    public boolean updateBatchById(Collection<MesIdentifierBindingEntity> rows, int size) {
+        throw new CheckedException("活动外码禁止批量迁移");
+    }
 
     private void require(boolean condition, String message) {
         if (!condition) throw new CheckedException(message);

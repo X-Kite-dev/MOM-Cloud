@@ -15,9 +15,13 @@ import java.util.List;
 @Data
 @Schema(description = "ERP生产订单映射回执")
 public class PlnErpProductionOrderReceiptCommand {
-    /** ERP 回执永久幂等号。 */
+    /**
+     * ERP 回执永久幂等号。
+     */
     private String requestId;
-    /** 对应 PRODUCTION_ORDER_REQUEST 的请求号。 */
+    /**
+     * 对应 PRODUCTION_ORDER_REQUEST 的请求号。
+     */
     private String sourcePostingRequestId;
     private String erpSystemCode;
     private String externalFactoryCode;
@@ -27,7 +31,9 @@ public class PlnErpProductionOrderReceiptCommand {
     private LocalDateTime receiptTime;
     private List<LineMapping> mappings;
 
-    /** 正式合同自制行与 ERP 生产订单的一一映射。 */
+    /**
+     * 正式合同自制行与 ERP 生产订单的一一映射。
+     */
     @Data
     public static class LineMapping {
         private String lineNo;

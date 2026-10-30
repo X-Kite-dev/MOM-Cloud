@@ -5,7 +5,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
-/** Agent审批冻结的缺料采购下达命令。 */
+/**
+ * Agent审批冻结的缺料采购下达命令。
+ */
 @Data
 public class PlanAgentPurchaseOrderDTO {
     private String requestId;

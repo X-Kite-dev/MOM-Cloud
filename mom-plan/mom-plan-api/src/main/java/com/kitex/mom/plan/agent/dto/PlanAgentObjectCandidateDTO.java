@@ -9,12 +9,16 @@ import jakarta.validation.constraints.Size;
 
 import java.util.List;
 
-/** 当前实名工厂的APS情景只读候选合同；候选选择不代表后续运行授权。 */
+/**
+ * 当前实名工厂的APS情景只读候选合同；候选选择不代表后续运行授权。
+ */
 public final class PlanAgentObjectCandidateDTO {
     private PlanAgentObjectCandidateDTO() {
     }
 
-    /** 仅接受当前工厂和有界关键词、页码；租户从实名上下文取得。 */
+    /**
+     * 仅接受当前工厂和有界关键词、页码；租户从实名上下文取得。
+     */
     @Schema(description = "智能体真实业务对象候选查询")
     public record Query(
             @NotBlank @Size(max = 100) @Schema(description = "必须严格等于当前实际授权工厂") String factoryCode,
@@ -23,7 +27,9 @@ public final class PlanAgentObjectCandidateDTO {
             @Min(1) @Max(50) @Schema(description = "页大小，未提供时为10") Integer size) {
     }
 
-    /** 总数使用十进制文本，页码和页大小保持JSON数字；记录和总数属于同一只读快照。 */
+    /**
+     * 总数使用十进制文本，页码和页大小保持JSON数字；记录和总数属于同一只读快照。
+     */
     @JsonInclude(JsonInclude.Include.ALWAYS)
     @Schema(description = "当前租户工厂内真实对象候选页")
     public record CandidatePage(
@@ -36,7 +42,9 @@ public final class PlanAgentObjectCandidateDTO {
             @Schema(description = "有界身份摘要，坏行保留并明确不可选") List<Candidate> records) {
     }
 
-    /** 只投影原身份和小摘要，不加载业务大JSON、审批或凭据。 */
+    /**
+     * 只投影原身份和小摘要，不加载业务大JSON、审批或凭据。
+     */
     @JsonInclude(JsonInclude.Include.ALWAYS)
     @Schema(description = "真实对象只读身份摘要")
     public record Candidate(

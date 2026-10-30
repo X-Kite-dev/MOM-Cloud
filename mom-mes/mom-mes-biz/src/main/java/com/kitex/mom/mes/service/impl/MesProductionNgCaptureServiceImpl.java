@@ -7,32 +7,18 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.entity.MdmWarehouseLocationEntity;
+import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mdm.feign.RemoteWarehouseLocationService;
 import com.kitex.mom.mdm.feign.RemoteWarehouseService;
-import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mes.dto.MesProductionNgCaptureDTO;
 import com.kitex.mom.mes.dto.MesTaskReportUnqualifiedVO;
-import com.kitex.mom.mes.entity.MesCaseDispositionReceiptEntity;
-import com.kitex.mom.mes.entity.MesInventoryQualityCaseEntity;
-import com.kitex.mom.mes.entity.MesProductionNgCaptureEntity;
-import com.kitex.mom.mes.entity.MesProductionNgCancellationEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskReportUnqualifiedEntity;
-import com.kitex.mom.mes.entity.MesWarehouseInoutEntity;
-import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.ReportModeEnum;
-import com.kitex.mom.mes.mapper.MesCaseDispositionReceiptMapper;
-import com.kitex.mom.mes.mapper.MesInventoryQualityCaseMapper;
-import com.kitex.mom.mes.mapper.MesProductionNgCaptureMapper;
-import com.kitex.mom.mes.mapper.MesProductionNgCancellationMapper;
-import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
-import com.kitex.mom.mes.mapper.MesTaskReportUnqualifiedMapper;
-import com.kitex.mom.mes.mapper.MesWarehouseInoutMapper;
-import com.kitex.mom.mes.mapper.MesWarehouseLiveStockMapper;
+import com.kitex.mom.mes.mapper.*;
+import com.kitex.mom.mes.service.MesExecutionTemplateService;
 import com.kitex.mom.mes.service.MesProductionMaterialOperationService;
 import com.kitex.mom.mes.service.MesProductionNgCaptureService;
 import com.kitex.mom.mes.service.MesTaskReportService;
-import com.kitex.mom.mes.service.MesExecutionTemplateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -46,11 +32,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 
@@ -150,7 +132,9 @@ public class MesProductionNgCaptureServiceImpl
                 arrange.getActualWorksiteCode(), mobile ? "MOBILE" : "STATION", allowed, assigned, restriction);
     }
 
-    /** 保留完整HTTP原字符串；所有身份/数量是明确文本，不接受客户端生成来源包。 */
+    /**
+     * 保留完整HTTP原字符串；所有身份/数量是明确文本，不接受客户端生成来源包。
+     */
     private JsonNode originalCommand(String raw, String factory) {
         var value = codec.objectDocument(raw, 64 * 1024);
         require(value.size() == KEYS.size(), "生产不良采集原文缺字段或有额外字段");
@@ -158,13 +142,15 @@ public class MesProductionNgCaptureServiceImpl
         require(COMMAND_VERSION.equals(text(value, "version")), "生产不良采集协议未知");
         require(text(value, "requestId").matches("[A-Za-z0-9_-]{8,64}"), "原请求号须为8至64位");
         require(Objects.equals(codec.id(text(value, "expectedTenantId")), TenantContextHolder.getTenantId())
-                && Objects.equals(text(value, "expectedFactoryCode"), factory)
-                && Objects.equals(codec.id(text(value, "expectedActorUserId")), SecurityUtils.getUser().getId()),
+                        && Objects.equals(text(value, "expectedFactoryCode"), factory)
+                        && Objects.equals(codec.id(text(value, "expectedActorUserId")), SecurityUtils.getUser().getId()),
                 "只能在当前实际实名租户工厂采集");
         return value;
     }
 
-    /** 仅首次执行要求业务字段有效；作废必须能封存库位/标识等填错的完整原文。 */
+    /**
+     * 仅首次执行要求业务字段有效；作废必须能封存库位/标识等填错的完整原文。
+     */
     private JsonNode command(String raw, String factory) {
         var value = originalCommand(raw, factory);
         codec.code(text(value, "arrangeCode"), "实际派工", 100);
@@ -414,7 +400,9 @@ public class MesProductionNgCaptureServiceImpl
         return facts;
     }
 
-    /** 作废是永久负向事实，不根据当前ABSENT或本机缓存猜未执行。 */
+    /**
+     * 作废是永久负向事实，不根据当前ABSENT或本机缓存猜未执行。
+     */
     private MesProductionNgCaptureDTO.Receipt cancellationReceipt(MesProductionNgCancellationEntity row) {
         require(row != null && Objects.equals(row.getActorId(), SecurityUtils.getUser().getId())
                 && Objects.equals(row.getTenantId(), TenantContextHolder.getTenantId())
@@ -433,11 +421,11 @@ public class MesProductionNgCaptureServiceImpl
     @Override
     public boolean validateOrigin(MesInventoryQualityCaseEntity qualityCase, MesWarehouseLiveStockEntity root) {
         require(qualityCase != null && "PRODUCTION_NG".equals(qualityCase.getOriginType())
-                && Objects.equals(qualityCase.getTenantId(), TenantContextHolder.getTenantId())
-                && !TenantContextHolder.getTenantSkip()
-                && !Boolean.TRUE.equals(com.kitex.common.data.orgFilter.FactoryContextHolder.getFactorySkip())
-                && Objects.equals(qualityCase.getFactoryCode(),
-                    com.kitex.common.data.orgFilter.FactoryContextHolder.getFactoryCode()),
+                        && Objects.equals(qualityCase.getTenantId(), TenantContextHolder.getTenantId())
+                        && !TenantContextHolder.getTenantSkip()
+                        && !Boolean.TRUE.equals(com.kitex.common.data.orgFilter.FactoryContextHolder.getFactorySkip())
+                        && Objects.equals(qualityCase.getFactoryCode(),
+                        com.kitex.common.data.orgFilter.FactoryContextHolder.getFactoryCode()),
                 "须为实际工厂真实生产NG案件");
         ready();
         var header = getById(qualityCase.getProductionNgCaptureId());
@@ -463,13 +451,15 @@ public class MesProductionNgCaptureServiceImpl
         }
     }
 
-    /** 原库位依据只采集一次；不以当前MDM变化改写永久历史。 */
+    /**
+     * 原库位依据只采集一次；不以当前MDM变化改写永久历史。
+     */
     private MdmWarehouseLocationEntity location(String code, String factory) {
         var response = locations.getByCode(code);
         var value = response == null ? null : response.getData();
         require(response != null && response.isOk() && value != null && Objects.equals(value.getLocationCode(), code)
-                && Objects.equals(value.getFactoryCode(), factory) && Objects.equals(value.getTenantId(), TenantContextHolder.getTenantId())
-                && Boolean.TRUE.equals(value.getStatus()) && Integer.valueOf(3).equals(value.getLocationLevel()),
+                        && Objects.equals(value.getFactoryCode(), factory) && Objects.equals(value.getTenantId(), TenantContextHolder.getTenantId())
+                        && Boolean.TRUE.equals(value.getStatus()) && Integer.valueOf(3).equals(value.getLocationLevel()),
                 "实际启用三级隔离库位和组织不可核验");
         var warehouse = warehouses.getByCode(value.getWarehouseCode());
         require(warehouse != null && warehouse.isOk() && warehouse.getData() != null
@@ -517,8 +507,8 @@ public class MesProductionNgCaptureServiceImpl
     }
 
     private MesWarehouseInoutEntity flow(MesWarehouseLiveStockEntity stock, Long id, Long dispositionId,
-                                        String requestId, BigDecimal before, BigDecimal after, BigDecimal quantity,
-                                        String direction, String business) {
+                                         String requestId, BigDecimal before, BigDecimal after, BigDecimal quantity,
+                                         String direction, String business) {
         var row = new MesWarehouseInoutEntity();
         BeanUtils.copyProperties(stock, row, "id", "createBy", "createTime", "updateBy", "updateTime", "delFlag");
         row.setId(id);
@@ -538,7 +528,9 @@ public class MesProductionNgCaptureServiceImpl
         return row;
     }
 
-    /** 明确固定原stock字段；数量的当前余额不改变首次原采集事实。 */
+    /**
+     * 明确固定原stock字段；数量的当前余额不改变首次原采集事实。
+     */
     private Map<String, String> stockFacts(MesWarehouseLiveStockEntity stock) {
         var facts = new TreeMap<String, String>();
         facts.put("id", stock.getId().toString());
@@ -585,9 +577,9 @@ public class MesProductionNgCaptureServiceImpl
 
     private MesProductionNgCaptureDTO.Receipt verified(MesProductionNgCaptureEntity row) {
         require(row != null && COMMAND_VERSION.equals(row.getCommandVersion()) && EVIDENCE_VERSION.equals(row.getEvidenceVersion())
-                && "ISOLATED".equals(row.getStatus())
-                && Objects.equals(row.getCommandFingerprint(), codec.fingerprint(COMMAND_VERSION, row.getCommandSnapshot()))
-                && Objects.equals(row.getEvidenceFingerprint(), codec.fingerprint(EVIDENCE_VERSION, row.getEvidenceSnapshot())),
+                        && "ISOLATED".equals(row.getStatus())
+                        && Objects.equals(row.getCommandFingerprint(), codec.fingerprint(COMMAND_VERSION, row.getCommandSnapshot()))
+                        && Objects.equals(row.getEvidenceFingerprint(), codec.fingerprint(EVIDENCE_VERSION, row.getEvidenceSnapshot())),
                 "原采集版本、原文或SHA不一致");
         var source = reports.selectById(row.getSourceUnqualifiedReportId());
         require(source != null && sourceCodec.verify(source), "原生产不良冻结事实缺失");
@@ -598,18 +590,18 @@ public class MesProductionNgCaptureServiceImpl
         var inflow = flows.selectById(row.getInflowId());
         var qualityCase = cases.selectById(row.getCaseId());
         require(stock != null && stock.getSourceReportId() == null && inflow != null && qualityCase != null
-                && Objects.equals(codec.snapshot(stockFacts(stock)), evidence.path("stockSnapshot").asText())
-                && Objects.equals(qualityCase.getSourceSnapshot(), row.getEvidenceSnapshot())
-                && Objects.equals(qualityCase.getProductionNgCaptureId(), row.getId())
-                && Objects.equals(qualityCase.getSourceUnqualifiedReportId(), source.getId())
-                && Objects.equals(qualityCase.getInitialInflowId(), inflow.getId())
-                && Objects.equals(inflow.getSourceStockId(), stock.getId())
-                && Objects.equals(inflow.getProductionNgCaptureId(), row.getId())
-                && Objects.equals(inflow.getSourceUnqualifiedReportId(), source.getId())
-                && inflow.getOperateNum() != null && inflow.getOperateNum().compareTo(row.getQuantity()) == 0
-                && inflow.getStockBeforeNum() != null && inflow.getStockBeforeNum().signum() == 0
-                && inflow.getStockAfterNum() != null && inflow.getStockAfterNum().compareTo(row.getQuantity()) == 0
-                && qualityCase.getQuantity() != null && qualityCase.getQuantity().compareTo(row.getQuantity()) == 0,
+                        && Objects.equals(codec.snapshot(stockFacts(stock)), evidence.path("stockSnapshot").asText())
+                        && Objects.equals(qualityCase.getSourceSnapshot(), row.getEvidenceSnapshot())
+                        && Objects.equals(qualityCase.getProductionNgCaptureId(), row.getId())
+                        && Objects.equals(qualityCase.getSourceUnqualifiedReportId(), source.getId())
+                        && Objects.equals(qualityCase.getInitialInflowId(), inflow.getId())
+                        && Objects.equals(inflow.getSourceStockId(), stock.getId())
+                        && Objects.equals(inflow.getProductionNgCaptureId(), row.getId())
+                        && Objects.equals(inflow.getSourceUnqualifiedReportId(), source.getId())
+                        && inflow.getOperateNum() != null && inflow.getOperateNum().compareTo(row.getQuantity()) == 0
+                        && inflow.getStockBeforeNum() != null && inflow.getStockBeforeNum().signum() == 0
+                        && inflow.getStockAfterNum() != null && inflow.getStockAfterNum().compareTo(row.getQuantity()) == 0
+                        && qualityCase.getQuantity() != null && qualityCase.getQuantity().compareTo(row.getQuantity()) == 0,
                 "原NG采集五方事实或落库数量精度不一致");
         return new MesProductionNgCaptureDTO.Receipt(row.getRequestId(), row.getStatus(), row.getTenantId().toString(),
                 row.getFactoryCode(), row.getActorId().toString(), row.getId().toString(), source.getId().toString(),

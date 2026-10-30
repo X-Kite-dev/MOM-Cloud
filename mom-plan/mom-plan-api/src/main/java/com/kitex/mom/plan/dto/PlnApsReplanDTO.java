@@ -6,7 +6,9 @@ import lombok.experimental.Accessors;
 
 import java.util.Map;
 
-/** 既有专用局部重排与统一智能 APS 案件之间的命令和归一化视图。 */
+/**
+ * 既有专用局部重排与统一智能 APS 案件之间的命令和归一化视图。
+ */
 public final class PlnApsReplanDTO {
 
     private PlnApsReplanDTO() {

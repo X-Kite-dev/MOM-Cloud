@@ -1,22 +1,15 @@
 package com.kitex.mom.oms.feign;
 
 import com.kitex.common.core.util.R;
-import com.kitex.mom.Constants;
-import com.kitex.mom.oms.dto.OmsDeliveryEventCommand;
-import com.kitex.mom.oms.dto.OmsSalesReturnEventCommand;
-import com.kitex.mom.oms.dto.OmsShipmentCorrectionEventCommand;
-import com.kitex.mom.oms.dto.OmsCustomerReceiptEventCommand;
-import com.kitex.mom.oms.dto.OmsCustomerExceptionResolutionCommand;
 import com.kitex.common.feign.annotation.NoToken;
+import com.kitex.mom.Constants;
+import com.kitex.mom.oms.dto.*;
 import com.kitex.mom.oms.entity.OmsOrderDetailsEntity;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
-
-import java.time.LocalDate;
-import java.util.List;
 
 /**
  * 查询实时库存
@@ -79,8 +72,11 @@ public interface RemoteOmsOrderService {
                                  @RequestParam("productCode") String productCode,
                                  @RequestParam("customerCode") String customerCode);
 
+    /**
+     * 交期使用 ISO 文本，避免调用方的 Feign 日期格式覆盖服务端解析契约。
+     */
     @GetMapping("/omsOrderBase/getOrderDetails")
     R<OmsOrderDetailsEntity> getOrderDetails(@RequestParam("orderCode") String orderCode,
                                              @RequestParam("productCode") String productCode,
-                                             @RequestParam("planDeliverTime") LocalDate planDeliverTime);
+                                             @RequestParam("planDeliverTime") String planDeliverDateIso);
 }

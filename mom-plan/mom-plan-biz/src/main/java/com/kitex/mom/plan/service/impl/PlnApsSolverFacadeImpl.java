@@ -1,18 +1,15 @@
 package com.kitex.mom.plan.service.impl;
 
+import com.kitex.mom.plan.service.aps.PlnApsSourceRouting;
+
 import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.common.core.exception.CheckedException;
-import com.kitex.mom.plan.dto.PlanSchedulingAgentDTO;
-import com.kitex.mom.plan.dto.PlnApsCaseCommand;
-import com.kitex.mom.plan.dto.PlnApsCaseDTO;
-import com.kitex.mom.plan.dto.PlnApsDecisionDTO;
-import com.kitex.mom.plan.dto.PlnApsResourceDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingScenarioRunDTO;
-import com.kitex.mom.plan.service.PlnApsCaseService;
-import com.kitex.mom.plan.service.PlnApsReadinessService;
-import com.kitex.mom.plan.service.PlnApsResourceSnapshotService;
-import com.kitex.mom.plan.service.PlnApsSolverFacade;
-import com.kitex.mom.plan.service.PlnSchedulingAgentService;
+import com.kitex.common.data.tenant.TenantContextHolder;
+import com.kitex.mom.plan.dto.*;
+import com.kitex.mom.plan.entity.PlnSchedulingScenarioEntity;
+import com.kitex.mom.plan.mapper.PlnSchedulingScenarioMapper;
+import com.kitex.mom.plan.service.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,14 +35,53 @@ public class PlnApsSolverFacadeImpl implements PlnApsSolverFacade {
     private final PlnApsResourceSnapshotService resourceSnapshotService;
     private final PlnApsReadinessService readinessService;
     private final PlnSchedulingAgentService schedulingAgentService;
+    private final PlnSchedulingScenarioMapper scenarioMapper;
+
+    private static List<Long> parseIds(List<String> values, String label) {
+        if (values == null) return null;
+        return values.stream().map(value -> parseId(value, label)).distinct().toList();
+    }
+
+    private static Long parseOptionalId(String value, String label) {
+        return StrUtil.isBlank(value) ? null : parseId(value, label);
+    }
+
+    private static Long parseId(String value, String label) {
+        try {
+            Long id = Long.valueOf(value);
+            require(id > 0, label + "必须为正整数");
+            return id;
+        } catch (RuntimeException ex) {
+            if (ex instanceof CheckedException checked) throw checked;
+            throw new CheckedException(label + "格式不正确");
+        }
+    }
+
+    private static String suffix(String requestId, String phase) {
+        return requestId.trim() + '#' + phase;
+    }
+
+    private static boolean isFingerprint(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static String trim(String value) {
+        return value == null ? null : value.trim();
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
 
     @Override
     public PlnApsDecisionDTO.Preview preview(Long caseId, PlnApsDecisionDTO.RunCommand command) {
         require(command != null, "APS求解预检参数不能为空");
         PlnApsCaseDTO apsCase = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(apsCase);
         List<String> blockers = gateBlockers(apsCase, command.getExpectedCaseFingerprint());
         PlnApsResourceDTO.Snapshot snapshot = null;
         PlanSchedulingAgentDTO.Readiness solver = null;
+        PlnApsDecisionDTO.ScopePreview scope = null;
         if (blockers.isEmpty()) {
             snapshot = currentSnapshot(apsCase, true);
             if (snapshot.getStale() || !Boolean.TRUE.equals(snapshot.getComplete())
@@ -53,12 +89,15 @@ public class PlnApsSolverFacadeImpl implements PlnApsSolverFacade {
                 blockers.add(StrUtil.blankToDefault(snapshot.getStaleReason(),
                         "跨模块资源证据尚未达到可求解状态：" + snapshot.getReadinessStatus()));
             } else {
-                solver = schedulingAgentService.preview(toScenarioCommand(apsCase, command));
+                scope = schedulingAgentService.previewScope(toScenarioCommand(apsCase, command));
+                solver = scope.getSolverReadiness();
                 if (!Boolean.TRUE.equals(solver.getReady())) blockers.add(solver.getSummary());
             }
         }
         return new PlnApsDecisionDTO.Preview().setApsCase(apsCase).setResourceSnapshot(snapshot)
-                .setSolverReadiness(solver).setReady(blockers.isEmpty()).setBlockers(List.copyOf(blockers));
+                .setSolverReadiness(solver).setReady(blockers.isEmpty()).setBlockers(List.copyOf(blockers))
+                .setSourcePlans(scope == null ? List.of() : scope.getSourcePlans())
+                .setInputFingerprint(scope == null ? null : scope.getInputFingerprint());
     }
 
     @Override
@@ -68,8 +107,13 @@ public class PlnApsSolverFacadeImpl implements PlnApsSolverFacade {
         require(StrUtil.isNotBlank(command.getRequestId()) && command.getRequestId().trim().length() <= 64,
                 "APS求解请求号不能为空且不能超过64个字符");
         PlnApsCaseDTO current = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(current);
         PlnSchedulingScenarioRunDTO scenarioCommand = toScenarioCommand(current, command);
-        if ("EVALUATED".equals(current.getCaseStatus()) && StrUtil.isNotBlank(current.getScenarioId())) {
+        PlnSchedulingScenarioEntity existing = findRequest(current, command.getRequestId().trim());
+        if (existing != null) {
+            require(Objects.equals(current.getScenarioId(), existing.getId().toString()),
+                    "原求解请求不属于当前案件已绑定情景");
+            // 先由引擎验证原命令指纹再回放；已选案或已发布后仍可恢复原求解回执。
             PlanSchedulingAgentDTO.ScenarioEvidence replay = schedulingAgentService.run(scenarioCommand);
             require(Objects.equals(parseId(current.getScenarioId(), "案件情景主键"),
                             replay.getScenario().getScenario().getId()),
@@ -77,14 +121,19 @@ public class PlnApsSolverFacadeImpl implements PlnApsSolverFacade {
             return replay;
         }
 
+        require(isFingerprint(command.getExpectedInputFingerprint())
+                        && command.getTargetIds() != null && !command.getTargetIds().isEmpty(),
+                "请先预检并确认完整计划范围，再运行APS计算");
         List<String> blockers = gateBlockers(current, command.getExpectedCaseFingerprint());
         require(blockers.isEmpty(), String.join("；", blockers));
         PlnApsResourceDTO.Snapshot snapshot = currentSnapshot(current, true);
         require(!Boolean.TRUE.equals(snapshot.getStale()) && Boolean.TRUE.equals(snapshot.getComplete())
                         && "READY".equals(snapshot.getReadinessStatus()),
                 StrUtil.blankToDefault(snapshot.getStaleReason(), "跨模块资源证据尚未达到可求解状态"));
-        PlanSchedulingAgentDTO.Readiness readiness = schedulingAgentService.preview(scenarioCommand);
-        require(Boolean.TRUE.equals(readiness.getReady()), readiness.getSummary());
+        PlnApsDecisionDTO.ScopePreview scope = schedulingAgentService.previewScope(scenarioCommand);
+        require(Boolean.TRUE.equals(scope.getSolverReadiness().getReady()), scope.getSolverReadiness().getSummary());
+        require(Objects.equals(scope.getInputFingerprint(), command.getExpectedInputFingerprint()),
+                "计划范围、计划内容、配置或规则已变化，请重新预检并确认");
 
         if ("STRATEGY".equals(current.getCurrentStage())) {
             current = advance(caseId, current, "CONFIRM_STRATEGY", suffix(command.getRequestId(), "STRATEGY"),
@@ -99,6 +148,31 @@ public class PlnApsSolverFacadeImpl implements PlnApsSolverFacade {
         caseService.bindScenarioResult(caseId, scenarioId, suffix(command.getRequestId(), "RESULT"),
                 current.getContextFingerprint(), "完成多候选求解并绑定情景" + evidence.getScenario().getScenario().getScenarioNo());
         return evidence;
+    }
+
+    @Override
+    public PlnApsDecisionDTO.RequestReceipt lookupRequest(Long caseId, String requestId) {
+        require(StrUtil.isNotBlank(requestId) && requestId.trim().length() <= 64, "请提供原计算请求号");
+        PlnApsCaseDTO current = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(current);
+        PlnSchedulingScenarioEntity scenario = findRequest(current, requestId.trim());
+        PlnApsDecisionDTO.RequestReceipt receipt = new PlnApsDecisionDTO.RequestReceipt()
+                .setCaseId(current.getId()).setRequestId(requestId.trim());
+        if (scenario == null) return receipt.setState("NOT_OBSERVED")
+                .setMessage("暂未读取到已提交结果，请保留原请求并继续核对或重试");
+        require(Objects.equals(current.getScenarioId(), scenario.getId().toString()),
+                "原求解请求不属于当前案件已绑定情景");
+        return receipt.setState("COMMITTED").setScenarioId(scenario.getId().toString())
+                .setScenarioNo(scenario.getScenarioNo()).setScenarioStatus(scenario.getScenarioStatus())
+                .setMessage("已找到原计算结果");
+    }
+
+    /** 显式限定租户和工厂；请求号相同不能读取其他工厂或其他案件的结果。 */
+    private PlnSchedulingScenarioEntity findRequest(PlnApsCaseDTO apsCase, String requestId) {
+        return scenarioMapper.selectOne(new LambdaQueryWrapper<PlnSchedulingScenarioEntity>()
+                .eq(PlnSchedulingScenarioEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(PlnSchedulingScenarioEntity::getFactoryCode, apsCase.getFactoryCode())
+                .eq(PlnSchedulingScenarioEntity::getRequestId, requestId));
     }
 
     private PlnApsCaseDTO advance(Long caseId, PlnApsCaseDTO current, String action,
@@ -151,12 +225,13 @@ public class PlnApsSolverFacadeImpl implements PlnApsSolverFacade {
     }
 
     private PlnSchedulingScenarioRunDTO toScenarioCommand(PlnApsCaseDTO apsCase,
-                                                           PlnApsDecisionDTO.RunCommand source) {
+                                                          PlnApsDecisionDTO.RunCommand source) {
         PlnSchedulingScenarioRunDTO target = new PlnSchedulingScenarioRunDTO();
         target.setRequestId(trim(source.getRequestId()));
         target.setApsCaseId(parseId(apsCase.getId(), "APS案件主键"));
         target.setResourceSnapshotId(parseId(apsCase.getResourceSnapshotId(), "APS资源快照主键"));
         target.setExpectedResourceFingerprint(apsCase.getResourceFingerprint());
+        target.setExpectedFingerprint(source.getExpectedInputFingerprint());
         target.setFactoryCode(apsCase.getFactoryCode());
         target.setTriggerType("APS_CASE");
         target.setScheduleDate(source.getScheduleDate());
@@ -167,41 +242,5 @@ public class PlnApsSolverFacadeImpl implements PlnApsSolverFacade {
         target.setObjectiveTemplateId(parseOptionalId(source.getObjectiveTemplateId(), "目标模板主键"));
         target.setExpectedObjectiveTemplateFingerprint(source.getExpectedObjectiveTemplateFingerprint());
         return target;
-    }
-
-    private static List<Long> parseIds(List<String> values, String label) {
-        if (values == null) return null;
-        return values.stream().map(value -> parseId(value, label)).distinct().toList();
-    }
-
-    private static Long parseOptionalId(String value, String label) {
-        return StrUtil.isBlank(value) ? null : parseId(value, label);
-    }
-
-    private static Long parseId(String value, String label) {
-        try {
-            Long id = Long.valueOf(value);
-            require(id > 0, label + "必须为正整数");
-            return id;
-        } catch (RuntimeException ex) {
-            if (ex instanceof CheckedException checked) throw checked;
-            throw new CheckedException(label + "格式不正确");
-        }
-    }
-
-    private static String suffix(String requestId, String phase) {
-        return requestId.trim() + '#' + phase;
-    }
-
-    private static boolean isFingerprint(String value) {
-        return value != null && value.matches("[0-9a-f]{64}");
-    }
-
-    private static String trim(String value) {
-        return value == null ? null : value.trim();
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
     }
 }

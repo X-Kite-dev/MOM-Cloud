@@ -5,12 +5,14 @@ import com.kitex.mom.mes.dto.MesTaskInWmsReceiptDTO;
 import com.kitex.mom.mes.service.MesTaskInWmsCommandService;
 import com.kitex.mom.mes.service.MesTaskService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** 登记提交后才调用原入库事务；事务失败已退出后才能判定是否从未开始远端发送。 */
+/**
+ * 登记提交后才调用原入库事务；事务失败已退出后才能判定是否从未开始远端发送。
+ */
 @Service
 @RequiredArgsConstructor
 @PreAuthorize("@pms.hasPermission('mesTask:update')")
@@ -41,7 +43,9 @@ public class MesTaskInWmsCoordinator {
         return tasks.resolveInWms(command);
     }
 
-    /** 显式结束原号；登记、同锁取消和只读核账均独立提交，晚到执行不能重开。 */
+    /**
+     * 显式结束原号；登记、同锁取消和只读核账均独立提交，晚到执行不能重开。
+     */
     @Transactional(propagation = Propagation.NEVER)
     public MesTaskInWmsReceiptDTO cancelUnsent(MesTaskInWmsDTO command) {
         commands.register(command);

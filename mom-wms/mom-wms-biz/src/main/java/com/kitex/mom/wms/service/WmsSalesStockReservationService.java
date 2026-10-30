@@ -12,6 +12,8 @@ import java.util.Map;
 import java.util.Set;
 
 public interface WmsSalesStockReservationService {
+    String PREFIX = "SALE-";
+
     WmsSalesStockReservationSnapshot reserve(WmsSalesStockReservationCommand command);
 
     WmsSalesStockReservationSnapshot release(WmsSalesStockReservationCommand command);
@@ -23,6 +25,10 @@ public interface WmsSalesStockReservationService {
     Map<Long, WmsSalesStockReservationSnapshot> snapshotsByPlanIds(Set<Long> deliverPlanIds);
 
     Map<Long, BigDecimal> activeReservedNums(Set<Long> liveStockIds);
+
+    /** 返回指定销售预留在当前仓库可用于出库的库存行及其剩余预留数量。 */
+    List<WmsLiveStockEntity> availableReservedStocks(String reservationNo, String productCode,
+                                                      String warehouseCode);
 
     Map<Long, BigDecimal> activeReservedByPlanIds(Set<Long> deliverPlanIds);
 

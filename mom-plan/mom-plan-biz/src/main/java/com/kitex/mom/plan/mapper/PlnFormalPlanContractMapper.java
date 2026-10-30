@@ -15,7 +15,9 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 public interface PlnFormalPlanContractMapper extends MomBaseMapper<PlnFormalPlanContractEntity> {
 
-    /** 获取当前事务范围内的稳定业务锁。 */
+    /**
+     * 获取当前事务范围内的稳定业务锁。
+     */
     @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(#{lockKey}, 0))")
     Integer lock(@Param("lockKey") String lockKey);
 }

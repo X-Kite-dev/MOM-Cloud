@@ -25,7 +25,9 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
 
-/** MES执行凭证向PLAN转交的跨租户工作器。 */
+/**
+ * MES执行凭证向PLAN转交的跨租户工作器。
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -36,7 +38,29 @@ public class MesErpPostingOutboxWorker {
     private final PlatformTransactionManager transactionManager;
     private final ObjectMapper objectMapper;
 
-    /** 转交失败只更新Outbox，不回滚原报工。 */
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new IllegalStateException("SHA-256不可用", ex);
+        }
+    }
+
+    private static String message(Exception ex) {
+        return ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
+    }
+
+    private static String abbreviate(String value) {
+        return value == null ? null : value.substring(0, Math.min(value.length(), 1000));
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new IllegalStateException(message);
+    }
+
+    /**
+     * 转交失败只更新Outbox，不回滚原报工。
+     */
     public int processDue(int limit) {
         int size = Math.max(1, Math.min(limit, 200));
         LocalDateTime now = LocalDateTime.now();
@@ -120,15 +144,22 @@ public class MesErpPostingOutboxWorker {
         require(row != null && "TRANSFERRING".equals(row.getStatus()), "MES ERP凭证租约已失效");
         return row;
     }
-    private TransactionTemplate tx() { return new TransactionTemplate(transactionManager); }
+
+    private TransactionTemplate tx() {
+        return new TransactionTemplate(transactionManager);
+    }
+
     private <T> T inFactory(String factory, Supplier<T> work) {
         String old = FactoryContextHolder.getFactoryCode();
         boolean skip = Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip());
-        try { FactoryContextHolder.clear(); FactoryContextHolder.setFactoryCode(factory); return work.get(); }
-        finally { FactoryContextHolder.clear(); FactoryContextHolder.setFactoryCode(old); if (skip) FactoryContextHolder.setFactorySkip(); }
+        try {
+            FactoryContextHolder.clear();
+            FactoryContextHolder.setFactoryCode(factory);
+            return work.get();
+        } finally {
+            FactoryContextHolder.clear();
+            FactoryContextHolder.setFactoryCode(old);
+            if (skip) FactoryContextHolder.setFactorySkip();
+        }
     }
-    private static String sha256(String value) { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); } catch (Exception ex) { throw new IllegalStateException("SHA-256不可用", ex); } }
-    private static String message(Exception ex) { return ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage(); }
-    private static String abbreviate(String value) { return value == null ? null : value.substring(0, Math.min(value.length(), 1000)); }
-    private static void require(boolean condition, String message) { if (!condition) throw new IllegalStateException(message); }
 }

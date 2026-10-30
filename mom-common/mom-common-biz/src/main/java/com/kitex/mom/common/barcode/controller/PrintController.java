@@ -53,8 +53,8 @@ public class PrintController {
      * @return
      */
     @PostMapping("preview")
-    public R preview(@RequestBody PreviewObj obj) {
-        return R.ok(printTemplateService.billPreview(obj));
+    public R<String> preview(@RequestBody PreviewObj obj) {
+        return R.ok(printTemplateService.billPreview(obj), null);
     }
 
     @GetMapping(value = "/createQr", produces = "image/png")

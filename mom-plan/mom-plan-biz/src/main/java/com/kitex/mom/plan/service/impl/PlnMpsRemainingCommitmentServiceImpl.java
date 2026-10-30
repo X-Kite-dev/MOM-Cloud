@@ -8,22 +8,12 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
-import com.kitex.mom.plan.exception.PlnMpsRemainingRejectedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.plan.dto.PlnMpsCapacityDTO;
 import com.kitex.mom.plan.dto.PlnMpsRemainingCommitmentDTO;
-import com.kitex.mom.plan.entity.PlnMpsLineEntity;
-import com.kitex.mom.plan.entity.PlnMpsPolicyEntity;
-import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentEntity;
-import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentHeadEntity;
-import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentLineEntity;
-import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentOperationEntity;
-import com.kitex.mom.plan.mapper.PlnMpsLineMapper;
-import com.kitex.mom.plan.mapper.PlnMpsPolicyMapper;
-import com.kitex.mom.plan.mapper.PlnMpsRemainingCommitmentHeadMapper;
-import com.kitex.mom.plan.mapper.PlnMpsRemainingCommitmentLineMapper;
-import com.kitex.mom.plan.mapper.PlnMpsRemainingCommitmentMapper;
-import com.kitex.mom.plan.mapper.PlnMpsRemainingCommitmentOperationMapper;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.exception.PlnMpsRemainingRejectedException;
+import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.PlnMpsRemainingCommitmentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -32,13 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 import static com.kitex.mom.plan.service.impl.PlnMpsRemainingSnapshotSupport.*;
 
@@ -230,9 +214,12 @@ public class PlnMpsRemainingCommitmentServiceImpl
                 var policy = policy();
                 require("BLOCK".equals(policy.getRccpMode()) || !risk.isEmpty(), "WARN/OFF发布须明确填写风险/模式说明，不冒充能力已验证");
                 String stale = null;
-                if (!Objects.equals(locked.head().getCurrentCommitmentId(), record.getPreviousCommitmentId())) stale = "当前前版已被另一发布替代";
-                if (!Objects.equals(hash(record.getPolicySnapshot()), record.getPolicyFingerprint())) throw new CheckedException("原冻结策略正文损坏，禁止发布");
-                if (!Objects.equals(hash(policySnapshot(policy)), record.getPolicyFingerprint())) stale = "工厂策略已换版，须重新编制";
+                if (!Objects.equals(locked.head().getCurrentCommitmentId(), record.getPreviousCommitmentId()))
+                    stale = "当前前版已被另一发布替代";
+                if (!Objects.equals(hash(record.getPolicySnapshot()), record.getPolicyFingerprint()))
+                    throw new CheckedException("原冻结策略正文损坏，禁止发布");
+                if (!Objects.equals(hash(policySnapshot(policy)), record.getPolicyFingerprint()))
+                    stale = "工厂策略已换版，须重新编制";
                 var baseline = baseline(record);
                 var schedules = schedules(lines(record.getId()));
                 var current = sourceReader.readBuckets(List.of(record.getMpsLineId()), record.getToleranceMinutes()).get(0);
@@ -263,7 +250,8 @@ public class PlnMpsRemainingCommitmentServiceImpl
         record.setStatus(after).setReviewRequestId(request).setReviewRequestFingerprint(fingerprint)
                 .setReviewedBy(operator()).setReviewedTime(LocalDateTime.now()).setReviewReason(explanation)
                 .setReviewChecksSnapshot(snapshot(Arrays.asList(checks.stream().sorted().toList(), risk, staleReason)));
-        if (capacityJson != null) record.setReviewCapacitySnapshot(capacityJson).setReviewCapacityFingerprint(hash(capacityJson));
+        if (capacityJson != null)
+            record.setReviewCapacitySnapshot(capacityJson).setReviewCapacityFingerprint(hash(capacityJson));
         require(updateById(record), "独立审核回执保存失败");
         if ("PUBLISHED".equals(after)) {
             var head = locked.head();
@@ -278,7 +266,9 @@ public class PlnMpsRemainingCommitmentServiceImpl
         return detail;
     }
 
-    /** 编制只限制新引用观察的30分钟；审批核对冻结原基线，不以当前数覆盖原B。 */
+    /**
+     * 编制只限制新引用观察的30分钟；审批核对冻结原基线，不以当前数覆盖原B。
+     */
     private Prepared prepare(PlnMpsRemainingCommitmentDTO.PreviewCommand command, boolean enforceCapacity) {
         require(command != null && command.getObservationId() != null && command.getLineId() != null, "原确认观察及精确原桶必填");
         var reference = evidenceReader.read(command.getObservationId(), command.getLineId());
@@ -310,12 +300,15 @@ public class PlnMpsRemainingCommitmentServiceImpl
     }
 
     private PlnMpsCapacityDTO.Preview assess(PlnMpsPolicyEntity policy, List<PlnMpsLineEntity> candidates, Long lineId, boolean enforce) {
-        if (candidates.isEmpty()) return new PlnMpsCapacityDTO.Preview().setMode(StrUtil.blankToDefault(policy.getRccpMode(), "OFF"))
-                .setMaxLoadRate(policy.getRccpMaxLoadRate()).setOverallStatus("FULFILLED").setLines(List.of());
+        if (candidates.isEmpty())
+            return new PlnMpsCapacityDTO.Preview().setMode(StrUtil.blankToDefault(policy.getRccpMode(), "OFF"))
+                    .setMaxLoadRate(policy.getRccpMaxLoadRate()).setOverallStatus("FULFILLED").setLines(List.of());
         return capacityService.previewRemaining(factory(), policy, candidates, lineId, enforce);
     }
 
-    /** 只把当前未兑现量用于粗能力预测；原日桶正量完整保存在不可变账。 */
+    /**
+     * 只把当前未兑现量用于粗能力预测；原日桶正量完整保存在不可变账。
+     */
     private List<PlnMpsLineEntity> candidates(PlnMpsLineEntity original, PlnMpsRemainingCommitmentDTO.Evaluation evaluation) {
         List<PlnMpsLineEntity> rows = new ArrayList<>();
         for (var schedule : evaluation.getBuckets()) {
@@ -338,7 +331,11 @@ public class PlnMpsRemainingCommitmentServiceImpl
             require(row.getBucketNo() != null && row.getBucketNo() >= 1 && row.getBucketNo() <= 100, "内部桶序号须1至100");
             String date = text(row.getPromisedDate(), 10, "承诺ISO日期");
             require(date.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}"), "日期须完整ISO日期");
-            try { LocalDate.parse(date); } catch (RuntimeException exception) { throw new CheckedException("内部承诺日期不存在"); }
+            try {
+                LocalDate.parse(date);
+            } catch (RuntimeException exception) {
+                throw new CheckedException("内部承诺日期不存在");
+            }
             BigDecimal quantity = quantity(StrUtil.trim(row.getQuantity()));
             require(quantity.signum() > 0, "内部责任桶须正量");
             return new PlnMpsRemainingCommitmentDTO.Schedule().setBucketNo(row.getBucketNo()).setPromisedDate(date).setQuantity(decimal(quantity));

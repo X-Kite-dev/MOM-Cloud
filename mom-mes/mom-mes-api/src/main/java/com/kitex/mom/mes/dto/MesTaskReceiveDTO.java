@@ -193,12 +193,16 @@ public class MesTaskReceiveDTO {
     @Schema(description = "APS批次包含的原计划数量分配")
     private List<MesApsBatchAllocationDTO> apsBatchAllocations;
 
-    /** PLAN/APS已选择且经MDM核验的工程版本ID。 */
+    /**
+     * PLAN/APS已选择且经MDM核验的工程版本ID。
+     */
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     @Schema(description = "精确工程版本ID")
     private Long engineeringReleaseId;
 
-    /** 与releaseId共同组成不可替换的生产版本对。 */
+    /**
+     * 与releaseId共同组成不可替换的生产版本对。
+     */
     @Schema(description = "工程版本原文SHA256")
     private String engineeringContentHash;
 

@@ -5,9 +5,12 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** PMS Agent采购订单驳回或取消剩余量后回写PLAN MRP的可靠命令与永久回执。 */
+/**
+ * PMS Agent采购订单驳回或取消剩余量后回写PLAN MRP的可靠命令与永久回执。
+ */
 public final class PlanAgentPurchaseRejectionDTO {
-    private PlanAgentPurchaseRejectionDTO() { }
+    private PlanAgentPurchaseRejectionDTO() {
+    }
 
     @Data
     @Accessors(chain = true)
@@ -33,7 +36,9 @@ public final class PlanAgentPurchaseRejectionDTO {
         private Long mrpId;
         private String agentRequestId;
         private String priorOrderStatus;
-        /** APPLIED / SUPERSEDED。 */
+        /**
+         * APPLIED / SUPERSEDED。
+         */
         private String resultStatus;
         private LocalDateTime handledTime;
         private Boolean duplicate;

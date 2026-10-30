@@ -1,10 +1,6 @@
 package com.kitex.mom.plan.dto;
 
-import com.kitex.mom.plan.entity.PlnQualityDeviationEvaluationEntity;
-import com.kitex.mom.plan.entity.PlnQualityReplanCaseEntity;
-import com.kitex.mom.plan.entity.PlnQualityReplanLineEntity;
-import com.kitex.mom.plan.entity.PlnQualitySupplementDemandEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingScenarioEntity;
+import com.kitex.mom.plan.entity.*;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -113,6 +109,14 @@ public final class PlanQualityLocalReplanDTO {
         private Boolean approved;
         private String expectedRequestFingerprint;
         private String reason;
+    }
+
+    @Data
+    @Schema(description = "继续已批准补产的正常MPS/MRP计划")
+    public static class SupplementPlanCommand {
+        private Long supplementId;
+        private String requestId;
+        private String expectedRequestFingerprint;
     }
 
     @Data

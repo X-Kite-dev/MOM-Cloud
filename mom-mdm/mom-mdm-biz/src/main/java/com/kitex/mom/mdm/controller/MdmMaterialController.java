@@ -15,10 +15,12 @@ import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.common.barcode.dto.req.PrintReq;
-import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.dto.MdmMaterialMeasureDTO;
+import com.kitex.mom.mdm.dto.MdmMaterialWarningConfigDTO;
+import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.entity.MdmSchedulingFamilyEntity;
 import com.kitex.mom.mdm.enums.MatTypeEnum;
+import com.kitex.mom.mdm.service.MdmMaterialIdentifierTemplateValidator;
 import com.kitex.mom.mdm.service.MdmMaterialService;
 import com.kitex.mom.mdm.service.MdmSchedulingFamilyService;
 import com.kitex.mom.mdm.utils.DynamicRefreshUtils;
@@ -63,15 +65,21 @@ public class MdmMaterialController {
      */
     @Operation(summary = "分页查询", description = "分页查询")
     @GetMapping("/page")
-    public R<Page<MdmMaterialEntity>> getMdmMaterialPage(SearchPage page, @ParameterObject MdmMaterialEntity mdmMaterial) {
+    public R<Page<MdmMaterialEntity>> getMdmMaterialPage(SearchPage page,
+                                                         @ParameterObject MdmMaterialEntity mdmMaterial) {
         QueryWrapper<MdmMaterialEntity> wrapper = new QueryWrapper<>();
         wrapper.lambda()
-                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialName()), MdmMaterialEntity::getMaterialName, mdmMaterial.getMaterialName())
-                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialCode()), MdmMaterialEntity::getMaterialCode, mdmMaterial.getMaterialCode())
+                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialName()), MdmMaterialEntity::getMaterialName,
+                        mdmMaterial.getMaterialName())
+                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialCode()), MdmMaterialEntity::getMaterialCode,
+                        mdmMaterial.getMaterialCode())
                 .eq(ObjUtil.isNotEmpty(mdmMaterial.getStatus()), MdmMaterialEntity::getStatus, mdmMaterial.getStatus())
-                .eq(StrUtil.isNotBlank(mdmMaterial.getBasicUnit()), MdmMaterialEntity::getBasicUnit, mdmMaterial.getBasicUnit())
-                .eq(StrUtil.isNotBlank(mdmMaterial.getPurchaseUnit()), MdmMaterialEntity::getPurchaseUnit, mdmMaterial.getPurchaseUnit())
-                .like(StrUtil.isNotBlank(mdmMaterial.getSpecificationModel()), MdmMaterialEntity::getSpecificationModel, mdmMaterial.getSpecificationModel())
+                .eq(StrUtil.isNotBlank(mdmMaterial.getBasicUnit()), MdmMaterialEntity::getBasicUnit,
+                        mdmMaterial.getBasicUnit())
+                .eq(StrUtil.isNotBlank(mdmMaterial.getPurchaseUnit()), MdmMaterialEntity::getPurchaseUnit,
+                        mdmMaterial.getPurchaseUnit())
+                .like(StrUtil.isNotBlank(mdmMaterial.getSpecificationModel()), MdmMaterialEntity::getSpecificationModel,
+                        mdmMaterial.getSpecificationModel())
                 .orderByDesc(MdmMaterialEntity::getCreateTime);
         if (StrUtil.isNotBlank(mdmMaterial.getGroupCode())) {
             List<String> groupCodes = Arrays.stream(mdmMaterial.getGroupCode().split(",")).toList();
@@ -97,15 +105,21 @@ public class MdmMaterialController {
      */
     @Operation(summary = "分页查询产品/半成品", description = "分页查询产品/半成品")
     @GetMapping("/pageProduct")
-    public R<Page<MdmMaterialEntity>> getMdmMaterialProductPage(SearchPage page, @ParameterObject MdmMaterialEntity mdmMaterial) {
+    public R<Page<MdmMaterialEntity>> getMdmMaterialProductPage(SearchPage page,
+                                                                @ParameterObject MdmMaterialEntity mdmMaterial) {
         QueryWrapper<MdmMaterialEntity> wrapper = new QueryWrapper<>();
         wrapper.lambda()
-                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialName()), MdmMaterialEntity::getMaterialName, mdmMaterial.getMaterialName())
-                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialCode()), MdmMaterialEntity::getMaterialCode, mdmMaterial.getMaterialCode())
+                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialName()), MdmMaterialEntity::getMaterialName,
+                        mdmMaterial.getMaterialName())
+                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialCode()), MdmMaterialEntity::getMaterialCode,
+                        mdmMaterial.getMaterialCode())
                 .eq(ObjUtil.isNotEmpty(mdmMaterial.getStatus()), MdmMaterialEntity::getStatus, mdmMaterial.getStatus())
-                .eq(StrUtil.isNotBlank(mdmMaterial.getBasicUnit()), MdmMaterialEntity::getBasicUnit, mdmMaterial.getBasicUnit())
-                .eq(StrUtil.isNotBlank(mdmMaterial.getPurchaseUnit()), MdmMaterialEntity::getPurchaseUnit, mdmMaterial.getPurchaseUnit())
-                .like(StrUtil.isNotBlank(mdmMaterial.getSpecificationModel()), MdmMaterialEntity::getSpecificationModel, mdmMaterial.getSpecificationModel())
+                .eq(StrUtil.isNotBlank(mdmMaterial.getBasicUnit()), MdmMaterialEntity::getBasicUnit,
+                        mdmMaterial.getBasicUnit())
+                .eq(StrUtil.isNotBlank(mdmMaterial.getPurchaseUnit()), MdmMaterialEntity::getPurchaseUnit,
+                        mdmMaterial.getPurchaseUnit())
+                .like(StrUtil.isNotBlank(mdmMaterial.getSpecificationModel()), MdmMaterialEntity::getSpecificationModel,
+                        mdmMaterial.getSpecificationModel())
                 .orderByAsc(MdmMaterialEntity::getMaterialType);
         if (StrUtil.isNotBlank(mdmMaterial.getGroupCode())) {
             List<String> groupCodes = Arrays.stream(mdmMaterial.getGroupCode().split(",")).toList();
@@ -167,11 +181,16 @@ public class MdmMaterialController {
     public R<Map<Boolean, Long>> getCount(@ParameterObject MdmMaterialEntity mdmMaterial) {
         QueryWrapper<MdmMaterialEntity> wrapper = new QueryWrapper<>();
         wrapper.lambda().select(MdmMaterialEntity::getStatus)
-                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialName()), MdmMaterialEntity::getMaterialName, mdmMaterial.getMaterialName())
-                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialCode()), MdmMaterialEntity::getMaterialCode, mdmMaterial.getMaterialCode())
-                .eq(StrUtil.isNotBlank(mdmMaterial.getBasicUnit()), MdmMaterialEntity::getBasicUnit, mdmMaterial.getBasicUnit())
-                .eq(StrUtil.isNotBlank(mdmMaterial.getPurchaseUnit()), MdmMaterialEntity::getPurchaseUnit, mdmMaterial.getPurchaseUnit())
-                .like(StrUtil.isNotBlank(mdmMaterial.getSpecificationModel()), MdmMaterialEntity::getSpecificationModel, mdmMaterial.getSpecificationModel())
+                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialName()), MdmMaterialEntity::getMaterialName,
+                        mdmMaterial.getMaterialName())
+                .like(StrUtil.isNotBlank(mdmMaterial.getMaterialCode()), MdmMaterialEntity::getMaterialCode,
+                        mdmMaterial.getMaterialCode())
+                .eq(StrUtil.isNotBlank(mdmMaterial.getBasicUnit()), MdmMaterialEntity::getBasicUnit,
+                        mdmMaterial.getBasicUnit())
+                .eq(StrUtil.isNotBlank(mdmMaterial.getPurchaseUnit()), MdmMaterialEntity::getPurchaseUnit,
+                        mdmMaterial.getPurchaseUnit())
+                .like(StrUtil.isNotBlank(mdmMaterial.getSpecificationModel()), MdmMaterialEntity::getSpecificationModel,
+                        mdmMaterial.getSpecificationModel())
                 .orderByDesc(MdmMaterialEntity::getCreateTime);
         if (StrUtil.isNotBlank(mdmMaterial.getGroupCode())) {
             List<String> groupCodes = Arrays.stream(mdmMaterial.getGroupCode().split(",")).toList();
@@ -212,10 +231,23 @@ public class MdmMaterialController {
     @GetMapping("/details")
     public R<MdmMaterialEntity> details(String materialCode) {
         return R.ok(mdmMaterialService
-                .getOne(Wrappers.<MdmMaterialEntity>lambdaQuery().eq(MdmMaterialEntity::getMaterialCode, materialCode)));
+                .getOne(Wrappers.<MdmMaterialEntity>lambdaQuery().eq(MdmMaterialEntity::getMaterialCode,
+                        materialCode)));
     }
 
-    /** 内部标记不替代实名与实际scope；原更新时间文本保留精度。 */
+    /**
+     * 内部系统任务入口；scope来自调度配置，不接受普通外部请求。
+     */
+    @Inner
+    @GetMapping("/internal/warning-configurations")
+    public R<List<MdmMaterialWarningConfigDTO>> warningConfigurations(@RequestParam Long tenantId,
+                                                                      @RequestParam String factoryCode) {
+        return R.ok(mdmMaterialService.warningConfigurations(tenantId, factoryCode));
+    }
+
+    /**
+     * 内部标记不替代实名与实际scope；原更新时间文本保留精度。
+     */
     @Inner
     @PreAuthorize("isAuthenticated()")
     @Operation(summary = "观察生产物料基本计量", description = "仅实际租户工厂唯一启用物料，不提供匿名或跨厂旁路")
@@ -235,7 +267,8 @@ public class MdmMaterialController {
     @GetMapping("/detailsByNoToken")
     public R<MdmMaterialEntity> detailsByNoToken(String materialCode) {
         return R.ok(mdmMaterialService
-                .getOne(Wrappers.<MdmMaterialEntity>lambdaQuery().eq(MdmMaterialEntity::getMaterialCode, materialCode)));
+                .getOne(Wrappers.<MdmMaterialEntity>lambdaQuery().eq(MdmMaterialEntity::getMaterialCode,
+                        materialCode)));
     }
 
     /**
@@ -261,6 +294,7 @@ public class MdmMaterialController {
     @PostMapping
     @PreAuthorize("@pms.hasPermission('mdm_mdmMaterial_add')")
     public R<Boolean> save(@RequestBody MdmMaterialEntity mdmMaterial) {
+        MdmMaterialIdentifierTemplateValidator.validate(mdmMaterial);
         resolveSchedulingFamily(mdmMaterial);
         mdmMaterialService.save(mdmMaterial);
         DynamicRefreshUtils.refreshMdm(mdmMaterial);
@@ -278,6 +312,7 @@ public class MdmMaterialController {
     @PutMapping
     @PreAuthorize("@pms.hasPermission('mdm_mdmMaterial_edit')")
     public R<Boolean> updateById(@RequestBody MdmMaterialEntity mdmMaterial) {
+        MdmMaterialIdentifierTemplateValidator.validate(mdmMaterial);
         resolveSchedulingFamily(mdmMaterial);
         mdmMaterialService.updateById(mdmMaterial);
         DynamicRefreshUtils.refreshMdm(mdmMaterial);
@@ -294,7 +329,8 @@ public class MdmMaterialController {
                 new LambdaQueryWrapper<MdmSchedulingFamilyEntity>()
                         .eq(MdmSchedulingFamilyEntity::getFamilyCode, material.getSchedulingFamilyCode().trim())
                         .eq(MdmSchedulingFamilyEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
-                        .eq(MdmSchedulingFamilyEntity::getEnabled, true), false);
+                        .eq(MdmSchedulingFamilyEntity::getEnabled, true),
+                false);
         if (family == null) {
             throw new com.kitex.common.core.exception.CheckedException("APS排产产品族不存在或未启用");
         }
@@ -325,7 +361,8 @@ public class MdmMaterialController {
      */
     @PostMapping("/import")
     @PreAuthorize("@pms.hasPermission('mdm_mdmMaterial_export')")
-    public R importMaterial(@RequestExcel(headRowNumber = 2) List<MdmMaterialExcelVO> excelVOList, BindingResult bindingResult) {
+    public R importMaterial(@RequestExcel(headRowNumber = 2) List<MdmMaterialExcelVO> excelVOList,
+                            BindingResult bindingResult) {
         return mdmMaterialService.importMaterial(excelVOList, bindingResult);
     }
 

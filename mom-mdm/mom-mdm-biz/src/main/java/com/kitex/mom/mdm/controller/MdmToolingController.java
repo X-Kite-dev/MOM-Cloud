@@ -68,7 +68,7 @@ public class MdmToolingController {
 
     @GetMapping("/routes/{routeCode}/nodes/{routeNodeCode}/requirements")
     public R<List<MdmProcedureToolingRequirementEntity>> nodeRequirements(@PathVariable String routeCode,
-                                                                         @PathVariable String routeNodeCode) {
+                                                                          @PathVariable String routeNodeCode) {
         return R.ok(service.getNodeRequirements(routeCode, routeNodeCode));
     }
 

@@ -10,7 +10,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Objects;
 
-/** 通过重新采集当前模块证据判断既有快照是否仍可用于求解和发布。 */
+/**
+ * 通过重新采集当前模块证据判断既有快照是否仍可用于求解和发布。
+ */
 @Service
 @RequiredArgsConstructor
 public class PlnApsReadinessServiceImpl implements PlnApsReadinessService {

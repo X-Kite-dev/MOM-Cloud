@@ -36,6 +36,8 @@ public final class MesProcessConformanceDTO {
     @Schema(description = "MES 工艺执行一致性权威证据")
     public static class Evidence {
         private String toolCode;
+        @Schema(description = "原冻结执行身份协议，NODE_EXECUTION_V1或LEGACY_PROCESS_V1")
+        private String identityContractVersion;
         private String metricDefinition;
         private String factoryCode;
         private LocalDateTime observedAt;
@@ -74,6 +76,10 @@ public final class MesProcessConformanceDTO {
     @Data
     @Accessors(chain = true)
     public static class OperationConformance {
+        @Schema(description = "工单冻结路线节点；历史无节点时为空")
+        private String routeNodeCode;
+        @Schema(description = "实际工序任务保存的原节点，不从当前MDM补值")
+        private String actualRouteNodeCode;
         private String processCode;
         private String processName;
         private Integer expectedOrder;

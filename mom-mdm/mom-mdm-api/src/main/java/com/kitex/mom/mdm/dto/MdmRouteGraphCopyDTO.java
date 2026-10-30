@@ -3,7 +3,9 @@ package com.kitex.mom.mdm.dto;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
-/** 路线结构复制命令；双版本避免复制过期来源或覆盖已被维护的目标。 */
+/**
+ * 路线结构复制命令；双版本避免复制过期来源或覆盖已被维护的目标。
+ */
 @Data
 @Schema(description = "仅复制路线结构及节点配置，不复制工程附件或历史")
 public class MdmRouteGraphCopyDTO {

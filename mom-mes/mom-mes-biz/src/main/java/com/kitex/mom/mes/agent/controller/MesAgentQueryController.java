@@ -30,9 +30,13 @@ public class MesAgentQueryController {
     private final MesProcessConformanceQueryService processConformanceService;
     private final MesResourceExecutionConformanceQueryService resourceExecutionConformanceService;
     private final MesProcessTelemetryScopeQueryService processTelemetryScopeService;
+    private final MesProcessDeviationScopeQueryService processDeviationScopeService;
     private final MesAgentObjectCandidateService objectCandidateService;
+    private final MesAndonRecoveryQueryService andonRecoveryService;
 
-    /** 当前实名工厂的真实生产工单候选，仅用于选择原号，不启动智能体运行。 */
+    /**
+     * 当前实名工厂的真实生产工单候选，仅用于选择原号，不启动智能体运行。
+     */
     @Inner
     @PostMapping("/internal/work-order-candidates")
     @PreAuthorize("@pms.hasPermission('mesTask:show')")
@@ -41,7 +45,9 @@ public class MesAgentQueryController {
         return R.ok(objectCandidateService.candidates(query));
     }
 
-    /** 权威计划来源范围，不接受模型猜测出的订单/产品关联。 */
+    /**
+     * 权威计划来源范围，不接受模型猜测出的订单/产品关联。
+     */
     @Inner
     @PostMapping("/internal/plan-task-scope")
     @PreAuthorize("@pms.hasPermission('mesTask:show')")
@@ -58,7 +64,9 @@ public class MesAgentQueryController {
         return R.ok(productionProgressService.query(query));
     }
 
-    /** 全量聚合和排名仍按MES原生产/报工来源权限授权，不授予跨工厂或自由查询。 */
+    /**
+     * 全量聚合和排名仍按MES原生产/报工来源权限授权，不授予跨工厂或自由查询。
+     */
     @Inner
     @PostMapping("/internal/production-statistics")
     @PreAuthorize("@pms.hasPermission('mesTask:show')")
@@ -107,6 +115,17 @@ public class MesAgentQueryController {
         return R.ok(processTelemetryScopeService.query(query));
     }
 
+    /**
+     * 告警与工单均须定位到唯一实际运行节点和下达冻结参数。
+     */
+    @Inner
+    @PostMapping("/internal/process-deviation-scope")
+    @PreAuthorize("@pms.hasPermission('mesProduceTask:show')")
+    public R<MesProcessDeviationScopeDTO.Evidence> processDeviationScope(
+            @Valid @RequestBody MesProcessDeviationScopeDTO.Query query) {
+        return R.ok(processDeviationScopeService.query(query));
+    }
+
     @Inner
     @PostMapping("/internal/operation-wip")
     @PreAuthorize("@pms.hasPermission('mesProduceTask:show')")
@@ -121,5 +140,27 @@ public class MesAgentQueryController {
     public R<MesBatchTraceDTO.Evidence> batchTrace(
             @Valid @RequestBody MesBatchTraceDTO.Query query) {
         return R.ok(batchTraceService.query(query));
+    }
+
+    /**
+     * 安灯处置Agent只按精确记录主键读取原状态机、履历与复产门证据。
+     */
+    @Inner
+    @PostMapping("/internal/andon-recovery")
+    @PreAuthorize("@pms.hasPermission('andonRecord:show') and @pms.hasPermission('mesTask:show')")
+    public R<MesAndonRecoveryDTO.Evidence> andonRecovery(
+            @Valid @RequestBody MesAndonRecoveryDTO.Query query) {
+        return R.ok(andonRecoveryService.query(query));
+    }
+
+    /**
+     * 原安灯流程的只读转交回执；未提交返回found=false，不创建业务记录。
+     */
+    @Inner
+    @PostMapping("/internal/process-deviation-andon-receipt")
+    @PreAuthorize("@pms.hasPermission('andonRecord:show') and @pms.hasPermission('mesTask:show')")
+    public R<MesAndonRecoveryDTO.Receipt> processDeviationAndonReceipt(
+            @Valid @RequestBody MesAndonRecoveryDTO.ReceiptQuery query) {
+        return R.ok(andonRecoveryService.receipt(query));
     }
 }

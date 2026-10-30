@@ -642,7 +642,9 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
         return assessExecutionDeviationInternal(command, toleranceMinutes);
     }
 
-    /** 旧Agent入口保留其既有指纹；新业务入口冻结明确公式，不改写历史永久请求算法。 */
+    /**
+     * 旧Agent入口保留其既有指纹；新业务入口冻结明确公式，不改写历史永久请求算法。
+     */
     private PlanResourceLocalReplanDTO.Scenario assessExecutionDeviationInternal(
             PlanResourceLocalReplanDTO.ExecutionDeviationAssessCommand command, Integer mpsTolerance) {
         require(command != null && command.getSourceScenarioId() != null && command.getIssueId() != null
@@ -701,8 +703,15 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
         List<PlnSchedulingOperationEntity> originals = lockedOperations(issue);
         Map<String, PlnSchedulingOperationEntity> originalByCode = uniqueByProcess(originals);
         if (mpsProof == null) {
-            require(command.getSourceRouteNodeCodes() == null, "该效果证据尚无节点证明，不能指定重复工序节点");
-            directCodes = new LinkedHashSet<>(PlnFrozenRouteNodeIdentity.selection(originals, directCodes, null));
+            Set<String> eligibleKeys = eligibleEffectKeys(effect, issue.getId(), originals);
+            boolean nodeProof = "FROZEN_NODE_V2".equals(effect.getIdentityContractVersion());
+            require(nodeProof || command.getSourceRouteNodeCodes() == null,
+                    "历史效果证据未冻结节点，不能指定节点或补造历史身份");
+            List<String> selected = PlnFrozenRouteNodeIdentity.selection(originals,
+                    command.getProcessCodes(), command.getSourceRouteNodeCodes());
+            directCodes = selected.isEmpty() ? eligibleKeys : new LinkedHashSet<>(selected);
+            require(!directCodes.isEmpty() && eligibleKeys.containsAll(directCodes),
+                    "指定节点缺少未开工且可移动的完整效果证据");
         } else {
             Set<String> eligibleKeys = mpsProof.operations().stream().filter(row -> Boolean.TRUE.equals(row.getEligible()))
                     .map(row -> StrUtil.isNotBlank(row.getSourceRouteNodeCode()) ? row.getSourceRouteNodeCode() : row.getProcessCode())
@@ -713,7 +722,17 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
         }
         require(originalByCode.keySet().containsAll(directCodes), "正式排程已缺少效果证据中的偏差工序");
         MesApsLocalScheduleDTO.StateBundle mesBefore = mesStates(issue);
-        PlnFrozenRouteNodeIdentity.correspondence(originals, mesBefore);
+        var currentStates = PlnFrozenRouteNodeIdentity.correspondence(originals, mesBefore);
+        if (mpsProof == null && "FROZEN_NODE_V2".equals(effect.getIdentityContractVersion())) {
+            for (var disposition : eligible) {
+                String key = effectNodeKey(disposition);
+                if (!directCodes.contains(key)) continue;
+                var currentState = currentStates.get(key);
+                require(currentState != null && Objects.equals(disposition.getMesProduceTaskId(), String.valueOf(currentState.getProduceTaskId()))
+                                && Objects.equals(disposition.getMesProduceTaskCode(), currentState.getProduceTaskCode()),
+                        "MES真实工序任务在观察与评估间已变化，须重新采集效果");
+            }
+        }
         require(mpsProof == null || Objects.equals(mpsProof.mesFingerprint(), mesBefore.getExecutionFingerprint()),
                 "MES事实在取证与评估之间变化，须重新预览，不能混用两次事实");
         Set<String> affectedCodes = downstreamClosure(originals, new ArrayList<>(directCodes));
@@ -734,7 +753,8 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
         evidenceFacts.put("issueId", issue.getId());
         evidenceFacts.put("issueNo", issue.getIssueNo());
         evidenceFacts.put("directProcessCodes", directCodes.stream().map(code -> originalByCode.get(code).getProcessCode()).distinct().toList());
-        if (PlnFrozenRouteNodeIdentity.nodeCodes(originals) != null) evidenceFacts.put("directSourceRouteNodeCodes", directCodes);
+        if (PlnFrozenRouteNodeIdentity.nodeCodes(originals) != null)
+            evidenceFacts.put("directSourceRouteNodeCodes", directCodes);
         evidenceFacts.put("dispositions", eligible);
         evidenceFacts.put("capturedTime", effect.getCapturedTime());
         if (mpsProof != null) {
@@ -980,12 +1000,7 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
                     .filter(frozenDirectCodes::contains).distinct().sorted().toList();
         } else {
             var originalFrozen = frozenOriginalOperations(candidate);
-            var eligibleProcesses = Optional.ofNullable(effect.getDeviationDispositions()).orElse(List.of()).stream()
-                    .filter(item -> Objects.equals(item.getIssueId(), candidate.getIssueId()))
-                    .filter(item -> "LOCAL_REPLAN_CANDIDATE".equals(item.getDisposition()))
-                    .filter(item -> Boolean.TRUE.equals(item.getReplanEligible()))
-                    .map(PlanSchedulingAgentDTO.DeviationDisposition::getProcessCode).distinct().toList();
-            currentDirectCodes = PlnFrozenRouteNodeIdentity.selection(originalFrozen, eligibleProcesses, null).stream()
+            currentDirectCodes = eligibleEffectKeys(effect, candidate.getIssueId(), originalFrozen).stream()
                     .filter(frozenDirectCodes::contains).sorted().toList();
         }
         if (currentDirectCodes.size() != new HashSet<>(frozenDirectCodes).size()) {
@@ -994,6 +1009,151 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
         }
         return new ResourceEvidence("PLAN_MES_EFFECT", effect.getScenarioNo(), "MES执行偏差",
                 json(effect), effect.getEffectFingerprint(), currentDirectCodes);
+    }
+
+    /**
+     * 效果清单属于观察时的冻结身份。新协议逐节点核对，旧协议只允许唯一主工序桥接；
+     * Agent重点清单被截断或存在缺证时不能据其生成完整可执行方案。
+     */
+    private Set<String> eligibleEffectKeys(PlanSchedulingAgentDTO.EffectEvidence effect, Long issueId,
+                                          List<PlnSchedulingOperationEntity> originals) {
+        require(Boolean.TRUE.equals(effect.getAvailable()) && !Boolean.TRUE.equals(effect.getDeviationTruncated())
+                        && (effect.getDataGaps() == null || effect.getDataGaps().isEmpty())
+                        && effect.getDetail() != null && effect.getDetail().getReview() != null
+                        && Set.of("WAITING_EXECUTION", "IN_PROGRESS", "COMPLETED")
+                        .contains(effect.getDetail().getReview().getReviewStatus()),
+                "效果证据缺失、存在缺口或重点清单已截断，须完整采集后再评估");
+        var eligible = Optional.ofNullable(effect.getDeviationDispositions()).orElse(List.of()).stream()
+                .filter(row -> Objects.equals(row.getIssueId(), issueId))
+                .filter(row -> "LOCAL_REPLAN_CANDIDATE".equals(row.getDisposition()) && Boolean.TRUE.equals(row.getReplanEligible()))
+                .toList();
+        if (effect.getIdentityContractVersion() == null) {
+            return new LinkedHashSet<>(PlnFrozenRouteNodeIdentity.selection(originals,
+                    eligible.stream().map(PlanSchedulingAgentDTO.DeviationDisposition::getProcessCode).toList(), null));
+        }
+        require("FROZEN_NODE_V2".equals(effect.getIdentityContractVersion()), "效果身份协议不受支持");
+        requireEffectBaseline(effect, issueId, originals);
+        var originalIndex = PlnFrozenRouteNodeIdentity.index(originals);
+        Set<String> result = new LinkedHashSet<>();
+        for (var row : eligible) {
+            String key = effectNodeKey(row);
+            var original = originalIndex.get(key);
+            require(original != null && Objects.equals(original.getIssueId(), row.getIssueId())
+                            && Objects.equals(original.getIssueNo(), row.getIssueNo())
+                            && Objects.equals(original.getSourceRouteNodeCode(), row.getSourceRouteNodeCode())
+                            && Objects.equals(original.getProcessCode(), row.getProcessCode())
+                            && Objects.equals(original.getOperationSeq(), row.getOperationSeq())
+                            && row.getSchedulingOperationId() != null && row.getSchedulingOperationId().matches("[1-9][0-9]{0,18}")
+                            && row.getMesProduceTaskId() != null && row.getMesProduceTaskId().matches("[1-9][0-9]{0,18}")
+                            && StrUtil.isNotBlank(row.getMesProduceTaskCode()) && result.add(key),
+                    "效果节点、原工序或MES任务身份缺失、重复或与当前正式范围不同");
+        }
+        return result;
+    }
+
+    /**
+     * 当前正式任务必须属于原发布谱系，且整张根计划仍对应观察冻结的时刻、资源和数量。
+     * 局部重排的proposal工序与原正式工序主键合法不同，使用原领域发布记录证明关系。
+     */
+    private void requireEffectBaseline(PlanSchedulingAgentDTO.EffectEvidence effect, Long issueId,
+                                       List<PlnSchedulingOperationEntity> originals) {
+        var review = effect.getDetail().getReview();
+        Set<Long> formalTasks = originals.stream().map(PlnSchedulingOperationEntity::getTaskId).collect(Collectors.toSet());
+        require(formalTasks.size() == 1 && !formalTasks.contains(null) && review.getSelectedTaskId() != null
+                        && Objects.equals(review.getScenarioId(), effect.getScenarioId()),
+                "效果来源与当前正式根计划任务不一致");
+        Long formalTask = formalTasks.iterator().next();
+        if (!Objects.equals(formalTask, review.getSelectedTaskId())) {
+            require(publishedEffectSourceCount(effect, issueId, formalTask) == 1,
+                    "效果来源未对应当前正式任务的原局部发布，不能用旧观察驱动新任务重排");
+        }
+        try {
+            JsonNode snapshot = objectMapper.readTree(review.getPlannedScopeSnapshot());
+            require("FROZEN_NODE_V2".equals(snapshot.path("identityContractVersion").asText())
+                            && snapshot.path("operations").isArray(), "效果原冻结基线缺少节点协议");
+            Map<String, JsonNode> frozen = new LinkedHashMap<>();
+            for (JsonNode row : snapshot.path("operations")) {
+                if (!Objects.equals(row.path("issueId").asText(), String.valueOf(issueId))) continue;
+                String node = nullableText(row, "sourceRouteNodeCode");
+                String key = StrUtil.isNotBlank(node) ? node : nullableText(row, "processCode");
+                require(key != null && frozen.putIfAbsent(key, row) == null, "效果原冻结节点重复或缺失");
+            }
+            var current = PlnFrozenRouteNodeIdentity.index(originals);
+            require(frozen.keySet().equals(current.keySet()), "效果原冻结范围与当前正式根计划不同");
+            for (var operation : originals) {
+                JsonNode row = frozen.get(PlnFrozenRouteNodeIdentity.key(operation));
+                require(Objects.equals(operation.getIssueNo(), nullableText(row, "issueNo"))
+                                && Objects.equals(operation.getSourceRouteNodeCode(), nullableText(row, "sourceRouteNodeCode"))
+                                && Objects.equals(operation.getProcessCode(), nullableText(row, "processCode"))
+                                && row.path("operationSeq").canConvertToInt()
+                                && Objects.equals(operation.getOperationSeq(), row.path("operationSeq").asInt())
+                                && Objects.equals(operation.getScheduledStartTime(), LocalDateTime.parse(row.path("scheduledStartTimeExact").asText()))
+                                && Objects.equals(operation.getScheduledEndTime(), LocalDateTime.parse(row.path("scheduledEndTimeExact").asText()))
+                                && Objects.equals(operation.getResourceType(), nullableText(row, "resourceType"))
+                                && Objects.equals(operation.getResourceCode(), nullableText(row, "resourceCode"))
+                                && Objects.equals(operation.getDeviceCode(), nullableText(row, "deviceCode"))
+                                && Objects.equals(operation.getEmployeeCode(), nullableText(row, "employeeCode"))
+                                && Objects.equals(operation.getToolingCodes(), nullableText(row, "toolingCodes"))
+                                && operation.getPlannedQuantity() != null && row.path("plannedQuantity").isNumber()
+                                && operation.getPlannedQuantity().compareTo(row.path("plannedQuantity").decimalValue()) == 0,
+                        "效果冻结的节点、时刻、资源或数量与当前正式排程不同，须重新核对来源并采集");
+            }
+        } catch (com.fasterxml.jackson.core.JsonProcessingException | java.time.format.DateTimeParseException ex) {
+            throw new CheckedException("效果原冻结基线无法完整读取，不能猜测当前正式范围");
+        }
+    }
+
+    /** 只认可原领域PUBLISHED记录，不按名称、时间先后或候选ID相近推断来源。 */
+    private long publishedEffectSourceCount(PlanSchedulingAgentDTO.EffectEvidence effect, Long issueId, Long taskId) {
+        Long selectedTask = effect.getDetail().getReview().getSelectedTaskId();
+        Long scenarioId = effect.getScenarioId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        Long tenant = TenantContextHolder.getTenantId();
+        long count = caseMapper.selectCount(new LambdaQueryWrapper<PlnResourceReplanCaseEntity>()
+                .eq(PlnResourceReplanCaseEntity::getTenantId, tenant).eq(PlnResourceReplanCaseEntity::getFactoryCode, factory)
+                .eq(PlnResourceReplanCaseEntity::getScenarioId, scenarioId).eq(PlnResourceReplanCaseEntity::getProposalTaskId, selectedTask)
+                .eq(PlnResourceReplanCaseEntity::getOriginalTaskId, taskId).eq(PlnResourceReplanCaseEntity::getIssueId, issueId)
+                .eq(PlnResourceReplanCaseEntity::getStatus, "PUBLISHED"));
+        count += shortageCaseMapper.selectCount(new LambdaQueryWrapper<PlnShortageReplanCaseEntity>()
+                .eq(PlnShortageReplanCaseEntity::getTenantId, tenant).eq(PlnShortageReplanCaseEntity::getFactoryCode, factory)
+                .eq(PlnShortageReplanCaseEntity::getScenarioId, scenarioId).eq(PlnShortageReplanCaseEntity::getProposalTaskId, selectedTask)
+                .eq(PlnShortageReplanCaseEntity::getOriginalTaskId, taskId).eq(PlnShortageReplanCaseEntity::getIssueId, issueId)
+                .eq(PlnShortageReplanCaseEntity::getStatus, "PUBLISHED"));
+        count += qualityCaseMapper.selectCount(new LambdaQueryWrapper<PlnQualityReplanCaseEntity>()
+                .eq(PlnQualityReplanCaseEntity::getTenantId, tenant).eq(PlnQualityReplanCaseEntity::getFactoryCode, factory)
+                .eq(PlnQualityReplanCaseEntity::getScenarioId, scenarioId).eq(PlnQualityReplanCaseEntity::getProposalTaskId, selectedTask)
+                .eq(PlnQualityReplanCaseEntity::getOriginalTaskId, taskId).eq(PlnQualityReplanCaseEntity::getIssueId, issueId)
+                .eq(PlnQualityReplanCaseEntity::getStatus, "PUBLISHED"));
+        var insertionCases = insertionCaseMapper.selectList(new LambdaQueryWrapper<PlnInsertionReplanCaseEntity>()
+                .eq(PlnInsertionReplanCaseEntity::getTenantId, tenant).eq(PlnInsertionReplanCaseEntity::getFactoryCode, factory)
+                .eq(PlnInsertionReplanCaseEntity::getScenarioId, scenarioId).eq(PlnInsertionReplanCaseEntity::getProposalTaskId, selectedTask)
+                .eq(PlnInsertionReplanCaseEntity::getStatus, "PUBLISHED"));
+        for (var insertionCase : insertionCases) {
+            var query = new LambdaQueryWrapper<PlnInsertionReplanIssueEntity>()
+                    .eq(PlnInsertionReplanIssueEntity::getTenantId, tenant).eq(PlnInsertionReplanIssueEntity::getFactoryCode, factory)
+                    .eq(PlnInsertionReplanIssueEntity::getCaseId, insertionCase.getId())
+                    .eq(PlnInsertionReplanIssueEntity::getIssueId, issueId);
+            if (Objects.equals(insertionCase.getInsertionIssueId(), issueId)) {
+                // 新插入根计划没有原任务，发布时另建正式任务，不能按被挤占计划的谱系核验。
+                if (!Objects.equals(insertionCase.getPublishedTaskId(), taskId)) continue;
+                query.eq(PlnInsertionReplanIssueEntity::getInsertionIssue, true)
+                        .isNull(PlnInsertionReplanIssueEntity::getOriginalTaskId);
+            } else {
+                query.eq(PlnInsertionReplanIssueEntity::getInsertionIssue, false)
+                        .eq(PlnInsertionReplanIssueEntity::getOriginalTaskId, taskId);
+            }
+            count += insertionIssueMapper.selectCount(query);
+        }
+        return count;
+    }
+
+    private String nullableText(JsonNode value, String field) {
+        return value.path(field).isNull() || value.path(field).isMissingNode() ? null : value.path(field).asText();
+    }
+
+    private String effectNodeKey(PlanSchedulingAgentDTO.DeviationDisposition disposition) {
+        return StrUtil.isNotBlank(disposition.getSourceRouteNodeCode())
+                ? disposition.getSourceRouteNodeCode() : disposition.getProcessCode();
     }
 
     private ResourceCandidateBuild buildCandidate(PlnSchedulingScenarioEntity header,
@@ -1550,7 +1710,9 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
         return view;
     }
 
-    /** 原冻结根计划及MPS来源必须保留；完成量/质量事实允许按原业务推进，不反向清零。 */
+    /**
+     * 原冻结根计划及MPS来源必须保留；完成量/质量事实允许按原业务推进，不反向清零。
+     */
     private void validateMpsMirrorSource(PlnResourceReplanCaseEntity entity, PlnIssueEntity issue) {
         try {
             JsonNode raw = objectMapper.readTree(objectMapper.readTree(entity.getResourceEvidenceSnapshot())
@@ -1582,10 +1744,12 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
         }
     }
 
-    /** 核对原物理工单/工序身份和保护范围；实际状态推进不等于计划属性漂移。 */
+    /**
+     * 核对原物理工单/工序身份和保护范围；实际状态推进不等于计划属性漂移。
+     */
     private void validateMesMirrorIdentity(PlnResourceReplanCaseEntity entity,
-                                          List<PlnSchedulingOperationEntity> frozen, Set<String> moved,
-                                          MesApsLocalScheduleDTO.StateBundle current) {
+                                           List<PlnSchedulingOperationEntity> frozen, Set<String> moved,
+                                           MesApsLocalScheduleDTO.StateBundle current) {
         try {
             JsonNode raw = objectMapper.readTree(objectMapper.readTree(entity.getResourceEvidenceSnapshot())
                     .path("fullExecutionSnapshot").asText());
@@ -1631,7 +1795,7 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
     }
 
     private List<PlnSchedulingOperationEntity> originalMoved(PlnResourceReplanCaseEntity entity,
-                                                            List<PlnSchedulingOperationEntity> originals) {
+                                                             List<PlnSchedulingOperationEntity> originals) {
         Set<String> codes = caseLines(entity.getId()).stream().filter(row -> "MOVE".equals(row.getActionType()))
                 .map(line -> PlnFrozenRouteNodeIdentity.lineKey(line.getOriginalOperationId(), line.getSourceRouteNodeCode(), line.getProcessCode(), uniqueByProcess(originals))).collect(Collectors.toSet());
         var result = originals.stream().filter(row -> codes.contains(PlnFrozenRouteNodeIdentity.key(row))).toList();
@@ -1646,7 +1810,9 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
                 "原不可变候选指纹不一致，不能恢复");
     }
 
-    /** 通用HTTP日期契约为秒级；仅对尚未冻结的新MPS候选规范精度，避免两端计划时刻不一致。 */
+    /**
+     * 通用HTTP日期契约为秒级；仅对尚未冻结的新MPS候选规范精度，避免两端计划时刻不一致。
+     */
     private void normalizeMpsCandidateTime(PlnSchedulingOperationEntity row) {
         LocalDateTime start = row.getScheduledStartTime() == null ? null : row.getScheduledStartTime().withNano(0);
         LocalDateTime end = row.getScheduledEndTime() == null ? null : row.getScheduledEndTime().withNano(0);
@@ -2333,7 +2499,9 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
         target.setSourceSnapshot(source.getSourceSnapshot());
     }
 
-    /** 正式计划只写copySchedule对应属性，null也明确清空；不覆盖数量、来源及现场回传。 */
+    /**
+     * 正式计划只写copySchedule对应属性，null也明确清空；不覆盖数量、来源及现场回传。
+     */
     private boolean updateFormalPlan(PlnSchedulingOperationEntity row) {
         return schedulingOperationMapper.update(null, new LambdaUpdateWrapper<PlnSchedulingOperationEntity>()
                 .eq(PlnSchedulingOperationEntity::getId, row.getId())
@@ -2604,7 +2772,9 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
                 "设备恢复排程复核须实名选择当前租户和实际工厂");
     }
 
-    /** 仅新业务公式追加当前工厂权限和时刻保护，不重解释旧Agent来源快照。 */
+    /**
+     * 仅新业务公式追加当前工厂权限和时刻保护，不重解释旧Agent来源快照。
+     */
     private boolean isMpsRemainingCase(PlnResourceReplanCaseEntity candidate) {
         return "EXECUTION".equals(candidate.getResourceType())
                 && StrUtil.isNotBlank(candidate.getResourceEvidenceSnapshot())

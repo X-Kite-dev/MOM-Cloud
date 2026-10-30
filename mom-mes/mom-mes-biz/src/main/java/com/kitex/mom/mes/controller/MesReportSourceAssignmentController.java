@@ -9,17 +9,13 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/** Web/PDA共用来源核定入口。只允许明确业务命令，不暴露通用增删改。 */
+/**
+ * Web/PDA共用来源核定入口。只允许明确业务命令，不暴露通用增删改。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/mesTask/report-source")
@@ -41,7 +37,9 @@ public class MesReportSourceAssignmentController {
         return R.ok(service.assign(command));
     }
 
-    /** 仅在事务代理完成回滚后响应；绝不以通用code=1推断原号未提交。 */
+    /**
+     * 仅在事务代理完成回滚后响应；绝不以通用code=1推断原号未提交。
+     */
     @ExceptionHandler(MesReportSourceRejectedException.class)
     public R<MesReportSourceAssignmentDTO.Rejection> rejected(MesReportSourceRejectedException exception) {
         return R.ok(new MesReportSourceAssignmentDTO.Rejection().setOutcome("ROLLBACK_CONFIRMED")

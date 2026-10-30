@@ -6,13 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -83,7 +77,8 @@ public class MesPhysicalTransformPlanner {
             equivalents.put(input.getStockId(), equivalent);
             remainders.put(input.getStockId(), codec.amount(available.subtract(used)));
             inputTotal = inputTotal.add(used);
-            if (source.getIdentifier() != null && !source.getIdentifier().isBlank()) sourceIdentifiers.add(source.getIdentifier());
+            if (source.getIdentifier() != null && !source.getIdentifier().isBlank())
+                sourceIdentifiers.add(source.getIdentifier());
         }
         assertShape(policy.getOperationType(), inputs.size(), outputs.size());
 
@@ -135,7 +130,7 @@ public class MesPhysicalTransformPlanner {
         Map<String, BigDecimal> allocatedOutputs = new HashMap<>();
         for (var allocation : plan.getAllocations()) {
             require(allocation != null && equivalents.containsKey(allocation.getStockId())
-                    && outputQuantities.containsKey(allocation.getOutputKey()) && !missingKeys.contains(allocation.getOutputKey()),
+                            && outputQuantities.containsKey(allocation.getOutputKey()) && !missingKeys.contains(allocation.getOutputKey()),
                     "分配引用范围外投入/输出或零量缺位");
             require(edges.add(codec.snapshot(List.of(allocation.getStockId(), allocation.getOutputKey()))), "投入到输出的当量边重复");
             BigDecimal quantity = codec.quantity(allocation.getQuantity(), false, "分配当量");
@@ -166,7 +161,9 @@ public class MesPhysicalTransformPlanner {
         return result;
     }
 
-    /** 每个板位对应完整单件；来源、投入和余量均不能留下分数SN或依赖舍入。 */
+    /**
+     * 每个板位对应完整单件；来源、投入和余量均不能留下分数SN或依赖舍入。
+     */
     private void requireWholeSnEquivalent(BigDecimal quantity, String name) {
         codec.amount(quantity);
         require(quantity.stripTrailingZeros().scale() <= 0, name + "必须是整数个SN，不能用分数实物当量拆板");

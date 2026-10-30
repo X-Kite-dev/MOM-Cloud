@@ -4,7 +4,6 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.kitex.admin.api.feign.RemoteParamService;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
@@ -40,7 +39,8 @@ public class MesMaterialStartGateService {
     private final MesTaskReportMapper reports;
     private final MesWarehouseFeedMapper feeds;
     private final MesWarehouseLiveStockService stocks;
-    private final RemoteParamService params;
+    private final MesMaterialConsumptionModeResolver consumptionModes;
+    private final MesStartMaterialBindingReader materialBindings;
     private final RemoteMaterialService materials;
     private final MesReworkMaterialPlanService rework;
     private final MesMaterialStartCheckMapper records;
@@ -82,8 +82,13 @@ public class MesMaterialStartGateService {
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void assertStart(MesTaskArrangeEntity a) {
+        assertStart(a, null);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void assertStart(MesTaskArrangeEntity a, List<Long> selectedFeedIds) {
         require(access.require("write").equals(a.getFactoryCode()), "开工物料核验工厂不一致");
-        var check = evaluate(a, "START_CHECK");
+        var check = evaluate(a, "START_CHECK", selectedFeedIds);
         if (!"READY".equals(check.getResult()) && (!"OBSERVE_REMAINING".equals(check.getMode()) || "UNKNOWN".equals(check.getResult()))) {
             check.setStage("START_BLOCKED");
             writer.rejected(check);
@@ -94,6 +99,10 @@ public class MesMaterialStartGateService {
     }
 
     private MesMaterialStartCheckEntity evaluate(MesTaskArrangeEntity a, String stage) {
+        return evaluate(a, stage, null);
+    }
+
+    private MesMaterialStartCheckEntity evaluate(MesTaskArrangeEntity a, String stage, List<Long> selectedFeedIds) {
         require(Set.of("STRICT_REMAINING", "OBSERVE_REMAINING").contains(mode), "开工物料策略无效，仅允许严格或明确观察模式");
         var manifest = new LinkedHashMap<String, Object>();
         manifest.put("version", "MATERIAL_START_V1");
@@ -104,7 +113,7 @@ public class MesMaterialStartGateService {
         manifest.put("asOf", java.time.LocalDateTime.now().toString());
         String result;
         try {
-            result = assess(a, manifest);
+            result = assess(a, manifest, selectedFeedIds);
         } catch (CheckedException ex) {
             result = "UNKNOWN";
             manifest.put("error", ex.getMessage());
@@ -131,7 +140,7 @@ public class MesMaterialStartGateService {
         return row;
     }
 
-    private String assess(MesTaskArrangeEntity a, Map<String, Object> manifest) {
+    private String assess(MesTaskArrangeEntity a, Map<String, Object> manifest, List<Long> selectedFeedIds) {
         var t = tasks.selectOne(new LambdaQueryWrapper<MesTaskEntity>().eq(MesTaskEntity::getCode, a.getTaskCode()).eq(MesTaskEntity::getTenantId, a.getTenantId()).eq(MesTaskEntity::getFactoryCode, a.getFactoryCode()));
         var p = processes.selectOne(new LambdaQueryWrapper<MesProduceTaskEntity>().eq(MesProduceTaskEntity::getCode, a.getProduceTaskCode()).eq(MesProduceTaskEntity::getTenantId, a.getTenantId()).eq(MesProduceTaskEntity::getFactoryCode, a.getFactoryCode()));
         require(t != null && p != null && Objects.equals(p.getTaskCode(), t.getCode()) && Objects.equals(p.getRouteCode(), a.getRouteCode()) && Objects.equals(p.getProcessRouteSnapshot(), t.getProcessRouteSnapshot()), "工单/工序/派工来源或冻结工艺不一致");
@@ -153,15 +162,26 @@ public class MesMaterialStartGateService {
                 p.getRouteCode(), p.getSourceRouteNodeCode());
         var demand = route.getMdmProcessProcedureMatList();
         require(demand != null && demand.size() <= 100, "工序用料未明确声明或超过100项，不能按无需物料放行");
-        var setting = params.getByKey("BACK_FLUSH");
-        require(setting != null && setting.isOk() && Set.of("0", "1").contains(Objects.toString(setting.getData(), "")), "正冲/倒冲配置不可核验");
-        boolean backflush = "1".equals(setting.getData());
+        boolean backflush = consumptionModes.resolve(a) == MesMaterialConsumptionModeResolver.Mode.BACKFLUSH;
         manifest.put("consumptionMode", backflush ? "BACKFLUSH" : "FEED");
         manifest.put("emptyMaterialDeclared", demand.isEmpty());
-        var allFeed = backflush ? List.<MesWarehouseFeedEntity>of() : feeds.selectList(new LambdaQueryWrapper<MesWarehouseFeedEntity>().eq(MesWarehouseFeedEntity::getArrangeCode, a.getCode())
-                .eq(MesWarehouseFeedEntity::getTenantId, a.getTenantId()).eq(MesWarehouseFeedEntity::getFactoryCode, a.getFactoryCode()).eq(MesWarehouseFeedEntity::getIsLock, false)
-                .and(w -> w.isNull(MesWarehouseFeedEntity::getMatValidEndDate).or().ge(MesWarehouseFeedEntity::getMatValidEndDate, LocalDate.now()))
-                .orderByAsc(MesWarehouseFeedEntity::getFeedTime).orderByAsc(MesWarehouseFeedEntity::getId).last("LIMIT 5001"));
+        var feedQuery = new LambdaQueryWrapper<MesWarehouseFeedEntity>()
+                .eq(MesWarehouseFeedEntity::getArrangeCode, a.getCode())
+                .eq(MesWarehouseFeedEntity::getTenantId, a.getTenantId())
+                .eq(MesWarehouseFeedEntity::getFactoryCode, a.getFactoryCode())
+                .eq(MesWarehouseFeedEntity::getIsLock, false)
+                .and(w -> w.isNull(MesWarehouseFeedEntity::getMatValidEndDate)
+                        .or().ge(MesWarehouseFeedEntity::getMatValidEndDate, LocalDate.now()));
+        materialBindings.constrain(a, feedQuery);
+        if (selectedFeedIds != null) {
+            require(!backflush && !selectedFeedIds.isEmpty() && selectedFeedIds.size() <= 100
+                    && selectedFeedIds.stream().allMatch(id -> id != null && id > 0)
+                    && new HashSet<>(selectedFeedIds).size() == selectedFeedIds.size(), "开工投料来源集合无效");
+            feedQuery.in(MesWarehouseFeedEntity::getId, selectedFeedIds);
+        }
+        var allFeed = backflush ? List.<MesWarehouseFeedEntity>of() : feeds.selectList(feedQuery
+                .orderByAsc(MesWarehouseFeedEntity::getFeedTime)
+                .orderByAsc(MesWarehouseFeedEntity::getId).last("LIMIT 5001"));
         require(allFeed.size() <= 5000, "投料证据超过5000行，不能截断后判断齐套");
         List<Map<String, Object>> lines = new ArrayList<>();
         manifest.put("materials", lines);
@@ -187,7 +207,7 @@ public class MesMaterialStartGateService {
             line.put("allocations", allocations);
             lines.add(line);
             for (var candidate : candidates) {
-                String key = (backflush ? "STOCK" : "FEED") + ":" + candidate.actualMatCode() + ":" + (backflush ? "" : d.getMaterialCode());
+                String key = (backflush ? "STOCK" : "FEED") + ":" + candidate.actualMatCode() + ":" + d.getMaterialCode();
                 List<Supply> supplies = supplyCache.computeIfAbsent(key, k -> supply(a, backflush, allFeed, d.getMaterialCode(), candidate));
                 BigDecimal available = supplies.stream().map(s -> s.quantity().subtract(used.getOrDefault(s.key(), BigDecimal.ZERO))).reduce(BigDecimal.ZERO, BigDecimal::add);
                 if (!policy.allowMixed() && available.compareTo(needed.multiply(candidate.ratio())) < 0) continue;
@@ -218,6 +238,10 @@ public class MesMaterialStartGateService {
             var query = new MesWarehouseLiveStockInoutDTO();
             query.setMatCode(c.actualMatCode());
             query.setFactoryCode(a.getFactoryCode());
+            query.setBillNo(a.getCode());
+            query.setRequirementMatCode(requirement);
+            query.setSubstituteRatio(c.ratio());
+            query.setSubstituteFlag(c.substitute());
             query.setProduceTaskCode(a.getProduceTaskCode());
             query.setAllowUnassignedProduceTask(true);
             query.setNum(BigDecimal.ONE);

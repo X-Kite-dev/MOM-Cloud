@@ -13,12 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -33,7 +28,9 @@ public class MdmRouteNodeResolver {
     private final MdmProcessRouteMapper routeMapper;
     private final MdmProcessRouteWorkingMapper workingMapper;
 
-    /** 按稳定关联ID解析；加锁后再次核实，不能将删除后重加的节点视为原节点。 */
+    /**
+     * 按稳定关联ID解析；加锁后再次核实，不能将删除后重加的节点视为原节点。
+     */
     public MdmProcessRouteWorkingEntity byId(Long id, boolean lock) {
         require(id != null && id > 0, "请选择已保存的工艺路线节点");
         List<MdmProcessRouteWorkingEntity> rows = workingMapper.selectList(scopedNodes()
@@ -51,7 +48,7 @@ public class MdmRouteNodeResolver {
      * 同时传主工序和节点码时必须一致，不能忽略矛盾身份。
      */
     public MdmProcessRouteWorkingEntity resolve(String routeCode, String routeNodeCode,
-                                               String processCode, boolean lock) {
+                                                String processCode, boolean lock) {
         require(StrUtil.isNotBlank(routeCode), "工艺路线编码不能为空");
         require(StrUtil.isNotBlank(routeNodeCode) || StrUtil.isNotBlank(processCode), "路线节点或主工序编码不能为空");
         requireParent(routeCode, lock);
@@ -76,7 +73,7 @@ public class MdmRouteNodeResolver {
      * 精确节点请求必须全部存在于所给路线；旧请求按实际路线工序对检测歧义。
      */
     public List<MdmProcessRouteWorkingEntity> resolveBatch(List<String> routeCodes, List<String> nodeCodes,
-                                                         List<String> processCodes) {
+                                                           List<String> processCodes) {
         List<String> routes = codes(routeCodes, 200, "工艺路线");
         List<String> nodes = codes(nodeCodes, 2000, "路线节点");
         List<String> processes = codes(processCodes, 2000, "主工序");

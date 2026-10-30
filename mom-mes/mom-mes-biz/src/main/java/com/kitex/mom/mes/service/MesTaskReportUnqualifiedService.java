@@ -1,11 +1,11 @@
 package com.kitex.mom.mes.service;
 
-import com.baomidou.mybatisplus.extension.service.IService;
 import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.kitex.mom.mes.dto.MesUnqualifiedTimingRecordDTO;
-import com.kitex.mom.mes.entity.MesTaskReportUnqualifiedEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
+import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.dto.MesProductionNgSourceDTO;
+import com.kitex.mom.mes.dto.MesUnqualifiedTimingRecordDTO;
+import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
+import com.kitex.mom.mes.entity.MesTaskReportUnqualifiedEntity;
 import com.kitex.mom.mes.enums.ReportModeEnum;
 
 /**
@@ -24,13 +24,19 @@ public interface MesTaskReportUnqualifiedService extends IService<MesTaskReportU
     void saveFrozenSource(MesTaskReportUnqualifiedEntity report, MesTaskArrangeEntity arrange, ReportModeEnum mode,
                           String originalInputJson);
 
-    /** 回放核原证据，不再次读取当前MDM单位或创建库存。 */
+    /**
+     * 回放核原证据，不再次读取当前MDM单位或创建库存。
+     */
     void verifySource(MesTaskReportUnqualifiedEntity report);
 
-    /** 按实际租户/工厂查询原不良请求结果；不触发重新上报。 */
+    /**
+     * 按实际租户/工厂查询原不良请求结果；不触发重新上报。
+     */
     MesProductionNgSourceDTO source(String requestId);
 
-    /** 按实际租户/工厂分页查看原NG时间证据；不以GOOD报告或操作流水ID代替。 */
+    /**
+     * 按实际租户/工厂分页查看原NG时间证据；不以GOOD报告或操作流水ID代替。
+     */
     IPage<MesUnqualifiedTimingRecordDTO> timingPage(long current, long size, String taskCode,
-                                                  String arrangeCode, String identifier);
+                                                    String arrangeCode, String identifier);
 }

@@ -1,5 +1,6 @@
 package com.kitex.mom.wms.service.inBill.service;
 
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.wms.entity.WmsInBillEntity;
 import com.kitex.mom.wms.entity.WmsInNoticeEntity;
 import com.kitex.mom.wms.enums.InBillTypeEnum;
@@ -26,12 +27,15 @@ public class WmsProductionReturnInBillService extends AbstractWmsInBillHandler {
     @Transactional(rollbackFor = Exception.class)
     public void handleDocumentBizWhenAdd(WmsInBillEntity bill) {
         if (bill != null && ("2".equals(bill.getState()) || "12".equals(bill.getState()))) {
-            WmsInNoticeEntity notice = bill.getNoticeId() == null ? null : wmsInNoticeMapper.selectById(bill.getNoticeId());
+            WmsInNoticeEntity notice = bill.getNoticeId() == null ? null
+                    : wmsInNoticeMapper.selectById(bill.getNoticeId());
             if (notice != null && (notice.getReturnReceiptStatus() == null
                     || "WAITING".equals(notice.getReturnReceiptStatus())
                     || "RECEIVING".equals(notice.getReturnReceiptStatus()))) {
                 notice.setReturnReceiptStatus("2".equals(notice.getState()) ? "RECEIVED" : "RECEIVING");
-                wmsInNoticeMapper.updateById(notice);
+                if (wmsInNoticeMapper.updateById(notice) != 1) {
+                    throw new CheckedException("生产退料通知实收状态保存失败，整笔入库回滚");
+                }
             }
             outboxService.enqueueBill(bill);
         }

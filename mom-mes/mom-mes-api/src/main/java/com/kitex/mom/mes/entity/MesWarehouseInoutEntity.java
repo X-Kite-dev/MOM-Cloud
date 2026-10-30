@@ -49,7 +49,9 @@ public class MesWarehouseInoutEntity extends BaseEntity<MesWarehouseInoutEntity>
     @Schema(description = "生产不良采集主键")
     private Long productionNgCaptureId;
 
-    /** 转换OUT所属执行或转换IN所属输出；不拿直接生产报告ID代替多来源。 */
+    /**
+     * 转换OUT所属执行或转换IN所属输出；不拿直接生产报告ID代替多来源。
+     */
     @Schema(description = "实物转换执行主键")
     private Long physicalTransformExecutionId;
     @Schema(description = "实物转换输出主键")

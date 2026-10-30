@@ -7,6 +7,6 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface WmsTransferVariancePolicyMapper extends MomBaseMapper<WmsTransferVariancePolicyEntity> {
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_TRANSFER_VARIANCE_POLICY:', #{key}), 0))")
-    void lockPolicyDimension(String key);
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_TRANSFER_VARIANCE_POLICY:', #{key}), 0))")
+    int lockPolicyDimension(String key);
 }

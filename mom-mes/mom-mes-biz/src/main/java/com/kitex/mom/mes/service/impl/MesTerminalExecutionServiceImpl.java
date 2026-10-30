@@ -3,10 +3,10 @@ package com.kitex.mom.mes.service.impl;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.component.PermissionService;
@@ -34,15 +34,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.temporal.TemporalAccessor;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -173,7 +165,9 @@ public class MesTerminalExecutionServiceImpl
         return receiptOf(row);
     }
 
-    /** 原号锁→真实工单锁→派工行→命令行。已登记的原回执优先，不重释当前模板。 */
+    /**
+     * 原号锁→真实工单锁→派工行→命令行。已登记的原回执优先，不重释当前模板。
+     */
     private MesTerminalExecutionCommandEntity register(MesMobileExecutionDTO.Command input, Identity owner,
                                                        String snapshot, String fingerprint) {
         lockRequest(owner, input.getRequestId());
@@ -200,7 +194,9 @@ public class MesTerminalExecutionServiceImpl
         return row;
     }
 
-    /** 占用独立提交；再次看到EXECUTING/UNKNOWN绝不执行。 */
+    /**
+     * 占用独立提交；再次看到EXECUTING/UNKNOWN绝不执行。
+     */
     private Claim claim(MesMobileExecutionDTO.Command input, Identity owner, String snapshot, String fingerprint) {
         lockRequest(owner, input.getRequestId());
         var arrange = lockedArrange(id(input.getArrangeId()));
@@ -218,10 +214,12 @@ public class MesTerminalExecutionServiceImpl
         return new Claim(row, true);
     }
 
-    /** 原领域动作和APPLIED在同一MES事务中；当前状态相同不能充当原号回执。 */
+    /**
+     * 原领域动作和APPLIED在同一MES事务中；当前状态相同不能充当原号回执。
+     */
     private MesTerminalExecutionCommandEntity execute(MesMobileExecutionDTO.Command input, Identity owner,
-                                                     String snapshot, String fingerprint, AtomicBoolean remoteRisk,
-                                                     AtomicInteger completion) {
+                                                      String snapshot, String fingerprint, AtomicBoolean remoteRisk,
+                                                      AtomicInteger completion) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCompletion(int status) {
@@ -261,10 +259,12 @@ public class MesTerminalExecutionServiceImpl
         });
     }
 
-    /** 只更新仍EXECUTING的原号；已提交APPLIED保持原结果，绝不覆盖或倒推销账。 */
+    /**
+     * 只更新仍EXECUTING的原号；已提交APPLIED保持原结果，绝不覆盖或倒推销账。
+     */
     private MesTerminalExecutionCommandEntity failure(MesMobileExecutionDTO.Command input, Identity owner,
-                                                     String snapshot, String fingerprint, String outcome,
-                                                     String message, boolean remoteRisk) {
+                                                      String snapshot, String fingerprint, String outcome,
+                                                      String message, boolean remoteRisk) {
         lockRequest(owner, input.getRequestId());
         lockedArrange(id(input.getArrangeId()));
         var row = baseMapper.locked(owner.tenantId(), input.getRequestId());
@@ -280,8 +280,8 @@ public class MesTerminalExecutionServiceImpl
         var occupancy = pending(arrange);
         require(occupancy != null && Objects.equals(occupancy.getId(), row.getId()), "原号未决占用不唯一");
         require(Objects.equals(input.getExpectedFingerprint(), row.getBeforeFactsFingerprint())
-                && Objects.equals(row.getBeforeFactsFingerprint(), factsFingerprint(arrange))
-                && Objects.equals(row.getBeforeFactsSnapshot(), json(facts(arrange))),
+                        && Objects.equals(row.getBeforeFactsFingerprint(), factsFingerprint(arrange))
+                        && Objects.equals(row.getBeforeFactsSnapshot(), json(facts(arrange))),
                 "派工事实已经变化，请保留原号拒绝回执，再读取新事实发起新的操作");
         String reason = unavailable(arrange, input.getAction());
         require(reason == null, reason);
@@ -364,7 +364,9 @@ public class MesTerminalExecutionServiceImpl
         require(baseMapper.updateById(row) == 1, "原回执保存失败，不得据当前状态销账");
     }
 
-    /** 完整原正文固定字段顺序，保留空工位和所有原因字符，拒绝静默裁剪。 */
+    /**
+     * 完整原正文固定字段顺序，保留空工位和所有原因字符，拒绝静默裁剪。
+     */
     private String commandSnapshot(MesMobileExecutionDTO.Command input) {
         var body = new LinkedHashMap<String, Object>();
         body.put("requestId", input.getRequestId());
@@ -389,7 +391,9 @@ public class MesTerminalExecutionServiceImpl
         return sha("MES_ARRANGE_FACTS_V1|" + json(facts(arrange)));
     }
 
-    /** 冻结契约内的所有数值转文本，数组及布尔语义保持，递归不损失数量。 */
+    /**
+     * 冻结契约内的所有数值转文本，数组及布尔语义保持，递归不损失数量。
+     */
     private Object textualTree(Object value) {
         if (value == null || value instanceof String || value instanceof Boolean) return value;
         if (value instanceof Number || value instanceof TemporalAccessor) return scalar(value);
@@ -423,15 +427,15 @@ public class MesTerminalExecutionServiceImpl
 
     private void assertExpectedOwner(MesMobileExecutionDTO.Command input, Identity owner) {
         require(Objects.equals(input.getExpectedTenantId(), text(owner.tenantId()))
-                && Objects.equals(input.getExpectedFactoryCode(), owner.factoryCode())
-                && Objects.equals(input.getExpectedActorUserId(), text(owner.actorId())),
+                        && Objects.equals(input.getExpectedFactoryCode(), owner.factoryCode())
+                        && Objects.equals(input.getExpectedActorUserId(), text(owner.actorId())),
                 "登录租户、工厂或实名已变化，禁止投递旧页面命令");
     }
 
     private void assertOwner(MesTerminalExecutionCommandEntity row, Identity owner) {
         require(row != null && Objects.equals(row.getTenantId(), owner.tenantId())
-                && Objects.equals(row.getFactoryCode(), owner.factoryCode())
-                && Objects.equals(row.getActorId(), owner.actorId()) && Objects.equals(row.getActorCode(), owner.actorCode()),
+                        && Objects.equals(row.getFactoryCode(), owner.factoryCode())
+                        && Objects.equals(row.getActorId(), owner.actorId()) && Objects.equals(row.getActorCode(), owner.actorCode()),
                 "原号不属于当前实名、租户及工厂，禁止串账");
     }
 
@@ -483,7 +487,9 @@ public class MesTerminalExecutionServiceImpl
         baseMapper.lockRequest(JSONUtil.toJsonStr(List.of(VERSION, text(owner.tenantId()), requestId)));
     }
 
-    /** 无代理自调用问题；调用时没有持有外层业务事务，三个阶段各自提交。 */
+    /**
+     * 无代理自调用问题；调用时没有持有外层业务事务，三个阶段各自提交。
+     */
     private <T> T transaction(Supplier<T> work) {
         require(!TransactionSynchronizationManager.isActualTransactionActive(),
                 "移动原命令入口禁止嵌入外层事务，避免独立占用自阻塞");
@@ -527,7 +533,9 @@ public class MesTerminalExecutionServiceImpl
         return value == null ? null : value.toString();
     }
 
-    /** 标准紧凑JSON、明确保留null；与JSON.stringify同字段顺序，不采用可变全局日期/转义配置。 */
+    /**
+     * 标准紧凑JSON、明确保留null；与JSON.stringify同字段顺序，不采用可变全局日期/转义配置。
+     */
     private String json(Object value) {
         try {
             return COMMAND_JSON.writeValueAsString(value);
@@ -536,7 +544,9 @@ public class MesTerminalExecutionServiceImpl
         }
     }
 
-    /** 只用JDK内置SHA-256，不为原号协议新增密码学依赖。 */
+    /**
+     * 只用JDK内置SHA-256，不为原号协议新增密码学依赖。
+     */
     private String sha(String value) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")

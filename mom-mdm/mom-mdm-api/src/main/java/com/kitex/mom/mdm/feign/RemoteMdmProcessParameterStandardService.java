@@ -19,7 +19,9 @@ public interface RemoteMdmProcessParameterStandardService {
     R<MdmProcessParameterStandardDTO.FrozenCatalog> resolveReleased(
             @RequestBody MdmProcessParameterStandardDTO.ResolveQuery query);
 
-    /** 节点冻结协议专用入口；旧入口不允许忽略节点读取NODE_V2正式内容。 */
+    /**
+     * 节点冻结协议专用入口；旧入口不允许忽略节点读取NODE_V2正式内容。
+     */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mdmProcessParameterStandard/internal/resolve-nodes")
     R<MdmProcessParameterStandardDTO.FrozenCatalog> resolveNodes(

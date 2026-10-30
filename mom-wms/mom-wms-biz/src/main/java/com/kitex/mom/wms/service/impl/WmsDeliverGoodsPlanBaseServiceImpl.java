@@ -245,7 +245,7 @@ public class WmsDeliverGoodsPlanBaseServiceImpl extends ServiceImpl<WmsDeliverGo
 
     private void requireNoMatchingOmsLine(WmsDeliverGoodsPlanBaseEntity plan) {
         R<OmsOrderDetailsEntity> result = remoteOmsOrderService.getOrderDetails(
-                plan.getOrderCode(), plan.getProductCode(), plan.getPlanDeliverTime());
+                plan.getOrderCode(), plan.getProductCode(), plan.getPlanDeliverTime().toString());
         if (result == null || !result.isOk()) {
             throw new CheckedException("OMS订单来源不可核验，手工发货计划故障关闭");
         }

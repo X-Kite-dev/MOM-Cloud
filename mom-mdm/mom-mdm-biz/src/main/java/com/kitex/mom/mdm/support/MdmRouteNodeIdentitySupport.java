@@ -6,13 +6,7 @@ import com.kitex.mom.mdm.entity.MdmProcessRouteEntity;
 import com.kitex.mom.mdm.entity.MdmProcessRouteWorkingEntity;
 import org.springframework.beans.BeanUtils;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 路线节点身份协调器，不读取数据库，也不授予保存权限。
@@ -30,11 +24,11 @@ public final class MdmRouteNodeIdentitySupport {
      * 返回行暂保留clientNodeKey，供图/时间来源和画布统一映射，持久化不写该字段。
      */
     public static List<MdmProcessRouteWorkingEntity> reconcileNodes(MdmProcessRouteEntity route,
-            List<MdmProcessRouteWorkingEntity> current, List<MdmProcessRouteWorkingEntity> requested) {
+                                                                    List<MdmProcessRouteWorkingEntity> current, List<MdmProcessRouteWorkingEntity> requested) {
         Map<String, MdmProcessRouteWorkingEntity> originals = new HashMap<>();
         for (MdmProcessRouteWorkingEntity row : current) {
             require(row.getId() != null && Objects.equals(row.getRouteNodeCode(), "RN-" + row.getId())
-                    && originals.putIfAbsent(row.getRouteNodeCode(), row) == null,
+                            && originals.putIfAbsent(row.getRouteNodeCode(), row) == null,
                     "当前路线节点身份不完整或重复，请先完成节点升级");
         }
         Set<String> keys = new HashSet<>();
@@ -76,15 +70,15 @@ public final class MdmRouteNodeIdentitySupport {
     /**
      * 生成本次保存行；保留原ID、组织及审计字段，只复制允许编辑的业务属性。
      *
-     * @param route 已锁定、已核真实组织的父路线
-     * @param current 当前路线全部活节点，不含逻辑删除节点
-     * @param requested 已经过DAG和时间配置规范化的请求
+     * @param route           已锁定、已核真实组织的父路线
+     * @param current         当前路线全部活节点，不含逻辑删除节点
+     * @param requested       已经过DAG和时间配置规范化的请求
      * @param newProcessCodes 新页面明确新增的主工序；空集合仅表示未声明新建，不替换旧桥接协议
      * @return 可写入的完整节点集合；遗漏的旧节点由调用方受控删除
      */
     public static List<MdmProcessRouteWorkingEntity> reconcile(MdmProcessRouteEntity route,
-            List<MdmProcessRouteWorkingEntity> current, List<MdmProcessRouteWorkingEntity> requested,
-            List<String> newProcessCodes) {
+                                                               List<MdmProcessRouteWorkingEntity> current, List<MdmProcessRouteWorkingEntity> requested,
+                                                               List<String> newProcessCodes) {
         Set<String> explicitNew = new HashSet<>();
         if (newProcessCodes != null) {
             for (String code : newProcessCodes) {
@@ -136,9 +130,11 @@ public final class MdmRouteNodeIdentitySupport {
         return result;
     }
 
-    /** 只允许节点业务值进入存储，客户端组织和审计字段不可信。 */
+    /**
+     * 只允许节点业务值进入存储，客户端组织和审计字段不可信。
+     */
     private static void copyBusiness(MdmProcessRouteEntity route, MdmProcessRouteWorkingEntity input,
-            MdmProcessRouteWorkingEntity saved) {
+                                     MdmProcessRouteWorkingEntity saved) {
         saved.setRouteCode(route.getRouteCode());
         saved.setRouteName(route.getRouteName());
         saved.setProcessCode(input.getProcessCode().trim());

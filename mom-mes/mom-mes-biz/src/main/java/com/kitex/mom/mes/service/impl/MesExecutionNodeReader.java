@@ -10,14 +10,7 @@ import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.util.Collection;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -29,12 +22,10 @@ import java.util.stream.Collectors;
 public class MesExecutionNodeReader {
     private final MesProduceTaskMapper tasks;
 
-    /** 当前实际父任务及其全部直接前序；实体只用于本次服务器校验，不接受客户端构造。 */
-    public record NodeContext(MesProduceTaskEntity current, List<MesProduceTaskEntity> predecessors) {
-    }
-
-    /** 每个工单单独成功或失败；一个坏图不能让其他工单的正常派工全部不可操作。 */
-    public record GraphBatch(Map<String, MesFrozenExecutionGraph> graphs, Map<String, String> failures) {
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new CheckedException(message);
+        }
     }
 
     public NodeContext read(MesTaskArrangeEntity arrange) {
@@ -46,7 +37,9 @@ public class MesExecutionNodeReader {
         return new NodeContext(current, graph.predecessors(current));
     }
 
-    /** 批量读取完整工单图；不能先按某一主工序/前序子集过滤，否则无法识别歧义和坏图。 */
+    /**
+     * 批量读取完整工单图；不能先按某一主工序/前序子集过滤，否则无法识别歧义和坏图。
+     */
     public Map<String, MesFrozenExecutionGraph> readGraphs(Long tenant, String factory, Collection<String> taskCodes) {
         GraphBatch batch = readCandidates(tenant, factory, taskCodes);
         require(batch.failures().isEmpty(), "原工单执行图不可用：" + batch.failures());
@@ -91,9 +84,15 @@ public class MesExecutionNodeReader {
         return new GraphBatch(Collections.unmodifiableMap(graphs), Collections.unmodifiableMap(failures));
     }
 
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new CheckedException(message);
-        }
+    /**
+     * 当前实际父任务及其全部直接前序；实体只用于本次服务器校验，不接受客户端构造。
+     */
+    public record NodeContext(MesProduceTaskEntity current, List<MesProduceTaskEntity> predecessors) {
+    }
+
+    /**
+     * 每个工单单独成功或失败；一个坏图不能让其他工单的正常派工全部不可操作。
+     */
+    public record GraphBatch(Map<String, MesFrozenExecutionGraph> graphs, Map<String, String> failures) {
     }
 }

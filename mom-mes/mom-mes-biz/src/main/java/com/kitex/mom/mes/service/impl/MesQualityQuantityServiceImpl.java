@@ -14,8 +14,10 @@ import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.*;
 import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.MesApsSourceQuantityService;
+import com.kitex.mom.mes.service.MesIdentifierBindingGroupService;
 import com.kitex.mom.mes.service.MesQualityQuantityService;
 import com.kitex.mom.mes.support.MesQualityEvidenceSupport;
+import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
@@ -23,9 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * 质量数量台账以报工记录为最小可追溯单元。QMS处置未指定具体SN/批段时，按报工时间FIFO分配
@@ -35,6 +35,9 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class MesQualityQuantityServiceImpl implements MesQualityQuantityService {
 
+    private final MesInspectionEventProjection eventProjection;
+    private final MesProductionTaskLock productionTaskLock;
+    private final com.kitex.mom.mes.service.MesQualityGateService qualityGateService;
     private final MesTaskReportMapper reportMapper;
     private final MesTaskReportRecordMapper reportRecordMapper;
     private final MesWarehouseLiveStockMapper liveStockMapper;
@@ -43,15 +46,50 @@ public class MesQualityQuantityServiceImpl implements MesQualityQuantityService 
     private final MesTaskMapper taskMapper;
     private final MesApsSourceQuantityService sourceQuantityService;
     private final MesQualityStockProofMapper stockProofMapper;
+    private final MesIdentifierBindingGroupService bindingGroups;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public MesQualityGateDecision reconcile(String produceTaskCode, MesQualityGateDecision decision) {
+        return reconcileQuantities(produceTaskCode, decision, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public MesQualityGateDecision reconcileEvent(String code, Long recordId, Long eventId, java.util.Date time) {
+        return reconcileQuantities(code, new MesQualityGateDecision(), null, new EventApplication(recordId, eventId, time));
+    }
+
+    private MesQualityGateDecision reconcileQuantities(String produceTaskCode, MesQualityGateDecision decision,
+                                                       ReworkQuantities rework) {
+        return reconcileQuantities(produceTaskCode, decision, rework, null);
+    }
+
+    private MesQualityGateDecision reconcileQuantities(String produceTaskCode, MesQualityGateDecision decision,
+                                                       ReworkQuantities rework, EventApplication event) {
         String factory = FactoryContextHolder.getFactoryCode();
-        if (TenantContextHolder.getTenantId() == null || TenantContextHolder.getTenantSkip()
+        if (TenantContextHolder.getTenantId() == null || TenantContextHolder.getTenantId() <= 0
+                || TenantContextHolder.getTenantSkip()
                 || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) || StrUtil.isBlank(factory)
                 || StrUtil.isBlank(produceTaskCode) || decision == null) {
             throw new CheckedException("质量数量同步缺少实际租户、工厂、工序或判定依据");
+        }
+        // 与报工/完工/纠正共用同一工单锁；禁止先锁报告或库存，再反向等待父行。
+        QualitySource source = lockSource(produceTaskCode, event != null);
+        if (rework == null) eventProjection.lockProcessEvidence(produceTaskCode);
+        boolean eventControlled = event != null || (rework == null && eventProjection.controlled(produceTaskCode));
+        if (eventControlled) {
+            decision = qualityGateService.eventSnapshot(produceTaskCode, event == null ? decision.getPhase() : "ALL",
+                    event == null ? null : event.recordId(), event == null ? null : event.eventId(), event == null ? null : event.time());
+        }
+        boolean reworkOrder = "REWORK".equals(source.task().getResourceType());
+        if (rework == null && reworkOrder) {
+            throw new CheckedException("返工产出须按已登记的独立复检结果同步，不能使用普通质量放行");
+        }
+        if (rework != null && (!reworkOrder
+                || !Objects.equals(rework.qmsTaskId(), source.task().getReinspectionTaskId())
+                || !Boolean.TRUE.equals(source.process().getLastRoute()))) {
+            throw new CheckedException("返工复检与已登记任务或最终工序不一致");
         }
         List<MesTaskReportEntity> reports = reportMapper.selectList(new LambdaQueryWrapper<MesTaskReportEntity>()
                 .eq(MesTaskReportEntity::getTenantId, TenantContextHolder.getTenantId())
@@ -64,18 +102,27 @@ public class MesQualityQuantityServiceImpl implements MesQualityQuantityService 
         if (reports.size() > 5000) throw new CheckedException("质量同步报工超过5000条，请先治理工序数据，禁止截断放行");
         reports.sort(Comparator.comparing(MesTaskReportEntity::getReportTime,
                 Comparator.nullsLast(Comparator.naturalOrder())).thenComparing(MesTaskReportEntity::getId));
-        if (reports.isEmpty()) {
-            return fillTotals(decision, reports);
-        }
+        Map<String, MesTaskArrangeEntity> arrangements = requireReportSources(reports, source);
+        if (rework != null) requireReworkQuantities(rework, source, reports, arrangements);
+        if (reports.isEmpty()) return fillTotals(decision, reports);
 
         BigDecimal alreadyReleased = sum(reports, QuantityPart.RELEASED);
         BigDecimal alreadyRejected = sum(reports, QuantityPart.REJECTED);
         BigDecimal pending = sum(reports, QuantityPart.PENDING);
-        BigDecimal releaseCapacity = Boolean.TRUE.equals(decision.getPassed())
-                ? alreadyReleased.add(pending) : acceptedCapacity(decision.getItems());
-        BigDecimal rejectCapacity = Boolean.TRUE.equals(decision.getPassed())
-                ? alreadyRejected : rejectedCapacity(decision.getItems());
-        BigDecimal releaseNeed = positive(releaseCapacity.subtract(alreadyReleased)).min(pending);
+        BigDecimal releaseCapacity;
+        BigDecimal rejectCapacity;
+        if (rework != null) {
+            releaseCapacity = rework.usable();
+            rejectCapacity = rework.rejected();
+        } else if (Boolean.TRUE.equals(decision.getPassed())) {
+            releaseCapacity = alreadyReleased.add(pending);
+            rejectCapacity = alreadyRejected;
+        } else {
+            releaseCapacity = acceptedCapacity(decision.getItems());
+            rejectCapacity = rejectedCapacity(decision.getItems());
+        }
+        BigDecimal releaseNeed = positive(releaseCapacity.subtract(alreadyReleased));
+        if (rework == null) releaseNeed = releaseNeed.min(pending);
         BigDecimal rejectNeed = positive(rejectCapacity.subtract(alreadyRejected));
         MesQualityEvidenceSupport.Evidence qualityEvidence = MesQualityEvidenceSupport.capture(decision);
 
@@ -90,7 +137,7 @@ public class MesQualityQuantityServiceImpl implements MesQualityQuantityService 
                 reportPending = reportPending.subtract(release);
                 report.setQualityReleasedNum(nz(report.getQualityReleasedNum()).add(release));
                 releaseNeed = releaseNeed.subtract(release);
-                applyReleasedQuantity(report, release);
+                applyReleasedQuantity(report, release, source, arrangements.get(report.getArrangeCode()));
             }
             BigDecimal reject = reportPending.min(rejectNeed);
             if (reject.signum() > 0) {
@@ -98,12 +145,16 @@ public class MesQualityQuantityServiceImpl implements MesQualityQuantityService 
                 reportPending = reportPending.subtract(reject);
                 report.setQualityRejectedNum(nz(report.getQualityRejectedNum()).add(reject));
                 rejectNeed = rejectNeed.subtract(reject);
-                MesTaskEntity task = taskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>()
-                        .eq(MesTaskEntity::getCode, report.getTaskCode()));
-                if (task == null) throw new CheckedException("质量判退报工缺少生产工单，不能归集来源计划");
+                MesTaskEntity task = source.task();
                 if (!"REWORK".equals(task.getResourceType())
                         && (task.getPlanNo() != null || task.getApsBatchNo() != null)) {
-                    sourceQuantityService.record(task,
+                    if (eventControlled) sourceQuantityService.recordDeferred(task,
+                            "QUALITY-REJECTED:" + report.getId() + ":"
+                                    + report.getQualityRejectedNum().stripTrailingZeros().toPlainString(),
+                            MesSourceQuantityKind.QUALITY_REJECTED, reject, String.valueOf(report.getId()),
+                            "报工记录【" + report.getId() + "】QMS累计判退【" + report.getQualityRejectedNum()
+                                    + "】，本次判退【" + reject + "】");
+                    else sourceQuantityService.record(task,
                             "QUALITY-REJECTED:" + report.getId() + ":"
                                     + report.getQualityRejectedNum().stripTrailingZeros().toPlainString(),
                             MesSourceQuantityKind.QUALITY_REJECTED, reject, String.valueOf(report.getId()),
@@ -119,7 +170,21 @@ public class MesQualityQuantityServiceImpl implements MesQualityQuantityService 
                 report.setQualityEvidenceFingerprint(qualityEvidence.fingerprint());
                 report.setQualityEvidenceSnapshot(qualityEvidence.snapshotJson());
                 if (reportMapper.updateById(report) != 1) throw new CheckedException("质量数量报工更新失败，已回滚");
-                reportRecordMapper.update(null, new LambdaUpdateWrapper<MesTaskReportRecordEntity>()
+                int expectedMirrors = 0;
+                if (eventControlled) {
+                    var mirrors = reportRecordMapper.selectList(new LambdaQueryWrapper<MesTaskReportRecordEntity>()
+                            .eq(MesTaskReportRecordEntity::getTenantId, report.getTenantId())
+                            .eq(MesTaskReportRecordEntity::getFactoryCode, report.getFactoryCode())
+                            .eq(MesTaskReportRecordEntity::getReportId, report.getId())
+                            .eq(MesTaskReportRecordEntity::getType, ReportRecordTypeEnum.REPORT.name())
+                            .orderByAsc(MesTaskReportRecordEntity::getId).last("LIMIT 5001 FOR UPDATE"));
+                    expectedMirrors = mirrors.size();
+                    if (expectedMirrors == 0 || expectedMirrors > 5000)
+                        throw new CheckedException("正式质量应用缺少有效报工明细或明细超限，已整体回滚");
+                }
+                int updatedMirrors = reportRecordMapper.update(null, new LambdaUpdateWrapper<MesTaskReportRecordEntity>()
+                        .eq(MesTaskReportRecordEntity::getTenantId, report.getTenantId())
+                        .eq(MesTaskReportRecordEntity::getFactoryCode, report.getFactoryCode())
                         .eq(MesTaskReportRecordEntity::getReportId, report.getId())
                         .eq(MesTaskReportRecordEntity::getType, ReportRecordTypeEnum.REPORT.name())
                         .set(MesTaskReportRecordEntity::getQualityQuantityStatus, report.getQualityQuantityStatus())
@@ -131,15 +196,117 @@ public class MesQualityQuantityServiceImpl implements MesQualityQuantityService 
                         .set(MesTaskReportRecordEntity::getQualityReleasedNum, report.getQualityReleasedNum())
                         .set(MesTaskReportRecordEntity::getQualityPendingNum, report.getQualityPendingNum())
                         .set(MesTaskReportRecordEntity::getQualityRejectedNum, report.getQualityRejectedNum()));
+                if (eventControlled && updatedMirrors != expectedMirrors)
+                    throw new CheckedException("正式质量报工明细更新不完整，已整体回滚");
                 saveAudit(report, release, reject);
             }
+        }
+        if (rework != null && (releaseNeed.signum() > 0 || rejectNeed.signum() > 0)) {
+            throw new CheckedException("返工复检处置数量未完整落账，已整体回滚");
         }
         return fillTotals(decision, reportMapper.selectList(new LambdaQueryWrapper<MesTaskReportEntity>()
                 .eq(MesTaskReportEntity::getTenantId, TenantContextHolder.getTenantId())
                 .eq(MesTaskReportEntity::getFactoryCode, factory)
+                .eq(MesTaskReportEntity::getTaskCode, source.task().getCode())
                 .eq(MesTaskReportEntity::getProduceTaskCode, produceTaskCode)
+                .ne(rework != null, MesTaskReportEntity::getQualityQuantityStatus, QualityQuantityStatusEnum.NOT_REQUIRED.name())
                 .and(w -> w.isNull(MesTaskReportEntity::getStatus)
                         .or().eq(MesTaskReportEntity::getStatus, ReportStatusEnum.EFFECTIVE.name()))));
+    }
+
+    private QualitySource lockSource(String code) {
+        return lockSource(code, false);
+    }
+
+    private QualitySource lockSource(String code, boolean internal) {
+        MesProduceTaskEntity observed = uniqueProcess(code, false);
+        if (StrUtil.isBlank(observed.getTaskCode())) throw new CheckedException("质量工序缺少原生产工单");
+        if (internal) productionTaskLock.lock(observed.getTaskCode());
+        else bindingGroups.lockDispatchTask(observed.getTaskCode());
+        var roots = taskMapper.selectList(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MesTaskEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
+                .eq(MesTaskEntity::getCode, observed.getTaskCode()).last("LIMIT 2 FOR UPDATE"));
+        if (roots.size() != 1) throw new CheckedException("质量同步缺少唯一原生产工单");
+        MesProduceTaskEntity locked = uniqueProcess(code, true);
+        if (!Objects.equals(observed.getId(), locked.getId())
+                || !Objects.equals(observed.getTaskCode(), locked.getTaskCode())) {
+            throw new CheckedException("质量工序归属已变化，请重新同步");
+        }
+        return new QualitySource(roots.get(0), locked);
+    }
+
+    private MesProduceTaskEntity uniqueProcess(String code, boolean lock) {
+        var rows = produceTaskMapper.selectList(new LambdaQueryWrapper<MesProduceTaskEntity>()
+                .eq(MesProduceTaskEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MesProduceTaskEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
+                .eq(MesProduceTaskEntity::getCode, code).last(lock ? "LIMIT 2 FOR UPDATE" : "LIMIT 2"));
+        if (rows.size() != 1) throw new CheckedException("质量工序任务单号不存在或重复，请核对原工序任务");
+        return rows.get(0);
+    }
+
+    private Map<String, MesTaskArrangeEntity> requireReportSources(List<MesTaskReportEntity> reports,
+                                                                   QualitySource source) {
+        Map<String, MesTaskArrangeEntity> arrangements = new HashMap<>();
+        for (MesTaskReportEntity report : reports) {
+            if (report.getId() == null || !Objects.equals(report.getTenantId(), source.task().getTenantId())
+                    || !Objects.equals(report.getFactoryCode(), source.task().getFactoryCode())
+                    || !Objects.equals(report.getTaskCode(), source.task().getCode())
+                    || !Objects.equals(report.getProduceTaskCode(), source.process().getCode())
+                    || StrUtil.isBlank(report.getArrangeCode())) {
+                throw new CheckedException("质量报工与原工单或工序归属不一致");
+            }
+            if (!arrangements.containsKey(report.getArrangeCode())) {
+                var rows = arrangeMapper.selectList(new LambdaQueryWrapper<MesTaskArrangeEntity>()
+                        .eq(MesTaskArrangeEntity::getTenantId, report.getTenantId())
+                        .eq(MesTaskArrangeEntity::getFactoryCode, report.getFactoryCode())
+                        .eq(MesTaskArrangeEntity::getCode, report.getArrangeCode()).last("LIMIT 2 FOR UPDATE"));
+                if (rows.size() != 1) throw new CheckedException("质量报工缺少唯一原派工");
+                MesFrozenExecutionGraph.assertArrangement(source.process(), rows.get(0));
+                arrangements.put(report.getArrangeCode(), rows.get(0));
+            }
+        }
+        return arrangements;
+    }
+
+    /**
+     * 返工处置按累计数量核定，不能把合格布尔值扩成全部未检产出的放行。
+     */
+    private void requireReworkQuantities(ReworkQuantities requested, QualitySource source,
+                                         List<MesTaskReportEntity> reports,
+                                         Map<String, MesTaskArrangeEntity> arrangements) {
+        BigDecimal reported = BigDecimal.ZERO;
+        BigDecimal released = BigDecimal.ZERO;
+        BigDecimal rejected = BigDecimal.ZERO;
+        Map<String, BigDecimal> releasedByArrange = new HashMap<>();
+        for (MesTaskReportEntity report : reports) {
+            BigDecimal total = report.getReportNum();
+            BigDecimal good = nz(report.getQualityReleasedNum());
+            BigDecimal bad = nz(report.getQualityRejectedNum());
+            BigDecimal pending = nz(report.getQualityPendingNum());
+            if (total == null || total.signum() < 0 || good.signum() < 0 || bad.signum() < 0
+                    || pending.signum() < 0 || total.compareTo(good.add(bad).add(pending)) != 0) {
+                throw new CheckedException("返工报工质量数量缺失或不守恒，请核对原报工");
+            }
+            reported = reported.add(total);
+            released = released.add(good);
+            rejected = rejected.add(bad);
+            releasedByArrange.merge(report.getArrangeCode(), good, BigDecimal::add);
+        }
+        if (reported.compareTo(nz(source.process().getCompleteNum())) != 0
+                || released.compareTo(nz(source.process().getQualityReleasedNum())) != 0) {
+            throw new CheckedException("返工实际完成量或质量量与原报工不一致，不能推断复检数量");
+        }
+        for (var entry : arrangements.entrySet()) {
+            if (nz(entry.getValue().getQualityReleasedNum())
+                    .compareTo(releasedByArrange.get(entry.getKey())) != 0) {
+                throw new CheckedException("返工派工质量量与原报工不一致，请先核对数量");
+            }
+        }
+        if (requested.handled().compareTo(reported) > 0 || requested.usable().compareTo(released) < 0
+                || requested.rejected().compareTo(rejected) < 0) {
+            throw new CheckedException("复检处置超出实际产出或累计数量倒退，须核对原结果或走受控逆向");
+        }
     }
 
     @Override
@@ -149,22 +316,27 @@ public class MesQualityQuantityServiceImpl implements MesQualityQuantityService 
                                                   boolean allQualified) {
         BigDecimal usable = nz(usableNum);
         BigDecimal handled = nz(handledNum);
-        if (usable.signum() < 0 || handled.signum() < 0 || usable.compareTo(handled) > 0) {
+        if (qmsTaskId == null || qmsTaskId <= 0 || usable.signum() < 0 || handled.signum() < 0
+                || usable.compareTo(handled) > 0 || (allQualified && usable.compareTo(handled) != 0)) {
             throw new CheckedException("返工复检数量关系不正确");
         }
         MesQualityGateItemDTO item = new MesQualityGateItemDTO();
         item.setInspectionId(qmsTaskId);
         item.setProduceTaskCode(produceTaskCode);
         item.setGateStatus(allQualified ? "PASSED" : "PENDING");
-        item.setQmsUsableNum(usable.intValueExact());
-        item.setQmsHandleNum(handled.intValueExact());
+        try {
+            item.setQmsUsableNum(usable.intValueExact());
+            item.setQmsHandleNum(handled.intValueExact());
+        } catch (ArithmeticException invalidCount) {
+            throw new CheckedException("返工复检数量须为QMS支持的非负整数，不能四舍五入", invalidCount);
+        }
         MesQualityGateDecision decision = new MesQualityGateDecision()
                 .setAllowed(Boolean.TRUE)
                 .setPassed(allQualified)
                 .setGateMode("BLOCK")
-                .setMessage(allQualified ? "返工复检合格，产出已解除隔离" : "返工复检数量处置同步")
+                .setMessage("返工复检已按累计处置数量同步")
                 .setItems(List.of(item));
-        return reconcile(produceTaskCode, decision);
+        return reconcileQuantities(produceTaskCode, decision, new ReworkQuantities(qmsTaskId, usable, handled));
     }
 
     private BigDecimal acceptedCapacity(List<MesQualityGateItemDTO> items) {
@@ -284,23 +456,29 @@ public class MesQualityQuantityServiceImpl implements MesQualityQuantityService 
         }
     }
 
-    private void applyReleasedQuantity(MesTaskReportEntity report, BigDecimal delta) {
+    private void applyReleasedQuantity(MesTaskReportEntity report, BigDecimal delta, QualitySource source,
+                                       MesTaskArrangeEntity arrange) {
         int arrangeUpdated = arrangeMapper.update(null, new LambdaUpdateWrapper<MesTaskArrangeEntity>()
+                .eq(MesTaskArrangeEntity::getId, arrange.getId())
+                .eq(MesTaskArrangeEntity::getTenantId, report.getTenantId())
                 .eq(MesTaskArrangeEntity::getFactoryCode, report.getFactoryCode())
+                .eq(MesTaskArrangeEntity::getTaskCode, report.getTaskCode())
+                .eq(MesTaskArrangeEntity::getProduceTaskCode, report.getProduceTaskCode())
                 .eq(MesTaskArrangeEntity::getCode, report.getArrangeCode())
-                .setSql("quality_released_num = COALESCE(quality_released_num, 0) + " + delta.toPlainString()));
+                .setSql("quality_released_num = COALESCE(quality_released_num, 0) + {0}", delta));
         if (arrangeUpdated != 1) throw new CheckedException("质量放行缺少唯一原派工，已回滚库存和数量");
-        MesProduceTaskEntity produceTask = produceTaskMapper.selectOne(new LambdaQueryWrapper<MesProduceTaskEntity>()
-                .eq(MesProduceTaskEntity::getCode, report.getProduceTaskCode()));
-        if (produceTask == null) {
-            throw new CheckedException("报工对应工序任务不存在，不能同步质量数量");
-        }
+        MesProduceTaskEntity produceTask = source.process();
         BigDecimal before = nz(produceTask.getQualityReleasedNum());
         BigDecimal after = before.add(delta);
         LambdaUpdateWrapper<MesProduceTaskEntity> update = new LambdaUpdateWrapper<MesProduceTaskEntity>()
                 .eq(MesProduceTaskEntity::getId, produceTask.getId())
-                .eq(MesProduceTaskEntity::getQualityReleasedNum, before)
+                .eq(MesProduceTaskEntity::getTenantId, report.getTenantId())
+                .eq(MesProduceTaskEntity::getFactoryCode, report.getFactoryCode())
+                .eq(MesProduceTaskEntity::getTaskCode, report.getTaskCode())
+                .eq(MesProduceTaskEntity::getCode, report.getProduceTaskCode())
                 .set(MesProduceTaskEntity::getQualityReleasedNum, after);
+        if (produceTask.getQualityReleasedNum() == null) update.isNull(MesProduceTaskEntity::getQualityReleasedNum);
+        else update.eq(MesProduceTaskEntity::getQualityReleasedNum, before);
         boolean overlapReached = Boolean.TRUE.equals(produceTask.getOverlapEnabled())
                 && produceTask.getTransferBatchQuantity() != null
                 && before.compareTo(produceTask.getTransferBatchQuantity()) < 0
@@ -308,19 +486,22 @@ public class MesQualityQuantityServiceImpl implements MesQualityQuantityService 
         boolean finishReleased = MesProduceTaskStatusEnum.FINISH.name().equals(produceTask.getStatus())
                 && after.compareTo(nz(produceTask.getCompleteNum())) >= 0;
         if ((overlapReached || finishReleased) && produceTask.getTransferReleasedTime() == null) {
-            update.set(MesProduceTaskEntity::getTransferReleasedTime, LocalDateTime.now().plusMinutes(
-                    Objects.requireNonNullElse(produceTask.getTransferMinutes(), 0L)));
+            LocalDateTime releaseTime = LocalDateTime.now().plusMinutes(
+                    Objects.requireNonNullElse(produceTask.getTransferMinutes(), 0L));
+            update.set(MesProduceTaskEntity::getTransferReleasedTime, releaseTime);
+            produceTask.setTransferReleasedTime(releaseTime);
         }
         if (produceTaskMapper.update(null, update) != 1) {
             throw new CheckedException("工序质量放行数量已被其他业务更新，请重新同步");
         }
-        MesTaskArrangeEntity arrange = arrangeMapper.selectOne(new LambdaQueryWrapper<MesTaskArrangeEntity>()
-                .eq(MesTaskArrangeEntity::getCode, report.getArrangeCode()));
-        if (arrange != null && Boolean.TRUE.equals(arrange.getLastRoute())) {
+        produceTask.setQualityReleasedNum(after);
+        if (Boolean.TRUE.equals(arrange.getLastRoute())) {
             int taskUpdated = taskMapper.update(null, new LambdaUpdateWrapper<MesTaskEntity>()
+                    .eq(MesTaskEntity::getId, source.task().getId())
+                    .eq(MesTaskEntity::getTenantId, report.getTenantId())
                     .eq(MesTaskEntity::getFactoryCode, report.getFactoryCode())
                     .eq(MesTaskEntity::getCode, report.getTaskCode())
-                    .setSql("un_in_stock_num = COALESCE(un_in_stock_num, 0) + " + delta.toPlainString()));
+                    .setSql("un_in_stock_num = COALESCE(un_in_stock_num, 0) + {0}", delta));
             if (taskUpdated != 1) throw new CheckedException("末工序质量放行缺少唯一原工单，已回滚");
         }
     }
@@ -373,4 +554,16 @@ public class MesQualityQuantityServiceImpl implements MesQualityQuantityService 
     }
 
     private enum QuantityPart {RELEASED, PENDING, REJECTED}
+
+    private record EventApplication(Long recordId, Long eventId, java.util.Date time) {
+    }
+
+    private record QualitySource(MesTaskEntity task, MesProduceTaskEntity process) {
+    }
+
+    private record ReworkQuantities(Long qmsTaskId, BigDecimal usable, BigDecimal handled) {
+        BigDecimal rejected() {
+            return handled.subtract(usable);
+        }
+    }
 }

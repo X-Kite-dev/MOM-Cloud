@@ -4,21 +4,12 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
-import com.kitex.mom.mdm.entity.MdmCalendarEntity;
-import com.kitex.mom.mdm.entity.MdmChangeoverRuleEntity;
-import com.kitex.mom.mdm.entity.MdmClassesEntity;
-import com.kitex.mom.mdm.entity.MdmMaterialEntity;
-import com.kitex.mom.mdm.entity.MdmProcessRouteEntity;
-import com.kitex.mom.mdm.entity.MdmProductionLotPolicyEntity;
 import com.kitex.mom.mdm.dto.MdmChangeoverCatalogDTO;
 import com.kitex.mom.mdm.dto.MdmChangeoverCatalogQueryDTO;
-import com.kitex.mom.mdm.feign.RemoteCalendarService;
-import com.kitex.mom.mdm.feign.RemoteClassesService;
-import com.kitex.mom.mdm.feign.RemoteMaterialService;
-import com.kitex.mom.mdm.feign.RemoteMdmChangeoverService;
-import com.kitex.mom.mdm.feign.RemoteProcessRouteService;
-import com.kitex.mom.plan.dto.PlnMpsCapacityDTO;
+import com.kitex.mom.mdm.entity.*;
+import com.kitex.mom.mdm.feign.*;
 import com.kitex.mom.plan.dto.PlnMpsCapacityBalanceDTO;
+import com.kitex.mom.plan.dto.PlnMpsCapacityDTO;
 import com.kitex.mom.plan.entity.PlnMpsLineEntity;
 import com.kitex.mom.plan.entity.PlnMpsPolicyEntity;
 import lombok.RequiredArgsConstructor;
@@ -63,10 +54,12 @@ public class PlnMpsRccpService {
         assess(factoryCode, policy, candidates, true, Set.of());
     }
 
-    /** 剩余承诺只替代精确原桶，绝不扩大为整个产品需求。 */
+    /**
+     * 剩余承诺只替代精确原桶，绝不扩大为整个产品需求。
+     */
     public PlnMpsCapacityDTO.Preview previewRemaining(String factory, PlnMpsPolicyEntity policy,
-                                                     List<PlnMpsLineEntity> candidates, Long originalLineId,
-                                                     boolean enforcePolicy) {
+                                                      List<PlnMpsLineEntity> candidates, Long originalLineId,
+                                                      boolean enforcePolicy) {
         assess(factory, policy, candidates, enforcePolicy, Set.of(originalLineId));
         return previewResult(policy, candidates);
     }
@@ -151,7 +144,7 @@ public class PlnMpsRccpService {
             boolean overload = verified && (available.signum() == 0
                     ? after.signum() > 0
                     : after.multiply(BigDecimal.valueOf(100)).compareTo(
-                            available.multiply(maxLoadRate)) > 0);
+                    available.multiply(maxLoadRate)) > 0);
             String status = !verified ? "UNVERIFIED" : overload ? "OVERLOAD" : "PASS";
             String evaluationMessage = !basis.verified ? basis.message
                     : day == null || !day.verified ? "工作日历或班次能力不完整"
@@ -221,7 +214,9 @@ public class PlnMpsRccpService {
         }
     }
 
-    /** 复核时用当前活动承诺重新计算，任何RCCP证据漂移都要求退回重编。 */
+    /**
+     * 复核时用当前活动承诺重新计算，任何RCCP证据漂移都要求退回重编。
+     */
     public void verify(String factoryCode, PlnMpsPolicyEntity policy, List<PlnMpsLineEntity> lines) {
         Map<String, String> frozen = new LinkedHashMap<>();
         lines.forEach(line -> frozen.put(capacityLineKey(line), line.getCapacityEvidenceFingerprint()));
@@ -287,9 +282,9 @@ public class PlnMpsRccpService {
      * 两种策略都以6位数量精度分配，并在返回前再次运行RCCP验证。</p>
      */
     public PlnMpsCapacityBalanceDTO.Result balance(String factoryCode, PlnMpsPolicyEntity policy,
-                                                     List<PlnMpsLineEntity> candidates,
-                                                     LocalDate horizonStart, LocalDate horizonEnd,
-                                                     LocalDate freezeThrough) {
+                                                   List<PlnMpsLineEntity> candidates,
+                                                   LocalDate horizonStart, LocalDate horizonEnd,
+                                                   LocalDate freezeThrough) {
         PlnMpsCapacityDTO.Preview original = preview(policy, candidates);
         PlnMpsLotSizingService.Catalog lotCatalog = lotSizingService.load(factoryCode,
                 candidates.stream().map(PlnMpsLineEntity::getProductCode).toList());
@@ -410,7 +405,9 @@ public class PlnMpsRccpService {
                 lotCatalog.productsWithoutPolicy(), lotCatalog.evidenceFingerprint(), messages);
     }
 
-    /** 未启用RCCP时只做批量整形，不借用未知产能，也不改变计划日期。 */
+    /**
+     * 未启用RCCP时只做批量整形，不借用未知产能，也不改变计划日期。
+     */
     private PlnMpsCapacityBalanceDTO.Proposal lotSizingProposal(
             List<PlnMpsLineEntity> candidates, PlnMpsLotSizingService.Catalog catalog) {
         List<Allocation> allocations = new ArrayList<>();
@@ -470,9 +467,9 @@ public class PlnMpsRccpService {
     private boolean sameShape(List<PlnMpsLineEntity> before, List<Allocation> after) {
         if (before.size() != after.size()) return false;
         List<String> beforeShape = before.stream().map(item -> normalized(item.getPlanQuantity())
-                        + "@" + item.getPlannedDate()).sorted().toList();
+                + "@" + item.getPlannedDate()).sorted().toList();
         List<String> afterShape = after.stream().map(item -> normalized(item.quantity)
-                        + "@" + item.date).sorted().toList();
+                + "@" + item.date).sorted().toList();
         return beforeShape.equals(afterShape);
     }
 
@@ -605,7 +602,8 @@ public class PlnMpsRccpService {
                         .map(PlnMpsCapacityDTO.Line::getEvidenceFingerprint).toList())));
         String explanation = switch (strategy) {
             case "MIN_CHANGE_FORWARD" -> "按MRP优先级保留原计划日可容纳数量，超出部分只向后续可信工作日顺延";
-            case "QUALIFIED_RESOURCE_BALANCE" -> "优先保留默认产线和原计划日；容量不足时仅在产品已启用工艺路线对应的合格产线间分配，再向后续可信工作日顺延";
+            case "QUALIFIED_RESOURCE_BALANCE" ->
+                    "优先保留默认产线和原计划日；容量不足时仅在产品已启用工艺路线对应的合格产线间分配，再向后续可信工作日顺延";
             default -> "按MRP优先级和原交期，从冻结区后的最早可信工作日装载，允许提前以降低延期风险";
         };
         return new PlnMpsCapacityBalanceDTO.Proposal().setStrategy(strategy).setStrategyName(strategyName)
@@ -624,7 +622,7 @@ public class PlnMpsRccpService {
      * 未配置批量策略的产品保持原时间桶，避免在灰度上线期间改变旧逻辑。
      */
     private List<PlnMpsLineEntity> allocationSources(List<PlnMpsLineEntity> candidates,
-                                                      Map<String, MdmProductionLotPolicyEntity> policies) {
+                                                     Map<String, MdmProductionLotPolicyEntity> policies) {
         Map<Long, List<PlnMpsLineEntity>> grouped = candidates.stream().collect(Collectors.groupingBy(
                 PlnMpsLineEntity::getDemandId, LinkedHashMap::new, Collectors.toList()));
         List<PlnMpsLineEntity> result = new ArrayList<>();
@@ -722,7 +720,7 @@ public class PlnMpsRccpService {
     }
 
     private Map<String, MdmMaterialEntity> loadMaterials(List<PlnMpsLineEntity> candidates,
-                                                          List<PlnMpsLineEntity> active) {
+                                                         List<PlnMpsLineEntity> active) {
         List<String> codes = productCodes(candidates, active);
         if (codes.isEmpty()) return Map.of();
         Map<String, MdmMaterialEntity> result = new LinkedHashMap<>();
@@ -801,9 +799,11 @@ public class PlnMpsRccpService {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
-    /** 返回默认资源优先、资源编码稳定排序的合格路线能力，供建议算法显式换线。 */
+    /**
+     * 返回默认资源优先、资源编码稳定排序的合格路线能力，供建议算法显式换线。
+     */
     private List<CapacityBasis> alternativeBases(PlnMpsLineEntity line, RouteCatalog routes,
-                                                   CapacityBasis defaultBasis) {
+                                                 CapacityBasis defaultBasis) {
         List<CapacityBasis> result = routes.qualified.getOrDefault(line.getProductCode(), List.of()).stream()
                 .filter(route -> sameFactory(line.getFactoryCode(), route.getFactoryCode()))
                 .map(route -> routeBasis(line, route, Objects.equals(route.getProductLineCode(),
@@ -820,8 +820,8 @@ public class PlnMpsRccpService {
      * 读取产线级换型目录。工位、设备和工装规则属于APS细排，不能在MPS日期桶中重复扣减。
      */
     private LineChangeoverCatalog loadLineChangeoverCatalog(String factoryCode,
-                                                             List<PlnMpsLineEntity> candidates,
-                                                             List<PlnMpsLineEntity> active) {
+                                                            List<PlnMpsLineEntity> candidates,
+                                                            List<PlnMpsLineEntity> active) {
         List<LocalDate> candidateDates = new ArrayList<>();
         candidates.stream().map(PlnMpsLineEntity::getPlannedDate).filter(Objects::nonNull).forEach(candidateDates::add);
         active.stream().filter(this::currentQuantityBasis).map(this::changeoverDate)
@@ -964,7 +964,7 @@ public class PlnMpsRccpService {
     }
 
     private ChangeoverResolution resolveLineChangeover(LineChangeoverCatalog catalog, String resource,
-                                                        String fromFamily, String toFamily, LocalDate date) {
+                                                       String fromFamily, String toFamily, LocalDate date) {
         if (date == null) return ChangeoverResolution.unverified("候选缺少计划日期，无法匹配产线换型规则");
         LocalDateTime effectiveAt = date.atStartOfDay();
         List<MdmChangeoverRuleEntity> matched = catalog.rules.stream()
@@ -994,13 +994,17 @@ public class PlnMpsRccpService {
         return basis != null && basis.verified && Objects.equals(resource, basis.resourceCode);
     }
 
-    /** 仅当前有效余额重算速率/换型，原冻结活动量及批准预留保持原依据。 */
+    /**
+     * 仅当前有效余额重算速率/换型，原冻结活动量及批准预留保持原依据。
+     */
     private boolean currentQuantityBasis(PlnMpsLineEntity line) {
         return Set.of("REMAINING_CURRENT", "ORIGINAL_OVERDUE_CURRENT").contains(
                 StrUtil.blankToDefault(line.getCapacityResponsibilityType(), "ORIGINAL"));
     }
 
-    /** 逾期未完成量从今日起装载，匹配当前生效换型规则；原计划日仍保留供审计。 */
+    /**
+     * 逾期未完成量从今日起装载，匹配当前生效换型规则；原计划日仍保留供审计。
+     */
     private LocalDate changeoverDate(PlnMpsLineEntity line) {
         LocalDate date = line.getPlannedDate();
         return currentQuantityBasis(line) && date != null && date.isBefore(LocalDate.now()) ? LocalDate.now() : date;
@@ -1119,8 +1123,8 @@ public class PlnMpsRccpService {
     }
 
     private CapacityBasis frozenOrResolvedBasis(PlnMpsLineEntity line,
-                                                 Map<String, MdmMaterialEntity> materials,
-                                                 RouteCatalog routes) {
+                                                Map<String, MdmMaterialEntity> materials,
+                                                RouteCatalog routes) {
         if (StrUtil.isNotBlank(line.getCapacityResourceCode())
                 && line.getCapacityDemandMinutes() != null && line.getCapacityDemandMinutes().signum() > 0
                 && Boolean.TRUE.equals(line.getCapacityVerified())) {

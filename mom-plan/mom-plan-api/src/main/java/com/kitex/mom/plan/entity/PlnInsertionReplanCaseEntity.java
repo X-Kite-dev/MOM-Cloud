@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** 一张紧急计划与被挤占计划共同形成的联合局部重排案件。 */
+/**
+ * 一张紧急计划与被挤占计划共同形成的联合局部重排案件。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -67,7 +69,9 @@ public class PlnInsertionReplanCaseEntity extends BaseEntity<PlnInsertionReplanC
     private String applicantName;
     private LocalDateTime proposedTime;
     private LocalDateTime expiresTime;
-    /** PROPOSED、SELECTED、SUPERSEDED、STALE、PUBLISHED、EXPIRED、CANCELLED、ROLLED_BACK。 */
+    /**
+     * PROPOSED、SELECTED、SUPERSEDED、STALE、PUBLISHED、EXPIRED、CANCELLED、ROLLED_BACK。
+     */
     private String status;
     private String publishRequestId;
     private String publisherCode;

@@ -5,13 +5,16 @@ import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyDTO;
+import com.kitex.mom.mdm.enums.ProductionOrderSyncModeEnum;
 import com.kitex.mom.mdm.feign.RemoteMdmFactoryPlanningPolicyService;
 import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
 import com.kitex.mom.plan.dto.PlnFormalPlanContractDTO;
+import com.kitex.mom.plan.dto.PlnFormalPlanMakeCoverage;
 import com.kitex.mom.plan.feign.RemotePlanFormalContractService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.Objects;
 
 /**
@@ -27,8 +30,20 @@ public class MesFormalPlanReceiptVerifier {
     private final RemoteMdmFactoryPlanningPolicyService planningPolicyService;
     private final RemotePlanFormalContractService formalContractService;
 
-    /** 校验成功才允许 MesTaskService 创建或幂等返回工单。 */
-    public void verify(MesTaskReceiveDTO receive) {
+    private static boolean isFingerprint(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new CheckedException(message);
+        }
+    }
+
+    /**
+     * 校验成功才允许 MesTaskService 创建或幂等返回工单。
+     */
+    public VerifiedReceipt verify(MesTaskReceiveDTO receive) {
         require(receive != null && StrUtil.isNotBlank(receive.getFactoryCode()),
                 "MES接单缺少工厂编码");
         String requestFactory = receive.getFactoryCode().trim();
@@ -56,6 +71,8 @@ public class MesFormalPlanReceiptVerifier {
                         && Objects.equals(receive.getMrpAuthority(), policy.getMrpAuthority())
                         && Objects.equals(receive.getProductionOrderSyncMode(), policy.getProductionOrderSyncMode()),
                 "MES接单携带的工厂计划权威已失效");
+        require(ProductionOrderSyncModeEnum.isValid(policy.getProductionOrderSyncMode()),
+                "MES接单的生产订单执行模式不可核验");
 
         R<PlnFormalPlanContractDTO> contractResponse = formalContractService.verified(
                 receive.getFormalPlanContractNo(), receive.getFormalPlanContractVersion());
@@ -74,13 +91,17 @@ public class MesFormalPlanReceiptVerifier {
                 .filter(item -> Objects.equals(String.valueOf(receive.getFormalPlanContractId()), item.getId()))
                 .filter(item -> "MAKE".equals(item.getSupplyType()))
                 .findFirst().orElseThrow(() -> new CheckedException("MES接单引用的正式合同自制行不存在"));
+        PlnFormalPlanMakeCoverage coverage = PlnFormalPlanMakeCoverage.resolve(contract,
+                line.getSourceDemandNo(), receive.getMatCode());
+        require(coverage.contains(receive.getFormalPlanContractId()), "合同代表行不属于本次来源需求及产品");
+        BigDecimal limit = coverage.quantity();
         require(Objects.equals(line.getProductCode(), receive.getMatCode())
                         && receive.getNoticeNum() != null && receive.getNoticeNum().signum() > 0
                         && receive.getProductionOrderQuantity() != null
                         && receive.getProductionOrderQuantity().signum() > 0
-                        && line.getPlannedQuantity() != null
+                        && limit != null
                         && receive.getNoticeNum().compareTo(receive.getProductionOrderQuantity()) <= 0
-                        && receive.getProductionOrderQuantity().compareTo(line.getPlannedQuantity()) <= 0,
+                        && receive.getProductionOrderQuantity().compareTo(limit) <= 0,
                 "MES工单产品或数量超出正式计划合同");
         if ("ERP_ORDER_REQUIRED".equals(policy.getProductionOrderSyncMode())) {
             require(StrUtil.isNotBlank(line.getErpProductionOrderNo())
@@ -90,16 +111,23 @@ public class MesFormalPlanReceiptVerifier {
         } else {
             require(StrUtil.isNotBlank(receive.getProductionOrder()),
                     "MOM订单执行模式必须生成稳定的本地生产订单号");
+            if (ProductionOrderSyncModeEnum.isLocalOnly(policy.getProductionOrderSyncMode())) {
+                require("MOM_MRP".equals(policy.getMrpAuthority())
+                                && "MOM".equals(contract.getSourceSystemCode())
+                                && StrUtil.isBlank(policy.getErpSystemCode())
+                                && StrUtil.isBlank(policy.getExternalFactoryCode())
+                                && StrUtil.isBlank(coverage.erpProductionOrderNo())
+                                && StrUtil.isBlank(receive.getErpProductionOrderNo()),
+                        "MOM独立执行不能混用ERP映射或ERP生产订单");
+            }
         }
+        return new VerifiedReceipt(contract, coverage, line);
     }
 
-    private static boolean isFingerprint(String value) {
-        return value != null && value.matches("[0-9a-f]{64}");
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new CheckedException(message);
-        }
+    /**
+     * 合同读取已校验；数量占用仍须在接收事务的合同锁内按物理工单重新核对。
+     */
+    public record VerifiedReceipt(PlnFormalPlanContractDTO contract, PlnFormalPlanMakeCoverage coverage,
+                                  PlnFormalPlanContractDTO.Line representative) {
     }
 }

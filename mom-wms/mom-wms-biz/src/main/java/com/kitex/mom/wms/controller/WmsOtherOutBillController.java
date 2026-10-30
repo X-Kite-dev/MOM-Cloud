@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * 其他出库单
@@ -45,7 +46,8 @@ public class WmsOtherOutBillController {
     private final String billType = OutBillTypeEnum.OTHER_OUT.getCode();
 
     // 其他出库所有类型，查询列表时的条件
-    private final List<String> otherBillTypes = Arrays.stream(OtherOutBillTypeEnum.values()).map(OtherOutBillTypeEnum::getCode).toList();
+    private final List<String> otherBillTypes = Stream.concat(Stream.of(billType),
+            Arrays.stream(OtherOutBillTypeEnum.values()).map(OtherOutBillTypeEnum::getCode)).toList();
 
     /**
      * 分页查询
@@ -86,7 +88,7 @@ public class WmsOtherOutBillController {
                 .like(StrUtil.isNotBlank(wmsOutBill.getNoticeId()), WmsOutBillEntity::getNoticeId, wmsOutBill.getNoticeId())
                 .eq(StrUtil.isNotBlank(wmsOutBill.getWarehouseCode()), WmsOutBillEntity::getWarehouseCode, wmsOutBill.getWarehouseCode())
                 .like(StrUtil.isNotBlank(wmsOutBill.getCreateBy()), WmsOutBillEntity::getCreateBy, wmsOutBill.getCreateBy())
-                .in(StrUtil.isBlank(wmsOutBill.getBillType()), WmsOutBillEntity::getBillType, otherBillTypes)
+                .in(WmsOutBillEntity::getBillType, otherBillTypes)
                 .eq(StrUtil.isNotBlank(wmsOutBill.getBillType()), WmsOutBillEntity::getBillType, wmsOutBill.getBillType());
         return wrapper;
     }

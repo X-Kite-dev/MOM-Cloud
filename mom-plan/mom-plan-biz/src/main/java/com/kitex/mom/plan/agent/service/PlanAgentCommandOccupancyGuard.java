@@ -28,7 +28,9 @@ public class PlanAgentCommandOccupancyGuard {
         this.pms = pms;
     }
 
-    /** true只表示相关真实领域明确查无原请求，旧业务号占用不允许创建新意图冒认旧回执。 */
+    /**
+     * true只表示相关真实领域明确查无原请求，旧业务号占用不允许创建新意图冒认旧回执。
+     */
     public boolean absent(PlanAgentCommandCodec.Frozen frozen, String factory) {
         Long tenant = TenantContextHolder.getTenantId();
         require(tenant != null && tenant > 0, "永久号占用核查缺少实际租户");
@@ -70,9 +72,9 @@ public class PlanAgentCommandOccupancyGuard {
 
     private boolean remoteAbsent(R<Map<String, String>> response, String factory, String request, String domain) {
         require(response != null && response.isOk() && response.getData() != null
-                && factory.equals(response.getData().get("factoryCode"))
-                && request.equals(response.getData().get("requestId"))
-                && ("ABSENT".equals(response.getData().get("status")) || "EXISTS".equals(response.getData().get("status"))),
+                        && factory.equals(response.getData().get("factoryCode"))
+                        && request.equals(response.getData().get("requestId"))
+                        && ("ABSENT".equals(response.getData().get("status")) || "EXISTS".equals(response.getData().get("status"))),
                 domain + "原永久号（含删除历史）尚不可权威核实");
         return "ABSENT".equals(response.getData().get("status"));
     }

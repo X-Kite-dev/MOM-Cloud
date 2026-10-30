@@ -3,6 +3,7 @@ package com.kitex.mom.wms.service.impl;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
@@ -18,12 +19,14 @@ import com.kitex.mom.wms.mapper.WmsLiveStockMapper;
 import com.kitex.mom.wms.mapper.WmsQualityStatusOperationMapper;
 import com.kitex.mom.wms.service.WmsMaterialReservationService;
 import com.kitex.mom.wms.service.WmsQualityStatusService;
+import com.kitex.mom.wms.util.WmsSerialStockGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -119,6 +122,9 @@ public class WmsQualityStatusServiceImpl
         BigDecimal actual = BigDecimal.ZERO;
         for (WmsLiveStockEntity stock : stocks) {
             require(Objects.equals(stock.getQualityHoldNo(), operation.getHoldNo()), "库存行不再属于当前隔离单");
+            require(Objects.equals(stock.getQualitySourceType(), operation.getSourceType())
+                            && Objects.equals(stock.getQualitySourceId(), operation.getSourceId()),
+                    "库存行已转由其他质量案件处理，不能凭原隔离单执行实物出库");
             require((operation.getAction() + "_PENDING").equals(stock.getQualityStatus()),
                     "库存行质量状态与待执行动作不一致");
             require(reservationService.activeReservedNum(stock.getId()).signum() == 0,
@@ -159,11 +165,14 @@ public class WmsQualityStatusServiceImpl
 
         BigDecimal remaining = operation.getRequestedQuantity();
         List<Long> affectedIds = new ArrayList<>();
+        List<Long> remainderIds = new ArrayList<>();
+        List<Map<String, String>> splitLinks = new ArrayList<>();
         for (WmsLiveStockEntity stock : stocks) {
             if (remaining.signum() <= 0) break;
             BigDecimal before = quantity(stock);
             if (before.signum() == 0) continue;
             BigDecimal take = before.min(remaining);
+            WmsSerialStockGuard.requireWhole(stock, take);
             if (before.compareTo(take) > 0) {
                 WmsLiveStockEntity remainder = new WmsLiveStockEntity();
                 BeanUtil.copyProperties(stock, remainder);
@@ -172,6 +181,12 @@ public class WmsQualityStatusServiceImpl
                 remainder.setMatNum(exactDouble(remainderQuantity));
                 require(liveStockMapper.insert(remainder) == 1, "质量库存拆分余量保存失败");
                 assertStoredQuantity(remainder.getId(), remainderQuantity);
+                remainderIds.add(remainder.getId());
+                Map<String, String> splitLink = new LinkedHashMap<>();
+                splitLink.put("parentStockId", String.valueOf(stock.getId()));
+                splitLink.put("remainderStockId", String.valueOf(remainder.getId()));
+                splitLink.put("remainderQuantity", remainderQuantity.stripTrailingZeros().toPlainString());
+                splitLinks.add(splitLink);
             }
             stock.setMatNum(exactDouble(take));
             applyState(stock, operation);
@@ -183,12 +198,24 @@ public class WmsQualityStatusServiceImpl
         require(remaining.signum() == 0, "质量库存处置数量不守恒，已回滚");
         operation.setAffectedQuantity(operation.getRequestedQuantity())
                 .setAffectedStockIds(affectedIds.stream().map(String::valueOf).collect(Collectors.joining(",")))
+                .setSplitRecorded(true)
+                .setSplitRemainderStockIds(remainderIds.isEmpty() ? null
+                        : remainderIds.stream().map(String::valueOf).collect(Collectors.joining(",")))
+                .setSplitLineageJson(JSONUtil.toJsonStr(splitLinks))
+                .setSplitRecordedAt(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS))
                 .setStatus(TERMINAL_PHYSICAL_ACTIONS.contains(operation.getAction()) ? "ACTION_PENDING" : "SUCCESS")
                 .setResultMessage(message(operation));
         require(updateById(operation), "质量库存操作结果保存失败");
         var persisted = getById(operation.getId());
         require(persisted != null && persisted.getAffectedQuantity() != null
-                && persisted.getAffectedQuantity().compareTo(operation.getAffectedQuantity()) == 0, "质量库存影响量发生精度舍入，已回滚");
+                        && persisted.getAffectedQuantity().compareTo(operation.getAffectedQuantity()) == 0,
+                "质量库存影响量发生精度舍入，已回滚");
+        require(Boolean.TRUE.equals(persisted.getSplitRecorded())
+                        && Objects.equals(StrUtil.nullToEmpty(persisted.getSplitRemainderStockIds()),
+                        StrUtil.nullToEmpty(operation.getSplitRemainderStockIds()))
+                        && Objects.equals(persisted.getSplitLineageJson(), operation.getSplitLineageJson())
+                        && Objects.equals(persisted.getSplitRecordedAt(), operation.getSplitRecordedAt()),
+                "质量库存拆分去向未完整保存，已回滚");
         return result(operation);
     }
 
@@ -201,6 +228,8 @@ public class WmsQualityStatusServiceImpl
                                                 .and(quality -> quality.eq(WmsLiveStockEntity::getQualityStatus, "PENDING")
                                                         .or().eq(WmsLiveStockEntity::getIsQualityTest, "1")))))
                         .or(rehold -> rehold.eq(WmsLiveStockEntity::getQualityHoldNo, operation.getHoldNo())
+                                .eq(WmsLiveStockEntity::getQualitySourceType, operation.getSourceType())
+                                .eq(WmsLiveStockEntity::getQualitySourceId, operation.getSourceId())
                                 .in(WmsLiveStockEntity::getQualityStatus, "HOLD", "REWORK", "QUALIFIED",
                                         "CONCESSION", "SCRAP_PENDING", "RETURN_PENDING")))
                 .orderByAsc(WmsLiveStockEntity::getInTime).orderByAsc(WmsLiveStockEntity::getId)
@@ -213,6 +242,8 @@ public class WmsQualityStatusServiceImpl
         return liveStockMapper.selectList(scope(operation)
                 .eq(WmsLiveStockEntity::getStatus, 1)
                 .eq(WmsLiveStockEntity::getQualityHoldNo, operation.getHoldNo())
+                .eq(WmsLiveStockEntity::getQualitySourceType, operation.getSourceType())
+                .eq(WmsLiveStockEntity::getQualitySourceId, operation.getSourceId())
                 .in(WmsLiveStockEntity::getQualityStatus, ACTIVE_HOLD_STATUS)
                 .orderByAsc(WmsLiveStockEntity::getInTime).orderByAsc(WmsLiveStockEntity::getId)
                 .last("FOR UPDATE"));

@@ -5,13 +5,7 @@ import com.kitex.mom.plan.agent.service.OmsAgentProjectService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 /**
  * 项目订单归属的权威业务入口，人工编制与审核分离。
@@ -26,7 +20,7 @@ public class OmsAgentProjectController {
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('agent:project:view')")
     public R<?> page(@RequestParam(defaultValue = "1") long current, @RequestParam(defaultValue = "20") long size,
-            @RequestParam(required = false) String projectCode, @RequestParam(required = false) String status) {
+                     @RequestParam(required = false) String projectCode, @RequestParam(required = false) String status) {
         return R.ok(service.page(current, size, projectCode, status));
     }
 

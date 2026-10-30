@@ -8,12 +8,10 @@ import com.kitex.common.security.service.MomUser;
 import com.kitex.mom.plan.constant.PlanStatusEnum;
 import com.kitex.mom.plan.dto.PlnDemandReplanEvidenceDTO;
 import com.kitex.mom.plan.entity.PlanMatMrpEntity;
-import com.kitex.mom.plan.entity.PlnIssueEntity;
 import com.kitex.mom.plan.entity.PlnMpsLineEntity;
 import com.kitex.mom.plan.entity.PlnMpsVersionEntity;
 import com.kitex.mom.plan.entity.PlnProductDemandEntity;
 import com.kitex.mom.plan.mapper.PlanMatMrpMapper;
-import com.kitex.mom.plan.mapper.PlnIssueMapper;
 import com.kitex.mom.plan.mapper.PlnMpsLineMapper;
 import com.kitex.mom.plan.mapper.PlnMpsVersionMapper;
 import com.kitex.mom.plan.mapper.PlnProductDemandMapper;
@@ -26,14 +24,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 已批准 MPS 滚动版本的跨模块执行器。
@@ -49,14 +40,17 @@ public class PlnMpsRevisionExecutor {
     private final PlnMpsLineMapper lineMapper;
     private final PlnProductDemandMapper demandMapper;
     private final PlanMatMrpMapper mrpMapper;
-    private final PlnIssueMapper issueMapper;
+    private final PlnMpsRootPlanService rootPlans;
+    private final PlnQualitySupplementPlanningProjector supplementPlanning;
     private final PlnDemandReplanCoordinator replanCoordinator;
     private final PlnProductDemandService demandService;
     private final PlnMpsService mpsService;
     private final PlnMpsCapacityPublicationLock publicationLock;
     private final PlatformTransactionManager transactionManager;
 
-    /** 执行已批准版本；失败时返回持久化的 FAILED 回执而不是丢失原申请。 */
+    /**
+     * 执行已批准版本；失败时返回持久化的 FAILED 回执而不是丢失原申请。
+     */
     public PlnMpsVersionEntity execute(Long versionId) {
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
         try {
@@ -96,10 +90,10 @@ public class PlnMpsRevisionExecutor {
             PlnMpsLineEntity representative = demandLines.get(0);
             require(demandLines.stream().allMatch(line ->
                             Objects.equals(line.getRevisionMode(), representative.getRevisionMode())
-                            && Objects.equals(line.getDownstreamEvidenceFingerprint(),
-                            representative.getDownstreamEvidenceFingerprint())
-                            && Objects.equals(line.getDownstreamEvidenceSnapshot(),
-                            representative.getDownstreamEvidenceSnapshot())),
+                                    && Objects.equals(line.getDownstreamEvidenceFingerprint(),
+                                    representative.getDownstreamEvidenceFingerprint())
+                                    && Objects.equals(line.getDownstreamEvidenceSnapshot(),
+                                    representative.getDownstreamEvidenceSnapshot())),
                     "同一需求的MPS桶下游证据不一致：" + representative.getDemandNo());
             PlnDemandReplanEvidenceDTO.Receipt receipt = replanCoordinator.execute(
                     representative.getDownstreamEvidenceSnapshot(), executionKey(version, representative),
@@ -123,13 +117,18 @@ public class PlnMpsRevisionExecutor {
                 supersededVersions.add(old.getVersionId());
             }
             for (PlnMpsLineEntity line : entry.getValue()) {
-            line.setPending(false).setActive(true);
+                line.setPending(false).setActive(true);
                 require(lineMapper.updateById(line) == 1,
                         "新MPS活动桶发布失败：" + line.getDemandNo() + "#" + line.getBucketNo());
-                createRootIssue(line);
+                PlnProductDemandEntity demand = requireDemand(line.getDemandId(), false);
+                if (!supplementPlanning.isStaged(demand)) rootPlans.create(line, demand);
             }
         }
 
+        // 仍在同一未提交事务内：新活动桶已就位，正常MRP门禁必须读到已发布版本。
+        // 任一后续失败均回滚到APPROVED，再由独立失败事务记录FAILED。
+        version.setStatus("PUBLISHED").setPublishedTime(LocalDateTime.now());
+        require(versionMapper.updateById(version) == 1, "MPS事务内发布状态保存失败");
         if (!replanDemandIds.isEmpty()) {
             R<?> response = demandService.mrp(replanDemandIds.toArray(Long[]::new));
             require(response != null && response.isOk(), "MPS修订后的MRP重算失败");
@@ -215,38 +214,6 @@ public class PlnMpsRevisionExecutor {
                 .orderByAsc(PlnMpsLineEntity::getId);
         if (lock) query.last("FOR UPDATE");
         return lineMapper.selectList(query);
-    }
-
-    /** 每个活动MPS桶形成一条独立根生产计划，APS和MES继续以计划ID/唯一计划号下钻。 */
-    private void createRootIssue(PlnMpsLineEntity line) {
-        PlnIssueEntity existing = issueMapper.selectOne(new LambdaQueryWrapper<PlnIssueEntity>()
-                .eq(PlnIssueEntity::getMpsLineId, line.getId())
-                .eq(PlnIssueEntity::getType, "issue").last("LIMIT 1"));
-        if (existing != null) {
-            require(Objects.equals(existing.getPlanningSourceKey(), line.getBucketKey())
-                            && existing.getNum() != null
-                            && existing.getNum().compareTo(line.getPlanQuantity()) == 0,
-                    "MPS桶已存在载荷不一致的根生产计划：" + line.getBucketKey());
-            return;
-        }
-        PlnProductDemandEntity demand = requireDemand(line.getDemandId(), false);
-        PlnIssueEntity issue = new PlnIssueEntity();
-        issue.setIssueNo("MPS-" + line.getId());
-        issue.setSourceDemandNo(demand.getDemandNo());
-        issue.setPlanningSourceKey(line.getBucketKey());
-        issue.setMpsLineId(line.getId());
-        issue.setCustomerCode(demand.getCustomerCode());
-        issue.setCustomerName(demand.getCustomerName());
-        issue.setProductCode(demand.getProductCode());
-        issue.setProductName(demand.getProductName());
-        issue.setSpecificationModel(demand.getSpecification());
-        issue.setNum(line.getPlanQuantity());
-        issue.setIssueTime(LocalDateTime.now());
-        issue.setDemandTime(line.getPlannedDate());
-        issue.setStatus("0");
-        issue.setType("issue");
-        issue.setFactoryCode(line.getFactoryCode());
-        require(issueMapper.insert(issue) == 1, "MPS桶根生产计划创建失败：" + line.getBucketKey());
     }
 
     private PlnProductDemandEntity requireDemand(Long id, boolean lock) {

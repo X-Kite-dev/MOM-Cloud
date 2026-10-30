@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** WMS销售退货实收事实OMS永久收件箱。 */
+/**
+ * WMS销售退货实收事实OMS永久收件箱。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

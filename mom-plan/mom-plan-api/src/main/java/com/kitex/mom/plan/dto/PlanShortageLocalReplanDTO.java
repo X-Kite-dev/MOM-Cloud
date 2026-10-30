@@ -1,8 +1,8 @@
 package com.kitex.mom.plan.dto;
 
+import com.kitex.mom.plan.entity.PlnSchedulingScenarioEntity;
 import com.kitex.mom.plan.entity.PlnShortageReplanCaseEntity;
 import com.kitex.mom.plan.entity.PlnShortageReplanLineEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingScenarioEntity;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;

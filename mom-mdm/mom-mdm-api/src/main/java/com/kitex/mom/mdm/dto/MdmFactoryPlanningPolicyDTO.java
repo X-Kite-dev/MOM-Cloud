@@ -5,7 +5,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/** 对外返回的工厂计划协同策略；雪花主键使用字符串避免浏览器精度损失。 */
+/**
+ * 对外返回的工厂计划协同策略；雪花主键使用字符串避免浏览器精度损失。
+ */
 @Data
 @Schema(description = "工厂计划协同策略版本")
 public class MdmFactoryPlanningPolicyDTO {
@@ -31,4 +33,6 @@ public class MdmFactoryPlanningPolicyDTO {
     private String publishedBy;
     private LocalDateTime publishedTime;
     private String activationFailureReason;
+    @Schema(description = "首次启用时冻结的新合同范围及影响证据JSON")
+    private String initialActivationSnapshot;
 }

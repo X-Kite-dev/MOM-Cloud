@@ -28,6 +28,15 @@ import java.time.LocalDateTime;
 @Schema(description = "入库单明细")
 public class WmsInBillDetailEntity extends BaseEntity<WmsInBillDetailEntity> {
 
+    @Schema(description = "库存货权：OWNED/CUSTOMER_SUPPLIED/CONSIGNED")
+    private String stockOwnerType;
+
+    @Schema(description = "客供客户或寄售供应商编码")
+    private String stockOwnerCode;
+
+    @Schema(description = "来源业务单号")
+    private String sourceBusinessNo;
+
     @Schema(description = "来源采购订单号")
     private String sourceOrderNo;
 

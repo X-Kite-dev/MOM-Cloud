@@ -6,9 +6,9 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.kitex.mom.mdm.dto.MdmProcessParameterStandardDTO;
 import com.kitex.mom.mes.agent.dto.MesWorkOrderKnowledgeDTO;
 import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mdm.dto.MdmProcessParameterStandardDTO;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -19,14 +19,7 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Map;
-import java.util.LinkedHashMap;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 有界解析MES保存的原始快照；绝不查询当前MDM补写历史。
@@ -34,7 +27,9 @@ import java.util.Set;
  */
 @Component
 public class MesWorkOrderKnowledgeSnapshotCodec {
-    /** 单份原JSON及最终派生投影各自的UTF8字节上限。 */
+    /**
+     * 单份原JSON及最终派生投影各自的UTF8字节上限。
+     */
     public static final int MAX_BYTES = 2 * 1024 * 1024;
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private static final Set<String> DATA_TYPES = Set.of("DECIMAL", "INTEGER");
@@ -44,14 +39,57 @@ public class MesWorkOrderKnowledgeSnapshotCodec {
     public MesWorkOrderKnowledgeSnapshotCodec(ObjectMapper mapper) {
         // 不修改共享Mapper；旧Hutool快照的数值Long和decimal不能经double再投影。
         json = mapper.copy().enable(DeserializationFeature.USE_BIG_INTEGER_FOR_INTS,
-                DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS,
-                DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                        DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS,
+                        DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                 .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
         json.setNodeFactory(JsonNodeFactory.withExactBigDecimals(true));
     }
 
     /**
+     * 原UTF8字节摘要，不重新序列化数字、空字段或日期。
+     */
+    public static String sha256(String raw) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("无法计算原快照SHA256", impossible);
+        }
+    }
+
+    /**
+     * 精确快照引用；调用方不能把本次观察摘要标成持久防篡改证明。
+     */
+    public static String proofRef(String base, String kind, String hash) {
+        return base + "/snapshot/" + kind + "/" + hash;
+    }
+
+    private static MesWorkOrderKnowledgeDTO.SnapshotProof missing(String kind) {
+        return new MesWorkOrderKnowledgeDTO.SnapshotProof(kind, "MISSING", null, "NONE", null);
+    }
+
+    private static String blankToNull(String value) {
+        return StringUtils.hasText(value) ? value : null;
+    }
+
+    private static String plain(BigDecimal value) {
+        return value == null ? null : value.toPlainString();
+    }
+
+    private static void require(boolean valid, String gap) {
+        if (!valid) {
+            throw new SnapshotFailure("INVALID_SNAPSHOT", gap);
+        }
+    }
+
+    private static void bound(boolean valid, String gap) {
+        if (!valid) {
+            throw new SnapshotFailure("OVERSIZED", gap);
+        }
+    }
+
+    /**
      * 解析原工单三类冻结快照，校验参数原保存SHA及路线归属，再派生有界知识。
+     *
      * @param task 从同一只读快照取得的MES工单
      * @param base 由已核租户、工厂及原工单主键组成的来源根引用
      * @return 已验证的原快照证明、工序、参数与缺口；不含任意原JSON或URL
@@ -116,7 +154,7 @@ public class MesWorkOrderKnowledgeSnapshotCodec {
     }
 
     private List<MesWorkOrderKnowledgeDTO.Process> processes(JsonNode route, String factory, String routeRef,
-                                                            List<String> gaps, boolean nodeProtocol) {
+                                                             List<String> gaps, boolean nodeProtocol) {
         List<MesWorkOrderKnowledgeDTO.Process> result = new ArrayList<>();
         Set<String> codes = new HashSet<>();
         int sopCount = 0;
@@ -179,7 +217,7 @@ public class MesWorkOrderKnowledgeSnapshotCodec {
         boolean available = raw.path("available").booleanValue();
         String contentSchema = text(raw, "contentSchemaVersion", 40, nodeProtocol && available);
         require(contentSchema == null || MdmProcessParameterStandardDTO.LEGACY_PROCESS_V1.equals(contentSchema)
-                || (nodeProtocol && MdmProcessParameterStandardDTO.NODE_V2.equals(contentSchema)),
+                        || (nodeProtocol && MdmProcessParameterStandardDTO.NODE_V2.equals(contentSchema)),
                 "原参数内容协议与冻结协议不一致");
         String routeId = id(raw, "processRouteId", true);
         String routeCode = text(raw, "routeCode", 100, true);
@@ -205,7 +243,7 @@ public class MesWorkOrderKnowledgeSnapshotCodec {
         bound(rows.size() <= 500, "冻结参数超过500项");
         if (!available) {
             require(standardId == null && no == null && name == null && version == null
-                    && fingerprint == null && effective == null && released == null && rows.isEmpty(),
+                            && fingerprint == null && effective == null && released == null && rows.isEmpty(),
                     "不可用原标准仍含正式身份或正文");
         }
         Set<String> processCodes = new HashSet<>();
@@ -234,8 +272,8 @@ public class MesWorkOrderKnowledgeSnapshotCodec {
             String node = text(parameter, "routeNodeCode", 64, nodeProtocol);
             String identifier = text(parameter, "identifier", 100, true);
             require(ids.add(itemId) && processCodes.contains(code)
-                    && (nodeProtocol ? Objects.equals(nodeProcesses.get(node), code) : node == null)
-                    && identifiers.add((nodeProtocol ? node : code) + "\u0000" + identifier),
+                            && (nodeProtocol ? Objects.equals(nodeProcesses.get(node), code) : node == null)
+                            && identifiers.add((nodeProtocol ? node : code) + "\u0000" + identifier),
                     "冻结参数身份重复、协议混用或节点/主工序不属于工单原路线");
             String type = text(parameter, "dataType", 20, true);
             String aggregation = text(parameter, "aggregationMode", 20, true);
@@ -274,7 +312,9 @@ public class MesWorkOrderKnowledgeSnapshotCodec {
                 nodeProtocol ? contentSchema : null);
     }
 
-    /** 缺省仅指历史V1，未知协议不能通过字段缺省降级。 */
+    /**
+     * 缺省仅指历史V1，未知协议不能通过字段缺省降级。
+     */
     private boolean nodeProtocol(JsonNode raw) {
         require(raw.isObject(), "原参数冻结不是对象");
         String schema = text(raw, "snapshotSchemaVersion", 40, false);
@@ -368,7 +408,9 @@ public class MesWorkOrderKnowledgeSnapshotCodec {
         return decimal;
     }
 
-    /** 旧Hutool默认epoch毫秒按明确业务时区解码，绝不依赖当前主机默认时区。 */
+    /**
+     * 旧Hutool默认epoch毫秒按明确业务时区解码，绝不依赖当前主机默认时区。
+     */
     private LocalDateTime time(JsonNode row, String field, boolean required) {
         JsonNode value = row.path(field);
         if (value.isNull() || value.isMissingNode()) {
@@ -401,56 +443,22 @@ public class MesWorkOrderKnowledgeSnapshotCodec {
         return result;
     }
 
-    /** 原UTF8字节摘要，不重新序列化数字、空字段或日期。 */
-    public static String sha256(String raw) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8)));
-        } catch (java.security.NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("无法计算原快照SHA256", impossible);
-        }
-    }
-
-    /** 精确快照引用；调用方不能把本次观察摘要标成持久防篡改证明。 */
-    public static String proofRef(String base, String kind, String hash) {
-        return base + "/snapshot/" + kind + "/" + hash;
-    }
-
-    private static MesWorkOrderKnowledgeDTO.SnapshotProof missing(String kind) {
-        return new MesWorkOrderKnowledgeDTO.SnapshotProof(kind, "MISSING", null, "NONE", null);
-    }
-
-    private static String blankToNull(String value) {
-        return StringUtils.hasText(value) ? value : null;
-    }
-
-    private static String plain(BigDecimal value) {
-        return value == null ? null : value.toPlainString();
-    }
-
-    private static void require(boolean valid, String gap) {
-        if (!valid) {
-            throw new SnapshotFailure("INVALID_SNAPSHOT", gap);
-        }
-    }
-
-    private static void bound(boolean valid, String gap) {
-        if (!valid) {
-            throw new SnapshotFailure("OVERSIZED", gap);
-        }
-    }
-
     /**
      * 原冻结快照验证后的内部投影，不作为新增数据库实体。
+     *
      * @param snapshots 三类原快照证明
      * @param processes 有界原工序和SOP引用
-     * @param standard 原标准投影，未保存时为空
-     * @param dataGaps 已去重的适用缺口
+     * @param standard  原标准投影，未保存时为空
+     * @param dataGaps  已去重的适用缺口
      */
     public record Bundle(List<MesWorkOrderKnowledgeDTO.SnapshotProof> snapshots,
                          List<MesWorkOrderKnowledgeDTO.Process> processes,
-                         MesWorkOrderKnowledgeDTO.Standard standard, List<String> dataGaps) { }
+                         MesWorkOrderKnowledgeDTO.Standard standard, List<String> dataGaps) {
+    }
 
-    /** 只捕获可预期快照问题；权限、数据库及依赖故障必须保持失败。 */
+    /**
+     * 只捕获可预期快照问题；权限、数据库及依赖故障必须保持失败。
+     */
     public static final class SnapshotFailure extends RuntimeException {
         private final String state;
 
@@ -459,7 +467,9 @@ public class MesWorkOrderKnowledgeSnapshotCodec {
             this.state = state;
         }
 
-        /** 供只读响应区分未冻结、损坏和超限；不暴露任意底层异常。 */
+        /**
+         * 供只读响应区分未冻结、损坏和超限；不暴露任意底层异常。
+         */
         public String state() {
             return state;
         }

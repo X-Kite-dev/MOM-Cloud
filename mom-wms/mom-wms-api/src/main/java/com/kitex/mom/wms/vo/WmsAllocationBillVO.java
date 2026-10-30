@@ -1,6 +1,7 @@
 package com.kitex.mom.wms.vo;
 
 import com.kitex.mom.wms.dto.WmsDetailDTO;
+import com.kitex.mom.wms.entity.WmsAllocationReturnReceiptEntity;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
@@ -66,6 +67,27 @@ public class WmsAllocationBillVO {
 
     @Schema(description = "取消原因")
     private String cancelReason;
+
+    @Schema(description = "申请取消时间")
+    private LocalDateTime cancelTime;
+
+    @Schema(description = "申请取消人")
+    private String cancelByName;
+
+    @Schema(description = "源仓实物退回凭证")
+    private String returnEvidence;
+
+    @Schema(description = "源仓实物退回确认时间")
+    private LocalDateTime returnTime;
+
+    @Schema(description = "源仓实物退回确认人")
+    private String returnBy;
+
+    @Schema(description = "最近一次退回异常单ID")
+    private Long returnExceptionCaseId;
+
+    @Schema(description = "每次源仓分批实物退回的独立凭证与数量")
+    private List<WmsAllocationReturnReceiptEntity> returnReceipts;
 
     /**
      * 旧仓库编码

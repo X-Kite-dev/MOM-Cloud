@@ -1,5 +1,6 @@
 package com.kitex.mom.wms.dto.app;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
@@ -15,6 +16,16 @@ import java.time.LocalDateTime;
 @Data
 @Schema(description = "实时库存DTO")
 public class WmsLiveStockMoveDTO {
+
+    @JsonIgnore
+    @Schema(hidden = true)
+    private Boolean aggregateFlow;
+
+    @Schema(description = "扫码确认的精确来源库存行ID；单件序列号移动必填")
+    private Long sourceStockId;
+
+    @Schema(description = "扫码确认的原始实物条码；单件序列号移动必填")
+    private String matBarcode;
 
     /**
      * 物料编码

@@ -1,6 +1,9 @@
 package com.kitex.mom.plan.dto;
+
 import lombok.Data;
+
 import java.util.List;
+
 @Data
 public class PlnObjectiveTemplateCommand {
     private Long id;

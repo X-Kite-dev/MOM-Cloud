@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
+import com.kitex.mom.plan.dto.PlanQualitySupplementProgressDTO;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
@@ -13,7 +14,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-/** 质量不可逆损失形成的独立补产需求及下游执行回执。 */
+/**
+ * 质量不可逆损失形成的独立补产需求及下游执行回执。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -37,8 +40,14 @@ public class PlnQualitySupplementDemandEntity extends BaseEntity<PlnQualitySuppl
     private String demandWarehouseCode;
     private String demandWarehouseName;
     private String reason;
-    /** SUBMITTED、REJECTED、MRP_GENERATED、FULFILLED、CANCELLED、WITHDRAWN、STALE。 */
+    /**
+     * SUBMITTED、REJECTED、DEMAND_CREATED、MRP_GENERATED、FULFILLED、CANCELLED、WITHDRAWN、STALE。
+     */
     private String status;
+    /**
+     * null为历史即时MRP模型；2为审批、MPS/MRP分阶段模型。
+     */
+    private Integer planningModelVersion;
     private String applicantCode;
     private String applicantName;
     private LocalDateTime submittedTime;
@@ -63,6 +72,8 @@ public class PlnQualitySupplementDemandEntity extends BaseEntity<PlnQualitySuppl
 
     @TableField(exist = false)
     private String downstreamStatus;
+    @TableField(exist = false)
+    private java.util.List<PlanQualitySupplementProgressDTO.RootPlan> productionPlans;
     @TableField(exist = false)
     private String downstreamMessage;
     @TableField(exist = false)

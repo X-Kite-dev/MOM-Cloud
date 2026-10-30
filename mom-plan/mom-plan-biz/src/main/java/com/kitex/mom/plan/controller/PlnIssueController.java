@@ -12,13 +12,10 @@ import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
+import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.mdm.dto.MdmRouteEngineeringDTO;
 import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
-import com.kitex.mom.plan.dto.MonthPlanQueryDTO;
-import com.kitex.mom.plan.dto.PlnIssueDTO;
-import com.kitex.mom.plan.dto.PlnEngineeringReleaseBindDTO;
-import com.kitex.mom.plan.dto.PlnIssueModuleDTO;
-import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
+import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.PlnIssueEntity;
 import com.kitex.mom.plan.entity.PlnIssueFeedbackEntity;
 import com.kitex.mom.plan.service.PlnIssueService;
@@ -31,9 +28,12 @@ import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.BeanPropertyBindingResult;
+import org.springframework.validation.BindException;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeParseException;
 import java.util.List;
@@ -118,23 +118,37 @@ public class PlnIssueController {
     /**
      * 主生产计划分页查询
      *
-     * @param page           分页对象
-     * @param plnIssueEntity 查询对象
+     * @param page  分页对象
+     * @param query 查询对象
      * @return R
      */
 
     @Operation(summary = "主生产计划分页查询", description = "主生产计划分页查询")
     @GetMapping("/mesPlan/page")
     public R<Page<PlnIssueEntity>> getMesPlanPage(@ParameterObject SearchPage page,
-                                                  @RequestParam(value = "issueTime", required = false) String issueTime,
-                                                  @ParameterObject PlnIssueEntity plnIssueEntity) {
-        if (StrUtil.isNotBlank(issueTime) && plnIssueEntity.getIssueTime() == null) {
+                                                  @ParameterObject PlnMesPlanQueryDTO query) throws BindException {
+        PlnIssueEntity criteria = new PlnIssueEntity();
+        criteria.setIssueTime(parseMesPlanDate(query));
+        criteria.setProductCode(query.getProductCode());
+        criteria.setProductName(query.getProductName());
+        criteria.setSpecificationModel(query.getSpecificationModel());
+        return R.ok(plnIssueService.getMesPlanPage(page.toMpPage(), criteria));
+    }
+
+    private LocalDateTime parseMesPlanDate(PlnMesPlanQueryDTO query) throws BindException {
+        String input = query.getIssueTime();
+        if (StrUtil.isNotBlank(input)) {
+            String value = input.trim();
             try {
-                plnIssueEntity.setIssueTime(LocalDate.parse(issueTime).atStartOfDay());
+                return value.length() == 10 ? LocalDate.parse(value).atStartOfDay()
+                        : LocalDateTime.parse(value.replace(' ', 'T'));
             } catch (DateTimeParseException ignored) {
+                // 明确拒绝无效日期，不能交给Service产生空指针或扩大月份范围。
             }
         }
-        return R.ok(plnIssueService.getMesPlanPage(page.toMpPage(), plnIssueEntity));
+        BeanPropertyBindingResult errors = new BeanPropertyBindingResult(query, "plnMesPlanQueryDTO");
+        errors.rejectValue("issueTime", "typeMismatch", "须为有效日期或本地日期时间");
+        throw new BindException(errors);
     }
 
     /**
@@ -268,7 +282,9 @@ public class PlnIssueController {
         return R.ok(plnIssueService.module(plnIssueModuleDTO));
     }
 
-    /** 当前生产计划产品可选择的已发布工程版本。 */
+    /**
+     * 当前生产计划产品可选择的已发布工程版本。
+     */
     @Operation(summary = "查询生产计划工程版本候选")
     @GetMapping("/engineering/candidates/{issueId}")
     @PreAuthorize("@pms.hasPermission('pln_plnIssue_view')")
@@ -277,7 +293,9 @@ public class PlnIssueController {
         return R.ok(plnIssueService.engineeringCandidates(issueId));
     }
 
-    /** 排程前绑定或更换精确工程版本，进入排程后只能走正式计划变更。 */
+    /**
+     * 排程前绑定或更换精确工程版本，进入排程后只能走正式计划变更。
+     */
     @Operation(summary = "绑定生产计划工程版本")
     @SysLog("绑定生产计划工程版本")
     @PostMapping("/engineering/bind")
@@ -342,6 +360,7 @@ public class PlnIssueController {
      */
     @Operation(summary = "修改生产生产排产结果表", description = "修改生产生产排产结果表")
     @SysLog("修改生产生产排产结果表")
+    @Inner
     @PutMapping("/edit")
     public R<Boolean> edit(@RequestBody List<OmsOrderLifeCycleDTO> omsOrderLifeCycleDtoList) {
         return R.ok(plnIssueService.edit(omsOrderLifeCycleDtoList));

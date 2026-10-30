@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** OMS订单变更不可变操作账，保留每一版申请、取代和终态复核。 */
+/**
+ * OMS订单变更不可变操作账，保留每一版申请、取代和终态复核。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

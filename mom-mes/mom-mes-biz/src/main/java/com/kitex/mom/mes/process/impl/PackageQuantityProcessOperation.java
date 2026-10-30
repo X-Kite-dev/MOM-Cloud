@@ -19,8 +19,8 @@ import com.kitex.mom.mes.service.MesWrapService;
 import com.kitex.mom.wms.api.feign.RemoteContainerBarcodeService;
 import com.kitex.mom.wms.entity.WmsContainerBarcodeEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Objects;
 

@@ -31,7 +31,9 @@ public class MesProductionNgSourceCodec {
     private final MesPhysicalTransformCodec codec;
     private final MesNgIdentificationCodec identification;
 
-    /** 只在真实新不良报告保存前调用；参数均来自服务器已核定的原生产事务。 */
+    /**
+     * 只在真实新不良报告保存前调用；参数均来自服务器已核定的原生产事务。
+     */
     public void freeze(MesTaskReportUnqualifiedEntity row, MesTaskArrangeEntity arrange,
                        MdmMaterialMeasureDTO material, ReportModeEnum mode) {
         require(material != null && material.getMaterialId() != null
@@ -69,17 +71,19 @@ public class MesProductionNgSourceCodec {
         verify(row);
     }
 
-    /** 原账独立校验不访问当前派工/MDM；历史所有新字段NULL才属于明确的未证明来源。 */
+    /**
+     * 原账独立校验不访问当前派工/MDM；历史所有新字段NULL才属于明确的未证明来源。
+     */
     public boolean verify(MesTaskReportUnqualifiedEntity row) {
         identification.verify(row);
         if (row.getSourceVersion() == null) {
             require(row.getSourceSnapshot() == null && row.getSourceFingerprint() == null
-                    && row.getReportUnit() == null && row.getReportMode() == null && row.getCapturedActorId() == null,
+                            && row.getReportUnit() == null && row.getReportMode() == null && row.getCapturedActorId() == null,
                     "不良来源存在不完整冻结字段，不能回落为旧历史");
             return false;
         }
         require(VERSION.equals(row.getSourceVersion()) && row.getSourceSnapshot() != null
-                && Objects.equals(row.getSourceFingerprint(), codec.fingerprint(VERSION, row.getSourceSnapshot())),
+                        && Objects.equals(row.getSourceFingerprint(), codec.fingerprint(VERSION, row.getSourceSnapshot())),
                 "不良原来源版本或完整字符串SHA不一致");
         JsonNode raw = codec.objectDocument(row.getSourceSnapshot(), MAX_SOURCE);
         var expected = reportFacts(row);
@@ -97,10 +101,12 @@ public class MesProductionNgSourceCodec {
         return true;
     }
 
-    /** 显式列举报告字段，后续实体扩展不会静默改变本版本原文/SHA。 */
+    /**
+     * 显式列举报告字段，后续实体扩展不会静默改变本版本原文/SHA。
+     */
     private TreeMap<String, String> reportFacts(MesTaskReportUnqualifiedEntity row) {
         require(row.getId() != null && row.getTenantId() != null && row.getCapturedActorId() != null
-                && row.getId() > 0 && row.getTenantId() > 0 && row.getCapturedActorId() > 0,
+                        && row.getId() > 0 && row.getTenantId() > 0 && row.getCapturedActorId() > 0,
                 "不良原来源缺真实主键/租户/认证用户");
         codec.code(row.getReportUnit(), "不良原单位", 100);
         codec.code(row.getFactoryCode(), "不良原工厂", 100);

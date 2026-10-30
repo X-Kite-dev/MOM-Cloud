@@ -6,7 +6,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-/** 周期投递MES完工重新打开事件，业务事务不等待PLAN在线。 */
+/**
+ * 周期投递MES完工重新打开事件，业务事务不等待PLAN在线。
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor

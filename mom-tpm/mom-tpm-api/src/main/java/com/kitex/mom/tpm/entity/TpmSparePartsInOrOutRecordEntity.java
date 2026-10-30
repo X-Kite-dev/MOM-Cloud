@@ -22,6 +22,12 @@ import java.math.BigDecimal;
 @Schema(description = "备件出入库流水表")
 public class TpmSparePartsInOrOutRecordEntity extends BaseEntity<TpmSparePartsInOrOutRecordEntity> {
 
+    /**
+     * 维修领料或退回审批生成的不可变库存回执；历史普通流水为空。
+     */
+    @Schema(description = "维修备件库存回执ID")
+    private Long repairSpareReceiptId;
+
 
     /**
      * id

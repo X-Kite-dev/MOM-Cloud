@@ -2,17 +2,24 @@ package com.kitex.mom.qms.agent.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.security.component.PermissionService;
 import com.kitex.mom.qms.agent.dto.QmsWorkOrderQualityDTO;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureTaskEntity;
 import com.kitex.mom.qms.entity.QmsInspectionProductTaskEntity;
+import com.kitex.mom.qms.entity.QmsBadInfoEntity;
+import com.kitex.mom.qms.entity.QmsCapaEntity;
 import com.kitex.mom.qms.enums.InspectionTaskResultEnum;
 import com.kitex.mom.qms.enums.InspectionTaskStatusEnum;
 import com.kitex.mom.qms.service.InspectionProcedureTaskService;
 import com.kitex.mom.qms.service.InspectionProductTaskService;
+import com.kitex.mom.qms.service.QmsBadInfoService;
+import com.kitex.mom.qms.service.QmsCapaService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -31,19 +38,38 @@ import java.util.*;
 public class QmsWorkOrderQualityQueryService {
 
     public static final String TOOL_CODE = "QMS_WORK_ORDER_QUALITY_QUERY@1";
+    private static final int STANDARD_MAX_TASKS = 50;
+    private static final int EFFECT_MAX_TASKS = 200;
 
     private final QmsAgentFactoryAccessService factoryAccess;
     private final PermissionService permissionService;
     private final InspectionProcedureTaskService procedureTaskService;
     private final InspectionProductTaskService productTaskService;
+    private final QmsBadInfoService badInfoService;
+    private final QmsCapaService capaService;
 
     public QmsWorkOrderQualityDTO.Evidence query(QmsWorkOrderQualityDTO.Query query) {
+        return query(query, false);
+    }
+
+    /**
+     * 参数异常效果复核需要逐条核对检验任务、同源 NCR 和 CAPA。
+     * 单独扩大只读明细范围，不改变面向普通问数的 50 条上限；超过 200 条仍标记截断并阻止结案。
+     * 汇总、任务、NCR 和 CAPA 在同一数据库快照下读取，避免并发质检提交导致单次回执自相矛盾。
+     */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public QmsWorkOrderQualityDTO.Evidence queryForEffect(QmsWorkOrderQualityDTO.Query query) {
+        return query(query, true);
+    }
+
+    private QmsWorkOrderQualityDTO.Evidence query(QmsWorkOrderQualityDTO.Query query, boolean effectReview) {
         if (query == null) {
             throw new CheckedException("生产工单质量查询不能为空");
         }
         String factory = factoryAccess.requireRead(query.getFactoryCode());
         String workOrderCode = normalizeCode(query.getWorkOrderCode());
-        int limit = query.getLimit() == null ? 20 : Math.max(1, Math.min(query.getLimit(), 50));
+        int limit = effectReview ? EFFECT_MAX_TASKS : query.getLimit() == null ? 20
+                : Math.max(1, Math.min(query.getLimit(), STANDARD_MAX_TASKS));
         query.setWorkOrderCode(workOrderCode).setLimit(limit);
 
         boolean procedurePermitted = permissionService.hasPermission("procedureTask:show");
@@ -110,17 +136,120 @@ public class QmsWorkOrderQualityQueryService {
         if (!productPermitted) {
             gaps.add("当前岗位没有成品检验查看权限，本次证据不含成品检验任务");
         }
-        List<String> refs = tasks.stream().map(item -> "QMS:"
+        List<String> refs = new ArrayList<>(tasks.stream().map(item -> "QMS:"
                 + ("PROCEDURE".equals(item.getInspectionType())
                 ? "qms_inspection_procedure_task:" : "qms_inspection_product_task:")
-                + item.getTaskId()).toList();
+                + item.getTaskId()).toList());
+
+        // NCR只能从本次有权读取、且已按工厂和工单精确核验的检验任务主键反查。
+        // 物料/批次相似不构成质量案件的来源证明。
+        List<QmsBadInfoEntity> ncrs = List.of();
+        List<QmsCapaEntity> capas = List.of();
+        boolean ncrTruncated = false;
+        if (!permissionService.hasPermission("bad:show")) {
+            gaps.add("当前岗位没有NCR查看权限，不能判断该工单是否已有正式不合格品单");
+        } else {
+            List<Long> procedureIds = tasks.stream().filter(item -> "PROCEDURE".equals(item.getInspectionType()))
+                    .map(QmsWorkOrderQualityDTO.QualityTask::getTaskId).toList();
+            List<Long> productIds = tasks.stream().filter(item -> "PRODUCT".equals(item.getInspectionType()))
+                    .map(QmsWorkOrderQualityDTO.QualityTask::getTaskId).toList();
+            if (!procedureIds.isEmpty() || !productIds.isEmpty()) {
+                LambdaQueryWrapper<QmsBadInfoEntity> source = new LambdaQueryWrapper<QmsBadInfoEntity>()
+                        .eq(QmsBadInfoEntity::getFactoryCode, factory);
+                if (!procedureIds.isEmpty() && !productIds.isEmpty()) {
+                    source.and(scope -> scope.nested(group -> group.eq(QmsBadInfoEntity::getResourceType, "PROCEDURE")
+                                    .in(QmsBadInfoEntity::getResourceTaskId, procedureIds))
+                            .or().nested(group -> group.eq(QmsBadInfoEntity::getResourceType, "PRODUCT")
+                                    .in(QmsBadInfoEntity::getResourceTaskId, productIds)));
+                } else if (!procedureIds.isEmpty()) {
+                    source.eq(QmsBadInfoEntity::getResourceType, "PROCEDURE")
+                            .in(QmsBadInfoEntity::getResourceTaskId, procedureIds);
+                } else {
+                    source.eq(QmsBadInfoEntity::getResourceType, "PRODUCT")
+                            .in(QmsBadInfoEntity::getResourceTaskId, productIds);
+                }
+                source.orderByDesc(QmsBadInfoEntity::getCreateTime)
+                        .orderByDesc(QmsBadInfoEntity::getId).last("LIMIT " + (EFFECT_MAX_TASKS + 1));
+                List<QmsBadInfoEntity> candidates = badInfoService.list(source);
+                if (candidates.size() > EFFECT_MAX_TASKS) {
+                    ncrTruncated = true;
+                    gaps.add("同源NCR超过" + EFFECT_MAX_TASKS + "条，本次仅展示前"
+                            + EFFECT_MAX_TASKS + "条；须在原QMS中查看全部案件");
+                }
+                Map<String, QmsWorkOrderQualityDTO.QualityTask> taskBySource = new HashMap<>();
+                tasks.forEach(item -> taskBySource.put(item.getInspectionType() + ":" + item.getTaskId(), item));
+                List<QmsBadInfoEntity> accepted = new ArrayList<>();
+                for (QmsBadInfoEntity ncr : candidates.stream().limit(EFFECT_MAX_TASKS).toList()) {
+                    QmsWorkOrderQualityDTO.QualityTask task = taskBySource.get(
+                            ncr.getResourceType() + ":" + ncr.getResourceTaskId());
+                    if (task == null || !Objects.equals(ncr.getMatCode(), task.getMaterialCode())
+                            || !Objects.equals(ncr.getBatchNo(), task.getBatchNo())) {
+                        gaps.add("NCR" + ncr.getId() + "来源任务或物料批次与当前检验快照冲突，未纳入同源案件");
+                        continue;
+                    }
+                    accepted.add(ncr);
+                }
+                ncrs = List.copyOf(accepted);
+                ncrs.forEach(item -> refs.add("QMS:qms_bad_info:" + item.getId()));
+            }
+            // 原过程/成品检验在判为不合格时由QMS原事务创建NCR。只有任务和案件均未截断，
+            // 才能把“找不到同源NCR”识别为需人工核查的数据异常；不能让Agent补造案件。
+            if (!ncrTruncated && total == tasks.size()) {
+                Set<String> ncrSources = ncrs.stream()
+                        .map(item -> item.getResourceType() + ":" + item.getResourceTaskId())
+                        .collect(java.util.stream.Collectors.toSet());
+                tasks.stream().filter(item -> InspectionTaskResultEnum.UN_QUALIFIED.name()
+                                .equals(item.getResult()))
+                        .filter(item -> !ncrSources.contains(item.getInspectionType() + ":" + item.getTaskId()))
+                        .forEach(item -> gaps.add("不合格检验任务" + item.getInspectionType() + ":" + item.getTaskId()
+                                + "未查到同源NCR；请在原QMS核对检验提交与案件/隔离事务，Agent不得补建"));
+            }
+            if (!permissionService.hasPermission("capa:show")) {
+                gaps.add("当前岗位没有CAPA查看权限，不披露关联CAPA状态");
+            } else {
+                List<Long> capaIds = ncrs.stream().map(QmsBadInfoEntity::getCapaId)
+                        .filter(Objects::nonNull).distinct().toList();
+                if (!capaIds.isEmpty()) {
+                    List<QmsCapaEntity> candidates = capaService.list(new LambdaQueryWrapper<QmsCapaEntity>()
+                            .eq(QmsCapaEntity::getFactoryCode, factory)
+                            .in(QmsCapaEntity::getId, capaIds));
+                    Set<Long> ncrIds = ncrs.stream().map(QmsBadInfoEntity::getId).collect(java.util.stream.Collectors.toSet());
+                    capas = candidates.stream().filter(item -> "NCR".equals(item.getSourceType())
+                                    && ncrIds.contains(item.getSourceId())).toList();
+                    Set<Long> verified = capas.stream().map(QmsCapaEntity::getId)
+                            .collect(java.util.stream.Collectors.toSet());
+                    ncrs.stream().filter(item -> item.getCapaId() != null && !verified.contains(item.getCapaId()))
+                            .forEach(item -> gaps.add("NCR" + item.getId() + "关联的CAPA来源不一致或当前工厂不可读取"));
+                    capas.forEach(item -> refs.add("QMS:qms_capa:" + item.getId()));
+                }
+            }
+        }
 
         return new QmsWorkOrderQualityDTO.Evidence()
                 .setToolCode(TOOL_CODE)
-                .setMetricDefinition("仅纳入当前岗位有权查看且factory_code和order_no同时精确匹配的过程/成品检验任务；状态和结果取观察时刻当前快照；严格任务合格率=合格任务数/(合格任务数+不合格任务数)，免检、紧急放行、让步接收和作废分别披露。")
+                .setMetricDefinition("仅纳入当前岗位有权查看且factory_code和order_no同时精确匹配的过程/成品检验任务；NCR仅按这些任务的来源类型和主键反查，CAPA再按NCR当前关联主键及来源核对。状态均为观察时刻快照；严格任务合格率=合格任务数/(合格任务数+不合格任务数)，免检、紧急放行、让步接收和作废分别披露。")
                 .setFactoryCode(factory).setWorkOrderCode(workOrderCode)
                 .setObservedAt(LocalDateTime.now()).setSummary(summary).setTasks(tasks)
-                .setDataGaps(gaps).setEvidenceRefs(refs).setTruncated(total > tasks.size());
+                .setNonconformances(ncrs.stream().map(this::ncr).toList())
+                .setCapas(capas.stream().map(this::capa).toList())
+                .setDataGaps(gaps).setEvidenceRefs(refs).setTruncated(total > tasks.size() || ncrTruncated);
+    }
+
+    private QmsWorkOrderQualityDTO.Nonconformance ncr(QmsBadInfoEntity item) {
+        return new QmsWorkOrderQualityDTO.Nonconformance()
+                .setNcrId(String.valueOf(item.getId())).setNcrNo(item.getNcrNo())
+                .setSourceType(item.getResourceType()).setSourceTaskId(String.valueOf(item.getResourceTaskId()))
+                .setStatus(item.getStatus()).setMaterialCode(item.getMatCode()).setBatchNo(item.getBatchNo())
+                .setCapaId(item.getCapaId() == null ? null : String.valueOf(item.getCapaId()))
+                .setCapaStatus(item.getCapaStatus());
+    }
+
+    private QmsWorkOrderQualityDTO.Capa capa(QmsCapaEntity item) {
+        return new QmsWorkOrderQualityDTO.Capa()
+                .setCapaId(String.valueOf(item.getId())).setCapaNo(item.getCapaNo())
+                .setSourceNcrId(String.valueOf(item.getSourceId()))
+                .setStatus(item.getStatus()).setEffectivenessResult(item.getEffectivenessResult())
+                .setClosedTime(item.getClosedTime());
     }
 
     private <T> Metrics metrics(BaseMapper<T> mapper, QueryWrapper<T> scope) {

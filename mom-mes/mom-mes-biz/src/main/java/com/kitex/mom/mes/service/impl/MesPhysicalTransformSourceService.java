@@ -10,11 +10,7 @@ import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
 import com.kitex.mom.mes.entity.MesWipTransferEntity;
 import com.kitex.mom.mes.enums.MesProduceTaskStatusEnum;
 import com.kitex.mom.mes.enums.ReportModeEnum;
-import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
-import com.kitex.mom.mes.mapper.MesTaskReportMapper;
-import com.kitex.mom.mes.mapper.MesTerminalExecutionCommandMapper;
-import com.kitex.mom.mes.mapper.MesWarehouseLiveStockMapper;
-import com.kitex.mom.mes.mapper.MesWipTransferMapper;
+import com.kitex.mom.mes.mapper.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -22,13 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 
@@ -49,7 +39,9 @@ public class MesPhysicalTransformSourceService {
     private final MesPhysicalTransformCodec codec;
     private final MesPhysicalTransformPlanner planner;
 
-    /** 一致快照观察完整精确来源；同码行超界拒绝，不用LIMIT悄悄遗漏对象余额。 */
+    /**
+     * 一致快照观察完整精确来源；同码行超界拒绝，不用LIMIT悄悄遗漏对象余额。
+     */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public MesPhysicalTransformDTO.SourceView sources(List<String> stockIds) {
         String factory = access.require("read");
@@ -72,7 +64,9 @@ public class MesPhysicalTransformSourceService {
         return result;
     }
 
-    /** 预检不会保存原号/库存，不以客户端政策草案开放正式转换。 */
+    /**
+     * 预检不会保存原号/库存，不以客户端政策草案开放正式转换。
+     */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public MesPhysicalTransformDTO.Preview preview(String rawJson) {
         var plan = codec.decode(rawJson);
@@ -81,8 +75,8 @@ public class MesPhysicalTransformSourceService {
         codec.id(plan.getExpectedActorUserId());
         codec.code(plan.getExpectedFactoryCode(), "期望工厂", 100);
         require(sourceView.getTenantId().equals(plan.getExpectedTenantId())
-                && sourceView.getFactoryCode().equals(plan.getExpectedFactoryCode())
-                && sourceView.getActorUserId().equals(plan.getExpectedActorUserId()),
+                        && sourceView.getFactoryCode().equals(plan.getExpectedFactoryCode())
+                        && sourceView.getActorUserId().equals(plan.getExpectedActorUserId()),
                 "观察后的实名或组织已改变，不能用新请求头套用原转换来源");
         var policy = codec.policy(plan.getPolicyDraft());
         var calculation = planner.calculate(plan, policy, sourceView.getSources());
@@ -152,14 +146,14 @@ public class MesPhysicalTransformSourceService {
             }
             if (mode != null && mode.isIdentifierRequired())
                 check(blocked, !blank(report.getTransferCode()) && !blank(stock.getMatBarcode())
-                        && Objects.equals(stock.getMatBarcode(), report.getTransferCode()),
+                                && Objects.equals(stock.getMatBarcode(), report.getTransferCode()),
                         "库存实物标识为空或与原报工规范标识不一致，不能借用另一实物来源");
         }
         boolean mobileOccupied = false;
         if (arrange != null) {
             // 正常完工不抹掉既有实物；待开工、关闭及未知派工不能证明有效生产来源。
             check(blocked, Set.of(MesProduceTaskStatusEnum.PRODUCT.name(), MesProduceTaskStatusEnum.PAUSE.name(),
-                    MesProduceTaskStatusEnum.FINISH.name()).contains(Objects.toString(arrange.getStatus(), "")),
+                            MesProduceTaskStatusEnum.FINISH.name()).contains(Objects.toString(arrange.getStatus(), "")),
                     "原派工未实际开工、已关闭或状态未确认");
             check(blocked, report != null && Objects.equals(arrange.getTaskCode(), report.getTaskCode())
                     && Objects.equals(arrange.getProduceTaskCode(), stock.getProduceTaskCode())
@@ -176,7 +170,7 @@ public class MesPhysicalTransformSourceService {
             require(peers.size() <= 2000, "同实物正量来源超过2000行，拒绝截断，请核查标识域");
             check(blocked, peers.stream().allMatch(peer -> selected.contains(peer.getId())), "同一实物的正量库存全集未选齐，不能只挑一行当完整母件");
             check(blocked, peers.stream().allMatch(peer -> Objects.equals(peer.getProduceTaskCode(), stock.getProduceTaskCode())
-                    && Objects.equals(peer.getMatCode(), stock.getMatCode()) && "WIP".equals(peer.getMatDetailType())),
+                            && Objects.equals(peer.getMatCode(), stock.getMatCode()) && "WIP".equals(peer.getMatDetailType())),
                     "同标识跨多个工序/物料/库存域，当前实物归属未治理，不能猜最新行");
             if (mode == ReportModeEnum.ONE_CODE)
                 check(blocked, peers.size() == 1 && stock.getNum() != null && stock.getNum().compareTo(BigDecimal.ONE) == 0,

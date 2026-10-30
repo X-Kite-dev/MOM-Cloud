@@ -11,11 +11,11 @@ import java.util.List;
 public class PlnSchedulingScenarioRunDTO {
     private String requestId;
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
-    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     @Schema(description = "智能APS工作台案件主键；旧排产入口不传")
     private Long apsCaseId;
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
-    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     @Schema(description = "智能APS工作台冻结的资源快照主键；必须与案件当前快照一致")
     private Long resourceSnapshotId;
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
@@ -35,7 +35,7 @@ public class PlnSchedulingScenarioRunDTO {
     private List<PlnSchedulingCandidateProfileDTO> candidateProfiles;
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     @Schema(description = "同工厂已批准行业目标模板版本；候选须与该版本完全一致")
-    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using=com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     private Long objectiveTemplateId;
     @Schema(description = "Agent目录返回的模板内容指纹；传入时PLAN必须在求解前复核一致")
     private String expectedObjectiveTemplateFingerprint;

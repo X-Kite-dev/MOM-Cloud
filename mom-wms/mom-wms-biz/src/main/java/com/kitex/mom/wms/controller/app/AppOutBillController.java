@@ -32,7 +32,7 @@ public class AppOutBillController {
     /**
      * 根据通知单id查询实时库存
      *
-     * @return R  对象
+     * @return R 对象
      */
     @Operation(summary = "根据通知单id查询实时库存", description = "根据通知单id查询实时库存")
     @GetMapping("/getLiveStockByNoticeId")
@@ -42,15 +42,14 @@ public class AppOutBillController {
     }
 
     /**
-     * 出库
-     * 提交某一条物料数量，更新入库单已收数量或生成入库单
+     * 出库 提交某一条物料数量，更新原出库单或生成出库单
      *
-     * @return R  对象
+     * @return R 对象
      */
     @Operation(summary = "出库", description = "出库")
     @PostMapping("/setOutBillNum")
-    public R setInBillNum(@RequestBody @Valid WmsOutBillDetailAppDTO params) {
+    public R<String> setInBillNum(@RequestBody @Valid WmsOutBillDetailAppDTO params) {
         String billNo = wmsOutBillService.setOutBillNum(params);
-        return R.ok(billNo);
+        return R.ok(billNo, null);
     }
 }

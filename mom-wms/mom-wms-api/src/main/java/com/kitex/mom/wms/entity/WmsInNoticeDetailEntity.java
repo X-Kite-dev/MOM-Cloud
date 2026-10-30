@@ -26,6 +26,15 @@ import java.time.LocalDate;
 @Schema(description = "wms_in_notice_detail")
 public class WmsInNoticeDetailEntity extends BaseEntity<WmsInNoticeDetailEntity> {
 
+    @Schema(description = "库存货权：OWNED/CUSTOMER_SUPPLIED/CONSIGNED")
+    private String stockOwnerType;
+
+    @Schema(description = "客供客户或寄售供应商编码")
+    private String stockOwnerCode;
+
+    @Schema(description = "来源业务单号")
+    private String sourceBusinessNo;
+
     @Schema(description = "来源采购订单号")
     private String sourceOrderNo;
 

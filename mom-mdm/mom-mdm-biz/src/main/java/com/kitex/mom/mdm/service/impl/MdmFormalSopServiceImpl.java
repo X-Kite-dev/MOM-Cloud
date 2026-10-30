@@ -10,21 +10,19 @@ import com.kitex.mom.mdm.entity.MdmSopVersionEntity;
 import com.kitex.mom.mdm.mapper.MdmSopOriginalMapper;
 import com.kitex.mom.mdm.mapper.MdmSopVersionMapper;
 import com.kitex.mom.mdm.service.MdmFormalSopService;
-import com.kitex.mom.mdm.sop.MdmSopJournal;
-import com.kitex.mom.mdm.sop.MdmSopOriginalStorage;
-import com.kitex.mom.mdm.sop.MdmSopSupport;
-import com.kitex.mom.mdm.sop.MdmSopWorkspace;
-import com.kitex.mom.mdm.sop.MdmSopOriginalWriter;
+import com.kitex.mom.mdm.sop.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+
 import static com.kitex.mom.mdm.sop.MdmSopSupport.*;
 
 /**
@@ -43,6 +41,13 @@ public class MdmFormalSopServiceImpl extends ServiceImpl<MdmSopVersionMapper, Md
     private final MdmSopOriginalStorage storage;
     private final MdmSopOriginalWriter originalWriter;
     private final MdmSopWorkspace workspace;
+
+    public static String contentHash(MdmSopVersionEntity version) {
+        return hash("FORMAL_SOP_CONTENT_V1", version.getTenantId(), version.getFactoryCode(), version.getSopNo(),
+                version.getVersionNo(), version.getParentVersionId(), version.getName(), version.getOriginalId(),
+                version.getOriginalHash(), version.getOriginalSize(), version.getMediaType(),
+                version.getDescription(), version.getApplicability());
+    }
 
     @Override
     public Page<MdmSopVersionEntity> catalog(String keyword, String status, long current, long size) {
@@ -97,8 +102,8 @@ public class MdmFormalSopServiceImpl extends ServiceImpl<MdmSopVersionMapper, Md
         if (attempt.previous() != null) return attempt.previous();
         String action = command.getAction();
         require(Set.of("CREATE", "REVISE").contains(action)
-                        || (command.getSourceNodeId() == null && command.getLegacyAttachmentId() == null
-                        && command.getDerivedFromVersionId() == null), "已建版本不能改写编制来源");
+                || (command.getSourceNodeId() == null && command.getLegacyAttachmentId() == null
+                && command.getDerivedFromVersionId() == null), "已建版本不能改写编制来源");
         MdmSopVersionEntity version;
         String before = null;
         if ("CREATE".equals(action)) {
@@ -244,13 +249,6 @@ public class MdmFormalSopServiceImpl extends ServiceImpl<MdmSopVersionMapper, Md
         contributors.add(actor);
         require(contributors.size() <= 1000, "SOP编制参与者超过审计上限，请由管理员核对版本治理");
         version.setContributorsJson(JSONUtil.toJsonStr(contributors));
-    }
-
-    public static String contentHash(MdmSopVersionEntity version) {
-        return hash("FORMAL_SOP_CONTENT_V1", version.getTenantId(), version.getFactoryCode(), version.getSopNo(),
-                version.getVersionNo(), version.getParentVersionId(), version.getName(), version.getOriginalId(),
-                version.getOriginalHash(), version.getOriginalSize(), version.getMediaType(),
-                version.getDescription(), version.getApplicability());
     }
 
     private void refreshHashes(MdmSopVersionEntity version) {

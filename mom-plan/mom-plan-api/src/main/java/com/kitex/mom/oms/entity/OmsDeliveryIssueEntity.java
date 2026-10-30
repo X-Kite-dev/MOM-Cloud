@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** OMS交付行下发协调账，持有WMS冻结命令与PLAN本地提交证据。 */
+/**
+ * OMS交付行下发协调账，持有WMS冻结命令与PLAN本地提交证据。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

@@ -58,6 +58,22 @@
         ORDER BY identifier
     </select>
 
+    <select id="selectProcessDeviationSamples" resultType="com.kitex.mom.iot.entity.IotDevicePropertyEntity">
+        SELECT id, tenant_id, factory_code, device_id, device_code, identifier, value,
+               quality_code, collect_time, del_flag, scope_verified
+        FROM mom_iot.iot_device_property
+        WHERE del_flag = '0'
+          AND scope_verified IS TRUE
+          AND tenant_id = #{tenantId}
+          AND factory_code = #{factoryCode}
+          AND device_id = #{deviceId}
+          AND identifier = #{identifier}
+          AND collect_time &gt;= #{startTime}
+          AND collect_time &lt; #{endTime}
+        ORDER BY collect_time, id
+        LIMIT #{limit}
+    </select>
+
     <sql id="baseColumns">
         id
         , device_id, device_code, product_id, product_code, identifier, name, value, data_type, unit,

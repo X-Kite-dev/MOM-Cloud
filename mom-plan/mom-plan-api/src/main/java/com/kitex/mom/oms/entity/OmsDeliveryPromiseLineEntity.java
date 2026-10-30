@@ -14,7 +14,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
-/** 交期答复候选行；同时保留来源行当时值和拟答复值，禁止后续覆盖历史。 */
+/**
+ * 交期答复候选行；同时保留来源行当时值和拟答复值，禁止后续覆盖历史。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

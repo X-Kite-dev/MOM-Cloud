@@ -101,7 +101,9 @@ public interface RemoteProcessRouteService {
     @GetMapping("/mdmProcessRoute/getProcessWorkingById")
     R<MdmProcessRouteWorkingEntity> getProcessWorkingById(@RequestParam("id") Long id);
 
-    /** 读取当前组织路线的真实节点清单，供旧按主工序维护的消费者先核定唯一归属。 */
+    /**
+     * 读取当前组织路线的真实节点清单，供旧按主工序维护的消费者先核定唯一归属。
+     */
     @GetMapping("/mdmProcessRoute/getProcedureList")
     R<List<MdmProcessRouteWorkingEntity>> getProcedureList(@RequestParam("routeCode") String routeCode);
 

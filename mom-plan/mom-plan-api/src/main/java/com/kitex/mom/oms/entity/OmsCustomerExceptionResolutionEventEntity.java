@@ -12,8 +12,12 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** OMS客户异常退款/让步结案永久收件箱。 */
-@Data @Accessors(chain = true) @TenantTable
+/**
+ * OMS客户异常退款/让步结案永久收件箱。
+ */
+@Data
+@Accessors(chain = true)
+@TenantTable
 @TableName("oms_customer_exception_resolution_event")
 @EqualsAndHashCode(callSuper = true)
 public class OmsCustomerExceptionResolutionEventEntity extends BaseEntity<OmsCustomerExceptionResolutionEventEntity> {

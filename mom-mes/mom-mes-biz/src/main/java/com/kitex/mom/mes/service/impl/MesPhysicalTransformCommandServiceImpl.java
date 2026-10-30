@@ -128,13 +128,17 @@ public class MesPhysicalTransformCommandServiceImpl
         });
     }
 
-    /** 所有原命令版本与将来claim/execute共用旧字面域，不按factory/version另开原号。 */
+    /**
+     * 所有原命令版本与将来claim/execute共用旧字面域，不按factory/version另开原号。
+     */
     private void lock(Identity owner, String requestId) {
         baseMapper.lockRequest(codec.snapshot(List.of(MesPhysicalTransformCodec.REQUEST_LOCK_VERSION,
                 owner.tenantId().toString(), requestId)));
     }
 
-    /** 提交响应不明只查原号；此事务失败不能包装成SEALED或转换成功。 */
+    /**
+     * 提交响应不明只查原号；此事务失败不能包装成SEALED或转换成功。
+     */
     private <T> T independent(Supplier<T> work) {
         require(!TransactionSynchronizationManager.isActualTransactionActive(), "转换传输原账入口禁止嵌入外层业务事务");
         var transaction = new TransactionTemplate(transactionManager);
@@ -143,7 +147,9 @@ public class MesPhysicalTransformCommandServiceImpl
         return transaction.execute(status -> work.get());
     }
 
-    /** 暂停外围事务的旧快照，只读当前永久事实；无锁/重建/重投或当前来源状态推断。 */
+    /**
+     * 暂停外围事务的旧快照，只读当前永久事实；无锁/重建/重投或当前来源状态推断。
+     */
     private <T> T latestRead(Supplier<T> work) {
         var transaction = new TransactionTemplate(transactionManager);
         transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -169,10 +175,10 @@ public class MesPhysicalTransformCommandServiceImpl
 
     private void assertOriginal(MesPhysicalTransformCommandEntity row, String rawJson, String fingerprint) {
         require(row.getCommandVersion() != null && List.of(MesPhysicalTransformCodec.COMMAND_VERSION,
-                MesPhysicalTransformCodec.COMMAND_VERSION_V2).contains(row.getCommandVersion())
-                && fingerprint != null && fingerprint.matches("[0-9a-f]{64}")
-                && Objects.equals(row.getCommandSnapshot(), rawJson) && Objects.equals(row.getRequestFingerprint(), fingerprint)
-                && fingerprint.equals(codec.fingerprint(row.getCommandVersion(), row.getCommandSnapshot())),
+                        MesPhysicalTransformCodec.COMMAND_VERSION_V2).contains(row.getCommandVersion())
+                        && fingerprint != null && fingerprint.matches("[0-9a-f]{64}")
+                        && Objects.equals(row.getCommandSnapshot(), rawJson) && Objects.equals(row.getRequestFingerprint(), fingerprint)
+                        && fingerprint.equals(codec.fingerprint(row.getCommandVersion(), row.getCommandSnapshot())),
                 "原号已经登记另一原文/版本或指纹损坏，不能重新序列化覆盖");
         require(row.getCommandVersion().equals(codec.command(rawJson).getVersion()), "永久原文声明的版本与原账不一致");
     }

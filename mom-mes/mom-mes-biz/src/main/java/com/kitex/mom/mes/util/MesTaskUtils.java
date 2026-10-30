@@ -1,7 +1,7 @@
 package com.kitex.mom.mes.util;
 
-import cn.hutool.json.JSONUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.mes.dto.ProcessProcedureDTO;
 import com.kitex.mom.mes.entity.MesTaskEntity;
@@ -31,7 +31,9 @@ public class MesTaskUtils {
         return getCurrentProcess(snapshot, routeCode, null);
     }
 
-    /** 原冻结节点与主工序须同时匹配；带节点失败时不能降级到同码工序。 */
+    /**
+     * 原冻结节点与主工序须同时匹配；带节点失败时不能降级到同码工序。
+     */
     public static ProcessProcedureDTO getCurrentProcess(String snapshot, String routeCode, String sourceRouteNodeCode) {
         if (StrUtil.isBlank(snapshot) || StrUtil.isBlank(routeCode)) {
             throw new CheckedException("冻结工艺快照或实际主工序缺失，不能猜测执行配置");

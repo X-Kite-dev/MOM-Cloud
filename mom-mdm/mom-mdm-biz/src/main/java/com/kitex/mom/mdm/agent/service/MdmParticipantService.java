@@ -5,7 +5,10 @@ import com.kitex.admin.api.dto.AgentParticipantAccount;
 import com.kitex.admin.api.feign.RemoteAgentParticipantAccountService;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
-import com.kitex.mom.mdm.agent.dto.MdmParticipantModels.*;
+import com.kitex.mom.mdm.agent.dto.MdmParticipantModels.Participant;
+import com.kitex.mom.mdm.agent.dto.MdmParticipantModels.ParticipantPage;
+import com.kitex.mom.mdm.agent.dto.MdmParticipantModels.Search;
+import com.kitex.mom.mdm.agent.dto.MdmParticipantModels.Verify;
 import com.kitex.mom.mdm.entity.MdmFactoryModelEntity;
 import com.kitex.mom.mdm.entity.MdmUserFactoryModelBindEntity;
 import com.kitex.mom.mdm.enums.FactoryModelPermissionEnum;
@@ -14,11 +17,14 @@ import com.kitex.mom.mdm.mapper.MdmFactoryModelMapper;
 import com.kitex.mom.mdm.mapper.MdmUserFactoryModelBindMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
 
-/** 制造协作选人：工厂有效授权与实名账号、固定用途办理权限的实时交集。 */
+/**
+ * 制造协作选人：工厂有效授权与实名账号、固定用途办理权限的实时交集。
+ */
 @Service
 @RequiredArgsConstructor
 public class MdmParticipantService {
@@ -42,12 +48,14 @@ public class MdmParticipantService {
             throw new CheckedException("参与人核验需要1至20个不重复账号ID");
         List<Long> ids = query.userIds().stream().map(this::id).toList();
         List<Participant> result = resolve(query.factoryCode(), query.purpose(), ids, null);
-        if (result.size() != ids.size()) throw new CheckedException("所选账号不存在、已停用、工厂权限失效或缺少办理权限，请重新选择");
+        if (result.size() != ids.size())
+            throw new CheckedException("所选账号不存在、已停用、工厂权限失效或缺少办理权限，请重新选择");
         return result;
     }
 
     private List<Participant> resolve(String factory, String purpose, List<Long> selected, String keyword) {
-        if (purpose == null || !Set.of("OPERATIONS", "HANDOVER").contains(purpose)) throw new CheckedException("参与人用途不合法");
+        if (purpose == null || !Set.of("OPERATIONS", "HANDOVER").contains(purpose))
+            throw new CheckedException("参与人用途不合法");
         scope.require(factory, "read");
         MdmFactoryModelEntity node = factories.selectOne(new LambdaQueryWrapper<MdmFactoryModelEntity>()
                 .eq(MdmFactoryModelEntity::getCode, factory).eq(MdmFactoryModelEntity::getType, FactoryModelTypeEnum.FACTORY.getCode())
@@ -56,11 +64,13 @@ public class MdmParticipantService {
                 .eq(MdmUserFactoryModelBindEntity::getFactoryModelId, node.getId()).eq(MdmUserFactoryModelBindEntity::getStatus, true)
                 .in(selected != null, MdmUserFactoryModelBindEntity::getUserId, selected)
                 .orderByAsc(MdmUserFactoryModelBindEntity::getUserId).last("LIMIT 2001"));
-        if (active.size() > 2000) throw new CheckedException("当前工厂有效绑定超过2000条，请由管理员整理工厂成员；未返回截断人数");
+        if (active.size() > 2000)
+            throw new CheckedException("当前工厂有效绑定超过2000条，请由管理员整理工厂成员；未返回截断人数");
         Map<String, List<String>> proofs = new TreeMap<>();
         for (var binding : active) {
             var permission = FactoryModelPermissionEnum.getByCode(binding.getPermissionType());
-            if (binding.getUserId() == null || permission == null || !permission.hasPermission(FactoryModelPermissionEnum.READ)) continue;
+            if (binding.getUserId() == null || permission == null || !permission.hasPermission(FactoryModelPermissionEnum.READ))
+                continue;
             proofs.computeIfAbsent(String.valueOf(binding.getUserId()), ignored -> new ArrayList<>())
                     .add(binding.getId() + ":" + permission.getCode());
         }
@@ -89,11 +99,16 @@ public class MdmParticipantService {
         try {
             if (value == null || !value.matches("[1-9][0-9]{0,18}")) throw new IllegalArgumentException();
             return Long.valueOf(value);
-        } catch (IllegalArgumentException ex) { throw new CheckedException("参与人ID必须为正整数文本"); }
+        } catch (IllegalArgumentException ex) {
+            throw new CheckedException("参与人ID必须为正整数文本");
+        }
     }
 
     private String hash(String value) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
-        catch (Exception ex) { throw new IllegalStateException("参与人摘要生成失败", ex); }
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new IllegalStateException("参与人摘要生成失败", ex);
+        }
     }
 }

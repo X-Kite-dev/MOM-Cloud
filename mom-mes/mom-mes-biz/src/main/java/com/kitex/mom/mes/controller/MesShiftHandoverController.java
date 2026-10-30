@@ -2,8 +2,8 @@ package com.kitex.mom.mes.controller;
 
 import com.kitex.common.core.util.R;
 import com.kitex.mom.mes.dto.MesShiftHandoverCommand;
-import com.kitex.mom.mes.service.impl.MesShiftHandoverService;
 import com.kitex.mom.mes.service.impl.MesFormalHandoverSourceService;
+import com.kitex.mom.mes.service.impl.MesShiftHandoverService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -17,7 +17,9 @@ public class MesShiftHandoverController {
 
     @GetMapping("/shifts")
     @PreAuthorize("@pms.hasPermission('mesTaskArrange:show')")
-    public R<?> shifts() { return R.ok(formal.shifts()); }
+    public R<?> shifts() {
+        return R.ok(formal.shifts());
+    }
 
     @GetMapping("/participants")
     @PreAuthorize("@pms.hasPermission('mesTaskArrange:show')")
@@ -29,11 +31,15 @@ public class MesShiftHandoverController {
 
     @GetMapping("/request/{requestId}")
     @PreAuthorize("@pms.hasPermission('mesTaskArrange:show')")
-    public R<?> request(@PathVariable String requestId) { return R.ok(service.requestReceipt(requestId)); }
+    public R<?> request(@PathVariable String requestId) {
+        return R.ok(service.requestReceipt(requestId));
+    }
 
     @PostMapping("/request/{requestId}/cancel-unexecuted")
     @PreAuthorize("@pms.hasPermission('mesShiftHandover:submit', 'mesShiftHandover:receive')")
-    public R<?> cancelUnexecuted(@PathVariable String requestId) { return R.ok(service.cancelUnexecuted(requestId)); }
+    public R<?> cancelUnexecuted(@PathVariable String requestId) {
+        return R.ok(service.cancelUnexecuted(requestId));
+    }
 
     @PostMapping("/preview")
     @PreAuthorize("@pms.hasPermission('mesTaskArrange:show')")

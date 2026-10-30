@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.kitex.common.core.entity.BaseEntity;
+import com.kitex.common.core.util.TenantTable;
 import com.kitex.mom.qms.enums.InspectionHistoryTypeEnum;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
@@ -21,6 +22,7 @@ import java.util.Date;
 @EqualsAndHashCode(callSuper = true)
 @Data
 @Accessors(chain = true)
+@TenantTable
 @Schema(description = "成品质检历史记录")
 @TableName(value = "qms_inspection_product_history", autoResultMap = true)
 public class QmsInspectionProductHistoryEntity extends BaseEntity<QmsInspectionProductHistoryEntity> {

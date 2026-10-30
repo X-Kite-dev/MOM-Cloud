@@ -6,7 +6,9 @@ import com.kitex.mom.plan.mapper.PlnMpsRemainingCommitmentOperationMapper;
 import com.kitex.mom.plan.service.PlnMpsRemainingCommitmentOperationService;
 import org.springframework.stereotype.Service;
 
-/** 账存储实现；不可变约束由领域命令与数据库双层保护，不注册通用写API。 */
+/**
+ * 账存储实现；不可变约束由领域命令与数据库双层保护，不注册通用写API。
+ */
 @Service
 public class PlnMpsRemainingCommitmentOperationServiceImpl extends ServiceImpl<PlnMpsRemainingCommitmentOperationMapper, PlnMpsRemainingCommitmentOperationEntity>
         implements PlnMpsRemainingCommitmentOperationService {

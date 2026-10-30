@@ -5,10 +5,14 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** OMS下发命令：调用结果未知时必须复用同一请求号。 */
+/**
+ * OMS下发命令：调用结果未知时必须复用同一请求号。
+ */
 public class OmsDeliveryIssueCommand {
     @Data
-    public static class Submit { private String requestId; }
+    public static class Submit {
+        private String requestId;
+    }
 
     @Data
     @Accessors(chain = true)

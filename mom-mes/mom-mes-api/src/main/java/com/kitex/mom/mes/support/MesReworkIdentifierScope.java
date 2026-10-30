@@ -34,25 +34,6 @@ public class MesReworkIdentifierScope {
     private String routeNodeCode;
     private List<Item> items = new ArrayList<>();
 
-    @Data
-    @Accessors(chain = true)
-    public static class Item {
-        private String sourceBindingId;
-        private String sourceBindingGroupId;
-        private String sourceOperationId;
-        private String sourceReportId;
-        private String canonicalIdentifier;
-        private String externalNamespace;
-        private String externalCode;
-        private String bindingStatus;
-        private Integer bindingVersion;
-        /** ACTIVE_EXTERNAL或CANONICAL_ONLY。 */
-        private String inputMode;
-        private String definitionFingerprint;
-        private String graphFingerprint;
-        private String sourceRouteFingerprint;
-    }
-
     public static MesReworkIdentifierScope parse(String raw) {
         try {
             MesReworkIdentifierScope scope = JSONUtil.toBean(raw, MesReworkIdentifierScope.class);
@@ -80,6 +61,10 @@ public class MesReworkIdentifierScope {
         }
     }
 
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
     public void validateIdentity(Long tenant, String factory, Long reworkId, String reworkCode,
                                  Long sourceId, String sourceCode, String sourceOperation, String node) {
         require(Objects.equals(tenantId, Objects.toString(tenant, null))
@@ -98,7 +83,24 @@ public class MesReworkIdentifierScope {
                 "返工动态实例范围数量与模式不一致");
     }
 
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
+    @Data
+    @Accessors(chain = true)
+    public static class Item {
+        private String sourceBindingId;
+        private String sourceBindingGroupId;
+        private String sourceOperationId;
+        private String sourceReportId;
+        private String canonicalIdentifier;
+        private String externalNamespace;
+        private String externalCode;
+        private String bindingStatus;
+        private Integer bindingVersion;
+        /**
+         * ACTIVE_EXTERNAL或CANONICAL_ONLY。
+         */
+        private String inputMode;
+        private String definitionFingerprint;
+        private String graphFingerprint;
+        private String sourceRouteFingerprint;
     }
 }

@@ -1,26 +1,21 @@
 package com.kitex.mom.plan.controller;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
 import com.kitex.mom.plan.dto.PlnMpsRemainingCommitmentDTO;
+import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentEntity;
+import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentOperationEntity;
+import com.kitex.mom.plan.exception.PlnMpsRemainingRejectedException;
+import com.kitex.mom.plan.service.PlnMpsRemainingCommitmentService;
 import com.kitex.mom.plan.service.impl.PlnMpsRemainingCommitmentEvidenceReader;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestParam;
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentEntity;
-import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentOperationEntity;
-import com.kitex.mom.plan.service.PlnMpsRemainingCommitmentService;
-import com.kitex.mom.plan.exception.PlnMpsRemainingRejectedException;
-import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.*;
 
-/** 剩余承诺领域入口；基线只读不是正式编制/发布授权，不提供通用CRUD。 */
+/**
+ * 剩余承诺领域入口；基线只读不是正式编制/发布授权，不提供通用CRUD。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/plnMpsRemainingCommitment")
@@ -28,7 +23,9 @@ public class PlnMpsRemainingCommitmentController {
     private final PlnMpsRemainingCommitmentEvidenceReader evidenceReader;
     private final PlnMpsRemainingCommitmentService service;
 
-    /** 服务事务代理成功回滚后才收到本类型；提交/SQL/原号冲突保持未知。 */
+    /**
+     * 服务事务代理成功回滚后才收到本类型；提交/SQL/原号冲突保持未知。
+     */
     @ExceptionHandler(PlnMpsRemainingRejectedException.class)
     public R<PlnMpsRemainingCommitmentDTO.Rejection> rejected(PlnMpsRemainingRejectedException exception) {
         return R.ok(new PlnMpsRemainingCommitmentDTO.Rejection().setOutcome("ROLLBACK_CONFIRMED")
@@ -67,7 +64,7 @@ public class PlnMpsRemainingCommitmentController {
     @GetMapping("/history/{lineId}")
     @PreAuthorize("@pms.hasPermission('plan_mps_view')")
     public R<Page<PlnMpsRemainingCommitmentEntity>> history(@PathVariable Long lineId,
-            @RequestParam(defaultValue = "1") long current, @RequestParam(defaultValue = "20") long size) {
+                                                            @RequestParam(defaultValue = "1") long current, @RequestParam(defaultValue = "20") long size) {
         return R.ok(service.history(lineId, current, size));
     }
 

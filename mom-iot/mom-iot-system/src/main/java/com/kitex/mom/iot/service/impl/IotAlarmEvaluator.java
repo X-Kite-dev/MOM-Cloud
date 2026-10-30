@@ -63,6 +63,8 @@ public class IotAlarmEvaluator {
                                 .setName(rule.getName()).setSeverity(rule.getSeverity()).setStatus("OPEN").setRuleSnapshot(JSONUtil.toJsonStr(rule))
                                 .setFirstPropertyId(cursor.getFirstBreachPropertyId()).setLastPropertyId(p.getId()).setFirstBreachTime(cursor.getFirstBreachTime())
                                 .setTriggeredTime(p.getCollectTime()).setLastTriggerTime(p.getCollectTime()).setObservationCount(rule.getTriggerSamples().longValue());
+                        // 事件订阅按告警真正形成时间追赶；迟到的历史采样也不能丢失新形成的告警。
+                        alarm.setCreateTime(LocalDateTime.now());
                         require(alarmMapper.insert(alarm)==1,"告警实例保存失败");alarmId=alarm.getId();
                         cursor.setActiveAlarmId(alarmId).setBreachCount(0).setRecoveryCount(0).setFirstBreachTime(null).setFirstBreachPropertyId(null);
                     }

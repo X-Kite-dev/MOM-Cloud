@@ -17,7 +17,9 @@ public final class PlanExecutionReplanComparisonDTO {
     private PlanExecutionReplanComparisonDTO() {
     }
 
-    /** 对照结论及可追溯的冻结来源。 */
+    /**
+     * 对照结论及可追溯的冻结来源。
+     */
     public record Comparison(
             @Schema(description = "SAME_FACT_SCHEDULE_ALIGNMENT_V1") String formulaVersion,
             @Schema(description = "COMPARABLE、PARTIAL、DATA_GAP或WAITING_EXECUTION") String status,
@@ -42,7 +44,9 @@ public final class PlanExecutionReplanComparisonDTO {
             @Schema(description = "范围、分母、正负方向及非因果限制") String interpretation) {
     }
 
-    /** 两组指标使用严格相同的工序、实际时刻和容差。 */
+    /**
+     * 两组指标使用严格相同的工序、实际时刻和容差。
+     */
     public record Metrics(
             @Schema(description = "可比较工序数") int operationCount,
             @Schema(description = "已有有效实际开工时刻的工序数") int startedOperationCount,
@@ -56,7 +60,9 @@ public final class PlanExecutionReplanComparisonDTO {
             @Schema(description = "已超过开工容差仍未开工的工序数") int pendingStartOverdueCount) {
     }
 
-    /** 单道工序的旧、新计划与共同MES观察；无实际时间的指标保持未知。 */
+    /**
+     * 单道工序的旧、新计划与共同MES观察；无实际时间的指标保持未知。
+     */
     public record Operation(
             @Schema(description = "生产计划号") String issueNo,
             @Schema(description = "工序编码") String processCode,

@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** OMS跨服务撤回协调账；WMS回执与OMS本地结果可分别恢复和对账。 */
+/**
+ * OMS跨服务撤回协调账；WMS回执与OMS本地结果可分别恢复和对账。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

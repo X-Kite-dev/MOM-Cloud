@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/** 制造自动化事件收件、策略和人工处置接口模型。 */
+/**
+ * 制造自动化事件收件、策略和人工处置接口模型。
+ */
 public final class PlanAutomationEventDTO {
 
     private PlanAutomationEventDTO() {

@@ -21,13 +21,9 @@ import com.kitex.mom.plan.service.PlnSchedulingEngineService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.HexFormat;
+import java.util.*;
 
 /**
  * 永久意图与原业务账的只读核查。没有完整命令意图的旧历史一律UNKNOWN。
@@ -48,11 +44,11 @@ public class PlanAgentCommandReceiptService {
     private final ObjectProvider<PlnSchedulingEngineService> engine;
 
     public PlanAgentCommandReceiptService(PlanAgentCommandProofService proofs, PlanAgentCommandCodec codec,
-            ObjectMapper mapper, PlnSchedulingScenarioMapper scenarios,
-            PlnShortageReplanCaseMapper shortages, PlnResourceReplanCaseMapper resources,
-            ObjectProvider<PlnSchedulingAgentService> scheduling,
-            ObjectProvider<PlnResourceLocalReplanService> resourceService,
-            PlanAgentCommandOccupancyGuard occupancy, ObjectProvider<PlnSchedulingEngineService> engine) {
+                                          ObjectMapper mapper, PlnSchedulingScenarioMapper scenarios,
+                                          PlnShortageReplanCaseMapper shortages, PlnResourceReplanCaseMapper resources,
+                                          ObjectProvider<PlnSchedulingAgentService> scheduling,
+                                          ObjectProvider<PlnResourceLocalReplanService> resourceService,
+                                          PlanAgentCommandOccupancyGuard occupancy, ObjectProvider<PlnSchedulingEngineService> engine) {
         this.proofs = proofs;
         this.codec = codec;
         this.mapper = mapper;
@@ -65,7 +61,9 @@ public class PlanAgentCommandReceiptService {
         this.engine = engine;
     }
 
-    /** 精确作用域和完整载荷先核验，CONFIRMED仅代表原命令执行，不代表收益或交付已完成。 */
+    /**
+     * 精确作用域和完整载荷先核验，CONFIRMED仅代表原命令执行，不代表收益或交付已完成。
+     */
     public Map<String, Object> lookup(PlanAgentCommandCodec.LookupQuery query) throws Exception {
         proofs.requireScope(query.factoryCode());
         PlanAgentCommandCodec.Frozen frozen;
@@ -219,7 +217,7 @@ public class PlanAgentCommandReceiptService {
                     && Objects.equals(scenario.getSelectionReason(), command.path("reason").asText().trim())
                     && Objects.equals(scenario.getSourceFingerprint(), command.path("expectedSourceFingerprint").asText())
                     && Objects.equals(scenario.getSelectionFingerprint(), hash(query.requestId().trim() + '|' + item.getId()
-                            + '|' + command.path("expectedSourceFingerprint").asText() + '|' + command.path("reason").asText().trim()))
+                    + '|' + command.path("expectedSourceFingerprint").asText() + '|' + command.path("reason").asText().trim()))
                     && proof.getActorCode().equals(scenario.getSelectedBy()) && scenario.getSelectedTime() != null
                     && !scenario.getSelectedTime().isBefore(proof.getCreateTime())
                     ? resourceService.getObject().scenario(item.getScenarioId()) : null;

@@ -35,7 +35,14 @@ public class PlnApsWorkflowGuard {
             entry("SUPERSEDE", Set.of("DRAFT", "PREPARING", "BLOCKED", "READY", "CALCULATING", "EVALUATED", "SELECTED", "PUBLISHING", "PUBLISHED", "DISPATCHING", "EXECUTING", "FAILED"), "SUPERSEDED", null, "SUPERSEDED", "plan_apsCorrection_major")
     );
 
-    /** 校验动作并给出唯一合法迁移。 */
+    private static Map.Entry<String, Transition> entry(String action, Set<String> allowed, String status,
+                                                       String stage, String step, String permission) {
+        return Map.entry(action, new Transition(allowed, status, stage, step, permission));
+    }
+
+    /**
+     * 校验动作并给出唯一合法迁移。
+     */
     public Transition requireTransition(PlnApsCaseEntity current, String action) {
         if (current == null || action == null) {
             throw new CheckedException("APS案件状态迁移参数不完整");
@@ -55,12 +62,9 @@ public class PlnApsWorkflowGuard {
                 ? transition.withStage(current.getCurrentStage()) : transition;
     }
 
-    private static Map.Entry<String, Transition> entry(String action, Set<String> allowed, String status,
-                                                        String stage, String step, String permission) {
-        return Map.entry(action, new Transition(allowed, status, stage, step, permission));
-    }
-
-    /** 状态机校验后的不可变迁移结果。 */
+    /**
+     * 状态机校验后的不可变迁移结果。
+     */
     public record Transition(Set<String> allowedStatuses, String status, String stage,
                              String step, String requiredPermission) {
         private Transition withStage(String actualStage) {

@@ -8,20 +8,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesProductionMaterialReversalDTO;
-import com.kitex.mom.mes.entity.MesProductionMaterialAllocationEntity;
-import com.kitex.mom.mes.entity.MesProductionMaterialOperationEntity;
-import com.kitex.mom.mes.entity.MesProductionMaterialRestoreEntity;
-import com.kitex.mom.mes.entity.MesProductionMaterialReversalEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskReportUnqualifiedEntity;
-import com.kitex.mom.mes.entity.MesWarehouseFeedEntity;
-import com.kitex.mom.mes.mapper.MesProductionMaterialAllocationMapper;
-import com.kitex.mom.mes.mapper.MesProductionMaterialOperationMapper;
-import com.kitex.mom.mes.mapper.MesProductionMaterialRestoreMapper;
-import com.kitex.mom.mes.mapper.MesProductionMaterialReversalMapper;
-import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
-import com.kitex.mom.mes.mapper.MesTaskReportUnqualifiedMapper;
-import com.kitex.mom.mes.mapper.MesWarehouseFeedMapper;
+import com.kitex.mom.mes.entity.*;
+import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.MesProductionMaterialOperationService;
 import com.kitex.mom.mes.service.MesProductionMaterialReversalService;
 import lombok.RequiredArgsConstructor;
@@ -33,13 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 
@@ -80,7 +62,9 @@ public class MesProductionMaterialReversalServiceImpl
         return new TransactionTemplate(transactions).execute(status -> execute(raw, command, factory));
     }
 
-    /** 写入与只读冲突核账共用同一严格原文/实际身份协议，不从客户端账号猜用户ID。 */
+    /**
+     * 写入与只读冲突核账共用同一严格原文/实际身份协议，不从客户端账号猜用户ID。
+     */
     private JsonNode command(String raw, String factory) {
         JsonNode command = codec.objectDocument(raw, 64 * 1024);
         require(command.size() == KEYS.size(), "耗料纠正原文缺字段或包含额外字段");
@@ -91,8 +75,8 @@ public class MesProductionMaterialReversalServiceImpl
         require(text(command, "requestId").matches("[A-Za-z0-9_-]{8,64}"), "独立耗料纠正请求号须为8至64位");
         require(text(command, "expectedFingerprint").matches("[0-9a-f]{64}"), "须提交原耗用SHA文本");
         require(Objects.equals(codec.id(text(command, "expectedTenantId")), TenantContextHolder.getTenantId())
-                && Objects.equals(text(command, "expectedFactoryCode"), factory)
-                && Objects.equals(codec.id(text(command, "expectedActorUserId")), SecurityUtils.getUser().getId()),
+                        && Objects.equals(text(command, "expectedFactoryCode"), factory)
+                        && Objects.equals(codec.id(text(command, "expectedActorUserId")), SecurityUtils.getUser().getId()),
                 "耗料纠正只能使用当前实际实名租户工厂");
         return command;
     }
@@ -141,9 +125,9 @@ public class MesProductionMaterialReversalServiceImpl
                     .eq(MesWarehouseFeedEntity::getId, group.getKey()).last("FOR UPDATE NOWAIT"));
             var first = group.getValue().get(0);
             require(feed != null && !Boolean.TRUE.equals(feed.getIsLock()) && Objects.equals(feed.getArrangeCode(), op.getArrangeCode())
-                    && Objects.equals(feed.getTaskCode(), op.getTaskCode()) && Objects.equals(feed.getProduceTaskCode(), op.getProduceTaskCode())
-                    && Objects.equals(feed.getMatCode(), first.getMatCode()) && Objects.equals(feed.getMatUnit(), first.getMatUnit())
-                    && feed.getFeedNum() != null && feed.getFeedNum().compareTo(first.getFeedNum()) == 0 && feed.getUsedNum() != null,
+                            && Objects.equals(feed.getTaskCode(), op.getTaskCode()) && Objects.equals(feed.getProduceTaskCode(), op.getProduceTaskCode())
+                            && Objects.equals(feed.getMatCode(), first.getMatCode()) && Objects.equals(feed.getMatUnit(), first.getMatUnit())
+                            && feed.getFeedNum() != null && feed.getFeedNum().compareTo(first.getFeedNum()) == 0 && feed.getUsedNum() != null,
                     "原投料不存在、锁定或归属/原单位/总量不一致，不能换投料恢复");
             BigDecimal quantity = group.getValue().stream().map(MesProductionMaterialAllocationEntity::getConsumeNum)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -240,7 +224,7 @@ public class MesProductionMaterialReversalServiceImpl
             var other = getOne(scoped(factory).eq(MesProductionMaterialReversalEntity::getOperationId, original.getId()));
             if (other != null) {
                 require(!Objects.equals(other.getRequestId(), requestId)
-                        && Objects.equals(other.getOriginalFingerprint(), text(command, "expectedFingerprint")),
+                                && Objects.equals(other.getOriginalFingerprint(), text(command, "expectedFingerprint")),
                         "另一恢复账不属于精确原耗用，不能清除待核");
                 applied = verified(other);
                 // 永久唯一operation及不可改/删原账保证本号以后也无法再执行；不是把ABSENT当授权。
@@ -277,7 +261,9 @@ public class MesProductionMaterialReversalServiceImpl
                 row.getCommandFingerprint(), row.getEvidenceVersion(), row.getEvidenceSnapshot(), row.getEvidenceFingerprint());
     }
 
-    /** 固定原证据字段，实体增加属性不改变V1。 */
+    /**
+     * 固定原证据字段，实体增加属性不改变V1。
+     */
     private Map<String, Object> evidence(MesProductionMaterialReversalEntity row, List<MesProductionMaterialRestoreEntity> lines) {
         var result = new TreeMap<String, Object>();
         result.put("version", EVIDENCE_VERSION);
@@ -318,7 +304,15 @@ public class MesProductionMaterialReversalServiceImpl
         require(Boolean.TRUE.equals(baseMapper.ready()), "耗料恢复保护未就绪，请先执行V2第258节；不能猜测未恢复");
     }
 
-    private String text(JsonNode node, String key) { return node.get(key).textValue(); }
-    private String number(BigDecimal quantity) { return quantity.stripTrailingZeros().toPlainString(); }
-    private BigDecimal exact(BigDecimal quantity) { return codec.quantity(number(quantity), true, "原feed恢复量"); }
+    private String text(JsonNode node, String key) {
+        return node.get(key).textValue();
+    }
+
+    private String number(BigDecimal quantity) {
+        return quantity.stripTrailingZeros().toPlainString();
+    }
+
+    private BigDecimal exact(BigDecimal quantity) {
+        return codec.quantity(number(quantity), true, "原feed恢复量");
+    }
 }

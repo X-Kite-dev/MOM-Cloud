@@ -83,7 +83,7 @@ public class PrintLogController {
     @GetMapping("/preview")
     public R<String> preview(@RequestParam("id") Long id) {
         String content = printLogService.preview(id);
-        return R.ok(content);
+        return R.ok(content, null);
     }
 
     /**

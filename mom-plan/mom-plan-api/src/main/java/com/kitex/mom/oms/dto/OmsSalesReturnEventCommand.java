@@ -6,7 +6,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** WMS销售退货实收入库对OMS原交付行的来源精确、永久幂等冲减。 */
+/**
+ * WMS销售退货实收入库对OMS原交付行的来源精确、永久幂等冲减。
+ */
 public class OmsSalesReturnEventCommand {
     @Data
     @Accessors(chain = true)

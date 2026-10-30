@@ -5,26 +5,13 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.kitex.admin.api.feign.RemoteParamService;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.dto.MdmMaterialMeasureDTO;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.mes.dto.ProcessProcedureDTO;
-import com.kitex.mom.mes.entity.MesProductionFeedBatchEntity;
-import com.kitex.mom.mes.entity.MesProductionFeedConsumptionEntity;
-import com.kitex.mom.mes.entity.MesProductionFeedOutputEntity;
-import com.kitex.mom.mes.entity.MesProductionFeedShareEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesWarehouseFeedEntity;
-import com.kitex.mom.mes.mapper.MesProductionFeedBatchMapper;
-import com.kitex.mom.mes.mapper.MesProductionFeedConsumptionMapper;
-import com.kitex.mom.mes.mapper.MesProductionFeedOutputMapper;
-import com.kitex.mom.mes.mapper.MesProductionFeedShareMapper;
-import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
-import com.kitex.mom.mes.mapper.MesTaskMapper;
-import com.kitex.mom.mes.mapper.MesWarehouseFeedMapper;
+import com.kitex.mom.mes.entity.*;
+import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.MesProductionFeedBatchService;
 import com.kitex.mom.mes.service.impl.material.MesProductionFeedAllocationPlanner;
 import com.kitex.mom.mes.util.MesTaskUtils;
@@ -35,14 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 
@@ -72,7 +52,8 @@ public class MesProductionFeedBatchServiceImpl
     private final MesProductionFeedEvidenceCodec evidence;
     private final MesProductionFeedAllocationPlanner planner;
     private final RemoteMaterialService materials;
-    private final RemoteParamService parameters;
+    private final MesMaterialConsumptionModeResolver consumptionModes;
+    private final MesStartMaterialBindingReader materialBindings;
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
@@ -132,9 +113,9 @@ public class MesProductionFeedBatchServiceImpl
             productionUnit = unit;
             if (good) {
                 require("EFFECTIVE".equals(facts.path("status").asText())
-                        && !"ROUTE_RETURN".equals(facts.path("execution_kind").asText())
-                        && codec.quantity(birth.getEffectiveQuantity(), false, "原GOOD有效数量").compareTo(quantity) == 0
-                        && codec.quantity(birth.getCorrectedQuantity(), true, "原GOOD纠正数量").signum() == 0,
+                                && !"ROUTE_RETURN".equals(facts.path("execution_kind").asText())
+                                && codec.quantity(birth.getEffectiveQuantity(), false, "原GOOD有效数量").compareTo(quantity) == 0
+                                && codec.quantity(birth.getCorrectedQuantity(), true, "原GOOD纠正数量").signum() == 0,
                         "只有真实有效正量GOOD允许总投料；退回执行不再次耗料");
             } else {
                 require("MES_PRODUCTION_NG_SOURCE_V1".equals(facts.path("source_version").asText())
@@ -157,18 +138,17 @@ public class MesProductionFeedBatchServiceImpl
                 arrange.getRouteCode(), arrange.getSourceRouteNodeCode());
         var requirements = Objects.requireNonNullElse(route.getMdmProcessProcedureMatList(),
                 List.<ProcessProcedureDTO.ProcessProcedureMatDTO>of());
-        var parameter = parameters.getByKey("BACK_FLUSH");
-        require(parameter != null && parameter.isOk() && ("0".equals(parameter.getData()) || "1".equals(parameter.getData())),
-                "实际倒冲配置未知，不能默认成总投料");
-        require(!"1".equals(parameter.getData()) || requirements.isEmpty(), "倒冲需独立真实库存协议，不能借FEED记账");
-        var eligible = requirements.isEmpty() ? List.<MesWarehouseFeedEntity>of() : feeds.selectList(
-                new LambdaQueryWrapper<MesWarehouseFeedEntity>().eq(MesWarehouseFeedEntity::getTenantId, tenant)
-                        .eq(MesWarehouseFeedEntity::getFactoryCode, factory).eq(MesWarehouseFeedEntity::getTaskCode, task.getCode())
-                        .eq(MesWarehouseFeedEntity::getProduceTaskCode, arrange.getProduceTaskCode())
-                        .eq(MesWarehouseFeedEntity::getArrangeCode, arrangeCode).eq(MesWarehouseFeedEntity::getIsLock, false)
-                        .and(w -> w.isNull(MesWarehouseFeedEntity::getMatValidEndDate)
-                                .or().ge(MesWarehouseFeedEntity::getMatValidEndDate, LocalDate.now()))
-                        .orderByAsc(MesWarehouseFeedEntity::getId).last("LIMIT 5001 FOR UPDATE NOWAIT"));
+        require(consumptionModes.resolve(arrange) == MesMaterialConsumptionModeResolver.Mode.FEED,
+                "原派工固定为倒冲，需独立真实库存协议，不能借FEED记账");
+        var feedQuery = new LambdaQueryWrapper<MesWarehouseFeedEntity>().eq(MesWarehouseFeedEntity::getTenantId, tenant)
+                .eq(MesWarehouseFeedEntity::getFactoryCode, factory).eq(MesWarehouseFeedEntity::getTaskCode, task.getCode())
+                .eq(MesWarehouseFeedEntity::getProduceTaskCode, arrange.getProduceTaskCode())
+                .eq(MesWarehouseFeedEntity::getArrangeCode, arrangeCode).eq(MesWarehouseFeedEntity::getIsLock, false)
+                .and(w -> w.isNull(MesWarehouseFeedEntity::getMatValidEndDate)
+                        .or().ge(MesWarehouseFeedEntity::getMatValidEndDate, LocalDate.now()))
+                .orderByAsc(MesWarehouseFeedEntity::getId);
+        materialBindings.constrain(arrange, feedQuery);
+        var eligible = requirements.isEmpty() ? List.<MesWarehouseFeedEntity>of() : feeds.selectList(feedQuery.last("LIMIT 5001 FOR UPDATE NOWAIT"));
         require(eligible.size() <= 5000, "实际投料超过5000条，不能截断");
         var demands = outputRows.stream().map(row -> new MesProductionFeedAllocationPlanner.OutputDemand(row.getOutputKey(),
                 MesProductionFeedAllocationPlanner.OutputKind.valueOf(row.getOutputKind()), row.getQuantity(), row.getProductionUnit())).toList();
@@ -261,7 +241,9 @@ public class MesProductionFeedBatchServiceImpl
         return batch;
     }
 
-    /** 实际计量读取用于本次原单位验证，不读取当前数据解释永久历史。 */
+    /**
+     * 实际计量读取用于本次原单位验证，不读取当前数据解释永久历史。
+     */
     private MdmMaterialMeasureDTO measure(String code) {
         var response = materials.productionMeasure(code);
         require(response != null && response.isOk() && response.getData() != null, "实际投料计量不可核定");
@@ -269,7 +251,7 @@ public class MesProductionFeedBatchServiceImpl
     }
 
     private List<MesProductionFeedConsumptionEntity> consumptionRows(MesProductionFeedAllocationPlanner.Plan plan,
-                                                                    MesProductionFeedBatchEntity batch) {
+                                                                     MesProductionFeedBatchEntity batch) {
         var rows = new ArrayList<MesProductionFeedConsumptionEntity>();
         var feedIds = new HashSet<Long>();
         for (var item : plan.consumptions()) {
@@ -299,8 +281,8 @@ public class MesProductionFeedBatchServiceImpl
     }
 
     private List<MesProductionFeedShareEntity> shareRows(MesProductionFeedAllocationPlanner.Plan plan, MesProductionFeedBatchEntity batch,
-                                                       List<MesProductionFeedOutputEntity> outputRows,
-                                                       List<MesProductionFeedConsumptionEntity> consumptionRows) {
+                                                         List<MesProductionFeedOutputEntity> outputRows,
+                                                         List<MesProductionFeedConsumptionEntity> consumptionRows) {
         Map<String, MesProductionFeedOutputEntity> outputIndex = new HashMap<>();
         outputRows.forEach(row -> outputIndex.put(row.getOutputKey(), row));
         Map<Long, MesProductionFeedConsumptionEntity> consumptionIndex = new HashMap<>();
@@ -310,9 +292,9 @@ public class MesProductionFeedBatchServiceImpl
             var output = outputIndex.get(item.outputKey());
             var consumption = consumptionIndex.get(item.feedId());
             require(output != null && consumption != null && output.getOutputKind().equals(item.kind().name())
-                    && consumption.getRequirementMatCode().equals(item.requirementMatCode())
-                    && consumption.getRequirementUnit().equals(item.requirementUnit())
-                    && consumption.getMatCode().equals(item.matCode()) && consumption.getMatUnit().equals(item.matUnit()),
+                            && consumption.getRequirementMatCode().equals(item.requirementMatCode())
+                            && consumption.getRequirementUnit().equals(item.requirementUnit())
+                            && consumption.getMatCode().equals(item.matCode()) && consumption.getMatUnit().equals(item.matUnit()),
                     "归属边不能按首条投料或物料猜根");
             var row = new MesProductionFeedShareEntity();
             row.setId(IdWorker.getId());
@@ -328,7 +310,9 @@ public class MesProductionFeedBatchServiceImpl
         return result;
     }
 
-    /** 一次完整集合提交，不为50000份额展开大量绑定参数或分事务。 */
+    /**
+     * 一次完整集合提交，不为50000份额展开大量绑定参数或分事务。
+     */
     private String rowsJson(List<Map<String, Object>> facts, MesProductionFeedBatchEntity batch) {
         return codec.snapshot(facts.stream().map(row -> {
             var result = new LinkedHashMap<>(row);
@@ -343,7 +327,9 @@ public class MesProductionFeedBatchServiceImpl
         return value == null ? null : value.toString();
     }
 
-    /** 业务实体审计由实际本人设置；数据库事务技术字段不从应用传入。 */
+    /**
+     * 业务实体审计由实际本人设置；数据库事务技术字段不从应用传入。
+     */
     private void stamp(com.kitex.common.core.entity.BaseEntity<?> entity, Long tenant, String factory, Long actor) {
         entity.setTenantId(tenant);
         entity.setCreateBy(actor.toString());

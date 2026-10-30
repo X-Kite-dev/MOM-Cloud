@@ -10,6 +10,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.component.PermissionService;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
@@ -27,11 +28,14 @@ import com.kitex.mom.wms.enums.InBillTypeEnum;
 import com.kitex.mom.wms.enums.InOutEnum;
 import com.kitex.mom.wms.enums.OutBillTypeEnum;
 import com.kitex.mom.wms.mapper.WmsAllocationBillMapper;
+import com.kitex.mom.wms.mapper.WmsAllocationReturnReceiptMapper;
+import com.kitex.mom.wms.mapper.WmsAllocationReturnExceptionLineMapper;
 import com.kitex.mom.wms.mapper.WmsContainerBarcodeMapper;
 import com.kitex.mom.wms.mapper.WmsInoutFlowMapper;
 import com.kitex.mom.wms.mapper.WmsTransferVarianceLineMapper;
 import com.kitex.mom.wms.service.*;
 import com.kitex.mom.wms.util.WmsStockAvailability;
+import com.kitex.mom.wms.util.WmsSerialStockGuard;
 import com.kitex.mom.wms.vo.WmsAllocationBillExcelVO;
 import com.kitex.mom.wms.vo.WmsAllocationBillVO;
 import lombok.AllArgsConstructor;
@@ -59,6 +63,9 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
 
     private static final String IN_TRANSIT = "IN_TRANSIT";
     private static final String PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED";
+    private static final String RETURN_PENDING = "RETURN_PENDING";
+    private static final String RETURN_EXCEPTION_PENDING = "RETURN_EXCEPTION_PENDING";
+    private static final String RETURN_EXCEPTION_CLOSED = "RETURN_EXCEPTION_CLOSED";
     private static final String RECEIVED = "RECEIVED";
     private static final String CANCELLED = "CANCELLED";
     private static final String PARTIALLY_CANCELLED = "PARTIALLY_CANCELLED";
@@ -67,6 +74,8 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
      */
     private static final int LEGACY_V6_TRANSFER_LEAD_HOURS = 24;
     private final WmsInoutFlowMapper wmsInoutFlowMapper;
+    private final WmsAllocationReturnReceiptMapper wmsAllocationReturnReceiptMapper;
+    private final WmsAllocationReturnExceptionLineMapper wmsAllocationReturnExceptionLineMapper;
     private final WmsInoutFlowService wmsInoutFlowService;
     private final WmsLiveStockService wmsLiveStockService;
     private final RemoteWarehouseLocationService remoteWarehouseLocationService;
@@ -78,6 +87,7 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
     private final WmsTransferRoutePolicyService wmsTransferRoutePolicyService;
     private final WmsTransferVarianceLineMapper wmsTransferVarianceLineMapper;
     private final WmsPlanShortageEventOutboxService wmsPlanShortageEventOutboxService;
+    private final WmsWarehouseBusinessGuard warehouseBusinessGuard;
 
     /**
      * 新增调拨单
@@ -115,6 +125,7 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
             require(Objects.equals(existing.getRequestSnapshot(), requestSnapshot), "调拨幂等号已被不同请求使用");
             return Boolean.TRUE;
         }
+        requireTransferConfiguration(sourceWarehouse.getWarehouseCode(), targetWarehouse.getWarehouseCode());
         require(count(new LambdaQueryWrapper<WmsAllocationBillEntity>()
                         .eq(WmsAllocationBillEntity::getBillNo, wmsAllocationBillAdd.getBillNo())) == 0,
                 "调拨单号已存在");
@@ -161,6 +172,7 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         requireText(wmsAllocationBillAdd.getRequestId(), "接收请求唯一号不能为空");
         wmsAllocationBillAdd.setRequestId(wmsAllocationBillAdd.getRequestId().trim());
         WmsAllocationBillEntity wmsAllocationBill = lockBill(wmsAllocationBillAdd.getId());
+        requireFactory(wmsAllocationBill.getFactoryCode());
         requireWarehousePermission("wms_wmsAllocationReceive_rec", wmsAllocationBill.getNewWarehouseCode(),
                 "无权接收至该仓库");
         require(wmsAllocationBillAdd.getDetails() != null && !wmsAllocationBillAdd.getDetails().isEmpty(),
@@ -173,6 +185,8 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
             return Boolean.TRUE;
         }
         require(IN_TRANSIT.equals(wmsAllocationBill.getAllocationState()), "仅在途调拨单可以接收");
+        require(warehouseBusinessGuard.check(wmsAllocationBill.getNewWarehouseCode(), "allocation", true),
+                "目标仓未配置调拨接收业务");
         if (!Boolean.TRUE.equals(wmsAllocationBill.getSourceDeducted())) {
             return legacyReceive(wmsAllocationBill, wmsAllocationBillAdd);
         }
@@ -222,10 +236,12 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         command.setReason(command.getReason().trim());
         String cancelSnapshot = JSONUtil.toJsonStr(Map.of("reason", command.getReason()));
         WmsAllocationBillEntity bill = lockBill(command.getId());
+        requireFactory(bill.getFactoryCode());
         requireWarehousePermission("wms_wmsAllocationBill_cancel", bill.getOldWarehouseCode(),
                 "无权取消该源仓的调拨单");
         if (Objects.equals(bill.getCancelRequestId(), command.getRequestId())
-                && Set.of(CANCELLED, PARTIALLY_CANCELLED).contains(bill.getAllocationState())) {
+                && Set.of(RETURN_PENDING, RETURN_EXCEPTION_PENDING, RETURN_EXCEPTION_CLOSED,
+                CANCELLED, PARTIALLY_CANCELLED).contains(bill.getAllocationState())) {
             require(Objects.equals(bill.getCancelRequestSnapshot(), cancelSnapshot),
                     "取消幂等号已被不同请求使用");
             return Boolean.TRUE;
@@ -235,42 +251,150 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         boolean partialReceived = PARTIALLY_RECEIVED.equals(bill.getAllocationState());
         BigDecimal cancelledSupplyQuantity = BigDecimal.ZERO;
         if (Boolean.TRUE.equals(bill.getSourceDeducted())) {
-            MdmWarehouseEntity source = requireWarehouse(bill.getOldWarehouseCode(), bill.getFactoryCode());
             Map<Long, BigDecimal> received = receivedQuantities(bill.getId());
+            boolean hasOutstanding = false;
             for (WmsInoutFlowEntity issueFlow : issueFlows(bill)) {
+                require(issueFlow.getMatNum() != null && Double.isFinite(issueFlow.getMatNum())
+                        && issueFlow.getMatNum() > 0, "调拨发出流水数量异常");
                 BigDecimal remaining = BigDecimal.valueOf(issueFlow.getMatNum())
-                        .subtract(received.getOrDefault(issueFlow.getId(), BigDecimal.ZERO)).max(BigDecimal.ZERO);
+                        .subtract(received.getOrDefault(issueFlow.getId(), BigDecimal.ZERO));
+                require(remaining.signum() >= 0, "调拨接收数量超过原发出数量，须先核账");
                 if (remaining.signum() == 0) continue;
+                hasOutstanding = true;
                 if (Objects.equals(issueFlow.getMatCode(), bill.getSourceMaterialCode())) {
                     cancelledSupplyQuantity = cancelledSupplyQuantity.add(remaining);
                 }
-                requireContainer(issueFlow.getContainerCode(), source);
-                WmsInoutFlowEntity returnSource = quantityCopy(issueFlow, remaining);
-                wmsLiveStockService.transferIn(returnSource, bill.getOldWarehouseCode(), bill.getOldWarehouseName(),
-                        issueFlow.getSiteCode(), issueFlow.getSiteName(), issueFlow.getContainerCode());
-                WmsInoutFlowEntity returnFlow = inFlow(bill, returnSource, bill.getOldWarehouseCode(),
-                        bill.getOldWarehouseName(), issueFlow.getSiteCode(), issueFlow.getSiteName(),
-                        issueFlow.getContainerCode(), "CANCEL_RETURN");
-                returnFlow.setSourceFlowId(issueFlow.getId());
-                returnFlow.setOperationRequestId(command.getRequestId());
-                require(wmsInoutFlowMapper.insert(returnFlow) == 1, "调拨取消返还流水保存失败");
             }
-            issueFlows(bill).forEach(wmsLiveStockService::releaseTransferSourceContainer);
+            require(hasOutstanding, "调拨单已无待退回数量，请完成最终接收");
         }
         MomUser user = SecurityUtils.getUser();
-        bill.setAllocationState(partialReceived ? PARTIALLY_CANCELLED : CANCELLED);
+        bill.setAllocationState(Boolean.TRUE.equals(bill.getSourceDeducted()) ? RETURN_PENDING
+                : partialReceived ? PARTIALLY_CANCELLED : CANCELLED);
         bill.setCancelRequestId(command.getRequestId());
         bill.setCancelRequestSnapshot(cancelSnapshot);
         bill.setCancelReason(command.getReason());
         bill.setCancelBy(user.getUsername());
         bill.setCancelByName(operatorName(user));
         bill.setCancelTime(LocalDateTime.now());
-        bill.setFinishTime(bill.getCancelTime());
-        bill.setFinishByName(operatorName(user));
+        if (!Boolean.TRUE.equals(bill.getSourceDeducted())) {
+            bill.setFinishTime(bill.getCancelTime());
+            bill.setFinishByName(operatorName(user));
+        }
         require(updateById(bill), "调拨取消状态更新失败");
         if (bill.getSourceMrpId() != null && cancelledSupplyQuantity.signum() > 0) {
             wmsPlanShortageEventOutboxService.enqueueTransferCancelled(bill, cancelledSupplyQuantity);
         }
+        return Boolean.TRUE;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Boolean confirmReturn(WmsAllocationReturnDTO command) {
+        require(command != null && command.getId() != null, "待退回调拨单ID不能为空");
+        requireText(command.getRequestId(), "退回确认请求号不能为空");
+        require(command.getRequestId().trim().length() <= 64, "退回确认请求号不能超过64字");
+        require(StrUtil.isNotBlank(command.getEvidence()) && command.getEvidence().trim().length() <= 500,
+                "实物退回证据不能为空且不能超过500字");
+        require(command.getLines() != null && !command.getLines().isEmpty()
+                && command.getLines().size() <= 500, "退回确认必须逐行核对且最多500行");
+        require(TenantContextHolder.getTenantId() != null, "退回确认缺少租户上下文");
+        String requestId = command.getRequestId().trim();
+        String snapshot = returnSnapshot(command);
+        WmsAllocationBillEntity bill = lockBill(command.getId());
+        requireFactory(bill.getFactoryCode());
+        requireWarehousePermission("wms_wmsAllocationBill_cancel", bill.getOldWarehouseCode(),
+                "无权确认该源仓的调拨退回");
+        WmsAllocationReturnReceiptEntity duplicate = wmsAllocationReturnReceiptMapper.selectOne(
+                new LambdaQueryWrapper<WmsAllocationReturnReceiptEntity>()
+                        .eq(WmsAllocationReturnReceiptEntity::getRequestId, requestId));
+        if (duplicate != null) {
+            require(Objects.equals(duplicate.getAllocationBillId(), bill.getId())
+                    && Objects.equals(duplicate.getFactoryCode(), bill.getFactoryCode()),
+                    "退回确认幂等号不属于当前调拨单");
+            require(Objects.equals(duplicate.getOperatorCode(), SecurityUtils.getUser().getUsername()),
+                    "退回确认幂等号不属于当前操作人");
+            require(Objects.equals(duplicate.getRequestSnapshot(), snapshot), "退回确认幂等号已被不同请求使用");
+            return Boolean.TRUE;
+        }
+        require(RETURN_PENDING.equals(bill.getAllocationState())
+                && Boolean.TRUE.equals(bill.getSourceDeducted()), "仅待退回的调拨单可以确认实物返还");
+
+        Map<Long, BigDecimal> received = receivedQuantities(bill.getId());
+        Map<Long, BigDecimal> returned = returnedQuantities(bill.getId());
+        List<WmsInoutFlowEntity> issues = issueFlows(bill);
+        Map<Long, WmsAllocationReturnDTO.Line> lines = new HashMap<>();
+        for (WmsAllocationReturnDTO.Line line : command.getLines()) {
+            require(line != null && line.getSourceFlowId() != null
+                    && line.getReturnedQuantity() != null && line.getReturnedQuantity().signum() >= 0
+                    && lines.putIfAbsent(line.getSourceFlowId(), line) == null,
+                    "退回明细来源流水不能为空、重复或数量无效");
+        }
+        Map<Long, BigDecimal> outstanding = new LinkedHashMap<>();
+        for (WmsInoutFlowEntity issue : issues) {
+            require(issue.getMatNum() != null && Double.isFinite(issue.getMatNum()) && issue.getMatNum() > 0,
+                    "调拨发出流水数量异常");
+            BigDecimal remaining = BigDecimal.valueOf(issue.getMatNum())
+                    .subtract(received.getOrDefault(issue.getId(), BigDecimal.ZERO))
+                    .subtract(returned.getOrDefault(issue.getId(), BigDecimal.ZERO));
+            require(remaining.signum() >= 0, "调拨接收与退回数量超过原发出数量，须先核账");
+            if (remaining.signum() > 0) outstanding.put(issue.getId(), remaining);
+        }
+        require(!outstanding.isEmpty(), "调拨单已无待退回数量");
+        require(lines.keySet().equals(outstanding.keySet()), "退回确认必须覆盖全部且仅覆盖未结发出流水");
+        BigDecimal returnTotal = BigDecimal.ZERO;
+        BigDecimal remainingTotal = BigDecimal.ZERO;
+        for (Map.Entry<Long, BigDecimal> entry : outstanding.entrySet()) {
+            BigDecimal quantity = lines.get(entry.getKey()).getReturnedQuantity();
+            require(quantity.compareTo(entry.getValue()) <= 0, "本次退回数量不能超过该流水未结数量");
+            returnTotal = returnTotal.add(quantity);
+            remainingTotal = remainingTotal.add(entry.getValue().subtract(quantity));
+        }
+        require(returnTotal.signum() > 0, "本次至少需要确认一项实际退回数量");
+
+        MdmWarehouseEntity source = requireWarehouse(bill.getOldWarehouseCode(), bill.getFactoryCode());
+        Map<Long, MdmWarehouseLocationEntity> sites = new HashMap<>();
+        for (WmsInoutFlowEntity issue : issues) {
+            if (!outstanding.containsKey(issue.getId())
+                    || lines.get(issue.getId()).getReturnedQuantity().signum() == 0) continue;
+            sites.put(issue.getId(), requireLocation(issue.getSiteCode(), source.getWarehouseCode(), bill.getFactoryCode()));
+            requireContainer(issue.getContainerCode(), source);
+        }
+        MomUser user = SecurityUtils.getUser();
+        LocalDateTime now = LocalDateTime.now();
+        WmsAllocationReturnReceiptEntity receipt = new WmsAllocationReturnReceiptEntity()
+                .setAllocationBillId(bill.getId()).setRequestId(requestId).setRequestSnapshot(snapshot)
+                .setEvidence(command.getEvidence().trim()).setReturnedQuantity(returnTotal)
+                .setRemainingQuantity(remainingTotal).setOperatorCode(user.getUsername())
+                .setOperatorName(operatorName(user)).setConfirmedTime(now).setFactoryCode(bill.getFactoryCode());
+        require(wmsAllocationReturnReceiptMapper.insert(receipt) == 1, "调拨退回确认记录保存失败");
+        for (WmsInoutFlowEntity issue : issues) {
+            WmsAllocationReturnDTO.Line line = lines.get(issue.getId());
+            if (line == null || line.getReturnedQuantity().signum() == 0) continue;
+            BigDecimal quantity = line.getReturnedQuantity();
+            MdmWarehouseLocationEntity site = sites.get(issue.getId());
+            WmsInoutFlowEntity returnSource = quantityCopy(issue, quantity);
+            wmsLiveStockService.transferIn(returnSource, source.getWarehouseCode(), source.getWarehouseName(),
+                    site.getLocationCode(), site.getLocationName(), issue.getContainerCode());
+            WmsInoutFlowEntity returnFlow = inFlow(bill, returnSource, source.getWarehouseCode(),
+                    source.getWarehouseName(), site.getLocationCode(), site.getLocationName(),
+                    issue.getContainerCode(), "CANCEL_RETURN");
+            returnFlow.setSourceFlowId(issue.getId());
+            returnFlow.setOperationRequestId(requestId);
+            require(wmsInoutFlowMapper.insert(returnFlow) == 1, "调拨退回流水保存失败");
+        }
+        bill.setReturnRequestId(requestId);
+        bill.setReturnRequestSnapshot(snapshot);
+        bill.setReturnEvidence(command.getEvidence().trim());
+        bill.setReturnBy(user.getUsername());
+        bill.setReturnTime(now);
+        if (remainingTotal.signum() == 0) {
+            issues.forEach(wmsLiveStockService::releaseTransferSourceContainer);
+            bill.setAllocationState(received.values().stream().anyMatch(value -> value.signum() > 0)
+                    ? PARTIALLY_CANCELLED : CANCELLED);
+            bill.setFinishTime(now);
+            bill.setFinishByName(operatorName(user));
+        }
+        require(updateById(bill), "调拨退回确认状态更新失败");
         return Boolean.TRUE;
     }
 
@@ -611,9 +735,11 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         WmsAllocationBillVO wmsAllocationBillVO = new WmsAllocationBillVO();
         WmsAllocationBillEntity byId = this.getById(id);
         require(byId != null, "调拨单不存在");
+        requireFactory(byId.getFactoryCode());
         require(permissionService.hasPermission(
                         "wms_wmsAllocationBill_view",
                         "wms_wmsAllocationBill_view_" + byId.getOldWarehouseCode(),
+                        "wms_wmsAllocationBill_cancel_" + byId.getOldWarehouseCode(),
                         "wms_wmsAllocationReceive_view",
                         "wms_wmsAllocationReceive_view_" + byId.getNewWarehouseCode(),
                         "wms_wmsAllocationReceive_rec_" + byId.getNewWarehouseCode()),
@@ -623,7 +749,11 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
                 ? issueFlows(byId)
                 : wmsInoutFlowMapper.selectList(new LambdaQueryWrapper<WmsInoutFlowEntity>()
                 .eq(WmsInoutFlowEntity::getBillNo, wmsAllocationBillVO.getBillNo())
-                .eq(WmsInoutFlowEntity::getOperateType, InOutEnum.OUT.getCode()));
+                .eq(WmsInoutFlowEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(WmsInoutFlowEntity::getFactoryCode, byId.getFactoryCode())
+                .eq(WmsInoutFlowEntity::getWarehouseCode, byId.getOldWarehouseCode())
+                .eq(WmsInoutFlowEntity::getOperateType, InOutEnum.OUT.getCode())
+                .eq(WmsInoutFlowEntity::getBillType, OutBillTypeEnum.ALLOCATION_OUT.getCode()));
         List<WmsInoutFlowEntity> terminalFlows = Boolean.TRUE.equals(byId.getSourceDeducted())
                 ? wmsInoutFlowMapper.selectList(new LambdaQueryWrapper<WmsInoutFlowEntity>()
                 .eq(WmsInoutFlowEntity::getBillId, byId.getId())
@@ -637,6 +767,13 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
                         .eq(WmsTransferVarianceLineEntity::getCaseId, byId.getVarianceCaseId())).stream()
                 .collect(Collectors.toMap(WmsTransferVarianceLineEntity::getSourceFlowId,
                         item -> item, (left, right) -> right));
+        Map<Long, BigDecimal> returnExceptionByFlow = RETURN_EXCEPTION_CLOSED.equals(byId.getAllocationState())
+                && byId.getReturnExceptionCaseId() != null
+                ? wmsAllocationReturnExceptionLineMapper.selectList(
+                new LambdaQueryWrapper<WmsAllocationReturnExceptionLineEntity>()
+                        .eq(WmsAllocationReturnExceptionLineEntity::getCaseId, byId.getReturnExceptionCaseId()))
+                .stream().collect(Collectors.toMap(WmsAllocationReturnExceptionLineEntity::getSourceFlowId,
+                        WmsAllocationReturnExceptionLineEntity::getExceptionQuantity, BigDecimal::add)) : Map.of();
         List<WmsDetailDTO> details = wmsInoutFlowEntities.stream()
                 .map(wmsInoutFlowEntity -> {
                     WmsDetailDTO wmsDetailDTO = new WmsDetailDTO();
@@ -647,8 +784,9 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
                     wmsDetailDTO.setOldWarehouseName(wmsInoutFlowEntity.getWarehouseName());
                     wmsDetailDTO.setFlowId(wmsInoutFlowEntity.getId());
                     wmsDetailDTO.setSourceStockId(wmsInoutFlowEntity.getSourceStockId());
+                    wmsDetailDTO.setOldContainerCode(wmsInoutFlowEntity.getContainerCode());
                     wmsDetailDTO.setBillId(Boolean.TRUE.equals(byId.getSourceDeducted())
-                            ? byId.getId() : wmsInoutFlowEntity.getBillId());
+                            ? byId.getId() : wmsInoutFlowEntity.getSourceStockId());
                     wmsDetailDTO.setOperateNum(wmsInoutFlowEntity.getMatNum());
                     BigDecimal issued = BigDecimal.valueOf(wmsInoutFlowEntity.getMatNum());
                     List<WmsInoutFlowEntity> terminals = terminalBySourceFlow
@@ -657,16 +795,33 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
                             .map(flow -> BigDecimal.valueOf(flow.getMatNum())).reduce(BigDecimal.ZERO, BigDecimal::add);
                     BigDecimal cancelled = terminals.stream().filter(flow -> "CANCEL_RETURN".equals(flow.getTransferAction()))
                             .map(flow -> BigDecimal.valueOf(flow.getMatNum())).reduce(BigDecimal.ZERO, BigDecimal::add);
-                    BigDecimal rawRemaining = issued.subtract(received).subtract(cancelled).max(BigDecimal.ZERO);
-                    boolean open = Set.of(IN_TRANSIT, PARTIALLY_RECEIVED).contains(byId.getAllocationState());
+                    BigDecimal rawRemaining = issued.subtract(received).subtract(cancelled);
+                    boolean open = Set.of(IN_TRANSIT, PARTIALLY_RECEIVED, RETURN_PENDING, RETURN_EXCEPTION_PENDING)
+                            .contains(byId.getAllocationState());
                     WmsTransferVarianceLineEntity variance = varianceBySourceFlow.get(wmsInoutFlowEntity.getId());
+                    BigDecimal shortQuantity = variance == null ? BigDecimal.ZERO :
+                            Optional.ofNullable(variance.getShortQuantity()).orElse(BigDecimal.ZERO);
+                    BigDecimal exceptionQuantity = returnExceptionByFlow.getOrDefault(
+                            wmsInoutFlowEntity.getId(), BigDecimal.ZERO);
+                    BigDecimal unreconciled = Boolean.TRUE.equals(byId.getSourceDeducted())
+                            ? (open ? rawRemaining.min(BigDecimal.ZERO).abs()
+                            : rawRemaining.subtract(shortQuantity).subtract(exceptionQuantity).abs()) : BigDecimal.ZERO;
                     wmsDetailDTO.setIssuedQuantity(issued);
                     wmsDetailDTO.setReceivedQuantity(received);
-                    wmsDetailDTO.setInTransitQuantity(open ? rawRemaining : BigDecimal.ZERO);
-                    wmsDetailDTO.setShortQuantity(variance == null ? BigDecimal.ZERO : variance.getShortQuantity());
+                    wmsDetailDTO.setInTransitQuantity(open ? rawRemaining.max(BigDecimal.ZERO) : BigDecimal.ZERO);
+                    wmsDetailDTO.setShortQuantity(shortQuantity);
+                    wmsDetailDTO.setReturnExceptionQuantity(exceptionQuantity);
                     wmsDetailDTO.setOverQuantity(variance == null ? BigDecimal.ZERO : variance.getOverQuantity());
-                    wmsDetailDTO.setTransferLineState(variance != null
+                    wmsDetailDTO.setUnreconciledQuantity(unreconciled);
+                    wmsDetailDTO.setTransferLineState(unreconciled.signum() > 0 ? "RECONCILIATION_REQUIRED"
+                            : variance != null
                             ? ("RESOLVED".equals(variance.getDispositionStatus()) ? "VARIANCE_RESOLVED" : "VARIANCE_PENDING")
+                            : RETURN_EXCEPTION_PENDING.equals(byId.getAllocationState()) && rawRemaining.signum() > 0
+                            ? RETURN_EXCEPTION_PENDING
+                            : RETURN_EXCEPTION_CLOSED.equals(byId.getAllocationState()) && exceptionQuantity.signum() > 0
+                            ? RETURN_EXCEPTION_CLOSED
+                            : RETURN_PENDING.equals(byId.getAllocationState()) && rawRemaining.signum() > 0
+                            ? RETURN_PENDING
                             : cancelled.signum() > 0 ? "CANCELLED"
                             : rawRemaining.signum() == 0 ? "RECEIVED"
                             : received.signum() > 0 ? "PARTIAL" : "IN_TRANSIT");
@@ -683,40 +838,48 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
                     return wmsDetailDTO;
                 }).toList();
         wmsAllocationBillVO.setDetails(details);
+        wmsAllocationBillVO.setReturnReceipts(byId.getReturnRequestId() == null ? List.of() :
+                Optional.ofNullable(wmsAllocationReturnReceiptMapper.selectList(
+                        new LambdaQueryWrapper<WmsAllocationReturnReceiptEntity>()
+                                .eq(WmsAllocationReturnReceiptEntity::getAllocationBillId, byId.getId())
+                                .orderByAsc(WmsAllocationReturnReceiptEntity::getConfirmedTime)
+                                .orderByAsc(WmsAllocationReturnReceiptEntity::getId)))
+                        .orElse(List.of()));
         return wmsAllocationBillVO;
     }
 
     private Boolean legacyReceive(WmsAllocationBillEntity bill, WmsAllocationBillAddDTO command) {
         require(command.getDetails() != null && !command.getDetails().isEmpty(), "调拨接收明细不能为空");
+        List<WmsInoutFlowEntity> issued = wmsInoutFlowMapper.selectList(
+                new LambdaQueryWrapper<WmsInoutFlowEntity>()
+                        .eq(WmsInoutFlowEntity::getBillNo, bill.getBillNo())
+                        .eq(WmsInoutFlowEntity::getTenantId, TenantContextHolder.getTenantId())
+                        .eq(WmsInoutFlowEntity::getFactoryCode, bill.getFactoryCode())
+                        .eq(WmsInoutFlowEntity::getWarehouseCode, bill.getOldWarehouseCode())
+                        .eq(WmsInoutFlowEntity::getOperateType, InOutEnum.OUT.getCode())
+                        .eq(WmsInoutFlowEntity::getBillType, OutBillTypeEnum.ALLOCATION_OUT.getCode())
+                        .orderByAsc(WmsInoutFlowEntity::getId).last("FOR UPDATE"));
+        Map<Long, WmsDetailDTO> requested = validateLegacyReceipt(bill, command, issued);
         MdmWarehouseEntity target = requireWarehouse(bill.getNewWarehouseCode(), bill.getFactoryCode());
-        for (WmsDetailDTO detail : command.getDetails()) {
-            require(detail.getBillId() != null && detail.getFlowId() != null
-                            && detail.getOperateNum() != null && detail.getOperateNum() > 0,
-                    "历史调拨明细缺少源库存、来源流水或有效数量");
+        for (WmsInoutFlowEntity original : issued) {
+            WmsDetailDTO detail = requested.get(original.getId());
             MdmWarehouseLocationEntity site = requireLocation(detail.getNewSiteCode(), target.getWarehouseCode(),
                     bill.getFactoryCode());
-            detail.setNewWarehouseCode(target.getWarehouseCode());
-            detail.setNewWarehouseName(target.getWarehouseName());
-            detail.setNewSiteCode(site.getLocationCode());
-            detail.setNewSiteName(site.getLocationName());
-            detail.setMatNum(detail.getOperateNum());
             requireContainer(detail.getContainerCode(), target);
-            wmsLiveStockService.materialSaveOrUpdate(detail);
-            WmsInoutFlowEntity flow = new WmsInoutFlowEntity();
-            BeanUtils.copyProperties(detail, flow);
-            flow.setId(null);
-            flow.setBillId(bill.getId());
-            flow.setBillNo(bill.getBillNo());
-            flow.setWarehouseCode(target.getWarehouseCode());
-            flow.setWarehouseName(target.getWarehouseName());
-            flow.setSiteCode(site.getLocationCode());
-            flow.setSiteName(site.getLocationName());
-            flow.setOperateType(InOutEnum.IN.getCode());
-            flow.setBillType(InBillTypeEnum.ALLOCATION.getCode());
-            flow.setTransferAction("RECEIVE");
-            flow.setSourceFlowId(detail.getFlowId());
-            flow.setFactoryCode(bill.getFactoryCode());
-            require(wmsInoutFlowMapper.insert(flow) == 1, "历史调拨接收流水保存失败");
+            Long sourceStockId = original.getSourceStockId();
+            WmsLiveStockEntity stock = wmsLiveStockService.transferOut(sourceStockId,
+                    original.getMatNum(), bill.getOldWarehouseCode());
+            requireLegacySourceMatches(bill, original, stock);
+            WmsInoutFlowEntity source = issueFlow(bill, stock, sourceStockId);
+            source.setId(original.getId());
+            wmsLiveStockService.transferIn(source, target.getWarehouseCode(), target.getWarehouseName(),
+                    site.getLocationCode(), site.getLocationName(), detail.getContainerCode());
+            WmsInoutFlowEntity receipt = inFlow(bill, source, target.getWarehouseCode(),
+                    target.getWarehouseName(), site.getLocationCode(), site.getLocationName(),
+                    detail.getContainerCode(), "RECEIVE");
+            receipt.setOperationRequestId(command.getRequestId());
+            require(wmsInoutFlowMapper.insert(receipt) == 1, "历史调拨接收流水保存失败");
+            wmsLiveStockService.releaseTransferSourceContainer(source);
         }
         MomUser user = SecurityUtils.getUser();
         bill.setAllocationState(RECEIVED);
@@ -726,6 +889,61 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         bill.setFinishByName(operatorName(user));
         require(updateById(bill), "调拨接收状态更新失败");
         return Boolean.TRUE;
+    }
+
+    private Map<Long, WmsDetailDTO> validateLegacyReceipt(WmsAllocationBillEntity bill,
+                                                             WmsAllocationBillAddDTO command,
+                                                             List<WmsInoutFlowEntity> issued) {
+        require(issued != null && !issued.isEmpty(), "历史调拨缺少可核对的发出流水");
+        Map<Long, WmsInoutFlowEntity> issuedById = new HashMap<>();
+        for (WmsInoutFlowEntity flow : issued) {
+            require(flow != null && flow.getId() != null && issuedById.put(flow.getId(), flow) == null
+                            && Objects.equals(flow.getTenantId(), TenantContextHolder.getTenantId())
+                            && Objects.equals(flow.getFactoryCode(), bill.getFactoryCode())
+                            && (Objects.equals(flow.getBillId(), bill.getId())
+                            || Objects.equals(flow.getBillId(), flow.getSourceStockId()))
+                            && Objects.equals(flow.getBillNo(), bill.getBillNo())
+                            && Objects.equals(flow.getWarehouseCode(), bill.getOldWarehouseCode())
+                            && Objects.equals(flow.getOperateType(), InOutEnum.OUT.getCode())
+                            && Objects.equals(flow.getBillType(), OutBillTypeEnum.ALLOCATION_OUT.getCode())
+                            && flow.getMatNum() != null && Double.isFinite(flow.getMatNum()) && flow.getMatNum() > 0,
+                    "历史调拨发出流水范围或数量异常，请先核对");
+        }
+        Map<Long, WmsDetailDTO> requested = new HashMap<>();
+        for (WmsDetailDTO detail : command.getDetails()) {
+            require(detail != null && detail.getFlowId() != null
+                            && requested.put(detail.getFlowId(), detail) == null
+                            && issuedById.containsKey(detail.getFlowId()),
+                    "接收明细包含重复或不属于本调拨单的发出流水");
+            WmsInoutFlowEntity flow = issuedById.get(detail.getFlowId());
+            Long stockId = flow.getSourceStockId();
+            require(stockId != null && stockId > 0,
+                    "历史调拨发出流水缺少源库存ID，须先核对并补齐来源，禁止自动接收");
+            require(Objects.equals(stockId, detail.getBillId())
+                            && detail.getOperateNum() != null && Double.isFinite(detail.getOperateNum())
+                            && BigDecimal.valueOf(detail.getOperateNum())
+                            .compareTo(BigDecimal.valueOf(flow.getMatNum())) == 0,
+                    "历史调拨必须按原发出库存和数量完整接收");
+        }
+        require(requested.size() == issuedById.size(), "历史调拨必须完整接收全部发出明细");
+        return requested;
+    }
+
+    private void requireLegacySourceMatches(WmsAllocationBillEntity bill,
+                                            WmsInoutFlowEntity original,
+                                            WmsLiveStockEntity stock) {
+        require(stock != null && Objects.equals(stock.getTenantId(), TenantContextHolder.getTenantId())
+                        && Objects.equals(stock.getFactoryCode(), bill.getFactoryCode())
+                        && Objects.equals(stock.getSiteCode(), original.getSiteCode())
+                        && Objects.equals(stock.getMatCode(), original.getMatCode())
+                        && Objects.equals(stock.getMatBatch(), original.getMatBatch())
+                        && Objects.equals(stock.getMatUnit(), original.getMatUnit())
+                        && Objects.equals(stock.getSupplierCode(), original.getSupplierCode())
+                        && Objects.equals(StrUtil.blankToDefault(stock.getStockOwnerType(), "OWNED"),
+                        StrUtil.blankToDefault(original.getStockOwnerType(), "OWNED"))
+                        && Objects.equals(stock.getStockOwnerCode(), original.getStockOwnerCode())
+                        && Objects.equals(stock.getMatBarcode(), original.getMatBarcode()),
+                "历史调拨源库存身份已变化，请先核对原发出流水");
     }
 
     private WmsAllocationBillEntity lockBill(Long id) {
@@ -877,6 +1095,19 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         return JSONUtil.toJsonStr(Map.of("billId", command.getId(), "lines", lines));
     }
 
+    private String returnSnapshot(WmsAllocationReturnDTO command) {
+        List<Map<String, Object>> lines = command.getLines().stream().map(line -> {
+            require(line != null && line.getSourceFlowId() != null && line.getReturnedQuantity() != null,
+                    "退回确认明细不能为空");
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("sourceFlowId", line.getSourceFlowId());
+            row.put("quantity", line.getReturnedQuantity().stripTrailingZeros().toPlainString());
+            return row;
+        }).sorted(Comparator.comparing(row -> Objects.toString(row.get("sourceFlowId"), ""))).toList();
+        return JSONUtil.toJsonStr(Map.of("billId", command.getId(),
+                "evidence", command.getEvidence().trim(), "lines", lines));
+    }
+
     private Map<String, TransferStockPool> buildTransferPools(List<WmsLiveStockEntity> stocks,
                                                               Map<String, MdmWarehouseEntity> warehouses,
                                                               Map<String, BigDecimal> safetyByMaterial) {
@@ -936,6 +1167,16 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
                 .forEach(flow -> received.merge(flow.getSourceFlowId(), BigDecimal.valueOf(flow.getMatNum()),
                         BigDecimal::add));
         return received;
+    }
+
+    private Map<Long, BigDecimal> returnedQuantities(Long billId) {
+        Map<Long, BigDecimal> returned = new HashMap<>();
+        wmsInoutFlowMapper.selectList(new LambdaQueryWrapper<WmsInoutFlowEntity>()
+                        .eq(WmsInoutFlowEntity::getBillId, billId)
+                        .eq(WmsInoutFlowEntity::getTransferAction, "CANCEL_RETURN"))
+                .forEach(flow -> returned.merge(flow.getSourceFlowId(), BigDecimal.valueOf(flow.getMatNum()),
+                        BigDecimal::add));
+        return returned;
     }
 
     private WmsInoutFlowEntity quantityCopy(WmsInoutFlowEntity source, BigDecimal quantity) {
@@ -1089,6 +1330,19 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         require(permissionService.hasPermission(permission, permission + "_" + warehouseCode), message);
     }
 
+    private void requireFactory(String factoryCode) {
+        String currentFactory = FactoryContextHolder.getFactoryCode();
+        require(StrUtil.isBlank(currentFactory) || Objects.equals(currentFactory, factoryCode),
+                "业务数据超出当前工厂范围");
+    }
+
+    private void requireTransferConfiguration(String sourceWarehouseCode, String targetWarehouseCode) {
+        require(warehouseBusinessGuard.check(sourceWarehouseCode, "allocation", false),
+                "源仓未配置调拨发出业务");
+        require(warehouseBusinessGuard.check(targetWarehouseCode, "allocation", true),
+                "目标仓未配置调拨接收业务");
+    }
+
     private String operatorName(MomUser user) {
         return StrUtil.blankToDefault(user.getName(), user.getUsername());
     }
@@ -1127,12 +1381,18 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         requireWarehousePermission("wms_wmsAllocationBill_add", source.getWarehouseCode(), "无权从该仓库发起调拨");
         wmsAllocationBillAdd.setFactoryCode(factoryCode);
         String requestSnapshot = appRequestSnapshot(wmsAllocationBillAdd);
+        // 同一租户同号重试先串行，再读取永久回执；避免并发检查均未命中后重复扣库存。
+        Long tenant = TenantContextHolder.getTenantId();
+        require(tenant != null && baseMapper.lockAgentTransfer(
+                "MOBILE_REQUEST:" + tenant + ":" + wmsAllocationBillAdd.getRequestId()) == 1,
+                "锁定移动调拨请求失败");
         WmsAllocationBillEntity existing = getOne(new LambdaQueryWrapper<WmsAllocationBillEntity>()
                 .eq(WmsAllocationBillEntity::getRequestId, wmsAllocationBillAdd.getRequestId()), false);
         if (existing != null) {
             require(Objects.equals(existing.getRequestSnapshot(), requestSnapshot), "调拨幂等号已被不同请求使用");
             return Boolean.TRUE;
         }
+        requireTransferConfiguration(source.getWarehouseCode(), target.getWarehouseCode());
         require(count(new LambdaQueryWrapper<WmsAllocationBillEntity>()
                         .eq(WmsAllocationBillEntity::getBillNo, wmsAllocationBillAdd.getBillNo())) == 0,
                 "调拨单号已存在");
@@ -1162,16 +1422,58 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         wmsAllocationBill.setFinishByName(operatorName(user));
         require(this.save(wmsAllocationBill), "即时调拨单保存失败");
 
-        // 记录出库流水
         wmsAllocationBillAdd.setAllocationBillId(wmsAllocationBill.getId());
         wmsAllocationBillAdd.setBillNo(wmsAllocationBill.getBillNo());
         wmsAllocationBillAdd.setFactoryCode(wmsAllocationBill.getFactoryCode());
-        wmsInoutFlowService.inOutFlow(wmsAllocationBillAdd);
-
         WmsLiveStockMoveDTO wmsLiveStockMoveDTO = new WmsLiveStockMoveDTO();
         BeanUtils.copyProperties(wmsAllocationBillAdd, wmsLiveStockMoveDTO);
-        wmsLiveStockService.billStockMove(wmsLiveStockMoveDTO);
+        List<WmsStockMoveSlice> slices = wmsLiveStockService.billStockMoveWithEvidence(wmsLiveStockMoveDTO);
+        recordImmediateTransferFlows(wmsAllocationBill, slices, wmsAllocationBillAdd);
         return Boolean.TRUE;
+    }
+
+    void recordImmediateTransferFlows(WmsAllocationBillEntity bill, List<WmsStockMoveSlice> slices,
+                                      WmsAllocationBillAppDTO command) {
+        require(bill != null && bill.getId() != null && command != null && slices != null && !slices.isEmpty(),
+                "即时调拨缺少实际移动结果");
+        BigDecimal recorded = BigDecimal.ZERO;
+        for (WmsStockMoveSlice slice : slices) {
+            require(slice != null && slice.sourceStock() != null && slice.sourceStock().getId() != null
+                            && slice.targetStockId() != null && Double.isFinite(slice.quantity())
+                            && slice.quantity() > 0, "即时调拨返回无效库存切片");
+            WmsLiveStockEntity source = slice.sourceStock();
+            require(Objects.equals(source.getWarehouseCode(), command.getOldWarehouseCode())
+                            && Objects.equals(source.getSiteCode(), command.getOldSiteCode())
+                            && Objects.equals(source.getFactoryCode(), bill.getFactoryCode()),
+                    "即时调拨来源库存与单据不一致");
+            if (command.getSourceStockId() != null) {
+                require(Objects.equals(command.getSourceStockId(), source.getId()),
+                        "即时调拨来源库存与扫码选择不一致");
+            }
+            if (Boolean.TRUE.equals(source.getSerialManaged())) {
+                require(Objects.equals(command.getSourceStockId(), source.getId())
+                                && StrUtil.isNotBlank(command.getMatBarcode())
+                                && Objects.equals(command.getMatBarcode(), source.getMatBarcode()),
+                        "单件序列号调拨必须核对精确来源库存和实物条码");
+                WmsSerialStockGuard.requireWhole(source, BigDecimal.valueOf(slice.quantity()));
+            }
+            recorded = recorded.add(BigDecimal.valueOf(slice.quantity()));
+        }
+        require(command.getOperateNum() != null && Double.isFinite(command.getOperateNum())
+                        && recorded.compareTo(BigDecimal.valueOf(command.getOperateNum())) == 0,
+                "即时调拨流水数量与实际移动数量不一致");
+        for (WmsStockMoveSlice slice : slices) {
+            WmsLiveStockEntity proof = new WmsLiveStockEntity();
+            BeanUtils.copyProperties(slice.sourceStock(), proof);
+            proof.setMatNum(slice.quantity());
+            WmsInoutFlowEntity issue = issueFlow(bill, proof, slice.sourceStock().getId());
+            require(wmsInoutFlowMapper.insert(issue) == 1 && issue.getId() != null,
+                    "即时调拨出库流水保存失败");
+            WmsInoutFlowEntity receipt = inFlow(bill, issue, command.getNewWarehouseCode(),
+                    command.getNewWarehouseName(), command.getNewSiteCode(), command.getNewSiteName(),
+                    command.getNewContainerCode(), "RECEIVE");
+            require(wmsInoutFlowMapper.insert(receipt) == 1, "即时调拨入库流水保存失败");
+        }
     }
 
     private String appRequestSnapshot(WmsAllocationBillAppDTO command) {
@@ -1189,6 +1491,8 @@ public class WmsAllocationBillServiceImpl extends ServiceImpl<WmsAllocationBillM
         snapshot.put("supplier", command.getSupplierCode());
         snapshot.put("quantity", command.getOperateNum());
         snapshot.put("unit", command.getMatUnit());
+        snapshot.put("sourceStockId", command.getSourceStockId());
+        snapshot.put("matBarcode", command.getMatBarcode());
         return JSONUtil.toJsonStr(snapshot);
     }
 

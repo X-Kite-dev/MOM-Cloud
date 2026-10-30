@@ -29,13 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.Arrays;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -572,7 +566,7 @@ public class MesChangePointHandleServiceImpl extends ServiceImpl<MesChangePointH
                 Boolean changed = candidate.getTenantId() == null
                         ? transaction.execute(status -> advanceIntensifiedInspection(candidate.getId(), observedTime))
                         : TenantBroker.applyAs(candidate.getTenantId(), ignored -> transaction.execute(
-                                status -> advanceIntensifiedInspection(candidate.getId(), observedTime)));
+                        status -> advanceIntensifiedInspection(candidate.getId(), observedTime)));
                 if (Boolean.TRUE.equals(changed)) advanced++;
             } catch (Exception exception) {
                 failed++;

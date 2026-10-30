@@ -9,7 +9,9 @@ import org.apache.ibatis.annotations.Param;
 
 import java.time.LocalDateTime;
 
-/** 出生逐源原账；单个JSON参数批量INSERT，避免五千条往返及PG绑定参数上限。 */
+/**
+ * 出生逐源原账；单个JSON参数批量INSERT，避免五千条往返及PG绑定参数上限。
+ */
 @Mapper
 public interface MesWarehouseFeedBirthLineMapper extends MomBaseMapper<MesWarehouseFeedBirthLineEntity> {
     @InterceptorIgnore(tenantLine = "true", dataPermission = "true")

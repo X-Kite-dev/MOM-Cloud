@@ -386,7 +386,9 @@ public class MdmProcessRouteController {
         return R.ok(mdmProcessRouteService.saveProcessWorking(mdmProcessRouteProcedureDTO));
     }
 
-    /** 使用现有工程编辑权限；来源和目标的实际组织、版本由服务层核验。 */
+    /**
+     * 使用现有工程编辑权限；来源和目标的实际组织、版本由服务层核验。
+     */
     @Operation(summary = "复制路线结构", description = "只复制到空路线，不复制工程附件、参数版本及生产历史")
     @PostMapping("/copyGraph")
     @PreAuthorize("@pms.hasPermission('mdm_mdmProcessRoute_edit')")
@@ -483,11 +485,13 @@ public class MdmProcessRouteController {
         return R.ok(mdmProcessRouteService.getSetByCode(routeCode, processCode));
     }
 
-    /** 工序配置按真实路线节点查询，避免重复主工序共用设置。 */
+    /**
+     * 工序配置按真实路线节点查询，避免重复主工序共用设置。
+     */
     @Operation(summary = "查询路线节点配置")
     @GetMapping("/getSetByNode")
     public R<MdmProcessProcedureSettingEntity> getSetByNode(@RequestParam String routeCode,
-                                                          @RequestParam String routeNodeCode) {
+                                                            @RequestParam String routeNodeCode) {
         return R.ok(mdmProcessRouteService.getSetByNode(routeCode, routeNodeCode));
     }
 

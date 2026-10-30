@@ -102,6 +102,16 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
     private final org.mybatis.spring.SqlSessionTemplate sqlSession;
     private final PlnApsFormalContractResolver formalContractResolver;
 
+    private static Long parseLong(String value, String label) {
+        try {
+            long parsed = Long.parseLong(value);
+            if (parsed <= 0) throw new NumberFormatException("not positive");
+            return parsed;
+        } catch (RuntimeException exception) {
+            throw new CheckedException(label + "格式不正确");
+        }
+    }
+
     @Override
     public PlnSchedulingRunInput captureRun(PlnSchedulingRunDTO original) {
         if (original == null) throw new CheckedException("运行参数不能为空");
@@ -664,9 +674,9 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                             && Objects.equals(option.path("code").asText(null), source.getResourceCode())
                             && Objects.equals(nullableInt(option, "slotNo"), source.getResourceSlotNo())
                             && Objects.equals(option.path("resourceGroupCode").asText(null),
-                                    source.getResourceGroupCode())
+                            source.getResourceGroupCode())
                             && Objects.equals(nullableInt(option, "resourceGroupSlotNo"),
-                                    source.getResourceGroupSlotNo())
+                            source.getResourceGroupSlotNo())
                             && Objects.equals(option.path("deviceCode").asText(null), source.getDeviceCode())
                             && Objects.equals(option.path("employeeCode").asText(null), source.getEmployeeCode())) {
                         current = option;
@@ -1475,7 +1485,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         receive.setWorkshopName(workshopName);
         receive.setWorkshopCode(workshopCode);
         receive.setFactoryCode(batch.getFactoryCode());
-        applyFormalContract(receive, formalResolution,
+        BigDecimal legacyOrderQuantity = applyFormalContract(receive, formalResolution,
                 allocations.stream().map(PlnSchedulingBatchAllocationEntity::getIssueId).toList(), primary);
         receive.setResourceType("APS_BATCH");
         receive.setResourceId(batch.getId());
@@ -1500,8 +1510,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         List<PlanMatMrpEntity> primaryMrps = mrpsByIssueNo.getOrDefault(primary.getIssueNo(), List.of());
         receive.setType(primaryMrps.stream().anyMatch(item -> Objects.equals(item.getMatCode(), primary.getProductCode())
                 && !ObjUtil.equal(item.getSubitemBomId(), 0L)) ? "PART" : "PRODUCT");
-        sealMesIssueRequest(receive, "PLAN_APS_BATCH:" + batch.getId());
-        R<MesTaskIssueReceiptDTO> response = remoteTaskService.add(receive);
+        R<MesTaskIssueReceiptDTO> response = sendMesIssueRequest(receive, "PLAN_APS_BATCH:" + batch.getId(), legacyOrderQuantity);
         if (response == null || !ObjUtil.equals(CommonConstants.SUCCESS, response.getCode())
                 || response.getData() == null
                 || !Objects.equals(receive.getSourceRequestId(), response.getData().getRequestId())
@@ -1585,7 +1594,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         receive.setWorkshopName(workshopName);
         receive.setWorkshopCode(workshopCode);
         receive.setFactoryCode(plnIssueEntity.getFactoryCode());
-        applyFormalContract(receive, formalResolution, List.of(plnIssueEntity.getId()), plnIssueEntity);
+        BigDecimal legacyOrderQuantity = applyFormalContract(receive, formalResolution, List.of(plnIssueEntity.getId()), plnIssueEntity);
         receive.setEngineeringReleaseId(plnIssueEntity.getEngineeringReleaseId());
         receive.setEngineeringContentHash(plnIssueEntity.getEngineeringContentHash());
         receive.setEngineeringVersionNo(plnIssueEntity.getEngineeringVersionNo());
@@ -1624,8 +1633,7 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         // 路线只能来自计划已绑定工程版本，MES会再向MDM精确取包并覆盖其他可编辑配置。
         receive.setProcessRouteCode(plnIssueEntity.getEngineeringRouteCode());
 
-        sealMesIssueRequest(receive, "PLAN_ISSUE:" + plnIssueEntity.getId());
-        R<MesTaskIssueReceiptDTO> response = remoteTaskService.add(receive);
+        R<MesTaskIssueReceiptDTO> response = sendMesIssueRequest(receive, "PLAN_ISSUE:" + plnIssueEntity.getId(), legacyOrderQuantity);
         MesTaskIssueReceiptDTO receipt = response == null ? null : response.getData();
         if (response == null || !ObjUtil.equals(CommonConstants.SUCCESS, response.getCode()) || receipt == null
                 || !Objects.equals(receive.getSourceRequestId(), receipt.getRequestId())
@@ -1649,27 +1657,27 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
      * 把发布时核验的工厂策略与正式合同写入 MES 接收载荷。
      * 合批场景只能对应一个执行订单号；否则 MES 无法在一张工单上保持 ERP 订单追溯一致性。
      */
-    private void applyFormalContract(MesTaskReceiveDTO receive,
-                                     PlnApsFormalContractResolver.Resolution resolution,
-                                     List<Long> issueIds, PlnIssueEntity representative) {
+    private BigDecimal applyFormalContract(MesTaskReceiveDTO receive,
+                                           PlnApsFormalContractResolver.Resolution resolution,
+                                           List<Long> issueIds, PlnIssueEntity representative) {
         if (resolution == null || resolution.policy() == null || resolution.contract() == null
                 || representative == null || issueIds == null || issueIds.isEmpty()) {
             throw new CheckedException("MES下达缺少正式计划合同或工厂策略证据");
         }
         PlnFormalPlanContractDTO contract = resolution.contract();
-        PlnFormalPlanContractDTO.Line contractLine = contract.getLines().stream()
-                .filter(line -> "MAKE".equals(line.getSupplyType()))
-                .filter(line -> Objects.equals(line.getSourceDemandNo(), representative.getSourceDemandNo()))
-                .filter(line -> Objects.equals(line.getProductCode(), representative.getProductCode()))
-                .findFirst().orElseThrow(() -> new CheckedException(
-                        "生产计划[" + representative.getIssueNo() + "]没有匹配的正式合同自制行"));
+        var coverage = resolution.coverageByIssueId().get(representative.getId());
+        if (coverage == null || !Objects.equals(coverage.sourceDemandNo(), representative.getSourceDemandNo())
+                || !Objects.equals(coverage.productCode(), receive.getMatCode())
+                || issueIds.stream().anyMatch(id -> !coverage.equals(resolution.coverageByIssueId().get(id)))) {
+            throw new CheckedException("一个MES执行单元须来自同一需求及产品的合同明细，请拆分APS合批后下达");
+        }
         Set<String> productionOrders = issueIds.stream()
                 .map(resolution.productionOrderByIssueId()::get)
                 .filter(StrUtil::isNotBlank).collect(Collectors.toCollection(LinkedHashSet::new));
         if (productionOrders.size() != 1) {
             throw new CheckedException("一个MES执行单元只能对应一个正式生产订单；请拆分APS合批后下达");
         }
-        receive.setFormalPlanContractId(parseLong(contractLine.getId(), "正式计划合同主键"));
+        receive.setFormalPlanContractId(parseLong(coverage.lines().get(0).id(), "正式计划合同主键"));
         receive.setFormalPlanContractNo(contract.getContractNo());
         receive.setFormalPlanContractVersion(contract.getContractVersion());
         receive.setFormalPlanContractFingerprint(contract.getSourceContentFingerprint());
@@ -1686,30 +1694,52 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         BigDecimal productionOrderQuantity = issueIds.stream().distinct()
                 .map(resolution.issueQuantityById()::get)
                 .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal legacyOrderQuantity = productionOrderQuantity;
+        // ERP订单可按不同MPS桶分次下达；冻结总量不能随本次选择的桶变化。
+        if (StrUtil.isNotBlank(coverage.erpProductionOrderNo())) productionOrderQuantity = coverage.quantity();
         if (productionOrderQuantity.signum() <= 0) {
             throw new CheckedException("正式生产订单总量无效");
         }
         receive.setProductionOrderQuantity(productionOrderQuantity);
         receive.setErpProductionOrderNo("ERP_ORDER_REQUIRED".equals(
                 resolution.policy().getProductionOrderSyncMode()) ? productionOrder : null);
-    }
-
-    private static Long parseLong(String value, String label) {
-        try {
-            long parsed = Long.parseLong(value);
-            if (parsed <= 0) throw new NumberFormatException("not positive");
-            return parsed;
-        } catch (RuntimeException exception) {
-            throw new CheckedException(label + "格式不正确");
-        }
+        return legacyOrderQuantity;
     }
 
     /**
      * 在发送前冻结完整载荷指纹。请求号由业务主键生成，事务重试时保持不变；
      * 任一计划、资源、物料预留或工序快照变化都会形成不同指纹并被MES拒绝复用旧请求。
      */
-    private void sealMesIssueRequest(MesTaskReceiveDTO receive, String requestId) {
+    private R<MesTaskIssueReceiptDTO> sendMesIssueRequest(MesTaskReceiveDTO receive, String requestId,
+                                                          BigDecimal legacyOrderQuantity) {
         MesTaskReceiveRequestSigner.seal(receive, requestId);
+        if (legacyOrderQuantity != null && legacyOrderQuantity.compareTo(receive.getProductionOrderQuantity()) != 0) {
+            // 旧ERP小桶已被MES接收但PLAN丢失回执时，只续接精确原载荷；不修改旧订单总量。
+            MesTaskReceiveDTO legacy = cn.hutool.core.bean.BeanUtil.copyProperties(receive, MesTaskReceiveDTO.class);
+            legacy.setProductionOrderQuantity(legacyOrderQuantity);
+            MesTaskReceiveRequestSigner.seal(legacy, requestId);
+            R<MesTaskIssueReceiptDTO> recovered = remoteTaskService.recoverReceiveReceipt(List.of(receive, legacy));
+            if (recovered == null || !recovered.isOk()) {
+                throw new CheckedException("MES原接单回执无法核验，已停止新下达；请保留原请求重试");
+            }
+            var receipt = recovered.getData();
+            if (receipt != null) {
+                boolean oldPayload = Objects.equals(receipt.getRequestFingerprint(), legacy.getSourceRequestFingerprint());
+                if (!Objects.equals(receipt.getRequestId(), receive.getSourceRequestId())
+                        || !oldPayload && !Objects.equals(receipt.getRequestFingerprint(), receive.getSourceRequestFingerprint())
+                        || !Objects.equals(receipt.getPlanNo(), receive.getPlanNo()) || !Boolean.TRUE.equals(receipt.getReplayed())
+                        || receipt.getTaskId() == null || receipt.getTaskId() <= 0 || StrUtil.isBlank(receipt.getTaskCode())
+                        || receipt.getAcceptedTime() == null) {
+                    throw new CheckedException("MES原接单回执与旧载荷不一致，禁止猜测续接");
+                }
+                if (oldPayload) {
+                    receive.setProductionOrderQuantity(legacyOrderQuantity);
+                    receive.setSourceRequestFingerprint(legacy.getSourceRequestFingerprint());
+                }
+                return recovered;
+            }
+        }
+        return remoteTaskService.add(receive);
     }
 
     /**

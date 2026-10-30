@@ -18,10 +18,14 @@ public interface MesProductionFeedBatchService extends IService<MesProductionFee
      */
     MesProductionFeedBatchEntity recordFeed(String requestId, String arrangeCode, List<SourceRef> sources);
 
-    /** 当前事务内的原账回读，仅同实际租户/工厂/本人；不是独立HTTP提交未知恢复接口。 */
+    /**
+     * 当前事务内的原账回读，仅同实际租户/工厂/本人；不是独立HTTP提交未知恢复接口。
+     */
     MesProductionFeedBatchEntity original(String requestId);
 
-    /** 服务器协调器指向一份真实正量产出；数量/单位/权限不从此引用中取得。 */
+    /**
+     * 服务器协调器指向一份真实正量产出；数量/单位/权限不从此引用中取得。
+     */
     record SourceRef(String outputKey, OutputKind kind, Long sourceId) {
     }
 }

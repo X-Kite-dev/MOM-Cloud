@@ -10,7 +10,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** 采集排程时域内设备停机、维修、保养与点检异常证据。 */
+/**
+ * 采集排程时域内设备停机、维修、保养与点检异常证据。
+ */
 @Component
 public class TpmApsAvailabilityCollector extends AbstractApsResourceCollector {
 
@@ -21,8 +23,15 @@ public class TpmApsAvailabilityCollector extends AbstractApsResourceCollector {
         this.service = service;
     }
 
-    @Override public String module() { return "TPM"; }
-    @Override public int order() { return 50; }
+    @Override
+    public String module() {
+        return "TPM";
+    }
+
+    @Override
+    public int order() {
+        return 50;
+    }
 
     @Override
     public PlnApsResourceEvidence collect(PlnApsResourceCollectionContext context) {

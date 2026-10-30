@@ -72,14 +72,15 @@ public class QmsBatchQualityTraceQueryService {
         List<String> gaps = new ArrayList<>();
         if (total > records.size())
             gaps.add("检验和NCR记录共" + total + "条，本次返回" + records.size() + "条；计数是全量，记录明细按时间截取");
-        if (total == 0) gaps.add("当前QMS没有该物料批次的检验或NCR记录；这不等同于已检验合格");
+        List<String> limitations = new ArrayList<>();
+        if (total == 0) limitations.add("当前QMS没有该物料批次的检验或NCR记录；这是已知零记录，不等同于已检验合格");
         List<String> refs = records.stream().map(item -> "QMS:" + table(item.getRecordType()) + ":" + item.getRecordId()).toList();
         return new QmsBatchQualityTraceDTO.Evidence().setToolCode(TOOL_CODE)
                 .setMetricDefinition("按当前工厂、物料编码和批次号精确匹配来料/过程/成品检验任务及NCR明细；状态和结果取观察时点当前快照，不把无记录解释为合格。")
                 .setFactoryCode(factory).setMaterialCode(material).setBatchNo(batch).setObservedAt(LocalDateTime.now())
                 .setInspectionTaskCount(procedureCount + productCount + purchaseCount)
                 .setUnqualifiedInspectionCount(unqualified).setNcrDetailCount(ncrCount).setOpenNcrCount(openNcr)
-                .setReturnedRecordCount(records.size()).setRecords(records).setDataGaps(gaps)
+                .setReturnedRecordCount(records.size()).setRecords(records).setDataGaps(gaps).setLimitations(limitations)
                 .setEvidenceRefs(refs).setTruncated(total > records.size());
     }
 

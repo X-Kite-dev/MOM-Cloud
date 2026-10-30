@@ -12,17 +12,20 @@ import java.util.List;
 public interface MesProductionFeedReversalService extends IService<MesProductionFeedReversalEntity> {
     /**
      * 只恢复显式选定产出的全部原份额，每产出终身一次；零需求仍登记。
-     * @param requestId 稳定纠正原号，租户内永久唯一
-     * @param batchId 已提交的原总耗用主账
+     *
+     * @param requestId           稳定纠正原号，租户内永久唯一
+     * @param batchId             已提交的原总耗用主账
      * @param expectedFingerprint 原主账完整证据SHA
-     * @param outputIds 同一原主账中的真实产出主键全集
-     * @param reason 完整纠正原因
+     * @param outputIds           同一原主账中的真实产出主键全集
+     * @param reason              完整纠正原因
      * @return 本事务完整原回执；不会另起事务或重算当前BOM
      */
     MesProductionFeedReversalEntity restoreOutputs(String requestId, Long batchId, String expectedFingerprint,
                                                    List<Long> outputIds, String reason);
 
-    /** 当前事务内本人原号完整回读；不是独立HTTP/UNKNOWN恢复协议。 */
+    /**
+     * 当前事务内本人原号完整回读；不是独立HTTP/UNKNOWN恢复协议。
+     */
     MesProductionFeedReversalEntity original(String requestId);
 }
 

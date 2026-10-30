@@ -1,116 +1,133 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.kitex.mom.mes.mapper.MesWipResidenceMapper">
-  <select id="snapshot" resultType="java.util.LinkedHashMap">
-    <!-- 原派工与实际任务都只读取库存所属组织；重复编码只报歧义，不选择第一条。 -->
-    WITH source_identity AS (
-      SELECT s.*, ac.cnt AS arrange_count,
+    <select id="snapshot" resultType="java.util.LinkedHashMap">
+        <!-- 原派工与实际任务都只读取库存所属组织；重复编码只报歧义，不选择第一条。 -->
+        WITH source_identity AS (
+        SELECT s.*, ac.cnt AS arrange_count,
         a.task_code AS linked_task_code,a.produce_task_code AS linked_produce_task_code,
         a.route_code AS linked_route_code,a.actual_worksite_code AS linked_worksite_code,a.status AS arrange_status,
         p.process_route_code AS frozen_process_route_code,p.source_route_node_code AS frozen_route_node_code,
         p.route_execution_schema_version AS frozen_execution_version,
         CASE
-          WHEN ac.cnt=0 THEN 'MISSING'
-          WHEN ac.cnt&gt;1 THEN 'AMBIGUOUS'
-          WHEN pc.cnt=0 THEN 'MISSING'
-          WHEN pc.cnt&gt;1 THEN 'AMBIGUOUS'
-          WHEN nullif(btrim(s.produce_task_code),'') IS NULL OR nullif(btrim(s.route_code),'') IS NULL
-            OR nullif(btrim(a.task_code),'') IS NULL OR nullif(btrim(p.task_code),'') IS NULL
-            OR nullif(btrim(p.route_code),'') IS NULL THEN 'MISSING'
-          WHEN s.produce_task_code IS DISTINCT FROM a.produce_task_code OR s.route_code IS DISTINCT FROM a.route_code
-            OR a.task_code IS DISTINCT FROM p.task_code OR a.route_code IS DISTINCT FROM p.route_code
-            OR a.route_execution_schema_version IS DISTINCT FROM p.route_execution_schema_version THEN 'MISMATCH'
-          WHEN p.route_execution_schema_version IS NOT NULL
-            AND p.route_execution_schema_version&lt;&gt;'NODE_EXECUTION_V1' THEN 'UNSUPPORTED'
-          WHEN p.route_execution_schema_version IS NULL THEN
-            CASE WHEN p.predecessor_node_codes IS NOT NULL OR p.successor_node_codes IS NOT NULL
-              OR p.node_timing_rules_json IS NOT NULL OR a.predecessor_node_codes IS NOT NULL
-              OR a.successor_node_codes IS NOT NULL OR a.node_timing_rules_json IS NOT NULL
-              OR (a.source_route_node_code IS NOT NULL AND a.source_route_node_code IS DISTINCT FROM p.source_route_node_code)
-              THEN 'MISMATCH' ELSE 'LEGACY' END
-          WHEN nullif(btrim(p.process_route_code),'') IS NULL OR p.source_route_node_code IS NULL
-            OR p.predecessor_node_codes IS NULL OR p.successor_node_codes IS NULL OR p.last_route IS NULL THEN 'MISSING'
-          WHEN length(p.source_route_node_code)&gt;64 OR p.source_route_node_code !~ '^RN-[1-9][0-9]*$'
-            OR a.source_route_node_code IS DISTINCT FROM p.source_route_node_code
-            OR a.predecessor_node_codes IS DISTINCT FROM p.predecessor_node_codes
-            OR a.successor_node_codes IS DISTINCT FROM p.successor_node_codes
-            OR a.node_timing_rules_json IS DISTINCT FROM p.node_timing_rules_json
-            OR a.predecessor_codes IS DISTINCT FROM p.predecessor_codes
-            OR a.successor_codes IS DISTINCT FROM p.successor_codes
-            OR a.route_order IS DISTINCT FROM p.route_order OR a.last_route IS DISTINCT FROM p.last_route
-            OR a.overlap_enabled IS DISTINCT FROM p.overlap_enabled
-            OR a.transfer_batch_quantity IS DISTINCT FROM p.transfer_batch_quantity
-            OR a.transfer_minutes IS DISTINCT FROM p.transfer_minutes THEN 'MISMATCH'
-          ELSE 'MATCHED'
+        WHEN ac.cnt=0 THEN 'MISSING'
+        WHEN ac.cnt&gt;1 THEN 'AMBIGUOUS'
+        WHEN pc.cnt=0 THEN 'MISSING'
+        WHEN pc.cnt&gt;1 THEN 'AMBIGUOUS'
+        WHEN nullif(btrim(s.produce_task_code),'') IS NULL OR nullif(btrim(s.route_code),'') IS NULL
+        OR nullif(btrim(a.task_code),'') IS NULL OR nullif(btrim(p.task_code),'') IS NULL
+        OR nullif(btrim(p.route_code),'') IS NULL THEN 'MISSING'
+        WHEN s.produce_task_code IS DISTINCT FROM a.produce_task_code OR s.route_code IS DISTINCT FROM a.route_code
+        OR a.task_code IS DISTINCT FROM p.task_code OR a.route_code IS DISTINCT FROM p.route_code
+        OR a.route_execution_schema_version IS DISTINCT FROM p.route_execution_schema_version THEN 'MISMATCH'
+        WHEN p.route_execution_schema_version IS NOT NULL
+        AND p.route_execution_schema_version&lt;&gt;'NODE_EXECUTION_V1' THEN 'UNSUPPORTED'
+        WHEN p.route_execution_schema_version IS NULL THEN
+        CASE WHEN p.predecessor_node_codes IS NOT NULL OR p.successor_node_codes IS NOT NULL
+        OR p.node_timing_rules_json IS NOT NULL OR a.predecessor_node_codes IS NOT NULL
+        OR a.successor_node_codes IS NOT NULL OR a.node_timing_rules_json IS NOT NULL
+        OR (a.source_route_node_code IS NOT NULL AND a.source_route_node_code IS DISTINCT FROM p.source_route_node_code)
+        THEN 'MISMATCH' ELSE 'LEGACY' END
+        WHEN nullif(btrim(p.process_route_code),'') IS NULL OR p.source_route_node_code IS NULL
+        OR p.predecessor_node_codes IS NULL OR p.successor_node_codes IS NULL OR p.last_route IS NULL THEN 'MISSING'
+        WHEN length(p.source_route_node_code)&gt;64 OR p.source_route_node_code !~ '^RN-[1-9][0-9]*$'
+        OR a.source_route_node_code IS DISTINCT FROM p.source_route_node_code
+        OR a.predecessor_node_codes IS DISTINCT FROM p.predecessor_node_codes
+        OR a.successor_node_codes IS DISTINCT FROM p.successor_node_codes
+        OR a.node_timing_rules_json IS DISTINCT FROM p.node_timing_rules_json
+        OR a.predecessor_codes IS DISTINCT FROM p.predecessor_codes
+        OR a.successor_codes IS DISTINCT FROM p.successor_codes
+        OR a.route_order IS DISTINCT FROM p.route_order OR a.last_route IS DISTINCT FROM p.last_route
+        OR a.overlap_enabled IS DISTINCT FROM p.overlap_enabled
+        OR a.transfer_batch_quantity IS DISTINCT FROM p.transfer_batch_quantity
+        OR a.transfer_minutes IS DISTINCT FROM p.transfer_minutes THEN 'MISMATCH'
+        ELSE 'MATCHED'
         END AS node_state
-      FROM mes_warehouse_live_stock s
-      LEFT JOIN LATERAL (
+        FROM mes_warehouse_live_stock s
+        LEFT JOIN LATERAL (
         SELECT count(*) AS cnt
         FROM mes_task_arrange a WHERE a.tenant_id=s.tenant_id AND a.factory_code=s.factory_code
-          AND a.code=s.bill_no AND a.del_flag='0'
-      ) ac ON true
-      LEFT JOIN mes_task_arrange a ON ac.cnt=1 AND a.tenant_id=s.tenant_id AND a.factory_code=s.factory_code
         AND a.code=s.bill_no AND a.del_flag='0'
-      LEFT JOIN LATERAL (
+        ) ac ON true
+        LEFT JOIN mes_task_arrange a ON ac.cnt=1 AND a.tenant_id=s.tenant_id AND a.factory_code=s.factory_code
+        AND a.code=s.bill_no AND a.del_flag='0'
+        LEFT JOIN LATERAL (
         SELECT count(*) AS cnt FROM mes_produce_task p
         WHERE p.tenant_id=s.tenant_id AND p.factory_code=s.factory_code
-          AND p.code=a.produce_task_code AND p.del_flag='0'
-      ) pc ON true
-      LEFT JOIN mes_produce_task p ON pc.cnt=1 AND p.tenant_id=s.tenant_id AND p.factory_code=s.factory_code
         AND p.code=a.produce_task_code AND p.del_flag='0'
-      WHERE s.tenant_id=#{tenant} AND s.factory_code=#{factory} AND s.del_flag='0'
+        ) pc ON true
+        LEFT JOIN mes_produce_task p ON pc.cnt=1 AND p.tenant_id=s.tenant_id AND p.factory_code=s.factory_code
+        AND p.code=a.produce_task_code AND p.del_flag='0'
+        WHERE s.tenant_id=#{tenant} AND s.factory_code=#{factory} AND s.del_flag='0'
         AND s.mat_detail_type='WIP' AND s.num&gt;0
-      <if test="q.stockId != null">AND s.id=#{q.stockId}</if>
-      <if test="q.matCode != null">AND s.mat_code=#{q.matCode}</if>
-      <if test="q.matBatch != null">AND s.mat_batch=#{q.matBatch}</if>
-      <if test="q.barcode != null">AND s.mat_barcode=#{q.barcode}</if>
-      <if test="q.taskCode != null">AND ac.cnt=1 AND a.task_code=#{q.taskCode}</if>
-      <if test="q.routeCode != null">AND s.route_code=#{q.routeCode}</if>
-      <if test="q.worksiteCode != null">AND ac.cnt=1 AND a.actual_worksite_code=#{q.worksiteCode}</if>
-      <if test="q.minHours != null">AND s.in_time&lt;=#{observedAt}::timestamp-(#{q.minHours} * interval '1 hour')</if>
-    ), population AS (
-      <!-- 精确身份筛选先于5001行边界，不让未核身份进入筛选结果或截断总量。 -->
-      SELECT s.* FROM source_identity s WHERE true
-      <if test="q.produceTaskCode != null">AND s.node_state IN('MATCHED','LEGACY') AND s.linked_produce_task_code=#{q.produceTaskCode}</if>
-      <if test="q.processRouteCode != null">AND s.node_state IN('MATCHED','LEGACY') AND s.frozen_process_route_code=#{q.processRouteCode}</if>
-      <if test="q.sourceRouteNodeCode != null">AND s.node_state='MATCHED' AND s.frozen_route_node_code=#{q.sourceRouteNodeCode}</if>
-      ORDER BY s.id LIMIT 5001
-    )
-    SELECT s.id::text AS "stockId",s.source_report_id::text AS "sourceReportId",s.bill_no AS "arrangeCode",
-      s.produce_task_code AS "produceTaskCode",s.route_code AS "routeCode",s.route_name AS "routeName",
-      CASE WHEN s.node_state IN('MATCHED','LEGACY') THEN s.frozen_process_route_code END AS "processRouteCode",
-      CASE WHEN s.node_state='MATCHED' THEN s.frozen_route_node_code END AS "sourceRouteNodeCode",
-      CASE WHEN s.node_state IN('MATCHED','UNSUPPORTED') THEN s.frozen_execution_version END AS "routeExecutionSchemaVersion",
-      s.node_state AS "nodeState",
-      s.mat_code AS "matCode",s.mat_name AS "matName",s.mat_batch AS "matBatch",s.mat_barcode AS "barcode",
-      s.mat_unit AS "unit",s.num::text AS "quantity",s.status AS "stockStatus",s.inspection_status AS "inspectionStatus",s.judge_status AS "judgeStatus",
-      s.warehouse_code AS "warehouseCode",s.site_code AS "siteCode",s.site_name AS "siteName",s.container_code AS "containerCode",
-      s.physical_location_code AS "physicalLocationCode",s.physical_location_name AS "physicalLocationName",
-      to_char(s.physical_confirmed_time,'YYYY-MM-DD HH24:MI:SS') AS "physicalConfirmedTime",
-      to_char(s.in_time,'YYYY-MM-DD HH24:MI:SS') AS "inTime",
-      CASE WHEN s.in_time IS NULL OR s.in_time&gt;#{observedAt} THEN NULL ELSE floor(extract(epoch FROM (#{observedAt}::timestamp-s.in_time)))::bigint END AS "residenceSeconds",
-      CASE WHEN s.in_time IS NULL THEN 'MISSING' WHEN s.in_time&gt;#{observedAt} THEN 'FUTURE' ELSE 'VALID' END AS "timeState",
-      s.linked_task_code AS "taskCode",s.linked_worksite_code AS "sourceWorksiteCode",s.arrange_status AS "sourceArrangeStatus",
-      CASE WHEN s.arrange_count=0 THEN 'ARRANGE_MISSING' WHEN s.arrange_count&gt;1 THEN 'ARRANGE_AMBIGUOUS'
-        WHEN s.produce_task_code IS DISTINCT FROM s.linked_produce_task_code OR s.route_code IS DISTINCT FROM s.linked_route_code THEN 'SOURCE_MISMATCH'
+        <if test="q.stockId != null">AND s.id=#{q.stockId}</if>
+        <if test="q.matCode != null">AND s.mat_code=#{q.matCode}</if>
+        <if test="q.matBatch != null">AND s.mat_batch=#{q.matBatch}</if>
+        <if test="q.barcode != null">AND s.mat_barcode=#{q.barcode}</if>
+        <if test="q.taskCode != null">AND ac.cnt=1 AND a.task_code=#{q.taskCode}</if>
+        <if test="q.routeCode != null">AND s.route_code=#{q.routeCode}</if>
+        <if test="q.worksiteCode != null">AND ac.cnt=1 AND a.actual_worksite_code=#{q.worksiteCode}</if>
+        <if test="q.minHours != null">AND s.in_time&lt;=#{observedAt}::timestamp-(#{q.minHours} * interval '1 hour')
+        </if>
+        ), population AS (
+        <!-- 精确身份筛选先于5001行边界，不让未核身份进入筛选结果或截断总量。 -->
+        SELECT s.* FROM source_identity s WHERE true
+        <if test="q.produceTaskCode != null">AND s.node_state IN('MATCHED','LEGACY') AND
+            s.linked_produce_task_code=#{q.produceTaskCode}
+        </if>
+        <if test="q.processRouteCode != null">AND s.node_state IN('MATCHED','LEGACY') AND
+            s.frozen_process_route_code=#{q.processRouteCode}
+        </if>
+        <if test="q.sourceRouteNodeCode != null">AND s.node_state='MATCHED' AND
+            s.frozen_route_node_code=#{q.sourceRouteNodeCode}
+        </if>
+        ORDER BY s.id LIMIT 5001
+        )
+        SELECT s.id::text AS "stockId",s.source_report_id::text AS "sourceReportId",s.bill_no AS "arrangeCode",
+        s.produce_task_code AS "produceTaskCode",s.route_code AS "routeCode",s.route_name AS "routeName",
+        CASE WHEN s.node_state IN('MATCHED','LEGACY') THEN s.frozen_process_route_code END AS "processRouteCode",
+        CASE WHEN s.node_state='MATCHED' THEN s.frozen_route_node_code END AS "sourceRouteNodeCode",
+        CASE WHEN s.node_state IN('MATCHED','UNSUPPORTED') THEN s.frozen_execution_version END AS
+        "routeExecutionSchemaVersion",
+        s.node_state AS "nodeState",
+        s.mat_code AS "matCode",s.mat_name AS "matName",s.mat_batch AS "matBatch",s.mat_barcode AS "barcode",
+        s.mat_unit AS "unit",s.num::text AS "quantity",s.status AS "stockStatus",s.inspection_status AS
+        "inspectionStatus",s.judge_status AS "judgeStatus",
+        s.warehouse_code AS "warehouseCode",s.site_code AS "siteCode",s.site_name AS "siteName",s.container_code AS
+        "containerCode",
+        s.physical_location_code AS "physicalLocationCode",s.physical_location_name AS "physicalLocationName",
+        to_char(s.physical_confirmed_time,'YYYY-MM-DD HH24:MI:SS') AS "physicalConfirmedTime",
+        to_char(s.in_time,'YYYY-MM-DD HH24:MI:SS') AS "inTime",
+        CASE WHEN s.in_time IS NULL OR s.in_time&gt;#{observedAt} THEN NULL ELSE floor(extract(epoch FROM
+        (#{observedAt}::timestamp-s.in_time)))::bigint END AS "residenceSeconds",
+        CASE WHEN s.in_time IS NULL THEN 'MISSING' WHEN s.in_time&gt;#{observedAt} THEN 'FUTURE' ELSE 'VALID' END AS
+        "timeState",
+        s.linked_task_code AS "taskCode",s.linked_worksite_code AS "sourceWorksiteCode",s.arrange_status AS
+        "sourceArrangeStatus",
+        CASE WHEN s.arrange_count=0 THEN 'ARRANGE_MISSING' WHEN s.arrange_count&gt;1 THEN 'ARRANGE_AMBIGUOUS'
+        WHEN s.produce_task_code IS DISTINCT FROM s.linked_produce_task_code OR s.route_code IS DISTINCT FROM
+        s.linked_route_code THEN 'SOURCE_MISMATCH'
         WHEN s.source_report_id IS NULL THEN 'REPORT_UNDECLARED' WHEN r.id IS NULL THEN 'REPORT_MISSING'
         WHEN r.arrange_code IS DISTINCT FROM s.bill_no OR r.produce_task_code IS DISTINCT FROM s.produce_task_code
-          OR r.task_code IS DISTINCT FROM s.linked_task_code OR r.mat_code IS DISTINCT FROM s.mat_code THEN 'SOURCE_MISMATCH'
-        WHEN r.status='REVERSED' THEN 'REPORT_REVERSED' WHEN r.status IS DISTINCT FROM 'EFFECTIVE' THEN 'REPORT_STATE_UNKNOWN'
+        OR r.task_code IS DISTINCT FROM s.linked_task_code OR r.mat_code IS DISTINCT FROM s.mat_code THEN
+        'SOURCE_MISMATCH'
+        WHEN r.status='REVERSED' THEN 'REPORT_REVERSED' WHEN r.status IS DISTINCT FROM 'EFFECTIVE' THEN
+        'REPORT_STATE_UNKNOWN'
         ELSE 'MATCHED' END AS "sourceState",
-      r.status AS "reportStatus",r.quality_quantity_status AS "qualityQuantityStatus",
-      r.quality_pending_num::text AS "reportPendingQuantity",r.quality_released_num::text AS "reportReleasedQuantity",
-      t.active_count AS "activeTimeouts",t.verify_count AS "verifyTimeouts",t.promise_due_count AS "promiseDueCount",
-      t.level AS "alertLevel",to_char(t.last_seen_at,'YYYY-MM-DD HH24:MI:SS') AS "lastTimeoutObservedAt"
-    FROM population s
-    LEFT JOIN mes_task_report r ON r.id=s.source_report_id AND r.tenant_id=s.tenant_id AND r.factory_code=s.factory_code AND r.del_flag='0'
-    LEFT JOIN LATERAL (
-      SELECT count(*) FILTER(WHERE status IN('0','1')) AS active_count,
+        r.status AS "reportStatus",r.quality_quantity_status AS "qualityQuantityStatus",
+        r.quality_pending_num::text AS "reportPendingQuantity",r.quality_released_num::text AS "reportReleasedQuantity",
+        t.active_count AS "activeTimeouts",t.verify_count AS "verifyTimeouts",t.promise_due_count AS "promiseDueCount",
+        t.level AS "alertLevel",to_char(t.last_seen_at,'YYYY-MM-DD HH24:MI:SS') AS "lastTimeoutObservedAt"
+        FROM population s
+        LEFT JOIN mes_task_report r ON r.id=s.source_report_id AND r.tenant_id=s.tenant_id AND
+        r.factory_code=s.factory_code AND r.del_flag='0'
+        LEFT JOIN LATERAL (
+        SELECT count(*) FILTER(WHERE status IN('0','1')) AS active_count,
         count(*) FILTER(WHERE status='1') AS verify_count,
         count(*) FILTER(WHERE status IN('0','1','2') AND expected_resolve_time&lt;=#{observedAt}) AS promise_due_count,
         max(alert_level) FILTER(WHERE status IN('0','1')) AS level,max(last_seen_at) AS last_seen_at
-      FROM mes_wip_timeout_handle t WHERE t.source_stock_id=s.id AND t.enter_time=s.in_time
+        FROM mes_wip_timeout_handle t WHERE t.source_stock_id=s.id AND t.enter_time=s.in_time
         AND t.tenant_id=s.tenant_id AND t.factory_code=s.factory_code AND t.del_flag='0'
-    ) t ON true
-  </select>
+        ) t ON true
+    </select>
 </mapper>

@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 制造异常事件到评估/排产场景的版本化订阅策略。 */
+/**
+ * 制造异常事件到评估/排产场景的版本化订阅策略。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

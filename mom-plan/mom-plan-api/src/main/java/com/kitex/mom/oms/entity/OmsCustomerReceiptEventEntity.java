@@ -12,8 +12,12 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** OMS客户实收永久收件箱。 */
-@Data @Accessors(chain = true) @TenantTable
+/**
+ * OMS客户实收永久收件箱。
+ */
+@Data
+@Accessors(chain = true)
+@TenantTable
 @TableName("oms_customer_receipt_event")
 @EqualsAndHashCode(callSuper = true)
 public class OmsCustomerReceiptEventEntity extends BaseEntity<OmsCustomerReceiptEventEntity> {

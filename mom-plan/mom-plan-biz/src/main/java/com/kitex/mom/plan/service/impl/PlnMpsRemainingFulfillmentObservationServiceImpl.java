@@ -1,35 +1,33 @@
 package com.kitex.mom.plan.service.impl;
 
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.kitex.common.core.exception.CheckedException;
-import com.kitex.mom.plan.exception.PlnMpsRemainingRejectedException;
-import com.kitex.mom.plan.entity.PlnMpsRemainingFulfillmentObservationEntity;
-import com.kitex.mom.plan.mapper.PlnMpsRemainingFulfillmentObservationMapper;
-import com.kitex.mom.plan.service.PlnMpsRemainingFulfillmentObservationService;
-import org.springframework.stereotype.Service;
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.plan.dto.PlnMpsRemainingCommitmentDTO;
+import com.kitex.mom.plan.entity.PlnMpsRemainingFulfillmentObservationEntity;
+import com.kitex.mom.plan.exception.PlnMpsRemainingRejectedException;
 import com.kitex.mom.plan.mapper.PlnMpsPolicyMapper;
+import com.kitex.mom.plan.mapper.PlnMpsRemainingFulfillmentObservationMapper;
 import com.kitex.mom.plan.service.PlnMpsRemainingCommitmentService;
+import com.kitex.mom.plan.service.PlnMpsRemainingFulfillmentObservationService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 import static com.kitex.mom.plan.service.impl.PlnMpsRemainingSnapshotSupport.*;
 
-/** 分期兑现采集与异人核验；冻结原观察，变化时新采集，不覆盖原事实。 */
+/**
+ * 分期兑现采集与异人核验；冻结原观察，变化时新采集，不覆盖原事实。
+ */
 @Service
 @RequiredArgsConstructor
 public class PlnMpsRemainingFulfillmentObservationServiceImpl extends ServiceImpl<PlnMpsRemainingFulfillmentObservationMapper, PlnMpsRemainingFulfillmentObservationEntity>
@@ -83,12 +81,12 @@ public class PlnMpsRemainingFulfillmentObservationServiceImpl extends ServiceImp
             var evidence = preview(command.getCommitmentId());
             require(Boolean.TRUE.equals(evidence.getCurrent()), "旧版只读历史，当前观察须引用新生效版本");
             record = new PlnMpsRemainingFulfillmentObservationEntity().setObservationNo("MPSRF-" + IdUtil.getSnowflakeNextIdStr())
-                .setCommitmentId(command.getCommitmentId()).setMpsLineId(Long.valueOf(evidence.getLineId()))
-                .setRequestId(request).setRequestFingerprint(fingerprint).setToleranceMinutes(evidence.getToleranceMinutes())
-                .setObservedTime(LocalDateTime.parse(evidence.getObservedAt())).setBaselineFingerprint(hash(snapshot(evidence.getBaseline())))
-                .setEvidenceFingerprint(evidence.getFingerprint()).setEvidenceSnapshot(snapshot(evidence)).setResult(evidence.getEvaluation().getResult())
-                .setCurrentQuantity(evidence.getEvaluation().getCurrentQuantity()).setRemainingQuantity(evidence.getEvaluation().getRemainingQuantity())
-                .setBucketCount(evidence.getEvaluation().getBuckets().size()).setStatus("PENDING").setReason(reason).setFactoryCode(factory());
+                    .setCommitmentId(command.getCommitmentId()).setMpsLineId(Long.valueOf(evidence.getLineId()))
+                    .setRequestId(request).setRequestFingerprint(fingerprint).setToleranceMinutes(evidence.getToleranceMinutes())
+                    .setObservedTime(LocalDateTime.parse(evidence.getObservedAt())).setBaselineFingerprint(hash(snapshot(evidence.getBaseline())))
+                    .setEvidenceFingerprint(evidence.getFingerprint()).setEvidenceSnapshot(snapshot(evidence)).setResult(evidence.getEvaluation().getResult())
+                    .setCurrentQuantity(evidence.getEvaluation().getCurrentQuantity()).setRemainingQuantity(evidence.getEvaluation().getRemainingQuantity())
+                    .setBucketCount(evidence.getEvaluation().getBuckets().size()).setStatus("PENDING").setReason(reason).setFactoryCode(factory());
         } catch (CheckedException exception) {
             throw new PlnMpsRemainingRejectedException(request, "CAPTURE", command.getCommitmentId().toString(), payload, exception.getMessage());
         }
@@ -116,7 +114,7 @@ public class PlnMpsRemainingFulfillmentObservationServiceImpl extends ServiceImp
         var replay = findRequest(request);
         if (replay != null) {
             require(Objects.equals(replay.getId(), command.getId()) && Objects.equals(replay.getReviewRequestId(), request)
-                    && Objects.equals(replay.getReviewRequestFingerprint(), fingerprint) && Objects.equals(replay.getReviewedBy(), operator()),
+                            && Objects.equals(replay.getReviewRequestFingerprint(), fingerprint) && Objects.equals(replay.getReviewedBy(), operator()),
                     "原核验号已用于不同观察/载荷或实名");
             return replay;
         }

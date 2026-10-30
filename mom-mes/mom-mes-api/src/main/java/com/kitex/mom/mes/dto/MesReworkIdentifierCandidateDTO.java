@@ -39,6 +39,8 @@ public class MesReworkIdentifierCandidateDTO {
     private String definitionFingerprint;
     private String graphFingerprint;
     private String sourceRouteFingerprint;
-    /** 同一实例在原实际工序上的有效正向操作数量；必须恰为1才可进入候选。 */
+    /**
+     * 同一实例在原实际工序上的有效正向操作数量；必须恰为1才可进入候选。
+     */
     private Integer sourceOperationCount;
 }

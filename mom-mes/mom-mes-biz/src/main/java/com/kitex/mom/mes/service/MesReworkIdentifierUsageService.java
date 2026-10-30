@@ -4,11 +4,7 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.dto.MesReworkIdentifierCandidateDTO;
 import com.kitex.mom.mes.dto.MesReworkMaterialCommand;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
-import com.kitex.mom.mes.entity.MesReworkIdentifierUsageEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
-import com.kitex.mom.mes.entity.MesTaskReportUnqualifiedEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.ReportModeEnum;
 
 import java.util.List;
@@ -27,7 +23,9 @@ public interface MesReworkIdentifierUsageService extends IService<MesReworkIdent
 
     void validateApproved(MesTaskEntity reworkTask);
 
-    /** 复核尚未写入工单的待批准范围，防止用当前工单旧值代替提案原文。 */
+    /**
+     * 复核尚未写入工单的待批准范围，防止用当前工单旧值代替提案原文。
+     */
     void validateFrozen(MesTaskEntity reworkTask, String snapshot, String fingerprint);
 
     Prepared prepare(MesTaskReportVO command, MesTaskArrangeEntity arrange, MesTaskEntity task,
@@ -38,11 +36,14 @@ public interface MesReworkIdentifierUsageService extends IService<MesReworkIdent
     void complete(Prepared prepared, MesTaskReportUnqualifiedEntity report);
 
     record ScopeContext(boolean required, List<MesReworkIdentifierCandidateDTO> candidates,
-                        String approvedScopeSnapshot, String approvedScopeFingerprint) { }
+                        String approvedScopeSnapshot, String approvedScopeFingerprint) {
+    }
 
-    record FrozenScope(String snapshot, String fingerprint) { }
+    record FrozenScope(String snapshot, String fingerprint) {
+    }
 
     record Prepared(String outcome, Long planId, Long sourceBindingId, String submittedIdentifier,
                     String canonicalIdentifier, Integer sourceBindingVersion, String scopeFingerprint,
-                    String evidenceSnapshot, String evidenceFingerprint, Long actorId, String actorCode) { }
+                    String evidenceSnapshot, String evidenceFingerprint, Long actorId, String actorCode) {
+    }
 }

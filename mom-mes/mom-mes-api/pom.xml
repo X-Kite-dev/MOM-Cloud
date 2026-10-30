@@ -13,6 +13,11 @@
     <artifactId>mom-mes-api</artifactId>
 
     <dependencies>
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-common-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!-- 派工契约冻结正式MDM工程版本；仅依赖接口模块，不依赖业务实现。 -->
         <dependency>
             <groupId>com.kitex</groupId>

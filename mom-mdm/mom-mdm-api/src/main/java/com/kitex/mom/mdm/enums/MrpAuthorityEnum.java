@@ -6,7 +6,9 @@ import lombok.RequiredArgsConstructor;
 import java.util.Arrays;
 import java.util.Optional;
 
-/** 工厂正式 MRP 权威；不提供运行时自动猜测模式。 */
+/**
+ * 工厂正式 MRP 权威；不提供运行时自动猜测模式。
+ */
 @Getter
 @RequiredArgsConstructor
 public enum MrpAuthorityEnum {

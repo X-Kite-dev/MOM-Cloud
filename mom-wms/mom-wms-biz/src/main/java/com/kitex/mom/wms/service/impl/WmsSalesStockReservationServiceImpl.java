@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.entity.MdmWarehouseEntity;
@@ -18,7 +19,9 @@ import com.kitex.mom.wms.entity.*;
 import com.kitex.mom.wms.enums.DeliverStateEnum;
 import com.kitex.mom.wms.mapper.*;
 import com.kitex.mom.wms.service.WmsSalesStockReservationService;
+import com.kitex.mom.wms.service.WmsReservationMovementPolicyService;
 import com.kitex.mom.wms.util.WmsStockAvailability;
+import com.kitex.mom.wms.util.WmsSerialStockGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
@@ -33,7 +36,7 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReservationService {
-    public static final String PREFIX = "SALE-";
+    public static final String PREFIX = WmsSalesStockReservationService.PREFIX;
     private static final String ACTIVE = "ACTIVE";
     private static final String CLOSED = "CLOSED";
     private static final Set<String> ACTIVE_PLAN_STATES = Set.of(
@@ -49,10 +52,12 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     private final WmsLiveStockMapper stockMapper;
     private final WmsMaterialReservationDetailMapper materialDetailMapper;
     private final RemoteWarehouseService warehouseService;
+    private final WmsReservationMovementPolicyService reservationMovementPolicyService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public WmsSalesStockReservationSnapshot reserve(WmsSalesStockReservationCommand command) {
+        requireScopedOrganization();
         validateCommand(command, true);
         WmsDeliverGoodsPlanBaseEntity plan = lockPlan(command.getDeliverPlanId());
         require(ACTIVE_PLAN_STATES.contains(plan.getDeliverState()), "仅活动发货计划允许预留销售库存");
@@ -65,6 +70,7 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
                     "同请求号的销售预留载荷不一致");
             return snapshot(plan.getId());
         }
+        reservationMovementPolicyService.ensureSalesReservable();
         WmsSalesStockReservationEntity reservation = lockReservation(plan.getId());
         String before = reservation == null ? null : JSONUtil.toJsonStr(snapshotOf(reservation));
         BigDecimal remainingOrder = quantity(plan.getDeliverNum()).subtract(quantity(plan.getDeliveredNum()));
@@ -137,10 +143,15 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
                     .subtract(production.getOrDefault(stock.getId(), BigDecimal.ZERO))
                     .subtract(sales.getOrDefault(stock.getId(), BigDecimal.ZERO)).max(BigDecimal.ZERO);
             BigDecimal take = rowAvailable.min(toAllocate);
-            if (take.signum() <= 0) continue;
+            if (take.signum() <= 0) {
+                continue;
+            }
+            WmsSerialStockGuard.requireWhole(stock, take);
             insertDetail(reservation, plan, stock, take);
             toAllocate = toAllocate.subtract(take);
-            if (toAllocate.signum() == 0) break;
+            if (toAllocate.signum() == 0) {
+                break;
+            }
         }
         require(toAllocate.signum() == 0, "销售库存预留并发分配未完整，请重试");
         if (!createdHeader) {
@@ -154,6 +165,7 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     @Override
     @Transactional(rollbackFor = Exception.class)
     public WmsSalesStockReservationSnapshot release(WmsSalesStockReservationCommand command) {
+        requireScopedOrganization();
         validateCommand(command, true);
         WmsDeliverGoodsPlanBaseEntity plan = lockPlan(command.getDeliverPlanId());
         requireNoOpenDelivery(plan);
@@ -178,9 +190,17 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
         while (iterator.hasPrevious() && left.signum() > 0) {
             WmsSalesStockReservationDetailEntity detail = iterator.previous();
             BigDecimal take = detailActive(detail).min(left);
-            if (take.signum() <= 0) continue;
+            if (take.signum() <= 0) {
+                continue;
+            }
+            WmsLiveStockEntity stock = stockMapper.selectById(detail.getLiveStockId());
+            require((stock != null && !Boolean.TRUE.equals(stock.getSerialManaged()))
+                            || take.compareTo(detailActive(detail)) == 0,
+                    "单件或缺失库存的预留必须整条释放");
             detail.setReleasedNum(quantity(detail.getReleasedNum()).add(take));
-            if (detailActive(detail).signum() == 0) detail.setStatus(CLOSED);
+            if (detailActive(detail).signum() == 0) {
+                detail.setStatus(CLOSED);
+            }
             require(detailMapper.updateById(detail) == 1, "销售预留明细释放失败");
             left = left.subtract(take);
         }
@@ -197,6 +217,7 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     @Override
     @Transactional(rollbackFor = Exception.class)
     public WmsSalesStockReservationSnapshot reallocateDrifted(WmsSalesStockReservationCommand command) {
+        requireScopedOrganization();
         validateCommand(command, true);
         require(command.getQuantity() == null, "受控换批固定处理全部漂移量，不接受客户端指定数量");
         WmsDeliverGoodsPlanBaseEntity plan = lockPlan(command.getDeliverPlanId());
@@ -247,12 +268,14 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
         Map<Long, BigDecimal> ownHealthyByDetail = new HashMap<>();
         for (WmsSalesStockReservationDetailEntity detail : productReservations) {
             WmsLiveStockEntity stock = stockById.get(detail.getLiveStockId());
-            BigDecimal rowPhysical = stock == null ? BigDecimal.ZERO :
-                    physicalRemaining.getOrDefault(stock.getId(), BigDecimal.ZERO).max(BigDecimal.ZERO);
+            BigDecimal rowPhysical = stock == null ? BigDecimal.ZERO
+                    : physicalRemaining.getOrDefault(stock.getId(), BigDecimal.ZERO).max(BigDecimal.ZERO);
             boolean healthy = stock != null && eligibleWarehouses.contains(stock.getWarehouseCode())
                     && WmsStockAvailability.isUsable(stock) && matches(detail, stock);
             BigDecimal healthyQuantity = healthy ? detailActive(detail).min(rowPhysical) : BigDecimal.ZERO;
-            if (stock != null) physicalRemaining.put(stock.getId(), rowPhysical.subtract(healthyQuantity));
+            if (stock != null) {
+                physicalRemaining.put(stock.getId(), rowPhysical.subtract(healthyQuantity));
+            }
             if (Objects.equals(detail.getReservationId(), reservation.getId())) {
                 ownHealthyByDetail.put(detail.getId(), healthyQuantity);
             }
@@ -272,7 +295,9 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
         for (Map.Entry<WmsSalesStockReservationDetailEntity, BigDecimal> entry : driftByDetail.entrySet()) {
             WmsSalesStockReservationDetailEntity detail = entry.getKey();
             detail.setReleasedNum(quantity(detail.getReleasedNum()).add(entry.getValue()));
-            if (detailActive(detail).signum() == 0) detail.setStatus(CLOSED);
+            if (detailActive(detail).signum() == 0) {
+                detail.setStatus(CLOSED);
+            }
             require(detailMapper.updateById(detail) == 1, "漂移销售预留明细释放失败");
         }
 
@@ -296,10 +321,15 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
                     .subtract(production.getOrDefault(stock.getId(), BigDecimal.ZERO))
                     .subtract(sales.getOrDefault(stock.getId(), BigDecimal.ZERO)).max(BigDecimal.ZERO);
             BigDecimal take = available.min(left);
-            if (take.signum() <= 0) continue;
+            if (take.signum() <= 0) {
+                continue;
+            }
+            WmsSerialStockGuard.requireWhole(stock, take);
             insertDetail(reservation, plan, stock, take);
             left = left.subtract(take);
-            if (left.signum() == 0) break;
+            if (left.signum() == 0) {
+                break;
+            }
         }
         require(left.signum() == 0, "销售预留换批并发分配未完整，整笔回滚");
         reservation.setReservedNum(quantity(reservation.getReservedNum()).add(drift));
@@ -315,21 +345,25 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
 
     @Override
     public WmsSalesStockReservationSnapshot snapshot(Long deliverPlanId) {
+        requireScopedOrganization();
         require(deliverPlanId != null, "发货计划ID不能为空");
         WmsDeliverGoodsPlanBaseEntity plan = planMapper.selectById(deliverPlanId);
         require(plan != null, "发货计划不存在");
         requireFactory(plan.getFactoryCode());
         WmsSalesStockReservationEntity reservation = reservationMapper.selectOne(
                 new LambdaQueryWrapper<WmsSalesStockReservationEntity>()
-                        .eq(WmsSalesStockReservationEntity::getDeliverPlanId, deliverPlanId), false);
-        if (reservation == null) return new WmsSalesStockReservationSnapshot().setDeliverPlanId(plan.getId())
-                .setDeliverPlanCode(plan.getDeliverPlanCode()).setOrderCode(plan.getOrderCode())
-                .setOrderDetailId(plan.getOrderCodeDetails()).setProductCode(plan.getProductCode())
-                .setTargetQuantity(quantity(plan.getDeliverNum()).subtract(quantity(plan.getDeliveredNum())))
-                .setReservedQuantity(BigDecimal.ZERO).setConsumedQuantity(BigDecimal.ZERO)
-                .setReleasedQuantity(BigDecimal.ZERO).setActiveQuantity(BigDecimal.ZERO)
-                .setHealthyActiveQuantity(BigDecimal.ZERO).setDriftQuantity(BigDecimal.ZERO)
-                .setHealthStatus("NONE").setStatus("NONE").setDetails(List.of());
+                        .eq(WmsSalesStockReservationEntity::getDeliverPlanId, deliverPlanId),
+                false);
+        if (reservation == null) {
+            return new WmsSalesStockReservationSnapshot().setDeliverPlanId(plan.getId())
+                    .setDeliverPlanCode(plan.getDeliverPlanCode()).setOrderCode(plan.getOrderCode())
+                    .setOrderDetailId(plan.getOrderCodeDetails()).setProductCode(plan.getProductCode())
+                    .setTargetQuantity(quantity(plan.getDeliverNum()).subtract(quantity(plan.getDeliveredNum())))
+                    .setReservedQuantity(BigDecimal.ZERO).setConsumedQuantity(BigDecimal.ZERO)
+                    .setReleasedQuantity(BigDecimal.ZERO).setActiveQuantity(BigDecimal.ZERO)
+                    .setHealthyActiveQuantity(BigDecimal.ZERO).setDriftQuantity(BigDecimal.ZERO)
+                    .setHealthStatus("NONE").setStatus("NONE").setDetails(List.of());
+        }
         WmsSalesStockReservationSnapshot snapshot = snapshotOf(reservation);
         BigDecimal healthy = healthyActiveReservedByPlanIds(Set.of(plan.getId()))
                 .getOrDefault(plan.getId(), BigDecimal.ZERO).min(snapshot.getActiveQuantity());
@@ -340,9 +374,14 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
 
     @Override
     public Map<Long, WmsSalesStockReservationSnapshot> snapshotsByPlanIds(Set<Long> deliverPlanIds) {
-        if (CollUtil.isEmpty(deliverPlanIds)) return Map.of();
+        requireScopedOrganization();
+        if (CollUtil.isEmpty(deliverPlanIds)) {
+            return Map.of();
+        }
         Map<Long, WmsSalesStockReservationEntity> headers = reservationsByPlanIds(deliverPlanIds);
-        if (headers.isEmpty()) return Map.of();
+        if (headers.isEmpty()) {
+            return Map.of();
+        }
         String factory = FactoryContextHolder.getFactoryCode();
         require(StrUtil.isNotBlank(factory) && headers.values().stream()
                 .allMatch(row -> Objects.equals(factory, row.getFactoryCode())), "销售预留批量快照混入跨工厂主账");
@@ -353,7 +392,8 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
         Map<Long, List<WmsSalesStockReservationDetailEntity>> detailsByReservation = detailMapper.selectList(
                         new LambdaQueryWrapper<WmsSalesStockReservationDetailEntity>()
                                 .in(WmsSalesStockReservationDetailEntity::getReservationId, reservationIds)
-                                .orderByAsc(WmsSalesStockReservationDetailEntity::getId)).stream()
+                                .orderByAsc(WmsSalesStockReservationDetailEntity::getId))
+                .stream()
                 .collect(Collectors.groupingBy(WmsSalesStockReservationDetailEntity::getReservationId,
                         LinkedHashMap::new, Collectors.toList()));
         Map<Long, WmsSalesStockReservationSnapshot> result = new LinkedHashMap<>();
@@ -371,8 +411,66 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
+    public List<WmsLiveStockEntity> availableReservedStocks(String reservationNo, String productCode,
+                                                             String warehouseCode) {
+        requireScopedOrganization();
+        if (!StrUtil.startWith(reservationNo, PREFIX) || StrUtil.isBlank(productCode)) {
+            return List.of();
+        }
+        WmsSalesStockReservationEntity reservation = reservationMapper.selectOne(
+                new LambdaQueryWrapper<WmsSalesStockReservationEntity>()
+                        .eq(WmsSalesStockReservationEntity::getReservationNo, reservationNo)
+                        .last("FOR UPDATE"), false);
+        require(reservation != null && ACTIVE.equals(reservation.getStatus())
+                        && active(reservation).signum() > 0,
+                "销售预留[" + reservationNo + "]不存在或已失效");
+        requireFactory(reservation.getFactoryCode());
+        Long tenantId = TenantContextHolder.getTenantId();
+        require(tenantId != null && Objects.equals(tenantId, reservation.getTenantId()),
+                "当前租户无权查看该销售预留");
+        require(Objects.equals(productCode, reservation.getProductCode()), "销售预留产品与出库通知不一致");
+
+        Map<Long, BigDecimal> physicalRemaining = new HashMap<>();
+        Map<Long, WmsLiveStockEntity> availableByStock = new LinkedHashMap<>();
+        for (WmsSalesStockReservationDetailEntity detail : activeDetails(reservation.getId(), false)) {
+            boolean warehouseMatches = StrUtil.isBlank(warehouseCode)
+                    || Objects.equals(warehouseCode, detail.getWarehouseCode());
+            if (!Objects.equals(productCode, detail.getProductCode())
+                    || !Objects.equals(reservation.getFactoryCode(), detail.getFactoryCode())
+                    || !warehouseMatches
+                    || detailActive(detail).signum() <= 0) {
+                continue;
+            }
+            WmsLiveStockEntity stock = stockMapper.selectById(detail.getLiveStockId());
+            if (stock == null || !Objects.equals(tenantId, stock.getTenantId())
+                    || !WmsStockAvailability.isUsable(stock) || !matches(detail, stock)) {
+                continue;
+            }
+            BigDecimal physical = physicalRemaining.computeIfAbsent(stock.getId(),
+                    ignored -> quantity(stock.getMatNum()));
+            BigDecimal usable = detailActive(detail).min(physical);
+            if (usable.signum() <= 0) {
+                continue;
+            }
+            physicalRemaining.put(stock.getId(), physical.subtract(usable));
+            WmsLiveStockEntity candidate = availableByStock.computeIfAbsent(stock.getId(), ignored -> {
+                WmsLiveStockEntity copy = new WmsLiveStockEntity();
+                BeanUtils.copyProperties(stock, copy);
+                copy.setMatNum(0d);
+                return copy;
+            });
+            candidate.setMatNum(quantity(candidate.getMatNum()).add(usable).doubleValue());
+        }
+        return new ArrayList<>(availableByStock.values());
+    }
+
+    @Override
     public Map<Long, BigDecimal> activeReservedNums(Set<Long> liveStockIds) {
-        if (CollUtil.isEmpty(liveStockIds)) return Map.of();
+        requireScopedOrganization();
+        if (CollUtil.isEmpty(liveStockIds)) {
+            return Map.of();
+        }
         Map<Long, BigDecimal> result = new HashMap<>();
         List<Long> ids = liveStockIds.stream().filter(Objects::nonNull).distinct().toList();
         for (int start = 0; start < ids.size(); start += 500) {
@@ -387,7 +485,10 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
 
     @Override
     public Map<Long, BigDecimal> activeReservedByPlanIds(Set<Long> deliverPlanIds) {
-        if (CollUtil.isEmpty(deliverPlanIds)) return Map.of();
+        requireScopedOrganization();
+        if (CollUtil.isEmpty(deliverPlanIds)) {
+            return Map.of();
+        }
         Map<Long, BigDecimal> result = new HashMap<>();
         List<Long> ids = deliverPlanIds.stream().filter(Objects::nonNull).distinct().toList();
         for (int start = 0; start < ids.size(); start += 500) {
@@ -401,15 +502,20 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
 
     @Override
     public Map<Long, BigDecimal> healthyActiveReservedByPlanIds(Set<Long> deliverPlanIds) {
+        requireScopedOrganization();
         Map<Long, WmsSalesStockReservationEntity> headers = reservationsByPlanIds(deliverPlanIds);
-        if (headers.isEmpty()) return Map.of();
+        if (headers.isEmpty()) {
+            return Map.of();
+        }
         String factory = FactoryContextHolder.getFactoryCode();
         require(StrUtil.isNotBlank(factory), "当前工厂不能为空");
         require(headers.values().stream().allMatch(row -> Objects.equals(factory, row.getFactoryCode())),
                 "销售预留健康量查询混入跨工厂主账");
         Set<Long> reservationIds = headers.values().stream()
                 .map(WmsSalesStockReservationEntity::getId).collect(Collectors.toSet());
-        if (reservationIds.isEmpty()) return Map.of();
+        if (reservationIds.isEmpty()) {
+            return Map.of();
+        }
         Set<String> products = headers.values().stream().map(WmsSalesStockReservationEntity::getProductCode)
                 .filter(StrUtil::isNotBlank).collect(Collectors.toSet());
         require(!products.isEmpty(), "销售预留主账产品不能为空");
@@ -420,11 +526,14 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
                         .eq(WmsSalesStockReservationDetailEntity::getStatus, ACTIVE)
                         .orderByAsc(WmsSalesStockReservationDetailEntity::getId));
         require(productDetails.size() <= 5000, "同产品活动销售预留明细超过5000行，拒绝截断健康量证据");
-        if (productDetails.isEmpty()) return Map.of();
+        if (productDetails.isEmpty()) {
+            return Map.of();
+        }
         Set<String> warehouses = eligibleWarehouses(factory);
         Set<Long> stockIds = productDetails.stream().map(WmsSalesStockReservationDetailEntity::getLiveStockId)
                 .filter(Objects::nonNull).collect(Collectors.toSet());
-        Map<Long, WmsLiveStockEntity> stocks = stockIds.isEmpty() ? Map.of() : stockMapper.selectBatchIds(stockIds)
+        Map<Long, WmsLiveStockEntity> stocks = stockIds.isEmpty() ? Map.of()
+                : stockMapper.selectBatchIds(stockIds)
                 .stream().peek(stock -> require(Objects.equals(factory, stock.getFactoryCode()),
                         "销售预留健康量查询混入跨工厂库存"))
                 .collect(Collectors.toMap(WmsLiveStockEntity::getId, item -> item));
@@ -438,19 +547,27 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
         for (WmsSalesStockReservationDetailEntity detail : productDetails) {
             WmsLiveStockEntity stock = stocks.get(detail.getLiveStockId());
             if (stock == null || !warehouses.contains(stock.getWarehouseCode())
-                    || !WmsStockAvailability.isUsable(stock) || !matches(detail, stock)) continue;
-            BigDecimal rowPhysical = physicalRemaining.getOrDefault(stock.getId(), BigDecimal.ZERO).max(BigDecimal.ZERO);
+                    || !WmsStockAvailability.isUsable(stock) || !matches(detail, stock)) {
+                continue;
+            }
+            BigDecimal rowPhysical = physicalRemaining.getOrDefault(stock.getId(), BigDecimal.ZERO)
+                    .max(BigDecimal.ZERO);
             BigDecimal healthy = detailActive(detail).min(rowPhysical);
             physicalRemaining.put(stock.getId(), rowPhysical.subtract(healthy));
             Long planId = planByReservation.get(detail.getReservationId());
-            if (planId != null) result.merge(planId, healthy, BigDecimal::add);
+            if (planId != null) {
+                result.merge(planId, healthy, BigDecimal::add);
+            }
         }
         return result;
     }
 
     @Override
     public Map<Long, WmsSalesStockReservationEntity> reservationsByPlanIds(Set<Long> deliverPlanIds) {
-        if (CollUtil.isEmpty(deliverPlanIds)) return Map.of();
+        requireScopedOrganization();
+        if (CollUtil.isEmpty(deliverPlanIds)) {
+            return Map.of();
+        }
         Map<Long, WmsSalesStockReservationEntity> result = new HashMap<>();
         List<Long> ids = deliverPlanIds.stream().filter(Objects::nonNull).distinct().toList();
         for (int start = 0; start < ids.size(); start += 500) {
@@ -464,23 +581,28 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
 
     @Override
     public String activeReservationNo(Long deliverPlanId) {
+        requireScopedOrganization();
         WmsSalesStockReservationEntity reservation = reservationMapper.selectOne(
                 new LambdaQueryWrapper<WmsSalesStockReservationEntity>()
-                        .eq(WmsSalesStockReservationEntity::getDeliverPlanId, deliverPlanId), false);
+                        .eq(WmsSalesStockReservationEntity::getDeliverPlanId, deliverPlanId),
+                false);
         return reservation != null && active(reservation).signum() > 0 ? reservation.getReservationNo() : null;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public List<WmsLiveStockEntity> consume(WmsOutBillDetailEntity billDetail) {
+        requireScopedOrganization();
         require(billDetail != null && StrUtil.startWith(billDetail.getReservationNo(), PREFIX)
                 && billDetail.getId() != null && billDetail.getBillId() != null, "销售预留出库缺少稳定来源");
+        require(billDetail.getMatNum() != null && Double.isFinite(billDetail.getMatNum())
+                && billDetail.getMatNum() > 0, "销售预留消费数量必须为大于0的有限数值");
         BigDecimal requested = quantity(billDetail.getMatNum());
-        require(requested.signum() > 0, "销售预留出库数量必须大于0");
         WmsSalesStockReservationEntity reservation = reservationMapper.selectOne(
                 new LambdaQueryWrapper<WmsSalesStockReservationEntity>()
                         .eq(WmsSalesStockReservationEntity::getReservationNo, billDetail.getReservationNo())
-                        .last("FOR UPDATE"), false);
+                        .last("FOR UPDATE"),
+                false);
         require(reservation != null && active(reservation).compareTo(requested) >= 0,
                 "销售预留不存在或活动数量不足");
         requireFactory(reservation.getFactoryCode());
@@ -490,7 +612,8 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
         String requestId = "SALES-OUT-" + billDetail.getBillId() + "-" + billDetail.getId();
         WmsSalesStockReservationOperationEntity replay = operationMapper.selectOne(
                 new LambdaQueryWrapper<WmsSalesStockReservationOperationEntity>()
-                        .eq(WmsSalesStockReservationOperationEntity::getRequestId, requestId), false);
+                        .eq(WmsSalesStockReservationOperationEntity::getRequestId, requestId),
+                false);
         require(replay == null, "同一销售预留出库明细已消费，禁止重复扣库");
         String before = JSONUtil.toJsonStr(snapshotOf(reservation));
         List<WmsSalesStockReservationDetailEntity> details = activeDetails(reservation.getId(), true).stream()
@@ -498,25 +621,31 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
         BigDecimal left = requested;
         List<WmsLiveStockEntity> reduced = new ArrayList<>();
         for (WmsSalesStockReservationDetailEntity detail : details) {
-            if (left.signum() == 0) break;
+            if (left.signum() == 0) {
+                break;
+            }
             WmsLiveStockEntity stock = stockMapper.selectOne(new LambdaQueryWrapper<WmsLiveStockEntity>()
                     .eq(WmsLiveStockEntity::getId, detail.getLiveStockId()).last("FOR UPDATE"), false);
             require(stock != null && WmsStockAvailability.isUsable(stock) && matches(detail, stock),
                     "销售预留库存行已丢失、漂移或质量不可用，须先受控释放并重新预留");
             BigDecimal take = detailActive(detail).min(left);
             require(quantity(stock.getMatNum()).compareTo(take) >= 0, "销售预留库存实物不足，拒绝透支出库");
+            WmsSerialStockGuard.requireWhole(stock, take);
             BigDecimal balance = quantity(stock.getMatNum()).subtract(take);
             WmsLiveStockEntity snapshot = new WmsLiveStockEntity();
             BeanUtils.copyProperties(stock, snapshot);
             snapshot.setMatNum(take.doubleValue());
             reduced.add(snapshot);
-            if (balance.signum() == 0) stockMapper.deleteById(stock.getId());
-            else {
+            if (balance.signum() == 0) {
+                require(stockMapper.deleteById(stock.getId()) == 1, "销售预留源库存删除未确认，消费整体回滚");
+            } else {
                 stock.setMatNum(balance.doubleValue());
                 require(stockMapper.updateById(stock) == 1, "销售预留库存扣减失败");
             }
             detail.setConsumedNum(quantity(detail.getConsumedNum()).add(take));
-            if (detailActive(detail).signum() == 0) detail.setStatus(CLOSED);
+            if (detailActive(detail).signum() == 0) {
+                detail.setStatus(CLOSED);
+            }
             require(detailMapper.updateById(detail) == 1, "销售预留消费明细更新失败");
             left = left.subtract(take);
         }
@@ -542,6 +671,7 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     @Transactional(rollbackFor = Exception.class)
     public void restoreAfterShipmentCorrection(Long deliverPlanId, List<WmsLiveStockEntity> restoredStocks,
                                                String requestId, String reason) {
+        requireScopedOrganization();
         require(deliverPlanId != null && CollUtil.isNotEmpty(restoredStocks)
                         && StrUtil.isNotBlank(requestId) && requestId.length() <= 64
                         && StrUtil.isNotBlank(reason) && reason.length() <= 500,
@@ -563,8 +693,9 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
                         && Objects.equals(stock.getMatUnit(), reservation.getUnitCode())),
                 "红冲恢复库存与原计划的工厂、产品或单位不一致");
         String before = JSONUtil.toJsonStr(snapshotOf(reservation));
-        for (WmsLiveStockEntity stock : restoredStocks)
+        for (WmsLiveStockEntity stock : restoredStocks) {
             insertDetail(reservation, plan, stock, quantity(stock.getMatNum()));
+        }
         reservation.setReservedNum(quantity(reservation.getReservedNum()).add(total));
         refreshStatus(reservation);
         reservation.setLastRequestId(requestId);
@@ -580,22 +711,61 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void validateOutboundReservation(List<WmsOutBillDetailEntity> details) {
+        requireScopedOrganization();
         Map<String, List<WmsOutBillDetailEntity>> grouped = Optional.ofNullable(details).orElse(List.of()).stream()
                 .filter(detail -> detail != null && StrUtil.startWith(detail.getReservationNo(), PREFIX))
                 .collect(Collectors.groupingBy(WmsOutBillDetailEntity::getReservationNo));
         for (Map.Entry<String, List<WmsOutBillDetailEntity>> entry : grouped.entrySet()) {
             WmsSalesStockReservationEntity reservation = reservationMapper.selectOne(
                     new LambdaQueryWrapper<WmsSalesStockReservationEntity>()
-                            .eq(WmsSalesStockReservationEntity::getReservationNo, entry.getKey()), false);
+                            .eq(WmsSalesStockReservationEntity::getReservationNo, entry.getKey()),
+                    false);
+            require(entry.getValue().stream().allMatch(item -> item.getMatNum() != null
+                            && Double.isFinite(item.getMatNum()) && item.getMatNum() > 0),
+                    "销售预留出库明细数量必须为大于0的有限数值");
             BigDecimal total = entry.getValue().stream().map(item -> quantity(item.getMatNum()))
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
             require(reservation != null && total.signum() > 0 && active(reservation).compareTo(total) >= 0
-                            && entry.getValue().stream().allMatch(item -> Objects.equals(reservation.getProductCode(), item.getMatCode())
-                            && Objects.equals(reservation.getFactoryCode(), item.getFactoryCode())
-                            && (StrUtil.isBlank(item.getMatUnit()) || Objects.equals(reservation.getUnitCode(), item.getMatUnit()))),
+                            && entry.getValue().stream()
+                            .allMatch(item -> Objects.equals(reservation.getProductCode(), item.getMatCode())
+                                    && Objects.equals(reservation.getFactoryCode(), item.getFactoryCode())
+                                    && (StrUtil.isBlank(item.getMatUnit())
+                                    || Objects.equals(reservation.getUnitCode(), item.getMatUnit()))),
                     "销售出库引用的正式预留不存在、产品/工厂/单位不符或活动数量不足");
+            List<WmsLiveStockEntity> stocks = availableReservedStocks(entry.getKey(),
+                    reservation.getProductCode(), null);
+            Map<Long, BigDecimal> availableByStock = stocks.stream().collect(Collectors.toMap(
+                    WmsLiveStockEntity::getId, stock -> quantity(stock.getMatNum())));
+            for (WmsOutBillDetailEntity out : entry.getValue()) {
+                BigDecimal required = quantity(out.getMatNum());
+                for (WmsLiveStockEntity stock : stocks) {
+                    if (required.signum() == 0) {
+                        break;
+                    }
+                    if (!matchesOutboundStock(out, stock)) {
+                        continue;
+                    }
+                    BigDecimal available = availableByStock.getOrDefault(stock.getId(), BigDecimal.ZERO);
+                    BigDecimal take = available.min(required);
+                    availableByStock.put(stock.getId(), available.subtract(take));
+                    required = required.subtract(take);
+                }
+                require(required.signum() == 0,
+                        "销售预留所选库存行、批次或剩余实物量已变化，请重新生成出库批次");
+            }
         }
+    }
+
+    private boolean matchesOutboundStock(WmsOutBillDetailEntity out, WmsLiveStockEntity stock) {
+        return (out.getSourceStockId() == null || Objects.equals(out.getSourceStockId(), stock.getId()))
+                && Objects.equals(out.getMatCode(), stock.getMatCode())
+                && Objects.equals(out.getWarehouseCode(), stock.getWarehouseCode())
+                && optionalMatch(stock.getMatBatch(), out.getMatBatch())
+                && optionalMatch(stock.getSiteCode(), out.getSiteCode())
+                && optionalMatch(stock.getContainerCode(), out.getContainerCode())
+                && optionalMatch(stock.getSupplierCode(), out.getSupplierCode());
     }
 
     private void requireNoOpenDelivery(WmsDeliverGoodsPlanBaseEntity plan) {
@@ -604,11 +774,14 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
                                 .eq(WmsDeliverGoodsDetailsEntity::getDeliverPlanCode, plan.getDeliverPlanCode()))
                 .stream().map(WmsDeliverGoodsDetailsEntity::getDeliverCode).filter(StrUtil::isNotBlank)
                 .distinct().toList();
-        if (deliverCodes.isEmpty()) return;
+        if (deliverCodes.isEmpty()) {
+            return;
+        }
         Long open = deliverBaseMapper.selectCount(new LambdaQueryWrapper<WmsDeliverGoodsBaseEntity>()
                 .in(WmsDeliverGoodsBaseEntity::getDeliverCode, deliverCodes)
                 .in(WmsDeliverGoodsBaseEntity::getDeliverState,
-                        DeliverStateEnum.NOT_START.getCode(), DeliverStateEnum.CREATE.getCode(), DeliverStateEnum.ING.getCode()));
+                        DeliverStateEnum.NOT_START.getCode(), DeliverStateEnum.CREATE.getCode(),
+                        DeliverStateEnum.ING.getCode()));
         require(open == null || open == 0, "发货计划存在未结束发货单，须先完成或关闭仓库执行后再调整正式预留");
     }
 
@@ -628,7 +801,9 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     }
 
     private Map<Long, BigDecimal> productionReserved(Set<Long> stockIds) {
-        if (stockIds.isEmpty()) return Map.of();
+        if (stockIds.isEmpty()) {
+            return Map.of();
+        }
         Map<Long, BigDecimal> result = new HashMap<>();
         List<Long> ids = new ArrayList<>(stockIds);
         for (int start = 0; start < ids.size(); start += 500) {
@@ -671,20 +846,22 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     }
 
     private List<WmsSalesStockReservationDetailEntity> activeDetails(Long reservationId, boolean lock) {
-        LambdaQueryWrapper<WmsSalesStockReservationDetailEntity> query =
-                new LambdaQueryWrapper<WmsSalesStockReservationDetailEntity>()
-                        .eq(WmsSalesStockReservationDetailEntity::getReservationId, reservationId)
-                        .eq(WmsSalesStockReservationDetailEntity::getStatus, ACTIVE)
-                        .orderByAsc(WmsSalesStockReservationDetailEntity::getValidEndDate)
-                        .orderByAsc(WmsSalesStockReservationDetailEntity::getStockInTime)
-                        .orderByAsc(WmsSalesStockReservationDetailEntity::getId);
-        if (lock) query.last("FOR UPDATE");
+        LambdaQueryWrapper<WmsSalesStockReservationDetailEntity> query = new LambdaQueryWrapper<WmsSalesStockReservationDetailEntity>()
+                .eq(WmsSalesStockReservationDetailEntity::getReservationId, reservationId)
+                .eq(WmsSalesStockReservationDetailEntity::getStatus, ACTIVE)
+                .orderByAsc(WmsSalesStockReservationDetailEntity::getValidEndDate)
+                .orderByAsc(WmsSalesStockReservationDetailEntity::getStockInTime)
+                .orderByAsc(WmsSalesStockReservationDetailEntity::getId);
+        if (lock) {
+            query.last("FOR UPDATE");
+        }
         return detailMapper.selectList(query);
     }
 
     private WmsDeliverGoodsPlanBaseEntity lockPlan(Long id) {
-        WmsDeliverGoodsPlanBaseEntity plan = planMapper.selectOne(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
-                .eq(WmsDeliverGoodsPlanBaseEntity::getId, id).last("FOR UPDATE"), false);
+        WmsDeliverGoodsPlanBaseEntity plan = planMapper
+                .selectOne(new LambdaQueryWrapper<WmsDeliverGoodsPlanBaseEntity>()
+                        .eq(WmsDeliverGoodsPlanBaseEntity::getId, id).last("FOR UPDATE"), false);
         require(plan != null, "发货计划不存在");
         requireFactory(plan.getFactoryCode());
         require(plan.getDeliverNum() != null && plan.getDeliveredNum() != null
@@ -702,9 +879,12 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     private WmsSalesStockReservationOperationEntity replay(String requestId, WmsDeliverGoodsPlanBaseEntity plan) {
         WmsSalesStockReservationOperationEntity operation = operationMapper.selectOne(
                 new LambdaQueryWrapper<WmsSalesStockReservationOperationEntity>()
-                        .eq(WmsSalesStockReservationOperationEntity::getRequestId, requestId), false);
-        if (operation != null) require(Objects.equals(operation.getDeliverPlanId(), plan.getId()),
-                "请求号已属于其他发货计划");
+                        .eq(WmsSalesStockReservationOperationEntity::getRequestId, requestId),
+                false);
+        if (operation != null) {
+            require(Objects.equals(operation.getDeliverPlanId(), plan.getId()),
+                    "请求号已属于其他发货计划");
+        }
         return operation;
     }
 
@@ -763,13 +943,19 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     }
 
     private void refreshStatus(WmsSalesStockReservationEntity row) {
-        if (active(row).signum() > 0) row.setStatus(ACTIVE);
-        else if (quantity(row.getConsumedNum()).signum() > 0) row.setStatus("CONSUMED");
-        else row.setStatus("RELEASED");
+        if (active(row).signum() > 0) {
+            row.setStatus(ACTIVE);
+        } else if (quantity(row.getConsumedNum()).signum() > 0) {
+            row.setStatus("CONSUMED");
+        } else {
+            row.setStatus("RELEASED");
+        }
     }
 
     private boolean matches(WmsSalesStockReservationDetailEntity reserved, WmsOutBillDetailEntity out) {
-        return Objects.equals(reserved.getWarehouseCode(), out.getWarehouseCode())
+        return (out.getSourceStockId() == null
+                || Objects.equals(reserved.getLiveStockId(), out.getSourceStockId()))
+                && Objects.equals(reserved.getWarehouseCode(), out.getWarehouseCode())
                 && optionalMatch(reserved.getMatBatch(), out.getMatBatch())
                 && optionalMatch(reserved.getSiteCode(), out.getSiteCode())
                 && optionalMatch(reserved.getContainerCode(), out.getContainerCode())
@@ -793,7 +979,8 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     }
 
     private boolean optionalMatch(String reserved, String selected) {
-        return StrUtil.isBlank(selected) || Objects.equals(StrUtil.nullToEmpty(reserved), StrUtil.nullToEmpty(selected));
+        return StrUtil.isBlank(selected)
+                || Objects.equals(StrUtil.nullToEmpty(reserved), StrUtil.nullToEmpty(selected));
     }
 
     private void validateSource(WmsSalesStockReservationEntity row, WmsDeliverGoodsPlanBaseEntity plan) {
@@ -842,11 +1029,22 @@ public class WmsSalesStockReservationServiceImpl implements WmsSalesStockReserva
     }
 
     private void requireFactory(String factory) {
+        requireScopedOrganization();
         require(StrUtil.isNotBlank(FactoryContextHolder.getFactoryCode())
                 && Objects.equals(factory, FactoryContextHolder.getFactoryCode()), "当前工厂无权操作该销售预留");
     }
 
+    private void requireScopedOrganization() {
+        require(TenantContextHolder.getTenantId() != null
+                        && StrUtil.isNotBlank(FactoryContextHolder.getFactoryCode())
+                        && !Boolean.TRUE.equals(TenantContextHolder.getTenantSkip())
+                        && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()),
+                "销售预留必须具有明确的租户和工厂上下文");
+    }
+
     private void require(boolean value, String message) {
-        if (!value) throw new CheckedException(message);
+        if (!value) {
+            throw new CheckedException(message);
+        }
     }
 }

@@ -67,8 +67,8 @@ public class MesProcessParameterStandardFreezeService {
      * 不再按下达时间选择“今日发布版”。
      */
     public FrozenBundle freezeFromEngineeringSnapshot(MesTaskEntity task,
-                                                       List<MdmProcessRouteWorkingDTO> routes,
-                                                       String snapshot) {
+                                                      List<MdmProcessRouteWorkingDTO> routes,
+                                                      String snapshot) {
         if (task == null || task.getProcessRouteId() == null || routes == null || routes.isEmpty()
                 || StrUtil.isBlank(snapshot)) {
             throw new CheckedException("工程版本参数冻结缺少工单、路线或原目录");
@@ -133,7 +133,9 @@ public class MesProcessParameterStandardFreezeService {
         return inherited;
     }
 
-    /** 下达时只复核返工方案已批准的节点参数正文，不重新选择当前标准。 */
+    /**
+     * 下达时只复核返工方案已批准的节点参数正文，不重新选择当前标准。
+     */
     public FrozenBundle validateReworkSnapshot(MesTaskEntity task,
                                                List<MdmProcessRouteWorkingDTO> routes) {
         if (task == null || StrUtil.isBlank(task.getProcessParameterStandardSnapshot())

@@ -5,7 +5,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.util.List;
 
-/** Agent审批冻结的跨仓调拨命令。 */
+/**
+ * Agent审批冻结的跨仓调拨命令。
+ */
 @Data
 public class PlanAgentTransferDecisionDTO {
     private String factoryCode;

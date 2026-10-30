@@ -38,24 +38,42 @@ public class MesReworkMaterialPlanEntity extends BaseEntity<MesReworkMaterialPla
     private Long sourcePlanId;
     private String supplementSnapshot;
     private String preparationSnapshot;
-    /** 双岗批准的跨工单时间口径；INITIAL必填，追加沿用当前批准正文。 */
+    /**
+     * 双岗批准的跨工单时间口径；INITIAL必填，追加沿用当前批准正文。
+     */
     private String reworkTimingPolicySnapshot;
-    /** 首轮方案冻结的原动态实例全集；NONE也保存明确原文，不以空值表示无动态来源。 */
+    /**
+     * 首轮方案冻结的原动态实例全集；NONE也保存明确原文，不以空值表示无动态来源。
+     */
     private String identifierScopeSnapshot;
-    /** identifierScopeSnapshot原始UTF-8字节SHA-256。 */
+    /**
+     * identifierScopeSnapshot原始UTF-8字节SHA-256。
+     */
     private String identifierScopeFingerprint;
-    /** INHERIT_SOURCE或APPROVED_OVERRIDE。 */
+    /**
+     * INHERIT_SOURCE或APPROVED_OVERRIDE。
+     */
     private String reworkEngineeringMode;
-    /** 选择的MDM返工覆盖版本，继承模式为空。 */
+    /**
+     * 选择的MDM返工覆盖版本，继承模式为空。
+     */
     @JsonSerialize(using = ToStringSerializer.class)
     private Long reworkEngineeringOverrideId;
-    /** 覆盖版本原文SHA256。 */
+    /**
+     * 覆盖版本原文SHA256。
+     */
     private String reworkEngineeringOverrideHash;
-    /** 返工工程选择、原生产版本、节点及MDM覆盖包的不可变原文。 */
+    /**
+     * 返工工程选择、原生产版本、节点及MDM覆盖包的不可变原文。
+     */
     private String reworkEngineeringScopeSnapshot;
-    /** reworkEngineeringScopeSnapshot原始UTF-8字节SHA256。 */
+    /**
+     * reworkEngineeringScopeSnapshot原始UTF-8字节SHA256。
+     */
     private String reworkEngineeringScopeFingerprint;
-    /** 方案作用后的单节点参数标准身份及正文。 */
+    /**
+     * 方案作用后的单节点参数标准身份及正文。
+     */
     private String resultParameterStandardNo;
     private Integer resultParameterStandardVersion;
     private String resultParameterStandardSnapshot;

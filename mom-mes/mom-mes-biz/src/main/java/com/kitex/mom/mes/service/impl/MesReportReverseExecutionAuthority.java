@@ -29,8 +29,8 @@ final class MesReportReverseExecutionAuthority {
     final Map<Long, MesReportReverseScopeEntity> scopes;
 
     private MesReportReverseExecutionAuthority(MesReportReverseRequestEntity request, String reviewRequestId,
-                                              String reviewFingerprint,
-                                              Map<Long, MesReportReverseScopeEntity> scopes) {
+                                               String reviewFingerprint,
+                                               Map<Long, MesReportReverseScopeEntity> scopes) {
         this.requestId = request.getId();
         this.evidenceFingerprint = request.getEvidenceFingerprint();
         this.evidenceSnapshot = request.getEvidenceSnapshot();
@@ -41,7 +41,9 @@ final class MesReportReverseExecutionAuthority {
         this.scopes = Map.copyOf(scopes);
     }
 
-    /** 复核服务已核对完整原指纹/逐报告范围后，在现有事务中执行，不能建立嵌套资格。 */
+    /**
+     * 复核服务已核对完整原指纹/逐报告范围后，在现有事务中执行，不能建立嵌套资格。
+     */
     static void runApproved(MesReportReverseRequestEntity request, String reviewRequestId,
                             String reviewFingerprint, Map<Long, MesReportReverseScopeEntity> scopes,
                             Runnable action) {
@@ -53,8 +55,11 @@ final class MesReportReverseExecutionAuthority {
             throw new CheckedException("节点补偿只能在已完整取证的实名异岗复核事务中执行");
         }
         CURRENT.set(new MesReportReverseExecutionAuthority(request, reviewRequestId, reviewFingerprint, scopes));
-        try { action.run(); }
-        finally { CURRENT.remove(); }
+        try {
+            action.run();
+        } finally {
+            CURRENT.remove();
+        }
     }
 
     static MesReportReverseExecutionAuthority requireCurrent() {

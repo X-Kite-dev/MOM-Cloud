@@ -19,7 +19,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class PlnMpsCapacityPublicationLock {
     private final PlnMpsPolicyMapper mapper;
 
-    /** 仅能在实际租户的写事务内调用，锁持续到整个事务结束。 */
+    /**
+     * 仅能在实际租户的写事务内调用，锁持续到整个事务结束。
+     */
     public void acquire(String factory) {
         if (TenantContextHolder.getTenantId() == null || TenantContextHolder.getTenantSkip()
                 || StrUtil.isBlank(factory) || !TransactionSynchronizationManager.isActualTransactionActive()

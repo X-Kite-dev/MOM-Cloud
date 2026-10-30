@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** 每一笔MES质量数量回执对应一次不可变阈值评估。 */
+/**
+ * 每一笔MES质量数量回执对应一次不可变阈值评估。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -44,7 +46,9 @@ public class PlnQualityDeviationEvaluationEntity extends BaseEntity<PlnQualityDe
     private BigDecimal openReworkQuantity;
     private BigDecimal atRiskQuantity;
     private BigDecimal deviationRate;
-    /** NO_POLICY、BELOW_THRESHOLD、TRIGGERED、RECOVERED。 */
+    /**
+     * NO_POLICY、BELOW_THRESHOLD、TRIGGERED、RECOVERED。
+     */
     private String evaluationResult;
     private String evaluationReason;
     private String qualityEvidenceFingerprint;

@@ -27,6 +27,6 @@ public class WmsLiveStockDynamicGroupDTO {
     @Schema(description = "库位编码")
     private List<String> siteCode;
 
-    @Schema(description = "分组字段列表，可选值：warehouseCode,matCode,matName,matSpec,matUnit,locationCode,batchNo,supplierCode")
+    @Schema(description = "分组字段列表：warehouse_code,mat_code,site_code,mat_batch,supplier_code；为空时返回明细数据")
     private List<String> groupFields;
 }

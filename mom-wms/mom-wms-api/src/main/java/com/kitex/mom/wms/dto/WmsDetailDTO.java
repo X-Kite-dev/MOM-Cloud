@@ -28,6 +28,9 @@ public class WmsDetailDTO {
     @Schema(description = "调拨源实时库存ID")
     private Long sourceStockId;
 
+    @Schema(description = "调拨发出时的源仓容器编码；与接收容器分别保存")
+    private String oldContainerCode;
+
     /**
      * 物料编码
      */
@@ -88,16 +91,22 @@ public class WmsDetailDTO {
     @Schema(description = "已累计接收数量，不含隔离中的溢收")
     private BigDecimal receivedQuantity;
 
-    @Schema(description = "仍在途数量")
+    @Schema(description = "未结数量；待实物退回阶段表示尚未返还源仓")
     private BigDecimal inTransitQuantity;
 
     @Schema(description = "最终短收数量")
     private BigDecimal shortQuantity;
 
+    @Schema(description = "审核通过的退回保管异常数量，不是已入库数量")
+    private BigDecimal returnExceptionQuantity;
+
     @Schema(description = "隔离或已处置的溢收数量")
     private BigDecimal overQuantity;
 
-    @Schema(description = "行状态：IN_TRANSIT/PARTIAL/RECEIVED/VARIANCE_PENDING/VARIANCE_RESOLVED/CANCELLED")
+    @Schema(description = "终态调拨中未被接收、取消返还或短收差异闭合的数量；大于0须人工核账")
+    private BigDecimal unreconciledQuantity;
+
+    @Schema(description = "行状态：IN_TRANSIT/PARTIAL/RETURN_PENDING/RETURN_EXCEPTION_PENDING/RETURN_EXCEPTION_CLOSED/RECEIVED/VARIANCE_PENDING/VARIANCE_RESOLVED/CANCELLED/RECONCILIATION_REQUIRED")
     private String transferLineState;
 
     /**

@@ -8,7 +8,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
-/** 当前工厂 ERP 投递健康度与待处置清单。 */
+/**
+ * 当前工厂 ERP 投递健康度与待处置清单。
+ */
 @Data
 @Accessors(chain = true)
 @Schema(description = "ERP投递对账摘要")

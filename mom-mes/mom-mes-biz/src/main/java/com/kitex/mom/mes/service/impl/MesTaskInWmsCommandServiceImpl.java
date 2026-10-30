@@ -105,11 +105,11 @@ public class MesTaskInWmsCommandServiceImpl
         Long tenant = TenantContextHolder.getTenantId();
         Long actor = SecurityUtils.getUser().getId();
         require(command != null && VERSION.equals(command.getCommandVersion()) && tenant != null && actor != null
-                        && tenant.toString().equals(command.getExpectedTenantId()) && actor.toString().equals(command.getExpectedActorId())
-                        && factory.equals(command.getExpectedFactoryCode()), "入库命令必须绑定实际认证本人、租户和工厂");
+                && tenant.toString().equals(command.getExpectedTenantId()) && actor.toString().equals(command.getExpectedActorId())
+                && factory.equals(command.getExpectedFactoryCode()), "入库命令必须绑定实际认证本人、租户和工厂");
         require(command.getRequestId() != null && command.getRequestId().matches("IW2:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-                        && command.getId() != null && command.getId() > 0 && command.getInWmsNum() != null
-                        && command.getInWmsNum().signum() > 0, "V2入库须新协议原号、真实工单与正数数量");
+                && command.getId() != null && command.getId() > 0 && command.getInWmsNum() != null
+                && command.getInWmsNum().signum() > 0, "V2入库须新协议原号、真实工单与正数数量");
         require(command.getWarehouseCode() != null && !command.getWarehouseCode().isBlank()
                         && command.getWarehouseCode().length() <= 100 && command.getWarehouseName() != null
                         && !command.getWarehouseName().isBlank() && command.getWarehouseName().length() <= 200

@@ -5,18 +5,11 @@ import com.kitex.mom.mes.entity.MesProduceTaskEntity;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
 
 import java.math.BigDecimal;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
-/** 仅使用原工单的完整实际任务集解释执行关系，不查询今日MDM。 */
+/**
+ * 仅使用原工单的完整实际任务集解释执行关系，不查询今日MDM。
+ */
 public final class MesFrozenExecutionGraph {
     public static final String NODE_EXECUTION_V1 = "NODE_EXECUTION_V1";
 
@@ -40,10 +33,10 @@ public final class MesFrozenExecutionGraph {
             require(row != null && Objects.equals(first.getRouteExecutionSchemaVersion(), row.getRouteExecutionSchemaVersion()),
                     "冻结执行图不能混合新旧或未知协议");
             require(Objects.equals(first.getTenantId(), row.getTenantId())
-                    && Objects.equals(first.getFactoryCode(), row.getFactoryCode())
-                    && Objects.equals(first.getTaskCode(), row.getTaskCode())
-                    && Objects.equals(first.getProcessRouteId(), row.getProcessRouteId())
-                    && Objects.equals(first.getProcessRouteCode(), row.getProcessRouteCode()),
+                            && Objects.equals(first.getFactoryCode(), row.getFactoryCode())
+                            && Objects.equals(first.getTaskCode(), row.getTaskCode())
+                            && Objects.equals(first.getProcessRouteId(), row.getProcessRouteId())
+                            && Objects.equals(first.getProcessRouteCode(), row.getProcessRouteCode()),
                     "冻结执行图必须属于同一组织、工单和路线");
             require(row.getId() != null && ids.add(row.getId()) && text(row.getCode()) && codes.add(row.getCode())
                     && text(row.getRouteCode()), "冻结执行图实际ID、任务编码或主工序缺失/重复");
@@ -73,6 +66,97 @@ public final class MesFrozenExecutionGraph {
 
     public static MesFrozenExecutionGraph of(List<MesProduceTaskEntity> rows) {
         return new MesFrozenExecutionGraph(rows);
+    }
+
+    /**
+     * 派工必须仍归属真实父任务；历史空节点不借父任务补身份。
+     */
+    public static void assertArrangement(MesProduceTaskEntity parent, MesTaskArrangeEntity arrange) {
+        require(parent != null && arrange != null && parent.getTenantId() != null
+                        && text(parent.getFactoryCode()) && text(parent.getTaskCode())
+                        && text(parent.getCode()) && text(parent.getRouteCode())
+                        && Objects.equals(parent.getTenantId(), arrange.getTenantId())
+                        && Objects.equals(parent.getFactoryCode(), arrange.getFactoryCode())
+                        && Objects.equals(parent.getTaskCode(), arrange.getTaskCode())
+                        && Objects.equals(parent.getCode(), arrange.getProduceTaskCode())
+                        && Objects.equals(parent.getRouteCode(), arrange.getRouteCode()),
+                "派工与原实际工序的组织、工单或主工序不一致");
+        String version = parent.getRouteExecutionSchemaVersion();
+        require(Objects.equals(version, arrange.getRouteExecutionSchemaVersion())
+                && (version == null || NODE_EXECUTION_V1.equals(version)), "派工与原实际工序执行协议不一致或未知");
+        if (version == null) {
+            require(parent.getPredecessorNodeCodes() == null && parent.getSuccessorNodeCodes() == null
+                            && parent.getNodeTimingRulesJson() == null && arrange.getPredecessorNodeCodes() == null
+                            && arrange.getSuccessorNodeCodes() == null && arrange.getNodeTimingRulesJson() == null,
+                    "历史派工不能夹带新执行合同");
+            require(arrange.getSourceRouteNodeCode() == null
+                            || Objects.equals(parent.getSourceRouteNodeCode(), arrange.getSourceRouteNodeCode()),
+                    "历史派工已有节点与原实际任务不一致");
+            return;
+        }
+        require(node(parent.getSourceRouteNodeCode()) && parent.getPredecessorNodeCodes() != null
+                        && parent.getSuccessorNodeCodes() != null && parent.getLastRoute() != null
+                        && Objects.equals(parent.getSourceRouteNodeCode(), arrange.getSourceRouteNodeCode())
+                        && Objects.equals(parent.getPredecessorNodeCodes(), arrange.getPredecessorNodeCodes())
+                        && Objects.equals(parent.getSuccessorNodeCodes(), arrange.getSuccessorNodeCodes())
+                        && Objects.equals(parent.getNodeTimingRulesJson(), arrange.getNodeTimingRulesJson())
+                        && Objects.equals(parent.getPredecessorCodes(), arrange.getPredecessorCodes())
+                        && Objects.equals(parent.getSuccessorCodes(), arrange.getSuccessorCodes())
+                        && Objects.equals(parent.getRouteOrder(), arrange.getRouteOrder())
+                        && Objects.equals(parent.getLastRoute(), arrange.getLastRoute())
+                        && Objects.equals(parent.getOverlapEnabled(), arrange.getOverlapEnabled())
+                        && sameQuantity(parent.getTransferBatchQuantity(), arrange.getTransferBatchQuantity())
+                        && Objects.equals(parent.getTransferMinutes(), arrange.getTransferMinutes()),
+                "新派工未完整复制原实际工序的冻结合同");
+    }
+
+    private static List<String> csv(String value) {
+        if (value == null || value.isEmpty()) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        Set<String> unique = new HashSet<>();
+        for (String code : value.split(",", -1)) {
+            String normalized = code.trim();
+            require(text(normalized) && unique.add(normalized), "冻结执行关系包含空项或重复项");
+            result.add(normalized);
+        }
+        return List.copyOf(result);
+    }
+
+    /**
+     * 节点关系投影可因两个不同节点使用同一主工序而重复；节点关系本身仍由csv严格去重。
+     */
+    private static List<String> projectionCsv(String value) {
+        if (value == null || value.isEmpty()) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        for (String code : value.split(",", -1)) {
+            String normalized = code.trim();
+            require(text(normalized) && Objects.equals(code, normalized),
+                    "冻结主工序投影包含空项或首尾空格");
+            result.add(normalized);
+        }
+        return List.copyOf(result);
+    }
+
+    private static boolean node(String value) {
+        return value != null && value.length() <= 64 && value.matches("RN-[1-9][0-9]*");
+    }
+
+    private static boolean sameQuantity(BigDecimal first, BigDecimal second) {
+        return first == null ? second == null : second != null && first.compareTo(second) == 0;
+    }
+
+    private static boolean text(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new CheckedException(message);
+        }
     }
 
     public List<MesProduceTaskEntity> predecessors(MesProduceTaskEntity current) {
@@ -127,7 +211,9 @@ public final class MesFrozenExecutionGraph {
         return Collections.unmodifiableMap(result);
     }
 
-    /** 从真实派工的父任务编码定位，不用主工序编码或拓扑顺序挑选一次执行。 */
+    /**
+     * 从真实派工的父任务编码定位，不用主工序编码或拓扑顺序挑选一次执行。
+     */
     public MesProduceTaskEntity current(MesTaskArrangeEntity arrange) {
         require(arrange != null, "当前派工缺失");
         MesProduceTaskEntity parent = tasks.values().stream()
@@ -143,63 +229,23 @@ public final class MesFrozenExecutionGraph {
         String key = rawKey(current);
         MesProduceTaskEntity frozen = tasks.get(key);
         require(frozen != null && Objects.equals(frozen.getId(), current.getId())
-                && Objects.equals(frozen.getCode(), current.getCode())
-                && Objects.equals(frozen.getTenantId(), current.getTenantId())
-                && Objects.equals(frozen.getFactoryCode(), current.getFactoryCode())
-                && Objects.equals(frozen.getTaskCode(), current.getTaskCode())
-                && Objects.equals(frozen.getProcessRouteId(), current.getProcessRouteId())
-                && Objects.equals(frozen.getProcessRouteCode(), current.getProcessRouteCode())
-                && Objects.equals(frozen.getRouteCode(), current.getRouteCode())
-                && Objects.equals(frozen.getRouteExecutionSchemaVersion(), current.getRouteExecutionSchemaVersion())
-                && Objects.equals(frozen.getSourceRouteNodeCode(), current.getSourceRouteNodeCode())
-                && Objects.equals(frozen.getPredecessorCodes(), current.getPredecessorCodes())
-                && Objects.equals(frozen.getSuccessorCodes(), current.getSuccessorCodes())
-                && Objects.equals(frozen.getPredecessorNodeCodes(), current.getPredecessorNodeCodes())
-                && Objects.equals(frozen.getSuccessorNodeCodes(), current.getSuccessorNodeCodes())
-                && Objects.equals(frozen.getNodeTimingRulesJson(), current.getNodeTimingRulesJson())
-                && Objects.equals(frozen.getLastRoute(), current.getLastRoute()),
+                        && Objects.equals(frozen.getCode(), current.getCode())
+                        && Objects.equals(frozen.getTenantId(), current.getTenantId())
+                        && Objects.equals(frozen.getFactoryCode(), current.getFactoryCode())
+                        && Objects.equals(frozen.getTaskCode(), current.getTaskCode())
+                        && Objects.equals(frozen.getProcessRouteId(), current.getProcessRouteId())
+                        && Objects.equals(frozen.getProcessRouteCode(), current.getProcessRouteCode())
+                        && Objects.equals(frozen.getRouteCode(), current.getRouteCode())
+                        && Objects.equals(frozen.getRouteExecutionSchemaVersion(), current.getRouteExecutionSchemaVersion())
+                        && Objects.equals(frozen.getSourceRouteNodeCode(), current.getSourceRouteNodeCode())
+                        && Objects.equals(frozen.getPredecessorCodes(), current.getPredecessorCodes())
+                        && Objects.equals(frozen.getSuccessorCodes(), current.getSuccessorCodes())
+                        && Objects.equals(frozen.getPredecessorNodeCodes(), current.getPredecessorNodeCodes())
+                        && Objects.equals(frozen.getSuccessorNodeCodes(), current.getSuccessorNodeCodes())
+                        && Objects.equals(frozen.getNodeTimingRulesJson(), current.getNodeTimingRulesJson())
+                        && Objects.equals(frozen.getLastRoute(), current.getLastRoute()),
                 "当前工序不属于原冻结执行图或合同已变化");
         return key;
-    }
-
-    /** 派工必须仍归属真实父任务；历史空节点不借父任务补身份。 */
-    public static void assertArrangement(MesProduceTaskEntity parent, MesTaskArrangeEntity arrange) {
-        require(parent != null && arrange != null && parent.getTenantId() != null
-                && text(parent.getFactoryCode()) && text(parent.getTaskCode())
-                && text(parent.getCode()) && text(parent.getRouteCode())
-                && Objects.equals(parent.getTenantId(), arrange.getTenantId())
-                && Objects.equals(parent.getFactoryCode(), arrange.getFactoryCode())
-                && Objects.equals(parent.getTaskCode(), arrange.getTaskCode())
-                && Objects.equals(parent.getCode(), arrange.getProduceTaskCode())
-                && Objects.equals(parent.getRouteCode(), arrange.getRouteCode()),
-                "派工与原实际工序的组织、工单或主工序不一致");
-        String version = parent.getRouteExecutionSchemaVersion();
-        require(Objects.equals(version, arrange.getRouteExecutionSchemaVersion())
-                && (version == null || NODE_EXECUTION_V1.equals(version)), "派工与原实际工序执行协议不一致或未知");
-        if (version == null) {
-            require(parent.getPredecessorNodeCodes() == null && parent.getSuccessorNodeCodes() == null
-                    && parent.getNodeTimingRulesJson() == null && arrange.getPredecessorNodeCodes() == null
-                    && arrange.getSuccessorNodeCodes() == null && arrange.getNodeTimingRulesJson() == null,
-                    "历史派工不能夹带新执行合同");
-            require(arrange.getSourceRouteNodeCode() == null
-                    || Objects.equals(parent.getSourceRouteNodeCode(), arrange.getSourceRouteNodeCode()),
-                    "历史派工已有节点与原实际任务不一致");
-            return;
-        }
-        require(node(parent.getSourceRouteNodeCode()) && parent.getPredecessorNodeCodes() != null
-                && parent.getSuccessorNodeCodes() != null && parent.getLastRoute() != null
-                && Objects.equals(parent.getSourceRouteNodeCode(), arrange.getSourceRouteNodeCode())
-                && Objects.equals(parent.getPredecessorNodeCodes(), arrange.getPredecessorNodeCodes())
-                && Objects.equals(parent.getSuccessorNodeCodes(), arrange.getSuccessorNodeCodes())
-                && Objects.equals(parent.getNodeTimingRulesJson(), arrange.getNodeTimingRulesJson())
-                && Objects.equals(parent.getPredecessorCodes(), arrange.getPredecessorCodes())
-                && Objects.equals(parent.getSuccessorCodes(), arrange.getSuccessorCodes())
-                && Objects.equals(parent.getRouteOrder(), arrange.getRouteOrder())
-                && Objects.equals(parent.getLastRoute(), arrange.getLastRoute())
-                && Objects.equals(parent.getOverlapEnabled(), arrange.getOverlapEnabled())
-                && sameQuantity(parent.getTransferBatchQuantity(), arrange.getTransferBatchQuantity())
-                && Objects.equals(parent.getTransferMinutes(), arrange.getTransferMinutes()),
-                "新派工未完整复制原实际工序的冻结合同");
     }
 
     private void validateNodeGraph() {
@@ -222,7 +268,7 @@ public final class MesFrozenExecutionGraph {
             }
             // 主工序字段继续旧语义；只能表示节点关系向主工序的投影。
             require(new LinkedHashSet<>(projectionCsv(row.getPredecessorCodes())).equals(project(predecessors.get(key)))
-                    && new LinkedHashSet<>(projectionCsv(row.getSuccessorCodes())).equals(project(next)),
+                            && new LinkedHashSet<>(projectionCsv(row.getSuccessorCodes())).equals(project(next)),
                     "冻结节点关系与原主工序关系投影不一致");
         }
         for (var entry : predecessors.entrySet()) {
@@ -262,52 +308,5 @@ public final class MesFrozenExecutionGraph {
 
     private String rawKey(MesProduceTaskEntity row) {
         return nodeContract ? row.getSourceRouteNodeCode() : row.getRouteCode();
-    }
-
-    private static List<String> csv(String value) {
-        if (value == null || value.isEmpty()) {
-            return List.of();
-        }
-        List<String> result = new ArrayList<>();
-        Set<String> unique = new HashSet<>();
-        for (String code : value.split(",", -1)) {
-            String normalized = code.trim();
-            require(text(normalized) && unique.add(normalized), "冻结执行关系包含空项或重复项");
-            result.add(normalized);
-        }
-        return List.copyOf(result);
-    }
-
-    /** 节点关系投影可因两个不同节点使用同一主工序而重复；节点关系本身仍由csv严格去重。 */
-    private static List<String> projectionCsv(String value) {
-        if (value == null || value.isEmpty()) {
-            return List.of();
-        }
-        List<String> result = new ArrayList<>();
-        for (String code : value.split(",", -1)) {
-            String normalized = code.trim();
-            require(text(normalized) && Objects.equals(code, normalized),
-                    "冻结主工序投影包含空项或首尾空格");
-            result.add(normalized);
-        }
-        return List.copyOf(result);
-    }
-
-    private static boolean node(String value) {
-        return value != null && value.length() <= 64 && value.matches("RN-[1-9][0-9]*");
-    }
-
-    private static boolean sameQuantity(BigDecimal first, BigDecimal second) {
-        return first == null ? second == null : second != null && first.compareTo(second) == 0;
-    }
-
-    private static boolean text(String value) {
-        return value != null && !value.isBlank();
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new CheckedException(message);
-        }
     }
 }

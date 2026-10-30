@@ -1,14 +1,19 @@
 package com.kitex.mom.plan.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.*;
 import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.*;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,22 +53,85 @@ public class PlnAutomationEventWorker {
     @Transactional(rollbackFor = Exception.class, propagation = Propagation.REQUIRES_NEW)
     public Boolean processOne(Long eventInboxId) {
         PlnAutomationEventEntity event = eventMapper.lockById(eventInboxId);
-        if (event == null || !List.of("RECEIVED", "RETRY_WAIT").contains(event.getStatus())
-                || event.getNextAttemptTime() == null || event.getNextAttemptTime().isAfter(LocalDateTime.now()))
-            return false;
+        if (event == null
+                || !List.of("RECEIVED", "RETRY_WAIT").contains(event.getStatus())
+                || event.getNextAttemptTime() == null
+                || event.getNextAttemptTime().isAfter(LocalDateTime.now())) return false;
+        require(
+                Objects.equals(event.getTenantId(), TenantContextHolder.getTenantId())
+                        && event.getTenantId() != null
+                        && event.getTenantId() > 0
+                        && Objects.equals(
+                        event.getFactoryCode(), FactoryContextHolder.getFactoryCode())
+                        && event.getFactoryCode() != null
+                        && !event.getFactoryCode().isBlank()
+                        && !TenantContextHolder.getTenantSkip()
+                        && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()),
+                "制造事件执行必须进入实际租户工厂");
         String before = event.getStatus();
         int attempt = Objects.requireNonNullElse(event.getAttemptCount(), 0) + 1;
-        event.setStatus("PROCESSING").setAttemptCount(attempt).setLastStartedTime(LocalDateTime.now());
+        event.setStatus("PROCESSING")
+                .setAttemptCount(attempt)
+                .setLastStartedTime(LocalDateTime.now());
         require(eventMapper.updateById(event) == 1, "事件执行占用失败");
-        operation(event, "PROCESS:" + event.getEventNo() + ':' + attempt, "PROCESS_START", before, "PROCESSING", attempt,
+        operation(
+                event,
+                "PROCESS:" + event.getEventNo() + ':' + attempt,
+                "PROCESS_START",
+                before,
+                "PROCESSING",
+                attempt,
                 "处理器=" + event.getHandlerCode());
 
         HandlerResult result = dispatch(event, parse(event.getPayloadJson()));
-        event.setStatus("SUCCEEDED").setCompletedTime(LocalDateTime.now()).setNextAttemptTime(null)
-                .setLastErrorCode(null).setLastErrorMessage(null).setResultSummary(result.summary)
-                .setTargetType(result.targetType).setTargetId(result.targetId).setTargetNo(result.targetNo);
-        require(eventMapper.updateById(event) == 1, "事件成功状态保存失败");
-        operation(event, "SUCCESS:" + event.getEventNo() + ':' + attempt, "PROCESS_SUCCESS", "PROCESSING", "SUCCEEDED", attempt,
+        event.setStatus("SUCCEEDED")
+                .setCompletedTime(LocalDateTime.now())
+                .setNextAttemptTime(null)
+                .setLastErrorCode(null)
+                .setLastErrorMessage(null)
+                .setResultSummary(result.summary)
+                .setTargetType(result.targetType)
+                .setTargetId(result.targetId)
+                .setTargetNo(result.targetNo);
+        require(
+                eventMapper.update(
+                        null,
+                        new LambdaUpdateWrapper<PlnAutomationEventEntity>()
+                                .eq(
+                                        PlnAutomationEventEntity::getTenantId,
+                                        event.getTenantId())
+                                .eq(
+                                        PlnAutomationEventEntity::getFactoryCode,
+                                        event.getFactoryCode())
+                                .eq(PlnAutomationEventEntity::getId, event.getId())
+                                .eq(PlnAutomationEventEntity::getStatus, "PROCESSING")
+                                .set(PlnAutomationEventEntity::getStatus, "SUCCEEDED")
+                                .set(
+                                        PlnAutomationEventEntity::getCompletedTime,
+                                        event.getCompletedTime())
+                                .set(PlnAutomationEventEntity::getNextAttemptTime, null)
+                                .set(PlnAutomationEventEntity::getLastErrorCode, null)
+                                .set(PlnAutomationEventEntity::getLastErrorMessage, null)
+                                .set(
+                                        PlnAutomationEventEntity::getResultSummary,
+                                        result.summary)
+                                .set(
+                                        PlnAutomationEventEntity::getTargetType,
+                                        result.targetType)
+                                .set(PlnAutomationEventEntity::getTargetId, result.targetId)
+                                .set(PlnAutomationEventEntity::getTargetNo, result.targetNo)
+                                .set(
+                                        PlnAutomationEventEntity::getUpdateTime,
+                                        LocalDateTime.now()))
+                        == 1,
+                "事件成功状态保存失败");
+        operation(
+                event,
+                "SUCCESS:" + event.getEventNo() + ':' + attempt,
+                "PROCESS_SUCCESS",
+                "PROCESSING",
+                "SUCCEEDED",
+                attempt,
                 result.summary);
         return true;
     }
@@ -100,9 +168,11 @@ public class PlnAutomationEventWorker {
             if (!payload.path("candidateProfiles").isArray()) {
                 throw new NonRetryableEventException("candidateProfiles必须是数组");
             }
-            command.setCandidateProfiles(objectMapper.convertValue(payload.path("candidateProfiles"),
-                    new TypeReference<List<PlnSchedulingCandidateProfileDTO>>() {
-                    }));
+            command.setCandidateProfiles(
+                    objectMapper.convertValue(
+                            payload.path("candidateProfiles"),
+                            new TypeReference<List<PlnSchedulingCandidateProfileDTO>>() {
+                            }));
         }
         PlnSchedulingScenarioDTO result = schedulingEngineService.runScenario(command);
         require(result != null && result.getScenario() != null, "多候选排产情景未成功生成");
@@ -138,7 +208,8 @@ public class PlnAutomationEventWorker {
         String qmsFactFingerprint = requiredText(payload, "qmsFactFingerprint");
         BigDecimal allocatedQuantity = requiredDecimal(payload, "allocatedQuantity");
         String dispositionKind = requiredText(payload, "dispositionKind").toUpperCase(Locale.ROOT);
-        if (!Set.of("ISOLATE", "RELEASE", "CONCESSION", "REWORK", "SMASH").contains(dispositionKind)) {
+        if (!Set.of("ISOLATE", "RELEASE", "CONCESSION", "REWORK", "SMASH")
+                .contains(dispositionKind)) {
             throw new NonRetryableEventException("QMS直连排产事件只支持隔离、放行、让步、返工和已批准报废事实");
         }
         if (!"PLN_ISSUE".equals(event.getAggregateType())
@@ -183,9 +254,17 @@ public class PlnAutomationEventWorker {
 
         // captureCallback使用CALLBACK:<MES请求号>作为永久幂等评价键；即使MES事件已经先处理，也不会重复建案。
         qualityLocalReplanService.captureCallback(receipt, issue);
-        return new HandlerResult("ISSUE_CALLBACK_RECEIPT", receipt.getId(), receipt.getRequestId(),
-                "QMS【" + dispositionKind + "】事实已与MES数量回执及来源计划完成对账并复用质量偏差评估"
-                        + "（映射=" + abbreviate(mappingFingerprint) + "，事实=" + abbreviate(qmsFactFingerprint)
+        return new HandlerResult(
+                "ISSUE_CALLBACK_RECEIPT",
+                receipt.getId(),
+                receipt.getRequestId(),
+                "QMS【"
+                        + dispositionKind
+                        + "】事实已与MES数量回执及来源计划完成对账并复用质量偏差评估"
+                        + "（映射="
+                        + abbreviate(mappingFingerprint)
+                        + "，事实="
+                        + abbreviate(qmsFactFingerprint)
                         + "）；补产或局部重排仍按既有A2/A3闸门执行");
     }
 
@@ -196,8 +275,12 @@ public class PlnAutomationEventWorker {
 
     private HandlerResult observeRepairResume(PlnAutomationEventEntity event, JsonNode payload) {
         var result = repairResumeEventHandler.observe(event, payload);
-        return new HandlerResult("REPAIR_RESUME_OBSERVATION", result.getId(), String.valueOf(result.getMesOutboxId()),
-                "MES真实复工区间已按维修停工/批准/MDM回执回写PLAN；计划对账状态=" + result.getMatchStatus()
+        return new HandlerResult(
+                "REPAIR_RESUME_OBSERVATION",
+                result.getId(),
+                String.valueOf(result.getMesOutboxId()),
+                "MES真实复工区间已按维修停工/批准/MDM回执回写PLAN；计划对账状态="
+                        + result.getMatchStatus()
                         + "，不替代PLAN排程复核或现场安全复机确认");
     }
 
@@ -217,10 +300,15 @@ public class PlnAutomationEventWorker {
         if ("MDM".equals(event.getSourceSystem())) {
             validateMdmResourceSource(event, payload, resourceType, resourceCode);
         }
-        LocalDateTime eventStart = parseDateTime(requiredText(payload, "eventStartTime"), "eventStartTime");
+        LocalDateTime eventStart =
+                parseDateTime(requiredText(payload, "eventStartTime"), "eventStartTime");
         boolean openEnded = payload.path("openEnded").asBoolean(false);
-        LocalDateTime expectedRecovery = openEnded ? null
-                : parseDateTime(requiredText(payload, "expectedRecoveryTime"), "expectedRecoveryTime");
+        LocalDateTime expectedRecovery =
+                openEnded
+                        ? null
+                        : parseDateTime(
+                        requiredText(payload, "expectedRecoveryTime"),
+                        "expectedRecoveryTime");
         if (!openEnded && !expectedRecovery.isAfter(eventStart))
             throw new NonRetryableEventException("预计恢复时间必须晚于资源异常开始时间");
         String reason = requiredText(payload, "reason");
@@ -232,11 +320,15 @@ public class PlnAutomationEventWorker {
             return new HandlerResult("RESOURCE_IMPACT_ASSESSMENT", null, null,
                     "已核对正式锁定排程，当前异常窗口未影响任何已排工序，无需生成局部重排候选");
         }
-        int maxAffectedIssues = optionalInt(payload, "maxAffectedIssues") == null ? 50 : optionalInt(payload, "maxAffectedIssues");
+        int maxAffectedIssues =
+                optionalInt(payload, "maxAffectedIssues") == null
+                        ? 50
+                        : optionalInt(payload, "maxAffectedIssues");
         if (maxAffectedIssues < 1 || maxAffectedIssues > 200)
             throw new NonRetryableEventException("maxAffectedIssues必须在1到200之间");
         if (issueIds.size() > maxAffectedIssues)
-            throw new NonRetryableEventException("资源异常影响计划数" + issueIds.size() + "超过事件上限" + maxAffectedIssues + "，需人工分批评估");
+            throw new NonRetryableEventException(
+                    "资源异常影响计划数" + issueIds.size() + "超过事件上限" + maxAffectedIssues + "，需人工分批评估");
 
         List<PlanResourceLocalReplanDTO.Scenario> results = new ArrayList<>();
         for (Long issueId : issueIds) {
@@ -254,10 +346,18 @@ public class PlnAutomationEventWorker {
         PlanResourceLocalReplanDTO.Scenario first = results.get(0);
         String scenarioNos = results.stream().map(item -> item.getScenario().getScenarioNo())
                 .filter(Objects::nonNull).limit(20).collect(Collectors.joining(","));
-        return new HandlerResult(results.size() == 1 ? "RESOURCE_REPLAN_SCENARIO" : "RESOURCE_REPLAN_SCENARIO_BATCH",
-                first.getScenario().getId(), first.getScenario().getScenarioNo(),
-                "已从正式锁定排程识别" + issueIds.size() + "张受影响计划并生成" + results.size() + "个"
-                        + (openEnded ? "开放式" : "定时") + "资源异常三候选情景（" + scenarioNos
+        return new HandlerResult(
+                results.size() == 1 ? "RESOURCE_REPLAN_SCENARIO" : "RESOURCE_REPLAN_SCENARIO_BATCH",
+                first.getScenario().getId(),
+                first.getScenario().getScenarioNo(),
+                "已从正式锁定排程识别"
+                        + issueIds.size()
+                        + "张受影响计划并生成"
+                        + results.size()
+                        + "个"
+                        + (openEnded ? "开放式" : "定时")
+                        + "资源异常三候选情景（"
+                        + scenarioNos
                         + "），需先A2选择唯一候选，再由A3人工复核发布");
     }
 
@@ -270,13 +370,21 @@ public class PlnAutomationEventWorker {
         String sourceType = requiredText(payload, "sourceType");
         String fingerprint = requiredText(payload, "sourceFingerprint");
         boolean openEnded = payload.path("openEnded").asBoolean(false);
-        boolean supported = ("TOOLING".equals(resourceType)
-                && Set.of("MDM_TOOLING_UNAVAILABLE_WINDOW", "MDM_TOOLING_MASTER_STATUS").contains(sourceType))
-                || ("EMPLOYEE".equals(resourceType)
-                && Set.of("MDM_EMPLOYEE_CALENDAR_EXCEPTION", "MDM_EMPLOYEE_QUALIFICATION_INVALID")
-                .contains(sourceType));
-        boolean modeMatches = Set.of("MDM_TOOLING_MASTER_STATUS", "MDM_EMPLOYEE_QUALIFICATION_INVALID")
-                .contains(sourceType) == openEnded;
+        boolean supported =
+                ("TOOLING".equals(resourceType)
+                        && Set.of(
+                                "MDM_TOOLING_UNAVAILABLE_WINDOW",
+                                "MDM_TOOLING_MASTER_STATUS")
+                        .contains(sourceType))
+                        || ("EMPLOYEE".equals(resourceType)
+                        && Set.of(
+                                "MDM_EMPLOYEE_CALENDAR_EXCEPTION",
+                                "MDM_EMPLOYEE_QUALIFICATION_INVALID")
+                        .contains(sourceType));
+        boolean modeMatches =
+                Set.of("MDM_TOOLING_MASTER_STATUS", "MDM_EMPLOYEE_QUALIFICATION_INVALID")
+                        .contains(sourceType)
+                        == openEnded;
         if (!supported || !modeMatches || fingerprint.length() != 64) {
             throw new NonRetryableEventException("MDM资源事件来源类型或事实指纹不合法");
         }
@@ -319,7 +427,9 @@ public class PlnAutomationEventWorker {
 
     private boolean containsCode(String codes, String expected) {
         if (codes == null) return false;
-        return java.util.Arrays.stream(codes.split(",")).map(String::trim).anyMatch(expected::equals);
+        return java.util.Arrays.stream(codes.split(","))
+                .map(String::trim)
+                .anyMatch(expected::equals);
     }
 
     private HandlerResult proposeShortage(PlnAutomationEventEntity event, JsonNode payload) {
@@ -329,9 +439,12 @@ public class PlnAutomationEventWorker {
         command.setFactoryCode(event.getFactoryCode());
         command.setMrpId(requiredLong(payload, "mrpId"));
         command.setIssueId(optionalLong(payload, "issueId"));
-        if ("WMS".equals(event.getSourceSystem())) validateWmsShortageSource(event, payload, command.getMrpId());
-        else if (command.getIssueId() == null) throw new NonRetryableEventException("非WMS缺料事件必须明确issueId");
-        command.setExpectedSupplyTime(parseDateTime(requiredText(payload, "expectedSupplyTime"), "expectedSupplyTime"));
+        if ("WMS".equals(event.getSourceSystem()))
+            validateWmsShortageSource(event, payload, command.getMrpId());
+        else if (command.getIssueId() == null)
+            throw new NonRetryableEventException("非WMS缺料事件必须明确issueId");
+        command.setExpectedSupplyTime(
+                parseDateTime(requiredText(payload, "expectedSupplyTime"), "expectedSupplyTime"));
         command.setAffectedProcessCodes(textList(payload.get("affectedProcessCodes")));
         command.setFreezeMinutes(optionalInt(payload, "freezeMinutes"));
         command.setMaxDelayMinutes(optionalInt(payload, "maxDelayMinutes"));
@@ -357,7 +470,8 @@ public class PlnAutomationEventWorker {
                 "PMS_ORDER_REMAINING_CANCELLED", "PMS_ORDER_AMENDED").contains(sourceType)
                 || sourceFingerprint.length() != 64)
             throw new NonRetryableEventException("PMS承诺事件来源类型或事实指纹不合法");
-        LocalDateTime expectedSupplyTime = parseDateTime(requiredText(payload, "expectedSupplyTime"), "expectedSupplyTime");
+        LocalDateTime expectedSupplyTime =
+                parseDateTime(requiredText(payload, "expectedSupplyTime"), "expectedSupplyTime");
         String reason = requiredText(payload, "reason");
         List<PlanMatMrpEntity> candidates = mrpMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<PlanMatMrpEntity>()
@@ -397,9 +511,13 @@ public class PlnAutomationEventWorker {
         PlanShortageLocalReplanDTO.Scenario first = proposals.get(0);
         String caseNos = proposals.stream().map(item -> item.getScenario().getScenarioNo())
                 .filter(Objects::nonNull).limit(20).collect(Collectors.joining(","));
-        return new HandlerResult(proposals.size() == 1 ? "SHORTAGE_REPLAN_SCENARIO" : "SHORTAGE_REPLAN_SCENARIO_BATCH",
-                first.getScenario().getId(), first.getScenario().getScenarioNo(), "已按PLAN当前MRP生成"
-                + proposals.size() + "个缺料情景、每个3个候选（" + caseNos + "），需先选择再A3发布");
+        return new HandlerResult(
+                proposals.size() == 1
+                        ? "SHORTAGE_REPLAN_SCENARIO"
+                        : "SHORTAGE_REPLAN_SCENARIO_BATCH",
+                first.getScenario().getId(),
+                first.getScenario().getScenarioNo(),
+                "已按PLAN当前MRP生成" + proposals.size() + "个缺料情景、每个3个候选（" + caseNos + "），需先选择再A3发布");
     }
 
     /**
@@ -433,7 +551,8 @@ public class PlnAutomationEventWorker {
             throw new NonRetryableEventException("WMS缺料事件聚合对象与MRP不一致");
         }
         String sourceType = requiredText(payload, "sourceType");
-        if (!Set.of("WMS_AGENT_TRANSFER_CANCELLED", "WMS_AGENT_TRANSFER_SHORT_RECEIPT").contains(sourceType)) {
+        if (!Set.of("WMS_AGENT_TRANSFER_CANCELLED", "WMS_AGENT_TRANSFER_SHORT_RECEIPT")
+                .contains(sourceType)) {
             throw new NonRetryableEventException("WMS缺料事件来源类型不受支持");
         }
         String sourceFingerprint = requiredText(payload, "sourceFingerprint");
@@ -469,7 +588,8 @@ public class PlnAutomationEventWorker {
         command.setInsertionIssueId(requiredLong(payload, "insertionIssueId"));
         command.setRequestId("AUTO:" + event.getEventNo());
         command.setUrgencyLevel(requiredText(payload, "urgencyLevel").toUpperCase());
-        command.setRequestedStartTime(parseDateTime(requiredText(payload, "requestedStartTime"), "requestedStartTime"));
+        command.setRequestedStartTime(
+                parseDateTime(requiredText(payload, "requestedStartTime"), "requestedStartTime"));
         command.setBusinessReason(requiredText(payload, "businessReason"));
         PlanInsertionLocalReplanDTO.Scenario result = insertionLocalReplanService.assess(command);
         String caseNos = result.getCandidates().stream().map(PlanInsertionLocalReplanDTO.CaseDetail::getCaseNo)
@@ -555,10 +675,12 @@ public class PlnAutomationEventWorker {
         if (node == null || node.isNull()) return List.of();
         if (!node.isArray()) throw new NonRetryableEventException("targetIds必须是数组");
         List<Long> values = new ArrayList<>();
-        node.forEach(value -> {
-            if (!value.canConvertToLong()) throw new NonRetryableEventException("targetIds必须为长整数数组");
-            values.add(value.asLong());
-        });
+        node.forEach(
+                value -> {
+                    if (!value.canConvertToLong())
+                        throw new NonRetryableEventException("targetIds必须为长整数数组");
+                    values.add(value.asLong());
+                });
         return values.stream().distinct().toList();
     }
 
@@ -568,10 +690,22 @@ public class PlnAutomationEventWorker {
 
     private void operation(PlnAutomationEventEntity event, String requestId, String type, String before,
                            String after, int attempt, String content) {
-        require(operationMapper.insert(new PlnAutomationEventOperationEntity().setEventId(event.getId())
-                .setRequestId(requestId).setOperationType(type).setBeforeStatus(before).setAfterStatus(after)
-                .setAttemptNo(attempt).setContent(content).setOperatorCode("SYSTEM").setOperatorName("系统事件处理器")
-                .setOperationTime(LocalDateTime.now()).setFactoryCode(event.getFactoryCode())) == 1, "事件执行履历保存失败");
+        require(
+                operationMapper.insert(
+                        new PlnAutomationEventOperationEntity()
+                                .setEventId(event.getId())
+                                .setRequestId(requestId)
+                                .setOperationType(type)
+                                .setBeforeStatus(before)
+                                .setAfterStatus(after)
+                                .setAttemptNo(attempt)
+                                .setContent(content)
+                                .setOperatorCode("SYSTEM")
+                                .setOperatorName("系统事件处理器")
+                                .setOperationTime(LocalDateTime.now())
+                                .setFactoryCode(event.getFactoryCode()))
+                        == 1,
+                "事件执行履历保存失败");
     }
 
     private record HandlerResult(String targetType, Long targetId, String targetNo, String summary) {

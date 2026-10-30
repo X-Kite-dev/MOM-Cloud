@@ -6,8 +6,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.kitex.common.core.exception.CheckedException;
@@ -15,20 +15,11 @@ import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
+import com.kitex.mom.oms.entity.OmsOrderDetailsEntity;
 import com.kitex.mom.plan.dto.PlnApsCaseDTO;
 import com.kitex.mom.plan.dto.PlnApsResourceDTO;
-import com.kitex.mom.plan.entity.PlnApsReadinessIssueEntity;
-import com.kitex.mom.plan.entity.PlnApsResourceSnapshotEntity;
-import com.kitex.mom.plan.entity.PlnIssueEntity;
-import com.kitex.mom.plan.entity.PlnMpsLineEntity;
-import com.kitex.mom.plan.entity.PlanMatMrpEntity;
-import com.kitex.mom.oms.entity.OmsOrderDetailsEntity;
-import com.kitex.mom.plan.mapper.OmsOrderDetailsMapper;
-import com.kitex.mom.plan.mapper.PlanMatMrpMapper;
-import com.kitex.mom.plan.mapper.PlnIssueMapper;
-import com.kitex.mom.plan.mapper.PlnMpsLineMapper;
-import com.kitex.mom.plan.mapper.PlnApsReadinessIssueMapper;
-import com.kitex.mom.plan.mapper.PlnApsResourceSnapshotMapper;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.PlnApsCaseService;
 import com.kitex.mom.plan.service.PlnApsResourceSnapshotService;
 import com.kitex.mom.plan.service.aps.collector.PlnApsResourceCollectionContext;
@@ -65,6 +56,26 @@ public class PlnApsResourceSnapshotServiceImpl
     private final PlnIssueMapper issueSourceMapper;
     private final List<PlnApsResourceCollector> collectors;
     private final ObjectMapper objectMapper;
+
+    private static boolean isFingerprint(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static Long parseId(String value) {
+        try {
+            return Long.valueOf(value);
+        } catch (Exception e) {
+            throw new CheckedException("APS来源主键格式不正确");
+        }
+    }
+
+    private static String text(Long value) {
+        return value == null ? null : value.toString();
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -128,7 +139,9 @@ public class PlnApsResourceSnapshotServiceImpl
         return toDto(snapshot);
     }
 
-    /** 供失效复核服务重采当前证据，不落新快照。 */
+    /**
+     * 供失效复核服务重采当前证据，不落新快照。
+     */
     public CurrentEvidence currentEvidence(Long caseId) {
         Scope scope = scope();
         PlnApsCaseDTO caseView = caseService.detail(caseId);
@@ -183,7 +196,8 @@ public class PlnApsResourceSnapshotServiceImpl
                         if (StrUtil.isNotBlank(row.getIssueNo())) planNoSet.add(row.getIssueNo());
                     }
                 }
-                default -> { }
+                default -> {
+                }
             }
         }
         List<String> planNos = List.copyOf(planNoSet);
@@ -250,19 +264,20 @@ public class PlnApsResourceSnapshotServiceImpl
 
     private void persistIssues(Long caseId, Long snapshotId, Scope scope, String operator,
                                List<PlnApsResourceEvidence> evidence) {
-        for (PlnApsResourceEvidence item : evidence) for (PlnApsResourceEvidence.Gap gap : item.gaps()) {
-            PlnApsReadinessIssueEntity issue = new PlnApsReadinessIssueEntity()
-                    .setCaseId(caseId).setSnapshotId(snapshotId).setIssueCode(gap.code())
-                    .setCategory(gap.category()).setSeverity(gap.severity()).setSourceModule(item.module())
-                    .setSourceType(gap.sourceType()).setSourceCode(gap.sourceCode()).setSourceVersion(item.sourceVersion())
-                    .setSourceFingerprint(item.contentFingerprint()).setTitle(gap.title()).setDescription(gap.description())
-                    .setResolutionRoute(gap.resolutionRoute()).setResolutionParams(json(gap.resolutionParams()))
-                    .setIssueStatus("OPEN").setFactoryCode(scope.factoryCode());
-            issue.setId(IdUtil.getSnowflakeNextId());
-            issue.setTenantId(scope.tenantId());
-            issue.setCreateBy(operator);
-            require(issueMapper.insert(issue) == 1, "保存APS资源预检问题失败");
-        }
+        for (PlnApsResourceEvidence item : evidence)
+            for (PlnApsResourceEvidence.Gap gap : item.gaps()) {
+                PlnApsReadinessIssueEntity issue = new PlnApsReadinessIssueEntity()
+                        .setCaseId(caseId).setSnapshotId(snapshotId).setIssueCode(gap.code())
+                        .setCategory(gap.category()).setSeverity(gap.severity()).setSourceModule(item.module())
+                        .setSourceType(gap.sourceType()).setSourceCode(gap.sourceCode()).setSourceVersion(item.sourceVersion())
+                        .setSourceFingerprint(item.contentFingerprint()).setTitle(gap.title()).setDescription(gap.description())
+                        .setResolutionRoute(gap.resolutionRoute()).setResolutionParams(json(gap.resolutionParams()))
+                        .setIssueStatus("OPEN").setFactoryCode(scope.factoryCode());
+                issue.setId(IdUtil.getSnowflakeNextId());
+                issue.setTenantId(scope.tenantId());
+                issue.setCreateBy(operator);
+                require(issueMapper.insert(issue) == 1, "保存APS资源预检问题失败");
+            }
     }
 
     private PlnApsResourceDTO.Snapshot toDto(PlnApsResourceSnapshotEntity snapshot) {
@@ -272,7 +287,8 @@ public class PlnApsResourceSnapshotServiceImpl
                 .eq(PlnApsReadinessIssueEntity::getFactoryCode, scope.factoryCode())
                 .eq(PlnApsReadinessIssueEntity::getSnapshotId, snapshot.getId())
                 .orderByDesc(PlnApsReadinessIssueEntity::getSeverity).orderByAsc(PlnApsReadinessIssueEntity::getId));
-        Map<String, PlnApsResourceDTO.ModuleStatus> modules = read(snapshot.getModuleStatusSummary(), new TypeReference<>() {});
+        Map<String, PlnApsResourceDTO.ModuleStatus> modules = read(snapshot.getModuleStatusSummary(), new TypeReference<>() {
+        });
         int blockers = (int) issues.stream().filter(issue -> "BLOCKER".equals(issue.getSeverity())).count();
         int warnings = (int) issues.stream().filter(issue -> "WARNING".equals(issue.getSeverity())).count();
         int infos = issues.size() - blockers - warnings;
@@ -288,8 +304,10 @@ public class PlnApsResourceSnapshotServiceImpl
 
     private String persistedFingerprint(PlnApsResourceSnapshotEntity snapshot,
                                         Map<String, PlnApsResourceDTO.ModuleStatus> modules) {
-        Map<String, Object> sources = read(snapshot.getSourceSummary(), new TypeReference<>() {});
-        List<String> refs = read(snapshot.getEvidenceRefs(), new TypeReference<>() {});
+        Map<String, Object> sources = read(snapshot.getSourceSummary(), new TypeReference<>() {
+        });
+        List<String> refs = read(snapshot.getEvidenceRefs(), new TypeReference<>() {
+        });
         return resourceFingerprint(sources, refs, modules);
     }
 
@@ -344,31 +362,39 @@ public class PlnApsResourceSnapshotServiceImpl
     }
 
     private String json(Object value) {
-        try { return objectMapper.writeValueAsString(value); }
-        catch (JsonProcessingException e) { throw new CheckedException("APS资源快照无法规范序列化"); }
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw new CheckedException("APS资源快照无法规范序列化");
+        }
     }
 
     private <T> T read(String value, TypeReference<T> type) {
-        try { return objectMapper.readValue(value, type); }
-        catch (JsonProcessingException e) { throw new CheckedException("APS资源快照内容损坏，禁止继续使用"); }
+        try {
+            return objectMapper.readValue(value, type);
+        } catch (JsonProcessingException e) {
+            throw new CheckedException("APS资源快照内容损坏，禁止继续使用");
+        }
     }
 
     private String sha256(String value) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException e) { throw new IllegalStateException("运行环境缺少SHA-256", e); }
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("运行环境缺少SHA-256", e);
+        }
     }
 
-    private static boolean isFingerprint(String value) { return value != null && value.matches("[0-9a-f]{64}"); }
-    private static Long parseId(String value) { try { return Long.valueOf(value); } catch (Exception e) { throw new CheckedException("APS来源主键格式不正确"); } }
-    private static String text(Long value) { return value == null ? null : value.toString(); }
-    private static void require(boolean condition, String message) { if (!condition) throw new CheckedException(message); }
+    public record Scope(Long tenantId, String factoryCode) {
+    }
 
-    public record Scope(Long tenantId, String factoryCode) { }
-    public record CurrentEvidence(PlnApsCaseDTO caseView, SnapshotMaterial material) { }
+    public record CurrentEvidence(PlnApsCaseDTO caseView, SnapshotMaterial material) {
+    }
+
     public record SnapshotMaterial(Map<String, Object> sourceSummary, List<String> evidenceRefs,
                                    Map<String, PlnApsResourceDTO.ModuleStatus> moduleStatuses,
                                    String readiness, boolean complete, int blockerCount,
-                                   int warningCount, String fingerprint) { }
+                                   int warningCount, String fingerprint) {
+    }
 }

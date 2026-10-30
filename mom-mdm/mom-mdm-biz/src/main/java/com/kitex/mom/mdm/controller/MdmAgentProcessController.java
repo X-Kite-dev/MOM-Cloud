@@ -76,6 +76,17 @@ public class MdmAgentProcessController {
                 .getVersionNo() <= source.getVersionNo()) {
             throw new CheckedException("来源标准已漂移或建议超出同路线新版本边界，须重新调查/审议");
         }
+        // NODE_V2 的路线节点是标准身份的一部分；AI转交不能借旧协议省略节点后再由MDM猜测。
+        String sourceSchema = source.getContentSchemaVersion() == null
+                ? MdmProcessParameterStandardDTO.LEGACY_PROCESS_V1 : source.getContentSchemaVersion();
+        String draftSchema = command.draft().getContentSchemaVersion() == null
+                ? MdmProcessParameterStandardDTO.LEGACY_PROCESS_V1 : command.draft().getContentSchemaVersion();
+        if (!Objects.equals(sourceSchema, draftSchema)
+                || (MdmProcessParameterStandardDTO.NODE_V2.equals(sourceSchema)
+                && command.draft().getItems().stream().anyMatch(item -> item.getRouteNodeCode() == null
+                || item.getRouteNodeCode().isBlank()))) {
+            throw new CheckedException("工程草稿必须保留来源内容协议和全部真实路线节点，不能将NODE_V2降级为主工序标准");
+        }
         Long id = standards.createDraft(command.draft());
         Map<String, Object> receipt = Map.of("factoryCode", command.factoryCode(), "proposalNo", command.proposalNo(),
                 "requestId", command.requestId(), "sourceStandardId", String.valueOf(source.getId()), "standardId",
@@ -107,6 +118,8 @@ public class MdmAgentProcessController {
         if (!"RELEASED".equals(source.getStatus()) || !"DRAFT".equals(target.getStatus()) ||
                 !Objects.equals(source.getProcessRouteId(), target.getProcessRouteId()) ||
                 !Objects.equals(source.getStandardNo(), target.getStandardNo()) ||
+                (MdmProcessParameterStandardDTO.NODE_V2.equals(source.getContentSchemaVersion())
+                        && !MdmProcessParameterStandardDTO.NODE_V2.equals(target.getContentSchemaVersion())) ||
                 !draftFingerprint(standards.detail(target.getId())).equals(command.expectedDraftFingerprint())) {
             throw new CheckedException("工艺草稿不是本提案转交版本或审议后参数已变化，请重新审议");
         }

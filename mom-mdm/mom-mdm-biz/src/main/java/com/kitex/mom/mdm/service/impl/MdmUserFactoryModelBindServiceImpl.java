@@ -73,6 +73,11 @@ public class MdmUserFactoryModelBindServiceImpl extends ServiceImpl<MdmUserFacto
         if (factoryModels == null || factoryModels.isEmpty()) {
             throw new CheckedException("请选择工厂");
         }
+        // 替换原授权之前校验所有节点，缺失或非法权限不得升级为管理权限。
+        if (factoryModels.stream().anyMatch(model -> model == null
+                || FactoryModelPermissionEnum.getByCode(model.getPermissionType()) == null)) {
+            throw new CheckedException("工厂节点权限必须为只读、读写或管理");
+        }
 
         // 删除用户权限（仅当有 userId 时）
         List<Long> userIds = users.stream()
@@ -99,7 +104,7 @@ public class MdmUserFactoryModelBindServiceImpl extends ServiceImpl<MdmUserFacto
                 binding.setFactoryModelName(factoryModel.getName());
                 binding.setNodeLevel(factoryModel.getLevel());
                 binding.setNodeType(factoryModel.getType());
-                binding.setPermissionType(FactoryModelPermissionEnum.ADMIN.getCode());
+                binding.setPermissionType(factoryModel.getPermissionType());
                 binding.setStatus(Boolean.TRUE);
                 entities.add(binding);
             }

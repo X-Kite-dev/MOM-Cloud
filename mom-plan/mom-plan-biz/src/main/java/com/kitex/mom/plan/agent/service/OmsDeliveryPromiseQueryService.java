@@ -2,21 +2,27 @@ package com.kitex.mom.plan.agent.service;
 
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.oms.agent.dto.OmsDeliveryPromiseDTO;
-import com.kitex.mom.oms.entity.OmsOrderBaseEntity;
+import com.kitex.mom.oms.entity.OmsDeliveryPromiseEntity;
+import com.kitex.mom.oms.entity.OmsDeliveryPromiseLineEntity;
+import com.kitex.mom.oms.entity.OmsOrderBaseTrackEntity;
 import com.kitex.mom.oms.entity.OmsOrderDetailsEntity;
 import com.kitex.mom.oms.vo.*;
-import com.kitex.mom.plan.service.OmsOrderBaseService;
+import com.kitex.mom.plan.service.OmsDeliveryPromiseService;
 import com.kitex.mom.plan.service.OmsOrderBaseTrackService;
 import com.kitex.mom.plan.service.OmsOrderDetailsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -32,11 +38,12 @@ import java.util.stream.Stream;
 @RequiredArgsConstructor
 public class OmsDeliveryPromiseQueryService {
 
-    public static final String TOOL_CODE = "OMS_DELIVERY_PROMISE_QUERY@1";
+    public static final String TOOL_CODE = "OMS_DELIVERY_PROMISE_QUERY";
 
     private final OmsOrderDetailsService detailsService;
-    private final OmsOrderBaseService orderBaseService;
     private final OmsOrderBaseTrackService trackService;
+    private final OmsDeliveryPromiseService promiseService;
+    private final ObjectMapper objectMapper;
 
     public OmsDeliveryPromiseDTO.Evidence query(OmsDeliveryPromiseDTO.Query query) {
         validate(query);
@@ -44,6 +51,7 @@ public class OmsDeliveryPromiseQueryService {
         String orderCode = query.getOrderCode().trim();
         String productCode = StrUtil.trim(query.getProductCode());
         int limit = query.getLineLimit() == null ? 20 : Math.max(1, Math.min(query.getLineLimit(), 50));
+        OmsOrderBaseTrackEntity order = order(factory, orderCode, query.getOrderTrackId());
         LambdaQueryWrapper<OmsOrderDetailsEntity> scope = scope(factory, orderCode, productCode);
         long total = detailsService.count(scope);
         require(total > 0, "当前工厂未找到指定销售订单交付行");
@@ -52,9 +60,6 @@ public class OmsDeliveryPromiseQueryService {
                 .orderByAsc(OmsOrderDetailsEntity::getProductCode)
                 .orderByAsc(OmsOrderDetailsEntity::getId)
                 .last("LIMIT " + limit));
-        OmsOrderBaseEntity order = orderBaseService.getOne(new LambdaQueryWrapper<OmsOrderBaseEntity>()
-                .eq(OmsOrderBaseEntity::getFactoryCode, factory)
-                .eq(OmsOrderBaseEntity::getOrderCode, orderCode), false);
         List<OmsDeliveryPromiseDTO.LineAssessment> lines = new ArrayList<>();
         LinkedHashSet<String> globalRefs = new LinkedHashSet<>();
         List<String> globalGaps = new ArrayList<>();
@@ -73,10 +78,12 @@ public class OmsDeliveryPromiseQueryService {
             globalGaps.add("订单交付行共" + total + "条，本次仅返回" + details.size()
                     + "条；不得把返回行的候选日期当作整单承诺");
         }
+        List<String> limitations = new ArrayList<>();
         if (query.getDispatchLeadDays() == null) {
-            globalGaps.add("未提供受控发运提前期；没有正式WMS发运计划的行只返回内部就绪日期，不推造客户到达日期");
+            limitations.add("未提供受控发运提前期；没有正式WMS发运计划的行只返回内部就绪日期，不推造客户到达日期");
         }
-        lines.stream().flatMap(line -> line.getBlockers().stream()).distinct().forEach(globalGaps::add);
+        if (lines.stream().anyMatch(line -> "INSUFFICIENT_EVIDENCE".equals(line.getPromiseStatus())))
+            globalGaps.add("存在内部就绪日或跨模块供应/生产事实不可核验的交付行");
         LocalDate latestPromise = lines.stream().map(OmsDeliveryPromiseDTO.LineAssessment::getCurrentPromisedDate)
                 .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(null);
         boolean candidateComplete = total == lines.size() && lines.stream()
@@ -85,17 +92,93 @@ public class OmsDeliveryPromiseQueryService {
                 .map(line -> "COMPLETED".equals(line.getPromiseStatus()) ? LocalDate.now() : line.getCandidatePromiseDate())
                 .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(null) : null;
         List<String> actions = recommendedActions(lines, candidateComplete);
-        return new OmsDeliveryPromiseDTO.Evidence().setToolCode(TOOL_CODE)
+        OmsDeliveryPromiseDTO.FormalReply formalReply = latestFormalReply(order, details,
+                StrUtil.isBlank(productCode) && total == details.size());
+        if (formalReply != null) globalRefs.add("OMS:oms_delivery_promise:" + formalReply.getPromiseId());
+        OmsDeliveryPromiseDTO.Evidence evidence = new OmsDeliveryPromiseDTO.Evidence().setToolCode(TOOL_CODE)
                 .setMetricDefinition("按当前factory-code精确读取OMS订单交付行，并复用订单生命周期中的PLAN来源唯一性、MRP、MES计划/完工、PMS供应、WMS质量净可交和正式发运计划。内部就绪日不等于客户到达日；无正式发运计划且未明确发运提前期时不生成客户候选日期。")
-                .setFactoryCode(factory).setOrderCode(orderCode).setProductCode(productCode)
-                .setCustomerCode(order == null ? null : order.getCustomerCode())
-                .setCustomerName(order == null ? null : order.getCustomerName())
+                .setFactoryCode(factory).setOrderScoped(StrUtil.isNotBlank(query.getOrderTrackId()))
+                .setOrderTrackId(String.valueOf(order.getId())).setOrderCode(orderCode).setProductCode(productCode)
+                .setCustomerCode(order.getCustomerCode()).setCustomerName(order.getCustomerName())
                 .setObservedAt(LocalDateTime.now()).setMatchedLineCount(total).setReturnedLineCount(lines.size())
                 .setOverallPromiseStatus(overall(lines, total > lines.size()))
                 .setLatestCurrentPromisedDate(latestPromise).setLatestCandidatePromiseDate(latestCandidate)
                 .setCandidateComplete(candidateComplete).setDispatchLeadDays(query.getDispatchLeadDays())
-                .setLines(lines).setRecommendedActions(actions).setDataGaps(globalGaps)
-                .setEvidenceRefs(new ArrayList<>(globalRefs)).setTruncated(total > lines.size());
+                .setLines(lines).setRecommendedActions(actions).setLimitations(limitations).setDataGaps(globalGaps)
+                .setEvidenceRefs(new ArrayList<>(globalRefs)).setLatestFormalReply(formalReply)
+                .setTruncated(total > lines.size());
+        return evidence.setFactFingerprint(fingerprint(evidence));
+    }
+
+    private OmsOrderBaseTrackEntity order(String factory, String orderCode, String orderTrackId) {
+        LambdaQueryWrapper<OmsOrderBaseTrackEntity> wrapper = new LambdaQueryWrapper<OmsOrderBaseTrackEntity>()
+                .eq(OmsOrderBaseTrackEntity::getFactoryCode, factory)
+                .eq(OmsOrderBaseTrackEntity::getOrderCode, orderCode);
+        if (StrUtil.isNotBlank(orderTrackId)) {
+            require(orderTrackId.matches("[1-9][0-9]{0,18}"), "订单跟踪主键格式无效");
+            try {
+                wrapper.eq(OmsOrderBaseTrackEntity::getId, Long.parseLong(orderTrackId));
+            } catch (NumberFormatException invalid) {
+                throw new CheckedException("订单跟踪主键超出数据库范围");
+            }
+        }
+        List<OmsOrderBaseTrackEntity> matches = trackService.list(wrapper.orderByDesc(
+                OmsOrderBaseTrackEntity::getUpdateTime).orderByDesc(OmsOrderBaseTrackEntity::getId).last("LIMIT 2"));
+        require(matches.size() == 1, matches.isEmpty() ? "当前工厂未找到指定销售订单"
+                : "当前工厂的销售订单号不唯一，请从订单跟踪列表按主键发起");
+        return matches.get(0);
+    }
+
+    private OmsDeliveryPromiseDTO.FormalReply latestFormalReply(OmsOrderBaseTrackEntity order,
+                                                                List<OmsOrderDetailsEntity> current,
+                                                                boolean completeOrderScope) {
+        OmsDeliveryPromiseEntity latest = promiseService.getOne(new LambdaQueryWrapper<OmsDeliveryPromiseEntity>()
+                .eq(OmsDeliveryPromiseEntity::getFactoryCode, order.getFactoryCode())
+                .eq(OmsDeliveryPromiseEntity::getOrderTrackId, order.getId())
+                .eq(OmsDeliveryPromiseEntity::getOrderCode, order.getOrderCode())
+                .orderByDesc(OmsDeliveryPromiseEntity::getCreateTime)
+                .orderByDesc(OmsDeliveryPromiseEntity::getId).last("LIMIT 1"), false);
+        if (latest == null) return null;
+        boolean scheduleMatched = false;
+        if (completeOrderScope && "REPLIED".equals(latest.getStatus())) {
+            com.kitex.mom.oms.dto.OmsDeliveryPromiseDTO.Detail detail = promiseService.detail(latest.getId());
+            scheduleMatched = sameSchedule(current, detail.getLines());
+        }
+        return new OmsDeliveryPromiseDTO.FormalReply()
+                .setPromiseId(String.valueOf(latest.getId())).setPromiseNo(latest.getPromiseNo())
+                .setStatus(latest.getStatus()).setOrderChangeStatus(latest.getOrderChangeStatus())
+                .setReadyTime(latest.getReadyTime()).setReplyChannel(latest.getReplyChannel())
+                .setReplyReference(latest.getReplyReference()).setRepliedTime(latest.getRepliedTime())
+                .setCurrentScheduleMatched(scheduleMatched);
+    }
+
+    private boolean sameSchedule(List<OmsOrderDetailsEntity> current, List<OmsDeliveryPromiseLineEntity> frozen) {
+        if (current == null || frozen == null || current.size() != frozen.size()) return false;
+        Map<String, Long> currentSchedule = current.stream().collect(java.util.stream.Collectors.groupingBy(
+                row -> scheduleKey(row.getProductCode(), row.getProductSpec(), row.getProductUnit(),
+                        row.getDeliverTime(), row.getDeliverNum()), TreeMap::new, java.util.stream.Collectors.counting()));
+        Map<String, Long> frozenSchedule = frozen.stream().collect(java.util.stream.Collectors.groupingBy(
+                row -> scheduleKey(row.getProductCode(), row.getProductSpec(), row.getProductUnit(),
+                        row.getProposedDeliverTime(), row.getProposedDeliverNum()), TreeMap::new,
+                java.util.stream.Collectors.counting()));
+        return currentSchedule.equals(frozenSchedule);
+    }
+
+    private String scheduleKey(String productCode, String productSpec, String unit, LocalDate date, BigDecimal quantity) {
+        return String.join("|", Objects.toString(productCode, ""), Objects.toString(productSpec, ""),
+                Objects.toString(unit, ""), Objects.toString(date, ""),
+                quantity == null ? "" : quantity.stripTrailingZeros().toPlainString());
+    }
+
+    private String fingerprint(OmsDeliveryPromiseDTO.Evidence evidence) {
+        try {
+            ObjectNode value = objectMapper.valueToTree(evidence);
+            value.remove(List.of("observedAt", "factFingerprint"));
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(objectMapper.writeValueAsString(value).getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception failure) {
+            throw new CheckedException("交付承诺事实指纹生成失败");
+        }
     }
 
     private OmsDeliveryPromiseDTO.LineAssessment assess(OmsOrderDetailsEntity detail, OmsLifeVO life,

@@ -27,6 +27,12 @@ import java.time.LocalDate;
 @Schema(description = "wms_out_notice_detail")
 public class WmsOutNoticeDetailEntity extends BaseEntity<WmsOutNoticeDetailEntity> {
 
+    @Schema(description = "指定出库库存货权：OWNED/CUSTOMER_SUPPLIED/CONSIGNED")
+    private String stockOwnerType;
+
+    @Schema(description = "指定出库库存的归属方编码")
+    private String stockOwnerCode;
+
     /**
      * 受控出库锁定的实时库存行；为空时沿用历史批次匹配逻辑。
      */

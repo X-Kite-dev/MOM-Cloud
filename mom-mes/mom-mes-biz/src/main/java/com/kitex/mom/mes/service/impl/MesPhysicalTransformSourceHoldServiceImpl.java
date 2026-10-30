@@ -91,7 +91,7 @@ public class MesPhysicalTransformSourceHoldServiceImpl
             }
             var stored = baseMapper.permanent(owner.tenantId(), command.getId());
             require(stored != null && row.getId().equals(stored.getId()) && "SOURCE_HELD".equals(stored.getStatus())
-                    && frozen.snapshot().equals(stored.getFrozenSnapshot()) && frozen.fingerprint().equals(stored.getFrozenFingerprint()),
+                            && frozen.snapshot().equals(stored.getFrozenSnapshot()) && frozen.fingerprint().equals(stored.getFrozenFingerprint()),
                     "来源占用完整主账写回读不一致");
             return receiptOf(command, stored, owner);
         });
@@ -156,7 +156,9 @@ public class MesPhysicalTransformSourceHoldServiceImpl
         return attached(command, owner);
     }
 
-    /** 必须沿调用方的最新原账事务附带恢复；不取得来源行锁或重新计算冻结原文。 */
+    /**
+     * 必须沿调用方的最新原账事务附带恢复；不取得来源行锁或重新计算冻结原文。
+     */
     private MesPhysicalTransformSourceHoldDTO.Receipt attached(MesPhysicalTransformCommandEntity command, Identity owner) {
         if (!Boolean.TRUE.equals(baseMapper.available())) {
             return empty(command, owner, "UNAVAILABLE");
@@ -166,7 +168,7 @@ public class MesPhysicalTransformSourceHoldServiceImpl
     }
 
     private MesPhysicalTransformSourceHoldDTO.Receipt receiptOf(MesPhysicalTransformCommandEntity command,
-                                                               MesPhysicalTransformSourceHoldEntity row, Identity owner) {
+                                                                MesPhysicalTransformSourceHoldEntity row, Identity owner) {
         require(Objects.equals(row.getTenantId(), owner.tenantId()) && Objects.equals(row.getFactoryCode(), owner.factoryCode())
                 && Objects.equals(row.getActorId(), owner.actorId()) && Objects.equals(row.getActorCode(), owner.actorCode())
                 && Objects.equals(row.getCommandId(), command.getId()) && Objects.equals(row.getCommandFingerprint(), command.getRequestFingerprint())
@@ -186,7 +188,7 @@ public class MesPhysicalTransformSourceHoldServiceImpl
         boolean held = "SOURCE_HELD".equals(row.getStatus());
         boolean cancelled = "CANCELLED".equals(row.getStatus());
         require(held || "APPLIED".equals(row.getStatus()) ? row.getCancelledTime() == null && row.getCancelReason() == null
-                : cancelled && row.getCancelledTime() != null && row.getCancelReason() != null && !row.getCancelledTime().isBefore(row.getHeldTime()),
+                        : cancelled && row.getCancelledTime() != null && row.getCancelReason() != null && !row.getCancelledTime().isBefore(row.getHeldTime()),
                 "永久来源占用取消时间/原因不一致");
         var receipt = empty(command, owner, row.getStatus());
         receipt.setHoldId(row.getId().toString());
@@ -234,9 +236,9 @@ public class MesPhysicalTransformSourceHoldServiceImpl
                 && "0".equals(row.getDelFlag()), "原命令不属于当前实际租户/工厂/实名");
         var body = codec.command(row.getCommandSnapshot());
         require(Objects.equals(body.getVersion(), row.getCommandVersion())
-                && Objects.equals(row.getRequestFingerprint(), codec.fingerprint(row.getCommandVersion(), row.getCommandSnapshot()))
-                && owner.tenantId().toString().equals(body.getExpectedTenantId())
-                && owner.factoryCode().equals(body.getExpectedFactoryCode()) && owner.actorId().toString().equals(body.getExpectedActorUserId()),
+                        && Objects.equals(row.getRequestFingerprint(), codec.fingerprint(row.getCommandVersion(), row.getCommandSnapshot()))
+                        && owner.tenantId().toString().equals(body.getExpectedTenantId())
+                        && owner.factoryCode().equals(body.getExpectedFactoryCode()) && owner.actorId().toString().equals(body.getExpectedActorUserId()),
                 "永久原文算法/SHA/声明owner不一致，不能覆盖原历史");
     }
 
@@ -262,7 +264,9 @@ public class MesPhysicalTransformSourceHoldServiceImpl
         return new Identity(TenantContextHolder.getTenantId(), factory, user.getId(), codec.code(user.getUsername(), "实际实名账号", 100));
     }
 
-    /** 写入口禁止外围旧快照；事务不明时不伪造占用成功或自动取消。 */
+    /**
+     * 写入口禁止外围旧快照；事务不明时不伪造占用成功或自动取消。
+     */
     private <T> T independent(Supplier<T> work) {
         require(!TransactionSynchronizationManager.isActualTransactionActive(), "来源占用入口禁止嵌入外层业务事务");
         var tx = new TransactionTemplate(transactionManager);
@@ -271,7 +275,9 @@ public class MesPhysicalTransformSourceHoldServiceImpl
         return tx.execute(status -> work.get());
     }
 
-    /** 只读最新原事实，暂停旧外围快照；不拿来源/任务锁、不重建或重投。 */
+    /**
+     * 只读最新原事实，暂停旧外围快照；不拿来源/任务锁、不重建或重投。
+     */
     private <T> T latestRead(Supplier<T> work) {
         var tx = new TransactionTemplate(transactionManager);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);

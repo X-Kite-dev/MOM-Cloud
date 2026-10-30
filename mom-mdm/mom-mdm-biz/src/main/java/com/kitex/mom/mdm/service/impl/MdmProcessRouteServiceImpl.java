@@ -9,10 +9,8 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.kitex.mom.mdm.support.MdmRouteNodeGraphSupport;
-import com.kitex.mom.mdm.support.MdmRouteNodeTimingPolicy;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
@@ -24,16 +22,18 @@ import com.kitex.mom.mdm.mapper.*;
 import com.kitex.mom.mdm.service.MdmProcessRouteService;
 import com.kitex.mom.mdm.sop.MdmSopSupport;
 import com.kitex.mom.mdm.sop.MdmSopWorkspace;
+import com.kitex.mom.mdm.support.MdmRouteNodeGraphSupport;
 import com.kitex.mom.mdm.support.MdmRouteNodeIdentitySupport;
 import com.kitex.mom.mdm.support.MdmRouteNodeResolver;
+import com.kitex.mom.mdm.support.MdmRouteNodeTimingPolicy;
 import com.kitex.mom.mdm.vo.*;
 import com.kitex.mom.mdm.vo.excel.MdmProcessRouteExcelVO;
 import lombok.AllArgsConstructor;
 import lombok.SneakyThrows;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.BindingResult;
 
 import java.util.*;
@@ -436,7 +436,9 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         return saveGraph(mdmProcessRouteProcedureDTO, parent);
     }
 
-    /** 调用方已经锁父路线并核原版本；图与节点必须在同一事务提交。 */
+    /**
+     * 调用方已经锁父路线并核原版本；图与节点必须在同一事务提交。
+     */
     private Boolean saveGraph(MdmProcessRouteProcedureDTO command, MdmProcessRouteEntity parent) {
         List<MdmProcessRouteWorkingEntity> procedureList = Optional.ofNullable(
                 command.getProcedureList()).orElseGet(ArrayList::new);
@@ -480,7 +482,9 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         return Boolean.TRUE;
     }
 
-    /** 来源与目标按ID加锁；结构复制不能覆盖节点、附件或继承来源身份。 */
+    /**
+     * 来源与目标按ID加锁；结构复制不能覆盖节点、附件或继承来源身份。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public Boolean copyGraph(MdmRouteGraphCopyDTO command) {
@@ -513,7 +517,8 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         for (JsonNode edge : canvas.path("edges")) {
             for (String field : List.of("source", "target")) {
                 String replacement = newKeys.get(edge.path(field).asText());
-                if (replacement != null) ((com.fasterxml.jackson.databind.node.ObjectNode) edge).put(field, replacement);
+                if (replacement != null)
+                    ((com.fasterxml.jackson.databind.node.ObjectNode) edge).put(field, replacement);
             }
         }
         for (MdmProcessRouteWorkingEntity row : rows) {
@@ -531,7 +536,9 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         return saveGraph(save, target);
     }
 
-    /** 当前工程图读取投影；历史头不改，旧关系先按原规则规范化。 */
+    /**
+     * 当前工程图读取投影；历史头不改，旧关系先按原规则规范化。
+     */
     private Map<String, String> engineeringNodes(MdmProcessRouteEntity parent, List<MdmProcessRouteWorkingEntity> rows) {
         if (parent.getGraphSchemaVersion() == null) {
             validateAndNormalizeProcessGraph(rows);
@@ -557,7 +564,9 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         return row;
     }
 
-    /** 兼容旧页面将JSON字符串再次编码为JSON字符串的快照，V2只存对象。 */
+    /**
+     * 兼容旧页面将JSON字符串再次编码为JSON字符串的快照，V2只存对象。
+     */
     private JsonNode readCanvas(String value) {
         try {
             return value == null || value.isBlank() ? null : decodeCanvas(new ObjectMapper().readTree(value));
@@ -578,7 +587,9 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         }
     }
 
-    /** 旧选路/物料协议在返回数据前核能力；不静默过滤默认路线。 */
+    /**
+     * 旧选路/物料协议在返回数据前核能力；不静默过滤默认路线。
+     */
     @Override
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public void requireLegacyExecutableRoutes(List<MdmProcessRouteEntity> routes) {
@@ -588,7 +599,9 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         }
     }
 
-    /** 维护入口只认当前真实租户/工厂；写入口先锁父路线以串行图修改。 */
+    /**
+     * 维护入口只认当前真实租户/工厂；写入口先锁父路线以串行图修改。
+     */
     private MdmProcessRouteEntity routeInCurrentFactory(Long id, boolean lock) {
         String factory = currentRouteFactory();
         LambdaQueryWrapper<MdmProcessRouteEntity> query = new LambdaQueryWrapper<MdmProcessRouteEntity>()
@@ -1006,7 +1019,9 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
                 routeNodeResolver.resolve(routeCode, null, processCode, false)));
     }
 
-    /** 新页面精确选择节点；不能回退到主工序再次查询。 */
+    /**
+     * 新页面精确选择节点；不能回退到主工序再次查询。
+     */
     @Override
     public MdmProcessProcedureSettingEntity getSetByNode(String routeCode, String routeNodeCode) {
         return mdmProcessProcedureSettingMapper.selectOne(settingQuery(
@@ -1066,7 +1081,9 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         return Boolean.TRUE;
     }
 
-    /** 明确移除配置依赖，不把所有开关关闭误认为已经解绑。 */
+    /**
+     * 明确移除配置依赖，不把所有开关关闭误认为已经解绑。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public Boolean removeSetting(Long id) {
@@ -1087,7 +1104,9 @@ public class MdmProcessRouteServiceImpl extends ServiceImpl<MdmProcessRouteMappe
         return Boolean.TRUE;
     }
 
-    /** 所有配置查询同时限定真实组织、路线和节点，不按主工序混合各次配置。 */
+    /**
+     * 所有配置查询同时限定真实组织、路线和节点，不按主工序混合各次配置。
+     */
     private LambdaQueryWrapper<MdmProcessProcedureSopEntity> sopQuery(MdmProcessRouteWorkingEntity node) {
         return new LambdaQueryWrapper<MdmProcessProcedureSopEntity>()
                 .eq(MdmProcessProcedureSopEntity::getTenantId, node.getTenantId())

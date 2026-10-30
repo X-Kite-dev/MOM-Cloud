@@ -7,17 +7,14 @@ import com.kitex.mom.mdm.vo.MdmProcessRouteWorkingVO;
 import com.kitex.mom.plan.dto.PlnOperationMaterialConstraintDTO;
 import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
 
-import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
-/** 仅供当前排程服务使用；节点身份与主工序能力始终分离。 */
+/**
+ * 仅供当前排程服务使用；节点身份与主工序能力始终分离。
+ */
 final class PlnRouteNodeSchedulingSupport {
-    private PlnRouteNodeSchedulingSupport() { }
+    private PlnRouteNodeSchedulingSupport() {
+    }
 
     static String nodeCode(Long workingId, String declaredCode) {
         if (workingId == null || workingId <= 0) throw new CheckedException("路线节点缺少真实关联ID");
@@ -43,7 +40,7 @@ final class PlnRouteNodeSchedulingSupport {
     }
 
     static Map<String, PlnSchedulingOperationEntity> operations(MdmProcessRouteDTO route,
-            List<MdmProcessRouteWorkingVO> workings, List<PlnSchedulingOperationEntity> operations) {
+                                                                List<MdmProcessRouteWorkingVO> workings, List<PlnSchedulingOperationEntity> operations) {
         if (operations.stream().anyMatch(Objects::isNull)) throw new CheckedException("工序排程快照存在空行");
         if (operations.stream().anyMatch(item -> item.getSourceRouteNodeCode() == null)
                 && operations.stream().anyMatch(item -> item.getSourceRouteNodeCode() != null))
@@ -90,7 +87,7 @@ final class PlnRouteNodeSchedulingSupport {
     }
 
     static Map<String, PlnOperationMaterialConstraintDTO> materials(String routeCode,
-            List<MdmProcessRouteWorkingVO> workings, Iterable<PlnOperationMaterialConstraintDTO> values) {
+                                                                    List<MdmProcessRouteWorkingVO> workings, Iterable<PlnOperationMaterialConstraintDTO> values) {
         Map<String, PlnOperationMaterialConstraintDTO> result = new LinkedHashMap<>();
         for (PlnOperationMaterialConstraintDTO value : values) {
             if (!Objects.equals(routeCode, value.getRouteCode()))

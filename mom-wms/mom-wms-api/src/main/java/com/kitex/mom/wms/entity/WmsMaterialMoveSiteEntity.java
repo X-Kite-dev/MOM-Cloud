@@ -31,6 +31,24 @@ public class WmsMaterialMoveSiteEntity extends BaseEntity<WmsMaterialMoveSiteEnt
     @Schema(description = "库内移动号")
     private String billNo;
 
+    @Schema(description = "实际扣减的来源库存行ID")
+    private Long sourceStockId;
+
+    @Schema(description = "移动后生成的目标库存行ID")
+    private Long targetStockId;
+
+    @Schema(description = "首次入库明细ID")
+    private Long sourceInBillDetailId;
+
+    @Schema(description = "货权类型")
+    private String stockOwnerType;
+
+    @Schema(description = "货权归属方编码")
+    private String stockOwnerCode;
+
+    @Schema(description = "首次入库来源单号")
+    private String sourceBusinessNo;
+
     /**
      * 物料编码
      */

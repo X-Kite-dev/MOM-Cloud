@@ -79,19 +79,27 @@ public class OmsOrderDetailsEntity extends Model<OmsOrderDetailsEntity> {
     @Schema(description = "已交付数量")
     private BigDecimal deliveredNum;
 
-    /** 客户签收累计量；与仓库出库/退货净交付量分账。 */
+    /**
+     * 客户签收累计量；与仓库出库/退货净交付量分账。
+     */
     @Schema(description = "客户签收累计量")
     private BigDecimal customerSignedNum;
 
-    /** 客户拒收、破损、丢失累计量；等待退货、补发或索赔闭环。 */
+    /**
+     * 客户拒收、破损、丢失累计量；等待退货、补发或索赔闭环。
+     */
     @Schema(description = "客户交付异常累计量")
     private BigDecimal customerExceptionNum;
 
-    /** 已由补发签收、退款或让步结案冲销的客户异常累计量。 */
+    /**
+     * 已由补发签收、退款或让步结案冲销的客户异常累计量。
+     */
     @Schema(description = "客户交付异常已解决累计量")
     private BigDecimal customerResolvedExceptionNum;
 
-    /** 退款或商业让步已结案的异常量；用于与补发签收区分订单完成口径。 */
+    /**
+     * 退款或商业让步已结案的异常量；用于与补发签收区分订单完成口径。
+     */
     @Schema(description = "客户异常结算关闭累计量")
     private BigDecimal customerSettlementResolvedNum;
 

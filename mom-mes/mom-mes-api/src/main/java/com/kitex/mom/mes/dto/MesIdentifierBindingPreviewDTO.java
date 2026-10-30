@@ -15,13 +15,19 @@ public class MesIdentifierBindingPreviewDTO {
     private String arrangeCode;
     @Schema(description = "服务端冻结动作")
     private String action;
-    /** 精确原生策略版本；历史预览为空，不能据此升级旧派工。 */
+    /**
+     * 精确原生策略版本；历史预览为空，不能据此升级旧派工。
+     */
     @Schema(description = "原生区段协议NODE_BINDING_V2")
     private String policySchemaVersion;
-    /** 当前派工真实父任务，供终端核对预览没有串任务。 */
+    /**
+     * 当前派工真实父任务，供终端核对预览没有串任务。
+     */
     @Schema(description = "原生区段当前工序任务号")
     private String produceTaskCode;
-    /** 当前派工冻结节点；同主工序的另一次执行不能替代。 */
+    /**
+     * 当前派工冻结节点；同主工序的另一次执行不能替代。
+     */
     @Schema(description = "原生区段当前稳定节点")
     private String sourceRouteNodeCode;
     @Schema(description = "永久区段ID文本")

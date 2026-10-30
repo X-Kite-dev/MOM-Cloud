@@ -13,12 +13,24 @@ import org.springframework.stereotype.Service;
 
 import java.util.Objects;
 
-/** 工厂计划权威解析实现；所有异常均按正式计划故障关闭处理。 */
+/**
+ * 工厂计划权威解析实现；所有异常均按正式计划故障关闭处理。
+ */
 @Service
 @RequiredArgsConstructor
 public class PlnFactoryPlanningAuthorityServiceImpl implements PlnFactoryPlanningAuthorityService {
 
     private final RemoteMdmFactoryPlanningPolicyService remotePolicyService;
+
+    private static boolean isSha256(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new CheckedException(message);
+        }
+    }
 
     @Override
     public MdmFactoryPlanningPolicyDTO requireCurrentPolicy(String requestedFactoryCode) {
@@ -59,15 +71,5 @@ public class PlnFactoryPlanningAuthorityServiceImpl implements PlnFactoryPlannin
                         && Objects.equals(current.getContentFingerprint(), expected.getContentFingerprint()),
                 "工厂计划权威已变化，本次正式写动作失效，请刷新后重试");
         return current;
-    }
-
-    private static boolean isSha256(String value) {
-        return value != null && value.matches("[0-9a-f]{64}");
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new CheckedException(message);
-        }
     }
 }

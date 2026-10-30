@@ -10,7 +10,9 @@ import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
 
-/** 正式转换的逐库存实际扣减行。 */
+/**
+ * 正式转换的逐库存实际扣减行。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

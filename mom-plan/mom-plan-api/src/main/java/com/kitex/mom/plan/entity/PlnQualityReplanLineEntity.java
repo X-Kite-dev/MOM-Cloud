@@ -22,7 +22,9 @@ public class PlnQualityReplanLineEntity extends BaseEntity<PlnQualityReplanLineE
     private Long proposalOperationId;
     private Integer operationSeq;
     private String processCode;
-    /** 原正式操作的冻结节点；旧案件保持空，不能按当前主数据补造。 */
+    /**
+     * 原正式操作的冻结节点；旧案件保持空，不能按当前主数据补造。
+     */
     private String sourceRouteNodeCode;
     private String processName;
     private Boolean directAffected;

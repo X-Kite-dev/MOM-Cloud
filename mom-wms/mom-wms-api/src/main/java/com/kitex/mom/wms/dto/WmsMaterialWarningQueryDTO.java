@@ -14,57 +14,60 @@ import java.time.LocalDate;
 @Data
 public class WmsMaterialWarningQueryDTO {
 
-    /**
-     * 物料编码
-     */
-    @Schema(description = "物料编码")
-    private String matCode;
+	@Schema(description = "预警号")
+	private String billNo;
 
-    /**
-     * 物料名称
-     */
-    @Schema(description = "物料名称")
-    private String matName;
+	/**
+	 * 物料编码
+	 */
+	@Schema(description = "物料编码")
+	private String matCode;
 
-    /**
-     * 物料批次
-     */
-    @Schema(description = "物料批次")
-    private String matBatch;
+	/**
+	 * 物料名称
+	 */
+	@Schema(description = "物料名称")
+	private String matName;
 
-    /**
-     * 仓库编码
-     */
-    @Schema(description = "仓库编码")
-    private String warehouseCode;
+	/**
+	 * 物料批次
+	 */
+	@Schema(description = "物料批次")
+	private String matBatch;
 
-    /**
-     * 仓库名称
-     */
-    @Schema(description = "仓库名称")
-    private String warehouseName;
+	/**
+	 * 仓库编码
+	 */
+	@Schema(description = "仓库编码")
+	private String warehouseCode;
 
-    /**
-     * 库位编码
-     */
-    @Schema(description = "库位编码")
-    private String siteCode;
+	/**
+	 * 仓库名称
+	 */
+	@Schema(description = "仓库名称")
+	private String warehouseName;
 
-    /**
-     * 库存名称
-     */
-    @Schema(description = "库存名称")
-    private String siteName;
+	/**
+	 * 库位编码
+	 */
+	@Schema(description = "库位编码")
+	private String siteCode;
 
-    /**
-     * 预警时间
-     */
-    @Schema(description = "预警时间")
-    private LocalDate[] createTime;
+	/**
+	 * 库存名称
+	 */
+	@Schema(description = "库存名称")
+	private String siteName;
 
-    /**
-     * 预警类型, 0 过期预警 1 呆滞预警
-     */
-    @Schema(description = "预警类型, 0 过期预警 1 呆滞预警")
-    private String type;
+	/**
+	 * 预警时间
+	 */
+	@Schema(description = "预警时间")
+	private LocalDate[] createTime;
+
+	/**
+	 * 预警类型, 0 过期预警 1 呆滞预警
+	 */
+	@Schema(description = "预警类型, 0 过期预警 1 呆滞预警")
+	private String type;
 }

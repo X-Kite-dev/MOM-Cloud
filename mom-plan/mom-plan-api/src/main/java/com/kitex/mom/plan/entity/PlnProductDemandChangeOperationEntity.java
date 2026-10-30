@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 需求变更不可变操作履历，兼作复核和取消命令的永久幂等账。 */
+/**
+ * 需求变更不可变操作履历，兼作复核和取消命令的永久幂等账。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

@@ -1,17 +1,9 @@
 package com.kitex.mom.oms.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
-import com.kitex.mom.oms.entity.OmsDeliveryPromiseEntity;
-import com.kitex.mom.oms.entity.OmsDeliveryPromiseLineEntity;
-import com.kitex.mom.oms.entity.OmsDeliveryPromiseOperationEntity;
-import com.kitex.mom.oms.entity.OmsOrderBaseTrackEntity;
-import com.kitex.mom.oms.entity.OmsOrderDetailsEntity;
+import com.kitex.mom.oms.entity.*;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.DecimalMin;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.*;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -21,7 +13,9 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-/** 交期答复工作台的查询结果和受控命令。 */
+/**
+ * 交期答复工作台的查询结果和受控命令。
+ */
 public final class OmsDeliveryPromiseDTO {
     private OmsDeliveryPromiseDTO() {
     }
@@ -30,54 +24,102 @@ public final class OmsDeliveryPromiseDTO {
     @Accessors(chain = true)
     public static class CandidateLine {
         private Long sourceDetailId;
-        @Size(max = 200) private String productCode;
-        @Size(max = 300) private String productName;
-        @Size(max = 300) private String productSpec;
-        @Size(max = 100) private String productUnit;
-        @NotNull @JsonFormat(pattern = "yyyy-MM-dd") private LocalDate proposedDeliverTime;
-        @NotNull @DecimalMin(value = "0.00000001") private BigDecimal proposedDeliverNum;
-        @Size(max = 500) private String remark;
+        @Size(max = 200)
+        private String productCode;
+        @Size(max = 300)
+        private String productName;
+        @Size(max = 300)
+        private String productSpec;
+        @Size(max = 100)
+        private String productUnit;
+        @NotNull
+        @JsonFormat(pattern = "yyyy-MM-dd")
+        private LocalDate proposedDeliverTime;
+        @NotNull
+        @DecimalMin(value = "0.00000001")
+        private BigDecimal proposedDeliverNum;
+        @Size(max = 500)
+        private String remark;
     }
 
     @Data
     @Accessors(chain = true)
     public static class SubmitCommand {
-        @NotBlank @Size(max = 180) private String requestId;
-        @NotBlank @Size(max = 100) private String orderCode;
-        @NotBlank @Size(max = 30) private String sourceType;
-        @NotBlank @Size(max = 200) private String customerRequestRef;
-        @NotBlank @Size(max = 2000) private String reason;
-        @NotNull @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss") private LocalDateTime replyDueTime;
-        @Valid @NotEmpty @Size(max = 100) private List<CandidateLine> lines = new ArrayList<>();
+        @NotBlank
+        @Size(max = 180)
+        private String requestId;
+        @NotBlank
+        @Size(max = 100)
+        private String orderCode;
+        @NotBlank
+        @Size(max = 30)
+        private String sourceType;
+        @NotBlank
+        @Size(max = 200)
+        private String customerRequestRef;
+        @NotBlank
+        @Size(max = 2000)
+        private String reason;
+        @NotNull
+        @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+        private LocalDateTime replyDueTime;
+        @Valid
+        @NotEmpty
+        @Size(max = 100)
+        private List<CandidateLine> lines = new ArrayList<>();
     }
 
     @Data
     @Accessors(chain = true)
     public static class ConfirmCommand {
-        @NotBlank @Size(max = 180) private String requestId;
-        @NotNull private Long promiseId;
-        @NotNull private Boolean approved;
-        @NotBlank @Size(max = 64) private String expectedFactHash;
-        @NotBlank @Size(max = 64) private String expectedCandidateHash;
-        @NotBlank @Size(max = 2000) private String remark;
+        @NotBlank
+        @Size(max = 180)
+        private String requestId;
+        @NotNull
+        private Long promiseId;
+        @NotNull
+        private Boolean approved;
+        @NotBlank
+        @Size(max = 64)
+        private String expectedFactHash;
+        @NotBlank
+        @Size(max = 64)
+        private String expectedCandidateHash;
+        @NotBlank
+        @Size(max = 2000)
+        private String remark;
     }
 
     @Data
     @Accessors(chain = true)
     public static class CancelCommand {
-        @NotBlank @Size(max = 180) private String requestId;
-        @NotNull private Long promiseId;
-        @NotBlank @Size(max = 1000) private String reason;
+        @NotBlank
+        @Size(max = 180)
+        private String requestId;
+        @NotNull
+        private Long promiseId;
+        @NotBlank
+        @Size(max = 1000)
+        private String reason;
     }
 
     @Data
     @Accessors(chain = true)
     public static class ReplyCommand {
-        @NotBlank @Size(max = 180) private String requestId;
-        @NotNull private Long promiseId;
-        @NotBlank @Size(max = 30) private String channel;
-        @NotBlank @Size(max = 300) private String reference;
-        @NotBlank @Size(max = 4000) private String content;
+        @NotBlank
+        @Size(max = 180)
+        private String requestId;
+        @NotNull
+        private Long promiseId;
+        @NotBlank
+        @Size(max = 30)
+        private String channel;
+        @NotBlank
+        @Size(max = 300)
+        private String reference;
+        @NotBlank
+        @Size(max = 4000)
+        private String content;
     }
 
     @Data

@@ -1,29 +1,20 @@
 package com.kitex.mom.mes.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.mdm.support.MdmProcessTimingPolicy;
 import com.kitex.mom.mdm.support.MdmRouteNodeTimingPolicy;
-import com.kitex.mom.mes.entity.MesProduceTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesIdentifierRouteReturnEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.ReportModeEnum;
-import com.kitex.mom.mes.mapper.MesProduceTaskMapper;
-import com.kitex.mom.mes.mapper.MesTaskReportMapper;
-import com.kitex.mom.mes.mapper.MesTaskMapper;
-import com.kitex.mom.mes.mapper.MesIdentifierRouteReturnMapper;
-import com.kitex.mom.mes.service.MesIdentifierBindingService;
-import com.kitex.mom.mes.entity.MesTimingExceptionEntity;
-import com.kitex.mom.mes.mapper.MesTimingExceptionMapper;
+import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.MesArrangeTimingEventService;
-import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
+import com.kitex.mom.mes.service.MesIdentifierBindingService;
 import com.kitex.mom.mes.support.MesReworkTimingPolicy;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.extern.slf4j.Slf4j;
+import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,11 +23,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 合格/不合格、Web/PAD/PDA/设备/API共用的跨工序报工时间门。
@@ -47,6 +34,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 @Slf4j
 public class MesProcessTimingGuard {
+    private static final String NODE_EVIDENCE = "MES_PROCESS_TIMING_EVIDENCE_V6";
+    private static final String NODE_DEPENDENCY = "MES_TIMING_DEPENDENCY_V4";
     private final MesProduceTaskMapper tasks;
     private final MesTaskMapper orders;
     private final MesTaskReportMapper reports;
@@ -56,12 +45,60 @@ public class MesProcessTimingGuard {
     private final MesArrangeTimingEventService timingEvents;
     private final MesExecutionNodeReader executionNodes;
 
-    private static final String NODE_EVIDENCE = "MES_PROCESS_TIMING_EVIDENCE_V6";
-    private static final String NODE_DEPENDENCY = "MES_TIMING_DEPENDENCY_V4";
+    private static void addNodeContract(LinkedHashMap<String, Object> body, MesProduceTaskEntity target) {
+        body.put("routeExecutionSchemaVersion", target.getRouteExecutionSchemaVersion());
+        body.put("targetRouteNodeCode", target.getSourceRouteNodeCode());
+        body.put("nodeTimingRulesJson", target.getNodeTimingRulesJson());
+    }
 
-    /** 接受时刻及原始JSON证据由服务器生成，不能取自报工DTO。 */
-    public record Decision(LocalDateTime acceptedAt, String evidenceJson, String dependencyJson,
-                           LocalDateTime limitUntil, List<String> lateRules) { }
+    /**
+     * 只能由数据库里的原观察选择旧协议，报工DTO没有降级开关。
+     */
+    private static boolean nodeProtocol(MesProduceTaskEntity target, String originalDependency) {
+        boolean node = MesFrozenExecutionGraph.NODE_EXECUTION_V1.equals(target.getRouteExecutionSchemaVersion());
+        if (originalDependency == null) return node;
+        String version = readEvidence(originalDependency, "原时间依赖正文无效").path("version").asText();
+        if (NODE_DEPENDENCY.equals(version)) {
+            require(node, "节点时间观察不能用于旧执行合同");
+            return true;
+        }
+        if ("MES_REWORK_TIMING_DEPENDENCY_V1".equals(version)) {
+            require(node, "返工跨工单时间观察不能用于旧执行合同");
+            return true;
+        }
+        require(Set.of("MES_TIMING_DEPENDENCY_V1", "MES_TIMING_DEPENDENCY_V2", "MES_TIMING_DEPENDENCY_V3").contains(version),
+                "原时间依赖协议不支持，不能自动改用新规则");
+        return false;
+    }
+
+    private static long ceilingSeconds(LocalDateTime start, LocalDateTime end) {
+        Duration duration = Duration.between(start, end);
+        return Math.max(0, duration.getSeconds() + (duration.getNano() == 0 ? 0 : 1));
+    }
+
+    /**
+     * 只解析服务器查询函数返回的原文，不接受客户端提供的轮次或来源声明。
+     */
+    private static com.fasterxml.jackson.databind.JsonNode readEvidence(String raw, String message) {
+        try {
+            require(raw != null && !raw.isBlank(), message);
+            var parsed = new ObjectMapper().readTree(raw);
+            require(parsed != null && parsed.isObject(), message);
+            return parsed;
+        } catch (CheckedException rejected) {
+            throw rejected;
+        } catch (Exception rejected) {
+            throw new CheckedException(message);
+        }
+    }
+
+    private static String prefix(MdmProcessTimingPolicy.Rule rule) {
+        return "时间规则【" + rule.name() + "】：";
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
 
     /**
      * 校验冻结规则。无规则仍记录接受时刻，供后续有规则的工序引用。
@@ -111,7 +148,9 @@ public class MesProcessTimingGuard {
                 root.put("approvedUntil", permit.getApprovedUntil().toString());
                 return new Decision(observed.acceptedAt(), root.toString(), observed.dependencyJson(),
                         observed.limitUntil(), observed.lateRules());
-            } catch (Exception failure) { throw new CheckedException("时间例外证据构造失败，未消费许可"); }
+            } catch (Exception failure) {
+                throw new CheckedException("时间例外证据构造失败，未消费许可");
+            }
         }
         var observation = new MesTimingExceptionEntity().setFactoryCode(arrange.getFactoryCode())
                 .setReportKind(context.reportKind()).setReportRequestId(context.requestId())
@@ -128,8 +167,9 @@ public class MesProcessTimingGuard {
             @Override
             public void afterCompletion(int status) {
                 if (status != STATUS_ROLLED_BACK) return;
-                try { exceptionRecorder.record(observation); }
-                catch (Exception failure) {
+                try {
+                    exceptionRecorder.record(observation);
+                } catch (Exception failure) {
                     log.error("超时观察登记失败，原报工未成功；tenant={}, factory={}, request={}",
                             observation.getTenantId(), observation.getFactoryCode(), observation.getReportRequestId(), failure);
                 }
@@ -139,7 +179,9 @@ public class MesProcessTimingGuard {
                 + "】已超时，未记产；请到超时例外工作台按原报工号 " + context.requestId() + " 查询，不要另号重投");
     }
 
-    /** 审批重新取实际来源；不记录新观察、不自动签许可，最短等待等所有身份门仍严格校验。 */
+    /**
+     * 审批重新取实际来源；不记录新观察、不自动签许可，最短等待等所有身份门仍严格校验。
+     */
     public Decision inspect(MesTaskArrangeEntity arrange, ReportModeEnum mode, String identifier, String originalDependency) {
         require(TransactionSynchronizationManager.isActualTransactionActive(), "时间来源复核须在实际事务内");
         require(originalDependency != null && !originalDependency.isBlank(), "审批必须携带原观察依赖正文");
@@ -252,7 +294,8 @@ public class MesProcessTimingGuard {
                 sourceTime = "START".equals(rule.sourceEvent()) ? source.getStartTime() : source.getFinishTime();
                 require(sourceTime != null, prefix(rule) + "来源工序尚无实际" + ("START".equals(rule.sourceEvent()) ? "开工" : "完工") + "时刻");
                 require(source.getStartTime() != null && !sourceTime.isBefore(source.getStartTime()), prefix(rule) + "来源工序时间顺序异常");
-                if ("FINISH".equals(rule.sourceEvent())) require("FINISH".equals(source.getStatus()), prefix(rule) + "来源工序尚未有效完工");
+                if ("FINISH".equals(rule.sourceEvent()))
+                    require("FINISH".equals(source.getStatus()), prefix(rule) + "来源工序尚未有效完工");
             } else {
                 require(Set.of(ReportModeEnum.ONE_CODE, ReportModeEnum.PACKAGE_ONE_CODE, ReportModeEnum.TRANSFER_CARD).contains(mode),
                         prefix(rule) + "同标识规则只支持单件码、包装逐件或流转卡；数量/包装数量须配置工单范围");
@@ -360,10 +403,6 @@ public class MesProcessTimingGuard {
         if (nodeRules) addNodeContract(dependency, target);
         return new Decision(accepted, MdmProcessTimingPolicy.encodeEvidence(evidence),
                 MdmProcessTimingPolicy.encodeEvidence(dependency), limitUntil, List.copyOf(lateRules));
-    }
-
-    /** 计算参数可复用主工序规则；实际来源和输出证据始终保留各自原生协议。 */
-    private record ResolvedRule(MdmProcessTimingPolicy.Rule calculation, Object evidence, MesProduceTaskEntity source) {
     }
 
     /**
@@ -497,31 +536,9 @@ public class MesProcessTimingGuard {
         return matches.get(0);
     }
 
-    private static void addNodeContract(LinkedHashMap<String, Object> body, MesProduceTaskEntity target) {
-        body.put("routeExecutionSchemaVersion", target.getRouteExecutionSchemaVersion());
-        body.put("targetRouteNodeCode", target.getSourceRouteNodeCode());
-        body.put("nodeTimingRulesJson", target.getNodeTimingRulesJson());
-    }
-
-    /** 只能由数据库里的原观察选择旧协议，报工DTO没有降级开关。 */
-    private static boolean nodeProtocol(MesProduceTaskEntity target, String originalDependency) {
-        boolean node = MesFrozenExecutionGraph.NODE_EXECUTION_V1.equals(target.getRouteExecutionSchemaVersion());
-        if (originalDependency == null) return node;
-        String version = readEvidence(originalDependency, "原时间依赖正文无效").path("version").asText();
-        if (NODE_DEPENDENCY.equals(version)) {
-            require(node, "节点时间观察不能用于旧执行合同");
-            return true;
-        }
-        if ("MES_REWORK_TIMING_DEPENDENCY_V1".equals(version)) {
-            require(node, "返工跨工单时间观察不能用于旧执行合同");
-            return true;
-        }
-        require(Set.of("MES_TIMING_DEPENDENCY_V1", "MES_TIMING_DEPENDENCY_V2", "MES_TIMING_DEPENDENCY_V3").contains(version),
-                "原时间依赖协议不支持，不能自动改用新规则");
-        return false;
-    }
-
-    /** 实际任务编码在组织/工单内必须唯一；锁住真实行避免计时读取期间改变来源时刻。 */
+    /**
+     * 实际任务编码在组织/工单内必须唯一；锁住真实行避免计时读取期间改变来源时刻。
+     */
     private MesProduceTaskEntity actualTask(MesTaskArrangeEntity arrange, String taskCode) {
         require(taskCode != null && !taskCode.isBlank(), "时间规则缺少实际工序任务编码");
         var matches = tasks.selectList(new LambdaQueryWrapper<MesProduceTaskEntity>()
@@ -543,28 +560,16 @@ public class MesProcessTimingGuard {
         return matches.get(0);
     }
 
-    private static long ceilingSeconds(LocalDateTime start, LocalDateTime end) {
-        Duration duration = Duration.between(start, end);
-        return Math.max(0, duration.getSeconds() + (duration.getNano() == 0 ? 0 : 1));
+    /**
+     * 接受时刻及原始JSON证据由服务器生成，不能取自报工DTO。
+     */
+    public record Decision(LocalDateTime acceptedAt, String evidenceJson, String dependencyJson,
+                           LocalDateTime limitUntil, List<String> lateRules) {
     }
 
-    /** 只解析服务器查询函数返回的原文，不接受客户端提供的轮次或来源声明。 */
-    private static com.fasterxml.jackson.databind.JsonNode readEvidence(String raw, String message) {
-        try {
-            require(raw != null && !raw.isBlank(), message);
-            var parsed = new ObjectMapper().readTree(raw);
-            require(parsed != null && parsed.isObject(), message);
-            return parsed;
-        } catch (CheckedException rejected) {
-            throw rejected;
-        } catch (Exception rejected) {
-            throw new CheckedException(message);
-        }
-    }
-
-    private static String prefix(MdmProcessTimingPolicy.Rule rule) { return "时间规则【" + rule.name() + "】："; }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
+    /**
+     * 计算参数可复用主工序规则；实际来源和输出证据始终保留各自原生协议。
+     */
+    private record ResolvedRule(MdmProcessTimingPolicy.Rule calculation, Object evidence, MesProduceTaskEntity source) {
     }
 }

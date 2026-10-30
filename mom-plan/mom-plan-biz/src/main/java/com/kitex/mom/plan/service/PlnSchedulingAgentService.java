@@ -2,6 +2,7 @@ package com.kitex.mom.plan.service;
 
 import com.kitex.mom.plan.agent.dto.PlanProductionScheduleCommitmentDTO;
 import com.kitex.mom.plan.dto.PlanSchedulingAgentDTO;
+import com.kitex.mom.plan.dto.PlnApsDecisionDTO;
 import com.kitex.mom.plan.dto.PlnSchedulingScenarioRunDTO;
 
 /**
@@ -16,6 +17,9 @@ public interface PlnSchedulingAgentService {
      * 预检待排计划、规则和候选配置，不创建排产情景，也不修改正式计划。
      */
     PlanSchedulingAgentDTO.Readiness preview(PlnSchedulingScenarioRunDTO command);
+
+    /** 从同一份规范化输入投影完整计划范围和核对指纹，供APS工作台确认。 */
+    PlnApsDecisionDTO.ScopePreview previewScope(PlnSchedulingScenarioRunDTO command);
 
     /**
      * 运行排产情景并生成可审计的候选证据包。

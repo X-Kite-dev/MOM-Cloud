@@ -45,6 +45,8 @@ public final class TpmEquipmentOverviewDTO {
         private LocalDateTime observedAt;
         private Summary summary;
         private List<ExceptionItem> exceptionItems = new ArrayList<>();
+        /** 已知能力边界，不代表本次查询缺数，也不应让Agent运行降级为PARTIAL。 */
+        private List<String> limitations = new ArrayList<>();
         private List<String> dataGaps = new ArrayList<>();
         private List<String> evidenceRefs = new ArrayList<>();
         private Boolean truncated;

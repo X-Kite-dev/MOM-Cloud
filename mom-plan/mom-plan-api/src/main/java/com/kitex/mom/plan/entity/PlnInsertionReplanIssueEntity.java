@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-/** 插单联合重排的逐计划影响、交期和MES证据。 */
+/**
+ * 插单联合重排的逐计划影响、交期和MES证据。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

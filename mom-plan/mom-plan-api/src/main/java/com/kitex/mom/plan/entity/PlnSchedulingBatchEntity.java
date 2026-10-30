@@ -12,8 +12,8 @@ import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Data
 @Accessors(chain = true)
@@ -31,10 +31,14 @@ public class PlnSchedulingBatchEntity extends BaseEntity<PlnSchedulingBatchEntit
     private String productCode;
     private String productName;
     private String routeCode;
-    /** 本批次唯一允许消费的已批准工程版本。 */
+    /**
+     * 本批次唯一允许消费的已批准工程版本。
+     */
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long engineeringReleaseId;
-    /** 与releaseId共同组成不可替换的生产版本对。 */
+    /**
+     * 与releaseId共同组成不可替换的生产版本对。
+     */
     private String engineeringContentHash;
     private Integer engineeringVersionNo;
     @JsonFormat(shape = JsonFormat.Shape.STRING)

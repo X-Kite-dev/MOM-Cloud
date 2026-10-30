@@ -8,6 +8,7 @@ import com.kitex.mom.mes.agent.dto.*;
 import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.vo.MesTaskReportOmsVO;
+
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.cloud.openfeign.SpringQueryMap;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,27 +30,63 @@ public interface RemoteMesTaskService {
     @PostMapping("/mesTask/add")
     R<MesTaskIssueReceiptDTO> add(@RequestBody MesTaskReceiveDTO receive);
 
+    /**
+     * 用原载荷指纹恢复已接收回执，不创建工单或更改旧订单总量。
+     */
+    @InternalCall(userTokenRequired = true)
+    @PostMapping("/mesTask/internal/receive-replay")
+    R<MesTaskIssueReceiptDTO> recoverReceiveReceipt(
+            @RequestBody List<MesTaskReceiveDTO> candidates);
+
     @PostMapping("/mesTask/rework")
     R<String> addRework(@RequestBody MesTaskReceiveDTO receive);
 
     @PostMapping("/mesTask/rework/inspection-result")
     R<Void> syncReworkInspection(@RequestBody MesReworkInspectionResultDTO result);
 
+    /**
+     * 独立服务写签名；接收端仍须验签并执行原数量门禁。
+     */
+    @NoToken
+    @PostMapping("/mesTask/internal/rework-inspection-delivery")
+    R<Void> deliverReworkInspection(@RequestBody MesReworkInspectionDeliveryDTO delivery);
+
+    /**
+     * 收妥普通工序检验原文；applied=false，不代表质量放行。
+     */
+    @NoToken
+    @PostMapping("/mesTask/internal/inspection-event-delivery")
+    R<MesInspectionEventReceiptDTO> deliverInspectionEvent(
+            @RequestBody MesInspectionEventDeliveryDTO delivery);
+
+    /**
+     * 修订执行前置准入/取消/状态；独立签名，不代表质检已改判。
+     */
+    @NoToken
+    @PostMapping("/mesTask/internal/inspection-revision-admission")
+    R<MesInspectionRevisionAdmissionDTO> inspectionRevisionAdmission(@RequestBody MesInspectionRevisionDeliveryDTO command);
+
+    @NoToken
+    @PostMapping("/mesTask/internal/inspection-revision-execution")
+    R<MesInspectionRevisionExecutionReceiptDTO> executeInspectionRevision(@RequestBody MesInspectionRevisionExecutionDTO command);
+
     @PostMapping("/mesTask/quality-disposition")
     R<Void> recordQualityDisposition(@RequestBody MesQualityDispositionDTO command);
 
     @GetMapping("/mesTask/internal/plan-source-mapping")
-    R<MesPlanSourceMappingDTO> planSourceMapping(@RequestParam(value = "taskCode", required = false) String taskCode,
-                                                 @RequestParam(value = "produceTaskCode", required = false) String produceTaskCode,
-                                                 @RequestParam("factoryCode") String factoryCode);
+    R<MesPlanSourceMappingDTO> planSourceMapping(
+            @RequestParam(value = "taskCode", required = false) String taskCode,
+            @RequestParam(value = "produceTaskCode", required = false) String produceTaskCode,
+            @RequestParam("factoryCode") String factoryCode);
 
     @PostMapping("/mesTask/internal/plan-withdraw")
     @NoToken
     R<MesPlanWithdrawalDTO.Receipt> withdrawPlan(@RequestBody MesPlanWithdrawalDTO.Command command);
 
     @GetMapping("/mesTask/internal/source-quantity-mapping")
-    R<MesSourceQuantityMappingDTO> sourceQuantityMapping(@RequestParam("requestId") String requestId,
-                                                         @RequestParam("factoryCode") String factoryCode);
+    R<MesSourceQuantityMappingDTO> sourceQuantityMapping(
+            @RequestParam("requestId") String requestId,
+            @RequestParam("factoryCode") String factoryCode);
 
     /**
      * 根据生产订单号查询生产工单最后一道工序的报工记录
@@ -59,7 +96,6 @@ public interface RemoteMesTaskService {
      */
     @GetMapping("/mesTask/getByOrders")
     R<List<MesTaskReportOmsVO>> getByOrders(@RequestParam("orders") List<String> orders);
-
 
     /**
      * 生产情况
@@ -87,8 +123,8 @@ public interface RemoteMesTaskService {
 
     @InternalCall
     @GetMapping("/mesApsSchedule/internal/operation-states")
-    R<MesApsLocalScheduleDTO.StateBundle> apsOperationStates(@RequestParam("planNo") String planNo,
-                                                             @RequestParam("factoryCode") String factoryCode);
+    R<MesApsLocalScheduleDTO.StateBundle> apsOperationStates(
+            @RequestParam("planNo") String planNo, @RequestParam("factoryCode") String factoryCode);
 
     @InternalCall
     @PostMapping("/mesApsSchedule/internal/apply")
@@ -100,22 +136,32 @@ public interface RemoteMesTaskService {
      */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesApsPublicationProbe/internal/probe")
-    R<MesApsPublicationProbeDTO.Reply> probeApsPublication(@RequestBody MesApsPublicationProbeDTO.Query query);
+    R<MesApsPublicationProbeDTO.Reply> probeApsPublication(
+            @RequestBody MesApsPublicationProbeDTO.Query query);
 
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesApsPublicationProbe/internal/catalog")
-    R<java.util.List<MesApsPublicationProbeDTO.ReceiptRef>> apsPublicationCatalog(@RequestBody MesApsPublicationProbeDTO.Scope scope);
+    R<java.util.List<MesApsPublicationProbeDTO.ReceiptRef>> apsPublicationCatalog(
+            @RequestBody MesApsPublicationProbeDTO.Scope scope);
+
+    /** 实名只读核对精确原应用账，不重新发送局部排程。 */
+    @InternalCall(userTokenRequired = true)
+    @PostMapping("/mesApsPublicationProbe/internal/audit")
+    R<MesApsPublicationProbeDTO.AuditReply> auditApsPublication(
+            @RequestBody MesApsPublicationProbeDTO.AuditQuery query);
 
     @InternalCall
     @PostMapping("/mesDurationEvidence/internal/query")
-    R<MesDurationEvidenceDTO.Bundle> durationEvidence(@RequestBody MesDurationEvidenceDTO.Query query);
+    R<MesDurationEvidenceDTO.Bundle> durationEvidence(
+            @RequestBody MesDurationEvidenceDTO.Query query);
 
     /**
      * 当前人员在实际工厂范围内查询生产进度权威证据。
      */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesAgentQuery/internal/production-progress")
-    R<MesProductionProgressDTO.Evidence> productionProgress(@RequestBody MesProductionProgressDTO.Query query);
+    R<MesProductionProgressDTO.Evidence> productionProgress(
+            @RequestBody MesProductionProgressDTO.Query query);
 
     /**
      * 当前人员在实际工厂范围内冻结生产计划对应的直接及APS合批工单范围。
@@ -129,7 +175,8 @@ public interface RemoteMesTaskService {
      */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesAgentQuery/internal/reporting-analysis")
-    R<MesReportingAnalysisDTO.Evidence> reportingAnalysis(@RequestBody MesReportingAnalysisDTO.Query query);
+    R<MesReportingAnalysisDTO.Evidence> reportingAnalysis(
+            @RequestBody MesReportingAnalysisDTO.Query query);
 
     /**
      * 当前人员在实际工厂范围内查询指定工单有效报工对应的实际物料消耗。
@@ -164,6 +211,14 @@ public interface RemoteMesTaskService {
             @RequestBody MesProcessTelemetryScopeDTO.Query query);
 
     /**
+     * IoT 告警或生产任务对应的唯一实际节点和冻结参数范围。
+     */
+    @InternalCall(userTokenRequired = true)
+    @PostMapping("/mesAgentQuery/internal/process-deviation-scope")
+    R<MesProcessDeviationScopeDTO.Evidence> processDeviationScope(
+            @RequestBody MesProcessDeviationScopeDTO.Query query);
+
+    /**
      * 当前人员在实际工厂范围内查询工序在制与停滞风险权威证据。
      */
     @InternalCall(userTokenRequired = true)
@@ -176,5 +231,4 @@ public interface RemoteMesTaskService {
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mesAgentQuery/internal/batch-trace")
     R<MesBatchTraceDTO.Evidence> batchTrace(@RequestBody MesBatchTraceDTO.Query query);
-
 }

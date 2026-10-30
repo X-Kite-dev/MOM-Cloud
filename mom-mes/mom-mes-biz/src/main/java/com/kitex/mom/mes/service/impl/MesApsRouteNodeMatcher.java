@@ -5,27 +5,23 @@ import com.kitex.mom.mes.dto.MdmProcessRouteWorkingDTO;
 import com.kitex.mom.mes.dto.MesApsOperationSnapshotDTO;
 import org.springframework.util.StringUtils;
 
-import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
-/** 下达时核完整APS与MES冻结图；节点与主工序分离，旧快照只能明确唯一桥接。 */
+/**
+ * 下达时核完整APS与MES冻结图；节点与主工序分离，旧快照只能明确唯一桥接。
+ */
 final class MesApsRouteNodeMatcher {
 
     private MesApsRouteNodeMatcher() {
     }
 
     static Map<String, MesApsOperationSnapshotDTO> matchAll(List<MesApsOperationSnapshotDTO> operations,
-            List<MdmProcessRouteWorkingDTO> routes, String routeCode) {
+                                                            List<MdmProcessRouteWorkingDTO> routes, String routeCode) {
         require(operations.size() == routes.size(), "APS与MES冻结工序数量不一致，禁止忽略额外或缺失工序");
         boolean nodeMode = operations.stream().anyMatch(row -> StringUtils.hasText(row.getSourceRouteNodeCode()));
         require(!nodeMode || operations.stream().allMatch(row -> validNode(row.getSourceRouteNodeCode())
-                        && row.getPredecessorNodeCodes() != null), "APS节点合同不完整或新旧身份混用，请重新排产");
+                && row.getPredecessorNodeCodes() != null), "APS节点合同不完整或新旧身份混用，请重新排产");
         Map<String, MesApsOperationSnapshotDTO> byIdentity = new LinkedHashMap<>();
         for (MesApsOperationSnapshotDTO operation : operations) {
             require(StringUtils.hasText(operation.getProcessCode()), "APS冻结主工序不能为空");

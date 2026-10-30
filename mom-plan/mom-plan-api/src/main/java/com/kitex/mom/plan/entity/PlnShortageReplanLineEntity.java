@@ -38,7 +38,9 @@ public class PlnShortageReplanLineEntity extends BaseEntity<PlnShortageReplanLin
 
     @Schema(description = "工序编码")
     private String processCode;
-    /** 原正式操作的冻结节点；旧案件保持空，不能按当前主数据补造。 */
+    /**
+     * 原正式操作的冻结节点；旧案件保持空，不能按当前主数据补造。
+     */
     private String sourceRouteNodeCode;
 
     @Schema(description = "工序名称")

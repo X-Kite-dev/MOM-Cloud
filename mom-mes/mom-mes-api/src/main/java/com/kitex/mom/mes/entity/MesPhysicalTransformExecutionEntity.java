@@ -13,7 +13,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/** 实物转换一次正式执行主账；提交后不可改删，不是生产报工产量。 */
+/**
+ * 实物转换一次正式执行主账；提交后不可改删，不是生产报工产量。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

@@ -7,7 +7,9 @@ import com.kitex.mom.plan.entity.PlnErpIntegrationOutboxEntity;
 
 import java.util.List;
 
-/** ERP 投递账领域服务。 */
+/**
+ * ERP 投递账领域服务。
+ */
 public interface PlnErpIntegrationOutboxService extends IService<PlnErpIntegrationOutboxEntity> {
     PlnErpIntegrationOutboxEntity enqueue(PlnErpPostingEnvelope envelope);
 
@@ -15,6 +17,8 @@ public interface PlnErpIntegrationOutboxService extends IService<PlnErpIntegrati
 
     List<PlnErpIntegrationOutboxEntity> recent(int limit);
 
-    /** 汇总当前工厂的投递状态、阻断与待人工处置请求。 */
+    /**
+     * 汇总当前工厂的投递状态、阻断与待人工处置请求。
+     */
     PlnErpReconciliationDTO reconcile(int limit);
 }

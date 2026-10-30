@@ -11,6 +11,6 @@ public interface WmsAllocationBillMapper extends MomBaseMapper<WmsAllocationBill
     /**
      * 将Agent调拨的幂等号与目标仓物料校验串行化，事务结束自动释放。
      */
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_AGENT_TRANSFER:', #{lockKey}), 0))")
-    void lockAgentTransfer(String lockKey);
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_AGENT_TRANSFER:', #{lockKey}), 0))")
+    int lockAgentTransfer(String lockKey);
 }

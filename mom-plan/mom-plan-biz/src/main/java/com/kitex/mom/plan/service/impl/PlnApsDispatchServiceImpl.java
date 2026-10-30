@@ -9,20 +9,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
+import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyDTO;
 import com.kitex.mom.plan.dto.PlnApsCaseDTO;
 import com.kitex.mom.plan.dto.PlnApsMesDispatchDTO;
 import com.kitex.mom.plan.dto.PlnFormalPlanContractDTO;
-import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyDTO;
-import com.kitex.mom.plan.entity.PlnApsMesDispatchOutboxEntity;
-import com.kitex.mom.plan.entity.PlnIssueEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingBatchAllocationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity;
-import com.kitex.mom.plan.mapper.PlnApsMesDispatchOutboxMapper;
-import com.kitex.mom.plan.mapper.PlnIssueMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingOperationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingBatchAllocationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskDetailMapper;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.PlnApsCaseService;
 import com.kitex.mom.plan.service.PlnApsDispatchService;
 import com.kitex.mom.plan.service.PlnFactoryPlanningAuthorityService;
@@ -35,14 +27,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
-/** PLAN 到 MES 的事务 Outbox 实现。 */
+/**
+ * PLAN 到 MES 的事务 Outbox 实现。
+ */
 @Service
 @RequiredArgsConstructor
 public class PlnApsDispatchServiceImpl
@@ -57,6 +46,38 @@ public class PlnApsDispatchServiceImpl
     private final PlnFactoryPlanningAuthorityService authorityService;
     private final PlnFormalPlanContractService formalPlanContractService;
     private final ObjectMapper objectMapper;
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    private static Long parseId(String value, String label) {
+        try {
+            Long id = Long.valueOf(value);
+            require(id > 0, label + "必须为正整数");
+            return id;
+        } catch (RuntimeException ex) {
+            if (ex instanceof CheckedException checked) throw checked;
+            throw new CheckedException(label + "格式不正确");
+        }
+    }
+
+    private static boolean isFingerprint(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static String text(Long value) {
+        return value == null ? null : value.toString();
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -273,7 +294,8 @@ public class PlnApsDispatchServiceImpl
         List<PlnApsMesDispatchDTO.ItemReceipt> receipts = List.of();
         if (StrUtil.isNotBlank(row.getResponseSnapshot())) {
             try {
-                receipts = objectMapper.readValue(row.getResponseSnapshot(), new TypeReference<>() { });
+                receipts = objectMapper.readValue(row.getResponseSnapshot(), new TypeReference<>() {
+                });
             } catch (Exception ignored) {
                 receipts = List.of();
             }
@@ -308,7 +330,8 @@ public class PlnApsDispatchServiceImpl
         boolean merged;
         do {
             merged = false;
-            outer: for (int left = 0; left < sets.size(); left++) {
+            outer:
+            for (int left = 0; left < sets.size(); left++) {
                 for (int right = left + 1; right < sets.size(); right++) {
                     if (sets.get(left).stream().anyMatch(sets.get(right)::contains)) {
                         sets.get(left).addAll(sets.remove(right));
@@ -385,37 +408,5 @@ public class PlnApsDispatchServiceImpl
             case "PENDING" -> "PENDING";
             default -> "DISPATCHING";
         };
-    }
-
-    private static String sha256(String value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException(ex);
-        }
-    }
-
-    private static Long parseId(String value, String label) {
-        try {
-            Long id = Long.valueOf(value);
-            require(id > 0, label + "必须为正整数");
-            return id;
-        } catch (RuntimeException ex) {
-            if (ex instanceof CheckedException checked) throw checked;
-            throw new CheckedException(label + "格式不正确");
-        }
-    }
-
-    private static boolean isFingerprint(String value) {
-        return value != null && value.matches("[0-9a-f]{64}");
-    }
-
-    private static String text(Long value) {
-        return value == null ? null : value.toString();
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
     }
 }

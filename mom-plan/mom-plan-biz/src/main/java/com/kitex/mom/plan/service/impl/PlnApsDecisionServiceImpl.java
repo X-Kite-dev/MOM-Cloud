@@ -1,27 +1,18 @@
 package com.kitex.mom.plan.service.impl;
 
+import com.kitex.mom.plan.service.aps.PlnApsSourceRouting;
+
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.common.core.exception.CheckedException;
-import com.kitex.mom.plan.dto.PlanSchedulingAgentDTO;
-import com.kitex.mom.plan.dto.PlnApsCaseCommand;
-import com.kitex.mom.plan.dto.PlnApsCaseDTO;
-import com.kitex.mom.plan.dto.PlnApsDecisionDTO;
-import com.kitex.mom.plan.dto.PlnApsResourceDTO;
+import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.PlnApsA3ApprovalEntity;
 import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
 import com.kitex.mom.plan.entity.PlnSchedulingScenarioEntity;
 import com.kitex.mom.plan.entity.PlnSchedulingTaskEntity;
 import com.kitex.mom.plan.mapper.PlnSchedulingScenarioMapper;
 import com.kitex.mom.plan.mapper.PlnSchedulingTaskMapper;
-import com.kitex.mom.plan.service.PlnApsCaseService;
-import com.kitex.mom.plan.service.PlnApsA3ApprovalService;
-import com.kitex.mom.plan.service.PlnApsDecisionService;
-import com.kitex.mom.plan.service.PlnApsDispatchService;
-import com.kitex.mom.plan.service.PlnApsReadinessService;
-import com.kitex.mom.plan.service.PlnOperationSchedulingService;
-import com.kitex.mom.plan.service.PlnSchedulingAgentService;
-import com.kitex.mom.plan.service.PlnSchedulingEngineService;
+import com.kitex.mom.plan.service.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -59,9 +50,37 @@ public class PlnApsDecisionServiceImpl implements PlnApsDecisionService {
     private final PlnApsFormalContractResolver formalContractResolver;
     private final PlatformTransactionManager transactionManager;
 
+    private static Long parseId(String value, String label) {
+        try {
+            Long id = Long.valueOf(value);
+            require(id > 0, label + "必须为正整数");
+            return id;
+        } catch (RuntimeException ex) {
+            if (ex instanceof CheckedException checked) throw checked;
+            throw new CheckedException(label + "格式不正确");
+        }
+    }
+
+    private static String suffix(String requestId, String phase) {
+        return requestId.trim() + '#' + phase;
+    }
+
+    private static String text(Long value) {
+        return value == null ? null : value.toString();
+    }
+
+    private static boolean isFingerprint(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
     @Override
     public PlnApsDecisionDTO.Comparison compare(Long caseId) {
         PlnApsCaseDTO apsCase = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(apsCase);
         require(COMPARABLE_STATUSES.contains(apsCase.getCaseStatus()) && StrUtil.isNotBlank(apsCase.getScenarioId()),
                 "APS案件尚未形成可比较的多候选情景");
         PlanSchedulingAgentDTO.DecisionContext context = schedulingAgentService.decisionContext(
@@ -74,8 +93,9 @@ public class PlnApsDecisionServiceImpl implements PlnApsDecisionService {
     @Override
     public List<PlnSchedulingOperationEntity> candidateOperations(Long caseId, Long taskId) {
         PlnApsCaseDTO apsCase = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(apsCase);
         require(COMPARABLE_STATUSES.contains(apsCase.getCaseStatus())
-                        && StrUtil.isNotBlank(apsCase.getScenarioId()), "当前案件尚无可读候选");
+                && StrUtil.isNotBlank(apsCase.getScenarioId()), "当前案件尚无可读候选");
         PlnSchedulingTaskEntity task = schedulingTaskMapper.selectById(taskId);
         require(task != null && Objects.equals(task.getScenarioId(),
                         parseId(apsCase.getScenarioId(), "APS情景主键"))
@@ -103,6 +123,7 @@ public class PlnApsDecisionServiceImpl implements PlnApsDecisionService {
                         && command.getOperations().size() <= 100,
                 "专业调整须提供有效请求号、案件和候选证据、原因以及1至100道工序变更");
         PlnApsCaseDTO before = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(before);
         require("EVALUATED".equals(before.getCaseStatus())
                         && Objects.equals(before.getContextFingerprint(), command.getExpectedCaseFingerprint()),
                 "只有未选案且未发布的当前APS案件允许专业调整");
@@ -132,6 +153,7 @@ public class PlnApsDecisionServiceImpl implements PlnApsDecisionService {
     private PlnApsDecisionDTO.Comparison deriveInTransaction(
             Long caseId, PlnApsDecisionDTO.DeriveCommand command, boolean replayOnly) {
         PlnApsCaseDTO apsCase = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(apsCase);
         require("EVALUATED".equals(apsCase.getCaseStatus())
                         && Objects.equals(apsCase.getContextFingerprint(), command.getExpectedCaseFingerprint()),
                 "只有未选案且未发布的当前APS案件允许专业调整");
@@ -168,6 +190,7 @@ public class PlnApsDecisionServiceImpl implements PlnApsDecisionService {
         validateSelect(command);
         Long taskId = parseId(command.getCandidateTaskId(), "APS候选任务主键");
         PlnApsCaseDTO apsCase = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(apsCase);
         PlanSchedulingAgentDTO.ScenarioEvidence evidence = scenarioEvidence(apsCase);
         PlnSchedulingScenarioEntity scenario = evidence.getScenario().getScenario();
 
@@ -202,6 +225,7 @@ public class PlnApsDecisionServiceImpl implements PlnApsDecisionService {
     public PlnApsDecisionDTO.PublishResult publish(Long caseId, PlnApsDecisionDTO.PublishCommand command) {
         validatePublish(command);
         PlnApsCaseDTO before = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(before);
         if (PUBLISH_REPLAY_STATUSES.contains(before.getCaseStatus())) {
             TransactionTemplate replayTransaction = new TransactionTemplate(transactionManager);
             return replayTransaction.execute(status -> {
@@ -236,6 +260,7 @@ public class PlnApsDecisionServiceImpl implements PlnApsDecisionService {
             Long caseId, PlnApsDecisionDTO.PublishCommand command,
             PlnApsFormalContractResolver.Resolution resolution) {
         PlnApsCaseDTO current = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(current);
         PlnApsA3ApprovalEntity approval = approvalService.requireApproved(caseId, command, false);
         require("SELECTED".equals(current.getCaseStatus())
                         && Objects.equals(current.getContextFingerprint(), command.getExpectedCaseFingerprint()),
@@ -337,32 +362,5 @@ public class PlnApsDecisionServiceImpl implements PlnApsDecisionService {
                         && isFingerprint(command.getExpectedSelectionFingerprint())
                         && StrUtil.isNotBlank(command.getApprovalId()),
                 "A3发布须携带当前PLAN审批记录与冻结证据");
-    }
-
-    private static Long parseId(String value, String label) {
-        try {
-            Long id = Long.valueOf(value);
-            require(id > 0, label + "必须为正整数");
-            return id;
-        } catch (RuntimeException ex) {
-            if (ex instanceof CheckedException checked) throw checked;
-            throw new CheckedException(label + "格式不正确");
-        }
-    }
-
-    private static String suffix(String requestId, String phase) {
-        return requestId.trim() + '#' + phase;
-    }
-
-    private static String text(Long value) {
-        return value == null ? null : value.toString();
-    }
-
-    private static boolean isFingerprint(String value) {
-        return value != null && value.matches("[0-9a-f]{64}");
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
     }
 }

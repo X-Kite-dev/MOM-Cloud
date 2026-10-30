@@ -13,7 +13,7 @@ import java.math.BigDecimal;
  * @since 2025-01-09
  */
 @Data
-@Schema(description = "工序不良率数据")
+@Schema(description = "所选建单期间工序任务的当前累计GOOD/NG快照；非期间检验事件或一次合格率，缺失证据返回null")
 public class ProcessDefectRateDTO implements Serializable {
 
     private static final long serialVersionUID = 1L;
@@ -46,19 +46,19 @@ public class ProcessDefectRateDTO implements Serializable {
      * 总检验数量
      */
     @Schema(description = "总检验数量")
-    private Long totalInspectionCount;
+    private BigDecimal totalInspectionCount;
 
     /**
      * 不良品数量
      */
     @Schema(description = "不良品数量")
-    private Long defectCount;
+    private BigDecimal defectCount;
 
     /**
      * 合格品数量
      */
     @Schema(description = "合格品数量")
-    private Long qualifiedCount;
+    private BigDecimal qualifiedCount;
 
     /**
      * 不良率（百分比）

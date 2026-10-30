@@ -24,7 +24,9 @@ public class MesPhysicalTransformSourceScopeLock {
     private final MesPhysicalTransformCodec codec;
     private final MesActualFactoryAccessService access;
 
-    /** 必须在同一个真实事务内调用；返回时没有持久实物占用或请求许可。 */
+    /**
+     * 必须在同一个真实事务内调用；返回时没有持久实物占用或请求许可。
+     */
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public void acquire(Long tenant, String factory) {
         require(tenant != null && tenant > 0 && Objects.equals(tenant, TenantContextHolder.getTenantId())
@@ -36,7 +38,9 @@ public class MesPhysicalTransformSourceScopeLock {
                 "实际工厂仍有库存/质量/派工写事务，请保留原号重新读取来源；未取得转换占用");
     }
 
-    /** 已持独占源域后按真实工单编码稳定排序调用；与原派工/报工父锁完全一致。 */
+    /**
+     * 已持独占源域后按真实工单编码稳定排序调用；与原派工/报工父锁完全一致。
+     */
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public void task(Long tenant, String factory, String code) {
         require(tenant != null && Objects.equals(tenant, TenantContextHolder.getTenantId())

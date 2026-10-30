@@ -47,7 +47,9 @@ public final class MesMaterialSubstituteResolver {
         return result.get(0);
     }
 
-    /** 读取冻结BOM全部允许绑定供明确选择；执行入口仍通过resolveFeedBinding拒绝歧义。 */
+    /**
+     * 读取冻结BOM全部允许绑定供明确选择；执行入口仍通过resolveFeedBinding拒绝歧义。
+     */
     public static List<Binding> feedBindings(String bomSnapshot, String actualMatCode, String requestedRequirementMatCode) {
         if (StrUtil.isBlank(bomSnapshot)) {
             throw new CheckedException("生产工单缺少BOM快照，不能校验投料");

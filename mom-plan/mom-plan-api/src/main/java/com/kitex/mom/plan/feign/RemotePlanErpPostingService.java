@@ -8,7 +8,9 @@ import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
-/** MES 将已提交执行事实幂等转交 PLAN ERP 投递账的内部客户端。 */
+/**
+ * MES 将已提交执行事实幂等转交 PLAN ERP 投递账的内部客户端。
+ */
 @FeignClient(contextId = "remotePlanErpPostingService", value = Constants.Name)
 public interface RemotePlanErpPostingService {
     @InternalCall

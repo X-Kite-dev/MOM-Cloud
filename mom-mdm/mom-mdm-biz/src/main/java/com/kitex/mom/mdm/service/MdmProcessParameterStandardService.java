@@ -49,13 +49,19 @@ public interface MdmProcessParameterStandardService
     MdmProcessParameterStandardDTO.FrozenCatalog resolveReleased(
             MdmProcessParameterStandardDTO.ResolveQuery query);
 
-    /** 按精确节点冻结；历史V1只做唯一投影，不修改其原内容及指纹。 */
+    /**
+     * 按精确节点冻结；历史V1只做唯一投影，不修改其原内容及指纹。
+     */
     MdmProcessParameterStandardDTO.FrozenCatalog resolveNodes(
             MdmProcessParameterStandardDTO.ResolveQuery query);
 
-    /** 当前工厂正式知识来源摘要；不读取正文、不修改工艺版本。 */
+    /**
+     * 当前工厂正式知识来源摘要；不读取正文、不修改工艺版本。
+     */
     MdmProcessKnowledgeDTO.SourcePage searchKnowledgeSources(MdmProcessKnowledgeDTO.SearchQuery query);
 
-    /** 精确版本的当前适用性核验，失效或结构不完整时不返回任何可用正文。 */
+    /**
+     * 精确版本的当前适用性核验，失效或结构不完整时不返回任何可用正文。
+     */
     MdmProcessKnowledgeDTO.SourceDetail verifyKnowledgeSource(MdmProcessKnowledgeDTO.VerifyQuery query);
 }

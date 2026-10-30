@@ -7,11 +7,11 @@ import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.mes.dto.MesPlanExecutionEvidenceDTO;
 import com.kitex.mom.mes.dto.MesReportSourceAssignmentDTO;
-import com.kitex.mom.mes.entity.MesOfflineReportReplayEntity;
 import com.kitex.mom.mes.entity.MesAutoReportEventEntity;
+import com.kitex.mom.mes.entity.MesOfflineReportReplayEntity;
 import com.kitex.mom.mes.enums.ReportModeEnum;
-import com.kitex.mom.mes.mapper.MesOfflineReportReplayMapper;
 import com.kitex.mom.mes.mapper.MesAutoReportEventMapper;
+import com.kitex.mom.mes.mapper.MesOfflineReportReplayMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -19,14 +19,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -41,7 +34,9 @@ public class MesPlanProductionEventReader {
     private final MesOfflineReportReplayMapper offlineMapper;
     private final MesAutoReportEventMapper autoEventMapper;
 
-    /** 读取实际原事件审计依据，不把AUTO文字或用户传入时刻直接当作设备采集证明。 */
+    /**
+     * 读取实际原事件审计依据，不把AUTO文字或用户传入时刻直接当作设备采集证明。
+     */
     public AuditEvidence auditEvidence(List<MesReportSourceAssignmentDTO.Preview> proofs, String factory) {
         var offline = offlineEvidence(proofs, factory);
         List<Long> reports = proofs.stream().flatMap(proof -> proof.getReports().stream())
@@ -60,7 +55,9 @@ public class MesPlanProductionEventReader {
         return new AuditEvidence(offline, events.stream().collect(Collectors.groupingBy(MesAutoReportEventEntity::getReportId)));
     }
 
-    /** 整版分块批量读取，不按工单/报工逐次查询；避开PG绑定参数上限，保持同一事务快照。 */
+    /**
+     * 整版分块批量读取，不按工单/报工逐次查询；避开PG绑定参数上限，保持同一事务快照。
+     */
     public Map<String, List<MesOfflineReportReplayEntity>> offlineEvidence(
             List<MesReportSourceAssignmentDTO.Preview> proofs, String factory) {
         List<String> requests = proofs.stream().flatMap(proof -> proof.getReports().stream())
@@ -80,7 +77,9 @@ public class MesPlanProductionEventReader {
         return rows.stream().collect(Collectors.groupingBy(MesOfflineReportReplayEntity::getRequestId));
     }
 
-    /** 只选本来源份额，完整合计严格与来源当前报工量相同。 */
+    /**
+     * 只选本来源份额，完整合计严格与来源当前报工量相同。
+     */
     public void populate(MesPlanExecutionEvidenceDTO.Link link, MesReportSourceAssignmentDTO.Preview proof,
                          AuditEvidence audits, LocalDateTime observedAt) {
         List<String> gaps = new ArrayList<>();
@@ -136,7 +135,7 @@ public class MesPlanProductionEventReader {
                     .setProvenanceFingerprint(hash(JSONUtil.toJsonStr(Arrays.asList(sourceFingerprint,
                             report.getAssignmentState(), report.getAssignmentId(), report.getAllocations()))));
             timeEvidence(event, report, report.getRequestId() == null ? List.of()
-                    : audits.offline().getOrDefault(report.getRequestId(), List.of()),
+                            : audits.offline().getOrDefault(report.getRequestId(), List.of()),
                     audits.device().getOrDefault(Long.parseLong(report.getReportId()), List.of()), observedAt);
             events.add(event);
             total = total.add(quantity);
@@ -158,10 +157,12 @@ public class MesPlanProductionEventReader {
         return shares.isEmpty() ? BigDecimal.ZERO : shares.size() == 1 ? quantity(shares.get(0).getQuantity()) : null;
     }
 
-    /** 时间分类不能用客户端capture或核定创建时刻替换原报工的时间依据。 */
+    /**
+     * 时间分类不能用客户端capture或核定创建时刻替换原报工的时间依据。
+     */
     private void timeEvidence(MesPlanExecutionEvidenceDTO.ProductionEvent event,
-            MesReportSourceAssignmentDTO.Report report, List<MesOfflineReportReplayEntity> offline,
-            List<MesAutoReportEventEntity> deviceEvents, LocalDateTime observedAt) {
+                              MesReportSourceAssignmentDTO.Report report, List<MesOfflineReportReplayEntity> offline,
+                              List<MesAutoReportEventEntity> deviceEvents, LocalDateTime observedAt) {
         event.setTimeBasis("UNVERIFIED");
         if (!offline.isEmpty()) {
             event.setTimeBasis("OFFLINE_UNVERIFIED").setTimeGap("弱网客户端采集时刻未独立核验，接收时刻不证明现场完成");
@@ -238,7 +239,9 @@ public class MesPlanProductionEventReader {
         if (!condition) throw new CheckedException(message);
     }
 
-    /** 仅业务读侧内部使用，来源表行不直接返回到客户端。 */
+    /**
+     * 仅业务读侧内部使用，来源表行不直接返回到客户端。
+     */
     public record AuditEvidence(Map<String, List<MesOfflineReportReplayEntity>> offline,
                                 Map<Long, List<MesAutoReportEventEntity>> device) {
     }

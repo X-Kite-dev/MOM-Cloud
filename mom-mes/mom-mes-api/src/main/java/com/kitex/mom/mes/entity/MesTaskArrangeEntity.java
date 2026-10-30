@@ -38,6 +38,11 @@ public class MesTaskArrangeEntity extends BaseEntity<MesTaskArrangeEntity> {
     @Schema(description = "派工单号")
     private String code;
 
+    @Schema(description = "同事务受控修正申请；出生后不可改绑")
+    @TableField(updateStrategy = FieldStrategy.NEVER)
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
+    private Long correctionRequestId;
+
     /**
      * 任务单号
      */

@@ -52,28 +52,34 @@
         <choose>
             <when test="dimension == 'CATEGORY'">category AS group_code, category AS group_name,</when>
             <when test="dimension == 'CONFIG'">config_code AS group_code, config_name AS group_name,</when>
-            <when test="dimension == 'LOSS'">COALESCE(loss_category,'NONE') AS group_code, COALESCE(loss_category,'NONE') AS group_name,</when>
+            <when test="dimension == 'LOSS'">COALESCE(loss_category,'NONE') AS group_code,
+                COALESCE(loss_category,'NONE') AS group_name,
+            </when>
             <otherwise>'TOTAL' AS group_code, '合计' AS group_name,</otherwise>
         </choose>
         COUNT(*) AS event_count,
         COUNT(*) FILTER (WHERE auto_pause_required) AS auto_pause_required_count,
         COUNT(*) FILTER (WHERE auto_pause_required AND NOT production_paused
-          AND pause_outcome IN ('FAILED_UNKNOWN','MDM_CONFIRMED_MES_FAILED')) AS pause_failure_count,
+        AND pause_outcome IN ('FAILED_UNKNOWN','MDM_CONFIRMED_MES_FAILED')) AS pause_failure_count,
         COALESCE(SUM(affected_wip_qty),0) AS affected_wip_qty,
         COALESCE(SUM(released_wip_qty),0) AS released_wip_qty,
         COALESCE(SUM(rework_wip_qty),0) AS rework_wip_qty,
         COALESCE(SUM(scrap_wip_qty),0) AS scrap_wip_qty,
         COALESCE(SUM(loss_amount),0) AS loss_amount,
         COALESCE(AVG(EXTRACT(EPOCH FROM (close_time-trigger_time))/60)
-          FILTER (WHERE close_time IS NOT NULL AND trigger_time IS NOT NULL),0) AS average_close_minutes
+        FILTER (WHERE close_time IS NOT NULL AND trigger_time IS NOT NULL),0) AS average_close_minutes
         FROM mes_change_point_handle
         WHERE del_flag='0' AND factory_code=#{factoryCode}
-          AND trigger_time&gt;=#{startTime} AND trigger_time&lt;#{endTime}
-          AND affected_wip_qty IS NOT NULL
+        AND trigger_time&gt;=#{startTime} AND trigger_time&lt;#{endTime}
+        AND affected_wip_qty IS NOT NULL
         <choose>
             <when test="dimension == 'CATEGORY'">GROUP BY category ORDER BY loss_amount DESC, event_count DESC</when>
-            <when test="dimension == 'CONFIG'">GROUP BY config_code,config_name ORDER BY loss_amount DESC, event_count DESC</when>
-            <when test="dimension == 'LOSS'">GROUP BY COALESCE(loss_category,'NONE') ORDER BY loss_amount DESC, event_count DESC</when>
+            <when test="dimension == 'CONFIG'">GROUP BY config_code,config_name ORDER BY loss_amount DESC, event_count
+                DESC
+            </when>
+            <when test="dimension == 'LOSS'">GROUP BY COALESCE(loss_category,'NONE') ORDER BY loss_amount DESC,
+                event_count DESC
+            </when>
         </choose>
     </select>
 

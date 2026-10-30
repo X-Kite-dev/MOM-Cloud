@@ -100,4 +100,39 @@ public final class MesApsPublicationProbeDTO {
         @Schema(description = "服务端观察时刻；不重写原应用时刻")
         private LocalDateTime observedTime;
     }
+
+    /** 仅核对原应用账，不声明完整原命令或当前计划已经匹配。 */
+    @Data
+    @Accessors(chain = true)
+    public static class AuditQuery {
+        private Scope scope;
+        @Schema(description = "PLAN按原发布号确定的精确应用子号，最多11个")
+        private List<String> requestIds;
+        @Schema(description = "PLAN原业务保存的MES应用后指纹；未入账时为空")
+        private String expectedAfterFingerprint;
+    }
+
+    @Data
+    @Accessors(chain = true)
+    public static class AuditRecord {
+        @Schema(description = "MES原应用永久请求号")
+        private String requestId;
+        @Schema(description = "原应用实名账号及原应用时刻，不用观察时刻代替")
+        private String appliedBy;
+        private LocalDateTime appliedTime;
+        @Schema(description = "原应用更新工序数，不是报工数量")
+        private Integer updatedOperationCount;
+        @Schema(description = "与PLAN保存的原应用后指纹是否匹配；PLAN未保存时为空")
+        private Boolean fingerprintMatched;
+    }
+
+    @Data
+    @Accessors(chain = true)
+    public static class AuditReply {
+        @Schema(description = "NOT_OBSERVED/VERIFIED/OBSERVED_UNRECONCILED/FINGERPRINT_MISMATCH/AMBIGUOUS")
+        private String state;
+        @Schema(description = "精确范围内全部原应用账，不挑最后一条代替有效决定")
+        private List<AuditRecord> records;
+        private LocalDateTime observedTime;
+    }
 }

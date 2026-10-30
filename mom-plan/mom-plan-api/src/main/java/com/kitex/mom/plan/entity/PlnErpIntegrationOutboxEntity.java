@@ -13,7 +13,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** ERP 计划与执行事实可靠投递账。 */
+/**
+ * ERP 计划与执行事实可靠投递账。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

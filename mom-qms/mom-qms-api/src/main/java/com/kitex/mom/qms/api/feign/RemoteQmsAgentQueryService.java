@@ -4,6 +4,7 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.feign.annotation.InternalCall;
 import com.kitex.mom.qms.Constants;
 import com.kitex.mom.qms.agent.dto.QmsBatchQualityTraceDTO;
+import com.kitex.mom.qms.agent.dto.QmsBatchRecallStatusDTO;
 import com.kitex.mom.qms.agent.dto.QmsInspectionOverviewDTO;
 import com.kitex.mom.qms.agent.dto.QmsWorkOrderQualityDTO;
 import org.springframework.cloud.openfeign.FeignClient;
@@ -33,4 +34,10 @@ public interface RemoteQmsAgentQueryService {
     @PostMapping("/qmsAgentQuery/internal/batch-quality-trace")
     R<QmsBatchQualityTraceDTO.Evidence> batchQualityTrace(
             @RequestBody QmsBatchQualityTraceDTO.Query query);
+
+    /** 读取指定物料批次的正式召回治理状态，不执行任何召回动作。 */
+    @InternalCall(userTokenRequired = true)
+    @PostMapping("/qmsAgentQuery/internal/batch-recall-status")
+    R<QmsBatchRecallStatusDTO.Evidence> batchRecallStatus(
+            @RequestBody QmsBatchRecallStatusDTO.Query query);
 }

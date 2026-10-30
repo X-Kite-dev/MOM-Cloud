@@ -15,15 +15,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.temporal.TemporalAccessor;
-import java.util.HexFormat;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
-/** 严格转换正文、文本计量和事实指纹；局部JSON配置不改变旧业务的序列化算法。 */
+/**
+ * 严格转换正文、文本计量和事实指纹；局部JSON配置不改变旧业务的序列化算法。
+ */
 @Component
 public class MesPhysicalTransformCodec {
 
@@ -32,7 +28,9 @@ public class MesPhysicalTransformCodec {
     public static final String PREVIEW_VERSION = "MES_PHYSICAL_PREVIEW_V1";
     public static final String COMMAND_VERSION = "MES_PHYSICAL_TRANSFORM_COMMAND_V1";
     public static final String COMMAND_VERSION_V2 = "MES_PHYSICAL_TRANSFORM_COMMAND_V2";
-    /** 永久原号锁保持旧字面域；升级命令算法不能释放同一tenant/requestId。 */
+    /**
+     * 永久原号锁保持旧字面域；升级命令算法不能释放同一tenant/requestId。
+     */
     public static final String REQUEST_LOCK_VERSION = COMMAND_VERSION;
     public static final int MAX_SOURCES = 50;
     public static final int MAX_OUTPUTS = 1000;
@@ -43,7 +41,13 @@ public class MesPhysicalTransformCodec {
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
             .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
 
-    /** 先检查每个JSON字段及类型，禁止Jackson把number转换成字符串或忽略额外字段。 */
+    public static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
+    /**
+     * 先检查每个JSON字段及类型，禁止Jackson把number转换成字符串或忽略额外字段。
+     */
     public MesPhysicalTransformDTO.Plan decode(String rawJson) {
         JsonNode root = tree(rawJson, 16 * 1024 * 1024);
         fields(root, Set.of("expectedTenantId", "expectedFactoryCode", "expectedActorUserId",
@@ -55,7 +59,9 @@ public class MesPhysicalTransformCodec {
         return result;
     }
 
-    /** 严格永久命令与预检分开：没有policyDraft、客户端工艺资格或服务器派工身份。 */
+    /**
+     * 严格永久命令与预检分开：没有policyDraft、客户端工艺资格或服务器派工身份。
+     */
     public MesPhysicalTransformCommandDTO.Body command(String rawJson) {
         JsonNode root = tree(rawJson, 16 * 1024 * 1024);
         require(root.isObject() && root.path("version").isTextual(), "永久转换版本必须是明确文本字段");
@@ -82,7 +88,9 @@ public class MesPhysicalTransformCodec {
         return result;
     }
 
-    /** 原号封存请求也是严格文本协议，避免DTO读取时number到字符串的隐式转换。 */
+    /**
+     * 原号封存请求也是严格文本协议，避免DTO读取时number到字符串的隐式转换。
+     */
     public MesPhysicalTransformCommandDTO.Seal seal(String rawJson) {
         JsonNode root = tree(rawJson, 16 * 1024);
         fields(root, Set.of("expectedFingerprint", "reason"));
@@ -93,7 +101,9 @@ public class MesPhysicalTransformCodec {
         return result;
     }
 
-    /** 两种协议共用字段形状检查，但不混用政策草案与正式命令权限。 */
+    /**
+     * 两种协议共用字段形状检查，但不混用政策草案与正式命令权限。
+     */
     private void planItems(JsonNode root) {
         array(root, "inputs", 1, MAX_SOURCES);
         array(root, "outputs", 1, MAX_OUTPUTS);
@@ -112,7 +122,9 @@ public class MesPhysicalTransformCodec {
         }
     }
 
-    /** 登记阶段仅核传输完整性及输出分配；投入当量/工艺/原事实须后续锁内再核。 */
+    /**
+     * 登记阶段仅核传输完整性及输出分配；投入当量/工艺/原事实须后续锁内再核。
+     */
     private void commandItems(MesPhysicalTransformCommandDTO.Body body) {
         Set<String> inputIds = new HashSet<>();
         for (var input : body.getInputs()) {
@@ -164,7 +176,9 @@ public class MesPhysicalTransformCodec {
                 "产出" + key + "的全部来源分配不完整"));
     }
 
-    /** 只返回数学政策草案；不证明工程发布、单位资格或现场工艺版本。 */
+    /**
+     * 只返回数学政策草案；不证明工程发布、单位资格或现场工艺版本。
+     */
     public MesPhysicalTransformDTO.Policy policy(String rawJson) {
         JsonNode root = tree(rawJson, 256 * 1024);
         fields(root, Set.of("version", "operationType", "inputObjectType", "outputObjectType", "inputUnit",
@@ -199,7 +213,9 @@ public class MesPhysicalTransformCodec {
         return result;
     }
 
-    /** 精确正Long文本，拒绝前导零、超界与浮点转换。 */
+    /**
+     * 精确正Long文本，拒绝前导零、超界与浮点转换。
+     */
     public Long id(String value) {
         require(value != null && value.matches("[1-9][0-9]{0,18}"), "库存及实名ID须为精确正整数文本");
         try {
@@ -209,7 +225,9 @@ public class MesPhysicalTransformCodec {
         }
     }
 
-    /** 28位有效数字、8位小数，不支持指数/符号/空白和隐式舍入。 */
+    /**
+     * 28位有效数字、8位小数，不支持指数/符号/空白和隐式舍入。
+     */
     public BigDecimal quantity(String value, boolean allowZero, String label) {
         require(value != null && value.length() <= 40 && value.matches("(0|[1-9][0-9]*)(\\.[0-9]+)?"),
                 label + "须为无指数和符号的精确小数文本");
@@ -219,7 +237,9 @@ public class MesPhysicalTransformCodec {
         return result;
     }
 
-    /** 计算结果必须仍精确可表示，不能将超精度当量四舍五入。 */
+    /**
+     * 计算结果必须仍精确可表示，不能将超精度当量四舍五入。
+     */
     public String amount(BigDecimal value) {
         BigDecimal normalized = value.stripTrailingZeros();
         require(value.signum() >= 0 && normalized.scale() <= 8
@@ -227,7 +247,9 @@ public class MesPhysicalTransformCodec {
         return normalized.toPlainString();
     }
 
-    /** 标识/单位/键保持原文；首尾空白与Web/PG使用同一显式字符集，不依赖strip/trim差异。 */
+    /**
+     * 标识/单位/键保持原文；首尾空白与Web/PG使用同一显式字符集，不依赖strip/trim差异。
+     */
     public String code(String value, String label, int maxLength) {
         require(value != null && !value.isEmpty() && value.length() <= maxLength
                 && !boundaryWhitespace(value.charAt(0)) && !boundaryWhitespace(value.charAt(value.length() - 1))
@@ -235,20 +257,26 @@ public class MesPhysicalTransformCodec {
         return value;
     }
 
-    /** C0/C1另行全串拒绝；此集覆盖合法Unicode空白及BOM，三层协议保持一致。 */
+    /**
+     * C0/C1另行全串拒绝；此集覆盖合法Unicode空白及BOM，三层协议保持一致。
+     */
     private boolean boundaryWhitespace(char value) {
         return value == '\u0020' || value == '\u00a0' || value == '\u1680'
                 || (value >= '\u2000' && value <= '\u200a') || value == '\u2028' || value == '\u2029'
                 || value == '\u202f' || value == '\u205f' || value == '\u3000' || value == '\ufeff';
     }
 
-    /** 原因完整保留；非法字符在任何落账之前拒绝。 */
+    /**
+     * 原因完整保留；非法字符在任何落账之前拒绝。
+     */
     public void reason(String value) {
         require(value != null && !value.isBlank() && value.length() <= 1000
                 && value.codePoints().noneMatch(Character::isISOControl), "转换原因须为1至1000字且不含控制字符");
     }
 
-    /** 明确版本字段集内数字/时间/boolean为文本；实体增长不能偷偷扩旧V1，缺字段也拒绝。 */
+    /**
+     * 明确版本字段集内数字/时间/boolean为文本；实体增长不能偷偷扩旧V1，缺字段也拒绝。
+     */
     public Map<String, String> facts(Object bean) {
         Map<String, String> result = new TreeMap<>();
         if (bean == null) return result;
@@ -266,7 +294,9 @@ public class MesPhysicalTransformCodec {
         return result;
     }
 
-    /** 固定局部JSON写法；事实Map以TreeMap顺序提供，不依赖全局Jackson配置。 */
+    /**
+     * 固定局部JSON写法；事实Map以TreeMap顺序提供，不依赖全局Jackson配置。
+     */
     public String snapshot(Object value) {
         try {
             return json.writeValueAsString(value);
@@ -275,7 +305,9 @@ public class MesPhysicalTransformCodec {
         }
     }
 
-    /** 带域版本前缀的UTF-8 SHA-256，不复用旧报工或SOP指纹语义。 */
+    /**
+     * 带域版本前缀的UTF-8 SHA-256，不复用旧报工或SOP指纹语义。
+     */
     public String fingerprint(String version, String snapshot) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
@@ -294,7 +326,9 @@ public class MesPhysicalTransformCodec {
         }
     }
 
-    /** 原冻结契约使用同一局部严格JSON读取，保留长整数，拒绝重复键及尾随内容。 */
+    /**
+     * 原冻结契约使用同一局部严格JSON读取，保留长整数，拒绝重复键及尾随内容。
+     */
     public JsonNode objectDocument(String source, int maxLength) {
         JsonNode result = tree(source, maxLength);
         require(result != null && result.isObject(), "原转换配置/契约必须是完整JSON对象");
@@ -307,7 +341,8 @@ public class MesPhysicalTransformCodec {
     }
 
     private void texts(JsonNode value, String... fields) {
-        for (String field : fields) require(value.get(field).isTextual(), field + "必须为文本，不接number/boolean/null强转");
+        for (String field : fields)
+            require(value.get(field).isTextual(), field + "必须为文本，不接number/boolean/null强转");
     }
 
     private void array(JsonNode value, String field, int min, int max) {
@@ -321,9 +356,5 @@ public class MesPhysicalTransformCodec {
         } catch (Exception exception) {
             throw new CheckedException("转换正文类型不符合严格协议");
         }
-    }
-
-    public static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
     }
 }

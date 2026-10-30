@@ -42,10 +42,14 @@ public class OmsOrderDetailsReviewEntity extends Model<OmsOrderDetailsReviewEnti
     @Schema(description = "订单评审单号")
     private String orderReviewCode;
 
-    /** 原订单行ID；审批时按精确来源行更新，不再按产品和交期猜测。 */
+    /**
+     * 原订单行ID；审批时按精确来源行更新，不再按产品和交期猜测。
+     */
     private Long sourceDetailId;
 
-    /** 提交时原订单行的不可变核心事实，用于复核前防陈旧校验。 */
+    /**
+     * 提交时原订单行的不可变核心事实，用于复核前防陈旧校验。
+     */
     private String sourceDetailSnapshot;
 
     /**

@@ -2,6 +2,7 @@ package com.kitex.mom.mes.support;
 
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
+
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.mes.dto.MesQualityGateDecision;
 import com.kitex.mom.mes.dto.MesQualityGateItemDTO;
@@ -14,9 +15,7 @@ import java.util.*;
 /**
  * 生成可跨报工、成品入库和WMS实物持续传递的QMS判定证据。
  *
- * <p>证据只记录业务发生时实际参与质量门判定的任务，不在之后按物料、批次或时间
- * 重新猜测。质量免检场景同样形成明确的空任务证据，避免把“无需质检”和
- * “历史来源缺失”混为一谈。</p>
+ * <p>证据只记录业务发生时实际参与质量门判定的任务，不在之后按物料、批次或时间 重新猜测。质量免检场景同样形成明确的空任务证据，避免把“无需质检”和 “历史来源缺失”混为一谈。
  */
 public final class MesQualityEvidenceSupport {
 
@@ -33,18 +32,22 @@ public final class MesQualityEvidenceSupport {
         if (decision == null || StrUtil.isBlank(decision.getGateMode())) {
             throw new CheckedException("质量门判定缺少模式，不能冻结质量证据");
         }
-        List<MesQualityGateItemDTO> items = new ArrayList<>(
-                decision.getItems() == null ? List.of() : decision.getItems());
-        items.sort(Comparator.comparing(MesQualityGateItemDTO::getRecordId,
-                        Comparator.nullsLast(Comparator.naturalOrder()))
-                .thenComparing(MesQualityGateItemDTO::getInspectionId,
-                        Comparator.nullsLast(Comparator.naturalOrder())));
+        List<MesQualityGateItemDTO> items =
+                new ArrayList<>(decision.getItems() == null ? List.of() : decision.getItems());
+        items.sort(
+                Comparator.comparing(
+                                MesQualityGateItemDTO::getRecordId,
+                                Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(
+                                MesQualityGateItemDTO::getInspectionId,
+                                Comparator.nullsLast(Comparator.naturalOrder())));
 
         LinkedHashSet<Long> taskIds = new LinkedHashSet<>();
         List<Map<String, Object>> taskFacts = new ArrayList<>();
         for (MesQualityGateItemDTO item : items) {
             if (item.getInspectionId() == null) {
-                if (!"NONE".equals(decision.getGateMode()) && Boolean.TRUE.equals(decision.getPassed())) {
+                if (!"NONE".equals(decision.getGateMode())
+                        && Boolean.TRUE.equals(decision.getPassed())) {
                     throw new CheckedException("质量门存在未生成QMS任务的证据，不能形成可逆向来源");
                 }
                 continue;
@@ -68,15 +71,29 @@ public final class MesQualityEvidenceSupport {
             fact.put("qmsHandleNum", item.getQmsHandleNum());
             fact.put("qmsHandleResult", item.getQmsHandleResult());
             fact.put("lastSyncTime", item.getLastSyncTime());
+            if (item.getQualityEventState() != null) {
+                fact.put("qualityEventId", item.getQualityEventId());
+                fact.put("qualityEventSequence", item.getQualityEventSequence());
+                fact.put("qualityEventFingerprint", item.getQualityEventFingerprint());
+                fact.put("qualityEventVersion", item.getQualityEventVersion());
+                fact.put("qualityEventState", item.getQualityEventState());
+                fact.put("qualityBlockedEventId", item.getQualityBlockedEventId());
+            }
             taskFacts.add(fact);
         }
-        if (!"NONE".equals(decision.getGateMode()) && Boolean.TRUE.equals(decision.getPassed())
-                && !items.isEmpty() && taskIds.isEmpty()) {
+        if (!"NONE".equals(decision.getGateMode())
+                && Boolean.TRUE.equals(decision.getPassed())
+                && !items.isEmpty()
+                && taskIds.isEmpty()) {
             throw new CheckedException("质量门未关联具体QMS任务，不能形成可逆向质量来源");
         }
 
         Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("version", "MES_QMS_EVIDENCE_V1");
+        snapshot.put(
+                "version",
+                items.stream().anyMatch(i -> i.getQualityEventState() != null)
+                        ? "MES_QMS_EVIDENCE_V2"
+                        : "MES_QMS_EVIDENCE_V1");
         snapshot.put("gateMode", decision.getGateMode());
         snapshot.put("phase", decision.getPhase());
         snapshot.put("passed", decision.getPassed());
@@ -91,8 +108,9 @@ public final class MesQualityEvidenceSupport {
 
     private static String sha256(String value) {
         try {
-            byte[] bytes = MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            byte[] bytes =
+                    MessageDigest.getInstance("SHA-256")
+                            .digest(value.getBytes(StandardCharsets.UTF_8));
             return java.util.HexFormat.of().formatHex(bytes);
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("当前JVM不支持SHA-256", exception);

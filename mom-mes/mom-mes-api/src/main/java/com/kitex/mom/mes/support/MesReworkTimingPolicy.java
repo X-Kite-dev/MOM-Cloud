@@ -1,9 +1,9 @@
 package com.kitex.mom.mes.support;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.annotation.JsonInclude;
 import com.kitex.common.core.exception.CheckedException;
 
 import java.util.Set;
@@ -28,19 +28,9 @@ public record MesReworkTimingPolicy(String version, String mode, String scope, S
             .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
-    public Long minimum() {
-        return minSeconds == null ? null : Long.valueOf(minSeconds);
-    }
-
-    public Long maximum() {
-        return maxSeconds == null ? null : Long.valueOf(maxSeconds);
-    }
-
-    public boolean enabled() {
-        return WINDOW.equals(mode);
-    }
-
-    /** 严格解析已批准策略；空值不是“无限制”，新返工必须明确批准NONE。 */
+    /**
+     * 严格解析已批准策略；空值不是“无限制”，新返工必须明确批准NONE。
+     */
     public static MesReworkTimingPolicy parse(String raw) {
         if (raw == null || raw.isBlank() || raw.length() > 4096) {
             throw new CheckedException("返工时间策略缺失或超过4KiB");
@@ -56,7 +46,9 @@ public record MesReworkTimingPolicy(String version, String mode, String scope, S
         }
     }
 
-    /** 返回字段顺序固定的批准正文。 */
+    /**
+     * 返回字段顺序固定的批准正文。
+     */
     public static String encode(MesReworkTimingPolicy policy) {
         validate(policy);
         try {
@@ -100,5 +92,17 @@ public record MesReworkTimingPolicy(String version, String mode, String scope, S
 
     private static void require(boolean condition, String message) {
         if (!condition) throw new CheckedException(message);
+    }
+
+    public Long minimum() {
+        return minSeconds == null ? null : Long.valueOf(minSeconds);
+    }
+
+    public Long maximum() {
+        return maxSeconds == null ? null : Long.valueOf(maxSeconds);
+    }
+
+    public boolean enabled() {
+        return WINDOW.equals(mode);
     }
 }

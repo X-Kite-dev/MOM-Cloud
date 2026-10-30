@@ -24,7 +24,9 @@ public interface PlnSchedulingEngineService {
 
     PlnSchedulingScenarioDTO runScenario(PlnSchedulingScenarioRunDTO runDTO);
 
-    /** 只规范化原Agent运行参数并计算原领域永久指纹，不查询当前来源、不求解、不写业务。 */
+    /**
+     * 只规范化原Agent运行参数并计算原领域永久指纹，不查询当前来源、不求解、不写业务。
+     */
     String agentPermanentRequestFingerprint(PlnSchedulingScenarioRunDTO runDTO);
 
     com.kitex.mom.plan.dto.PlnSchedulingScenarioInput captureScenario(PlnSchedulingScenarioRunDTO runDTO);
@@ -33,7 +35,9 @@ public interface PlnSchedulingEngineService {
 
     PlnSchedulingScenarioDTO getScenarioById(Long scenarioId);
 
-    /** 同一情景内复制父候选、应用专业调整并重验硬约束；失败时整笔事务回滚。 */
+    /**
+     * 同一情景内复制父候选、应用专业调整并重验硬约束；失败时整笔事务回滚。
+     */
     PlnSchedulingScenarioDTO deriveScenarioCandidate(Long caseId, PlnApsDecisionDTO.DeriveCommand command);
 
     PlnSchedulingScenarioDTO selectScenarioCandidate(String scenarioNo, PlnSchedulingScenarioSelectDTO selectDTO);

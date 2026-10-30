@@ -113,8 +113,8 @@ public class MesReworkMaterialPlanService {
             }
         } else
             require(c.getPlanId() != null && c.getItems() == null && c.getNoMaterialConfirmed() == null
-                    && c.getTiming() == null && c.getIdentifierScope() == null
-                    && c.getEngineeringOverride() == null,
+                            && c.getTiming() == null && c.getIdentifierScope() == null
+                            && c.getEngineeringOverride() == null,
                     "复核/撤回须引用原方案，不能更改其物料、时间、原实例或工程口径");
         String fingerprint = hash(JSONUtil.toJsonStr(Arrays.asList(c, actor.getId())));
         plans.lockRequest("MES-REWORK-MATERIAL:" + TenantContextHolder.getTenantId() + ":" + factory + ":" + c.getRequestId());
@@ -504,7 +504,9 @@ public class MesReworkMaterialPlanService {
                 t.getNoticeNum() == null ? null : t.getNoticeNum().stripTrailingZeros()));
     }
 
-    /** 只比较单节点正式SOP片段；方案路线还包含本次批准的用料，不能整段与MDM覆盖结果比较。 */
+    /**
+     * 只比较单节点正式SOP片段；方案路线还包含本次批准的用料，不能整段与MDM覆盖结果比较。
+     */
     private String formalSopSnapshot(String routeSnapshot) {
         var route = JSONUtil.parseArray(routeSnapshot);
         require(route.size() == 1, "返工工程覆盖必须绑定唯一工序节点");

@@ -11,12 +11,18 @@ import com.kitex.mom.plan.dto.PlnApsReplanDTO;
  */
 public interface PlnApsReplanAdapter {
 
-    /** 从专用重排案件幂等启动统一 APS 案件。 */
+    /**
+     * 从专用重排案件幂等启动统一 APS 案件。
+     */
     PlnApsCaseDTO launchFromReplanSource(PlnApsReplanDTO.LaunchCommand command);
 
-    /** 从执行效果回评幂等启动待确认的执行偏差案件。 */
+    /**
+     * 从执行效果回评幂等启动待确认的执行偏差案件。
+     */
     PlnApsCaseDTO launchFromEffectReview(Long reviewId, String requestId);
 
-    /** 查询专用事实在统一案件中的只读投影。 */
+    /**
+     * 查询专用事实在统一案件中的只读投影。
+     */
     PlnApsReplanDTO.Projection projection(Long apsCaseId);
 }

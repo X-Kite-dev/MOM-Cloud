@@ -1,11 +1,9 @@
 package com.kitex.mom.mdm.controller;
 
-import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.ObjUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.SearchPage;
@@ -69,7 +67,8 @@ public class MdmWarehouseController {
     @Operation(summary = "分页查询", description = "分页查询")
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('mdm_mdmWarehouse_view')")
-    public R<Page<MdmWarehouseEntity>> getMdmWarehousePage(SearchPage page, @ParameterObject MdmWarehouseEntity mdmWarehouse) {
+    public R<Page<MdmWarehouseEntity>> getMdmWarehousePage(SearchPage page,
+                                                           @ParameterObject MdmWarehouseEntity mdmWarehouse) {
         QueryWrapper<MdmWarehouseEntity> wrapper = new QueryWrapper<>();
         if (ObjUtil.isNotEmpty(mdmWarehouse.getFactoryCode())) {
             // 跳过工厂验证
@@ -82,8 +81,10 @@ public class MdmWarehouseController {
                         mdmWarehouse.getWarehouseCode())
                 .like(StrUtil.isNotEmpty(mdmWarehouse.getWarehouseName()), MdmWarehouseEntity::getWarehouseName,
                         mdmWarehouse.getWarehouseName())
-                .eq(ObjUtil.isNotEmpty(mdmWarehouse.getStatus()), MdmWarehouseEntity::getStatus, mdmWarehouse.getStatus())
-                .eq(ObjUtil.isNotEmpty(mdmWarehouse.getWarehouseType()), MdmWarehouseEntity::getWarehouseType, mdmWarehouse.getWarehouseType())
+                .eq(ObjUtil.isNotEmpty(mdmWarehouse.getStatus()), MdmWarehouseEntity::getStatus,
+                        mdmWarehouse.getStatus())
+                .eq(ObjUtil.isNotEmpty(mdmWarehouse.getWarehouseType()), MdmWarehouseEntity::getWarehouseType,
+                        mdmWarehouse.getWarehouseType())
                 .orderByAsc(MdmWarehouseEntity::getSort);
         return R.ok(mdmWarehouseService.page(page.toMpPage(), wrapper));
     }
@@ -98,9 +99,12 @@ public class MdmWarehouseController {
     public R<Map<Boolean, Long>> getCount(@ParameterObject MdmWarehouseEntity mdmWarehouse) {
         QueryWrapper<MdmWarehouseEntity> wrapper = new QueryWrapper<>();
         wrapper.lambda().select(MdmWarehouseEntity::getStatus)
-                .like(StrUtil.isNotEmpty(mdmWarehouse.getWarehouseCode()), MdmWarehouseEntity::getWarehouseCode, mdmWarehouse.getWarehouseCode())
-                .like(StrUtil.isNotEmpty(mdmWarehouse.getWarehouseName()), MdmWarehouseEntity::getWarehouseName, mdmWarehouse.getWarehouseName())
-                .eq(ObjUtil.isNotEmpty(mdmWarehouse.getWarehouseType()), MdmWarehouseEntity::getWarehouseType, mdmWarehouse.getWarehouseType());
+                .like(StrUtil.isNotEmpty(mdmWarehouse.getWarehouseCode()), MdmWarehouseEntity::getWarehouseCode,
+                        mdmWarehouse.getWarehouseCode())
+                .like(StrUtil.isNotEmpty(mdmWarehouse.getWarehouseName()), MdmWarehouseEntity::getWarehouseName,
+                        mdmWarehouse.getWarehouseName())
+                .eq(ObjUtil.isNotEmpty(mdmWarehouse.getWarehouseType()), MdmWarehouseEntity::getWarehouseType,
+                        mdmWarehouse.getWarehouseType());
         return R.ok(mdmWarehouseService.list(wrapper)
                 .stream()
                 .collect(Collectors.groupingBy(MdmWarehouseEntity::getStatus, Collectors.counting())));
@@ -114,10 +118,24 @@ public class MdmWarehouseController {
     public R<List<MdmWarehouseEntity>> getMdmWarehouseList(@ParameterObject MdmWarehouseEntity mdmWarehouse) {
         QueryWrapper<MdmWarehouseEntity> queryWrapper = Wrappers.query();
         queryWrapper.lambda().eq(MdmWarehouseEntity::getStatus, true)
-                .like(StrUtil.isNotEmpty(mdmWarehouse.getWarehouseCode()), MdmWarehouseEntity::getWarehouseCode, mdmWarehouse.getWarehouseCode())
-                .like(StrUtil.isNotEmpty(mdmWarehouse.getWarehouseName()), MdmWarehouseEntity::getWarehouseName, mdmWarehouse.getWarehouseName())
+                .like(StrUtil.isNotEmpty(mdmWarehouse.getWarehouseCode()), MdmWarehouseEntity::getWarehouseCode,
+                        mdmWarehouse.getWarehouseCode())
+                .like(StrUtil.isNotEmpty(mdmWarehouse.getWarehouseName()), MdmWarehouseEntity::getWarehouseName,
+                        mdmWarehouse.getWarehouseName())
                 .orderByAsc(MdmWarehouseEntity::getSort);
         return R.ok(mdmWarehouseService.list(queryWrapper));
+    }
+
+    @Inner
+    @GetMapping("/menuConfigurationWarehouses")
+    public R<List<MdmWarehouseEntity>> getMenuConfigurationWarehouses() {
+        return R.ok(mdmWarehouseService.menuConfigurationWarehouses());
+    }
+
+    @Inner
+    @GetMapping("/menuStates")
+    public R<Map<String, Boolean>> menuStates() {
+        return R.ok(mdmWarehouseService.menuStates());
     }
 
     @Inner
@@ -171,21 +189,19 @@ public class MdmWarehouseController {
     @PutMapping
     @PreAuthorize("@pms.hasPermission('mdm_mdmWarehouse_edit')")
     public R<Boolean> updateById(@RequestBody MdmWarehouseEntity mdmWarehouse) {
-        FactoryContextHolder.setFactorySkip();
         return R.ok(mdmWarehouseService.updateById(mdmWarehouse));
     }
-
 
     /**
      * 修改仓库配置
      */
     @Operation(summary = "修改仓库配置", description = "修改仓库配置")
     @PutMapping("/updateConfig")
+    @PreAuthorize("@pms.hasPermission('mdm_mdmWarehouse_edit') || "
+            + "((#p0.isBatch == null || @pms.hasPermission('wms_wmsWarehouseMenu_batch')) && "
+            + "(#p0.isContainer == null || @pms.hasPermission('wms_wmsWarehouseMenu_container')))")
     public R<Boolean> updateConfig(@RequestBody MdmWarehouseEntity mdmWarehouse) {
-        return R.ok(mdmWarehouseService.update(new UpdateWrapper<MdmWarehouseEntity>()
-                .lambda().set(MdmWarehouseEntity::getIsBatch, mdmWarehouse.getIsBatch())
-                .set(MdmWarehouseEntity::getIsContainer, mdmWarehouse.getIsContainer())
-                .eq(MdmWarehouseEntity::getWarehouseCode, mdmWarehouse.getWarehouseCode())));
+        return R.ok(mdmWarehouseService.updateWarehouseConfig(mdmWarehouse));
     }
 
     /**
@@ -199,8 +215,7 @@ public class MdmWarehouseController {
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('mdm_mdmWarehouse_del')")
     public R<Boolean> removeById(@RequestBody Long[] ids) {
-        FactoryContextHolder.setFactorySkip();
-        return R.ok(mdmWarehouseService.removeBatchByIds(CollUtil.toList(ids)));
+        return R.ok(mdmWarehouseService.removeUnusedWarehouses(ids == null ? null : Arrays.asList(ids)));
     }
 
     /**
@@ -228,7 +243,8 @@ public class MdmWarehouseController {
      */
     @PostMapping("/import")
     @PreAuthorize("@pms.hasPermission('mdm_mdmWarehouse_export')")
-    public R importWarehouse(@RequestExcel(headRowNumber = 2) List<MdmWarehouseModelExcelVO> excelVOList, BindingResult bindingResult) {
+    public R importWarehouse(@RequestExcel(headRowNumber = 2) List<MdmWarehouseModelExcelVO> excelVOList,
+                             BindingResult bindingResult) {
         FactoryContextHolder.setFactorySkip();
         return mdmWarehouseService.importWarehouse(excelVOList, bindingResult);
     }

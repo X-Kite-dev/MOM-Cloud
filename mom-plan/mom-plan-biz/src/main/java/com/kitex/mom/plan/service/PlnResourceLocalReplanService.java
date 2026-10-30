@@ -68,7 +68,9 @@ public interface PlnResourceLocalReplanService {
     PlanResourceLocalReplanDTO.Scenario assessExecutionDeviation(
             PlanResourceLocalReplanDTO.ExecutionDeviationAssessCommand command);
 
-    /** 业务MPS来源采用全部工序实时证据；原始数量不改，保留既有三候选和A3发布链。 */
+    /**
+     * 业务MPS来源采用全部工序实时证据；原始数量不改，保留既有三候选和A3发布链。
+     */
     PlanResourceLocalReplanDTO.Scenario assessMpsRemaining(
             PlanResourceLocalReplanDTO.ExecutionDeviationAssessCommand command, int toleranceMinutes);
 
@@ -87,7 +89,9 @@ public interface PlnResourceLocalReplanService {
      */
     PlanResourceLocalReplanDTO.PublishReceipt publish(PlanResourceLocalReplanDTO.PublishCommand command);
 
-    /** 只读核对MPS原发布链；恢复仍须原号、原实名发布人和独立A3权限。 */
+    /**
+     * 只读核对MPS原发布链；恢复仍须原号、原实名发布人和独立A3权限。
+     */
     PlnMpsPublicationRecoveryDTO mpsPublicationRecovery(Long caseId);
 
     /**

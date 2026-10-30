@@ -33,7 +33,9 @@ public class PlnErpPostingEnvelope {
     private String formalPlanContractNo;
     private Integer formalPlanContractVersion;
     private String formalPlanContractFingerprint;
-    /** 领域载荷的规范 JSON；不能包含 ERP 密钥、任意回调地址或浏览器令牌。 */
+    /**
+     * 领域载荷的规范 JSON；不能包含 ERP 密钥、任意回调地址或浏览器令牌。
+     */
     private String payloadJson;
     private LocalDateTime occurredTime;
 }

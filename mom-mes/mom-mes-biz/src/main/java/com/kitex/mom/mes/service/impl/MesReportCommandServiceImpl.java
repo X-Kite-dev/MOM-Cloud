@@ -7,10 +7,10 @@ import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesReportCommandReceiptDTO;
-import com.kitex.mom.mes.dto.MesTaskReportVO;
 import com.kitex.mom.mes.dto.MesReportOperatorContextDTO;
-import com.kitex.mom.mes.entity.MesReportRequestCloseEntity;
+import com.kitex.mom.mes.dto.MesTaskReportVO;
 import com.kitex.mom.mes.entity.MesReportCommandEntity;
+import com.kitex.mom.mes.entity.MesReportRequestCloseEntity;
 import com.kitex.mom.mes.entity.MesTaskReportEntity;
 import com.kitex.mom.mes.enums.MesReportChannelEnum;
 import com.kitex.mom.mes.mapper.MesReportCommandMapper;
@@ -27,12 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
-import java.util.Collection;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * 报工原正文版本化幂等。
@@ -59,7 +54,9 @@ public class MesReportCommandServiceImpl extends ServiceImpl<MesReportCommandMap
         return captureInternal(command, channel, false);
     }
 
-    /** 封存入口复用同一原正文算法和请求锁，不能生成不同格式的“取消命令”。 */
+    /**
+     * 封存入口复用同一原正文算法和请求锁，不能生成不同格式的“取消命令”。
+     */
     private CapturedCommand captureInternal(MesTaskReportVO command, MesReportChannelEnum channel, boolean closing) {
         String factory = factoryAccess.require("write");
         require(command != null && channel != null, "缺少报工命令或可信入口");
@@ -128,9 +125,9 @@ public class MesReportCommandServiceImpl extends ServiceImpl<MesReportCommandMap
         }
         if (old != null) {
             require(Objects.equals(old.getFactoryCode(), factory) && Objects.equals(old.getActorId(), actor.getId())
-                    && version.equals(old.getCommandVersion()) && Objects.equals(old.getChannel(), channel.name())
-                    && Objects.equals(old.getRequestFingerprint(), fingerprint)
-                    && Objects.equals(old.getCommandSnapshot(), snapshot),
+                            && version.equals(old.getCommandVersion()) && Objects.equals(old.getChannel(), channel.name())
+                            && Objects.equals(old.getRequestFingerprint(), fingerprint)
+                            && Objects.equals(old.getCommandSnapshot(), snapshot),
                     "原报工请求号已被不同正文、入口、人员或工厂使用；请核对原回执，不能覆盖或换号重记");
             require("ACCEPTED".equals(old.getStatus()) && old.getReportId() != null, "原报工永久回执异常，请人工核查");
             command.setReportId(old.getReportId());
@@ -164,12 +161,12 @@ public class MesReportCommandServiceImpl extends ServiceImpl<MesReportCommandMap
     public void accept(CapturedCommand captured, MesTaskReportEntity report) {
         String factory = factoryAccess.require("write");
         require(captured != null && captured.replayReportId() == null && report != null && report.getId() != null
-                        && Objects.equals(captured.tenantId(), TenantContextHolder.getTenantId())
-                        && Objects.equals(captured.factoryCode(), factory)
-                        && Objects.equals(captured.actorId(), SecurityUtils.getUser().getId())
-                        && Objects.equals(captured.requestId(), report.getRequestId())
-                        && Objects.equals(captured.factoryCode(), report.getFactoryCode())
-                        && Objects.equals(captured.tenantId(), report.getTenantId()), "原正文与实际报工归属不一致");
+                && Objects.equals(captured.tenantId(), TenantContextHolder.getTenantId())
+                && Objects.equals(captured.factoryCode(), factory)
+                && Objects.equals(captured.actorId(), SecurityUtils.getUser().getId())
+                && Objects.equals(captured.requestId(), report.getRequestId())
+                && Objects.equals(captured.factoryCode(), report.getFactoryCode())
+                && Objects.equals(captured.tenantId(), report.getTenantId()), "原正文与实际报工归属不一致");
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("version", captured.version());
         result.put("reportId", report.getId().toString());
@@ -286,7 +283,9 @@ public class MesReportCommandServiceImpl extends ServiceImpl<MesReportCommandMap
         }
     }
 
-    /** 永久账只能通过capture/accept/receipt操作，避免通用CRUD绕过原子受理。 */
+    /**
+     * 永久账只能通过capture/accept/receipt操作，避免通用CRUD绕过原子受理。
+     */
     @Override
     public MesReportCommandMapper getBaseMapper() {
         throw new CheckedException("报工命令账禁止通用CRUD，请使用领域命令与原号查询");

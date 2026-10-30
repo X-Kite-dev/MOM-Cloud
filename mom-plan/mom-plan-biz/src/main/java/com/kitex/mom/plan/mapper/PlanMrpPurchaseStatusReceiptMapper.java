@@ -8,6 +8,6 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface PlanMrpPurchaseStatusReceiptMapper extends MomBaseMapper<PlanMrpPurchaseStatusReceiptEntity> {
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('PLAN_MRP_PURCHASE_STATUS:',#{eventId}),0))")
-    void lockEvent(@Param("eventId") String eventId);
+    @Select("SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(CONCAT('PLAN_MRP_PURCHASE_STATUS:',#{eventId}),0))")
+    Integer lockEvent(@Param("eventId") String eventId);
 }

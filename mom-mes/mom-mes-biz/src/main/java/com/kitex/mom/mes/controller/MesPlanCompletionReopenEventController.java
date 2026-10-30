@@ -10,7 +10,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
-/** MES完工重新打开向PLAN可靠回写的查询、核验和死信续投入口。 */
+/**
+ * MES完工重新打开向PLAN可靠回写的查询、核验和死信续投入口。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/mesTask/plan-completion-reopen")

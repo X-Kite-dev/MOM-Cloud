@@ -5,7 +5,10 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.kitex.common.core.entity.SearchPage;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.excel.annotation.RequestExcel;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.mom.plan.dto.TemporaryPlanQueryDTO;
@@ -14,7 +17,10 @@ import com.kitex.mom.wms.dto.WmsLiveStockDynamicGroupDTO;
 import com.kitex.mom.wms.dto.WmsLiveStockQueryDTO;
 import com.kitex.mom.wms.dto.WmsLiveStockQuerySumDTO;
 import com.kitex.mom.wms.entity.WmsLiveStockEntity;
+import com.kitex.mom.wms.enums.menu.LiveStockMenuTypeEnum;
 import com.kitex.mom.wms.service.WmsLiveStockService;
+import com.kitex.mom.wms.service.impl.WmsLiveStockReadAccess;
+import com.kitex.mom.wms.service.impl.WmsOperationStockSummaryAccess;
 import com.kitex.mom.wms.vo.WmsLiveStockByMaterialExcelVO;
 import com.kitex.mom.wms.vo.WmsLiveStockBySupplierExcelVO;
 import com.kitex.mom.wms.vo.WmsLiveStockDetailExcelVO;
@@ -46,6 +52,8 @@ import java.util.Map;
 public class WmsMaterialLiveStockController {
 
     private final WmsLiveStockService wmsLiveStockService;
+    private final WmsLiveStockReadAccess readAccess;
+    private final WmsOperationStockSummaryAccess operationSummaryAccess;
 
     /**
      * 获取库存条数
@@ -53,7 +61,10 @@ public class WmsMaterialLiveStockController {
     @Operation(summary = "获取库存条数", description = "获取库存条数")
     @GetMapping("/getLiveStockDetailNum")
     public R getLiveStockDetailNum(@RequestParam String warehouseCode) {
+        readAccess.requireView(LiveStockMenuTypeEnum.STOCK_DETAIL, warehouseCode);
         return R.ok(wmsLiveStockService.count(new LambdaQueryWrapper<WmsLiveStockEntity>()
+                .eq(WmsLiveStockEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(WmsLiveStockEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
                 .eq(WmsLiveStockEntity::getWarehouseCode, warehouseCode)
                 .ne(WmsLiveStockEntity::getMatNum, 0)
         ));
@@ -68,8 +79,8 @@ public class WmsMaterialLiveStockController {
      */
     @Operation(summary = "分页查询-库存明细", description = "分页查询-库存明细")
     @GetMapping("/page")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsLiveStock_view')")
     public R getWmsLiveStockPage(@ParameterObject SearchPage page, @ParameterObject WmsLiveStockQueryDTO wmsLiveStock) {
+        readAccess.requireView(LiveStockMenuTypeEnum.STOCK_DETAIL, wmsLiveStock.getWarehouseCode());
         return R.ok(wmsLiveStockService.pageDetail(page.toMpPage(), wmsLiveStock));
     }
 
@@ -82,8 +93,8 @@ public class WmsMaterialLiveStockController {
      */
     @Operation(summary = "分页查询-物料级", description = "分页查询-物料级")
     @GetMapping("/pageByMat")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsLiveStock_view')")
     public R getWmsLiveStockPageByMat(@ParameterObject SearchPage page, @ParameterObject WmsLiveStockQueryDTO wmsLiveStock) {
+        readAccess.requireView(LiveStockMenuTypeEnum.BY_MATERIAL, wmsLiveStock.getWarehouseCode());
         QueryWrapper<WmsLiveStockEntity> wrapper = getQueryWrapperByMat(wmsLiveStock);
         return R.ok(wmsLiveStockService.page(page.toMpPage(), wrapper));
     }
@@ -91,7 +102,9 @@ public class WmsMaterialLiveStockController {
     public QueryWrapper<WmsLiveStockEntity> getQueryWrapperByMat(WmsLiveStockQueryDTO wmsLiveStock) {
         QueryWrapper<WmsLiveStockEntity> wrapper = new QueryWrapper<>();
         wrapper.select("mat_code", "mat_name", "mat_spec", "mat_unit", "sum(mat_num) as mat_num");
-        wrapper.lambda().like(StrUtil.isNotBlank(wmsLiveStock.getMatCode()), WmsLiveStockEntity::getMatCode, wmsLiveStock.getMatCode())
+        wrapper.lambda().eq(WmsLiveStockEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(WmsLiveStockEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
+                .like(StrUtil.isNotBlank(wmsLiveStock.getMatCode()), WmsLiveStockEntity::getMatCode, wmsLiveStock.getMatCode())
                 .in(CollUtil.isNotEmpty(wmsLiveStock.getSiteCode()), WmsLiveStockEntity::getSiteCode, wmsLiveStock.getSiteCode())
                 .like(StrUtil.isNotBlank(wmsLiveStock.getMatName()), WmsLiveStockEntity::getMatName, wmsLiveStock.getMatName())
                 .like(StrUtil.isNotBlank(wmsLiveStock.getMatBatch()), WmsLiveStockEntity::getMatBatch, wmsLiveStock.getMatBatch())
@@ -110,8 +123,8 @@ public class WmsMaterialLiveStockController {
      */
     @Operation(summary = "分页查询-供应商级", description = "分页查询-供应商级")
     @GetMapping("/pageBySupplier")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsLiveStock_view')")
     public R pageBySupplier(@ParameterObject SearchPage page, @ParameterObject WmsLiveStockQueryDTO wmsLiveStock) {
+        readAccess.requireView(LiveStockMenuTypeEnum.BY_SUPPLIER, wmsLiveStock.getWarehouseCode());
         QueryWrapper<WmsLiveStockEntity> wrapper = getQueryWrapperBySupplier(wmsLiveStock);
         return R.ok(wmsLiveStockService.page(page.toMpPage(), wrapper));
     }
@@ -119,7 +132,9 @@ public class WmsMaterialLiveStockController {
     public QueryWrapper<WmsLiveStockEntity> getQueryWrapperBySupplier(WmsLiveStockQueryDTO wmsLiveStock) {
         QueryWrapper<WmsLiveStockEntity> wrapper = new QueryWrapper<>();
         wrapper.select("supplier_code", "supplier_name", "mat_code", "mat_name", "mat_unit", "sum(mat_num) as mat_num");
-        wrapper.lambda().like(StrUtil.isNotBlank(wmsLiveStock.getMatCode()), WmsLiveStockEntity::getMatCode, wmsLiveStock.getMatCode())
+        wrapper.lambda().eq(WmsLiveStockEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(WmsLiveStockEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
+                .like(StrUtil.isNotBlank(wmsLiveStock.getMatCode()), WmsLiveStockEntity::getMatCode, wmsLiveStock.getMatCode())
                 .in(CollUtil.isNotEmpty(wmsLiveStock.getSiteCode()), WmsLiveStockEntity::getSiteCode, wmsLiveStock.getSiteCode())
                 .like(StrUtil.isNotBlank(wmsLiveStock.getSupplierCode()), WmsLiveStockEntity::getSupplierCode, wmsLiveStock.getSupplierCode())
                 .like(StrUtil.isNotBlank(wmsLiveStock.getSupplierName()), WmsLiveStockEntity::getSupplierName, wmsLiveStock.getSupplierName())
@@ -151,7 +166,9 @@ public class WmsMaterialLiveStockController {
      */
     @Operation(summary = "查询汇总一条数据", description = "查询汇总一条数据")
     @GetMapping("/getSumByParams")
-    public R getSumByParams(@Valid @ParameterObject WmsLiveStockQuerySumDTO params) {
+    public R getSumByParams(@Valid @ParameterObject WmsLiveStockQuerySumDTO params,
+            @RequestParam("operation") String operation) {
+        operationSummaryAccess.require(operation, params.getWarehouseCode());
         return R.ok(wmsLiveStockService.getSumByParams(params));
     }
 
@@ -164,9 +181,10 @@ public class WmsMaterialLiveStockController {
      */
     @Operation(summary = "通过id查询", description = "通过id查询")
     @GetMapping("/{id}")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsLiveStock_view')")
     public R getById(@PathVariable("id") String id) {
-        return R.ok(wmsLiveStockService.getById(id));
+        WmsLiveStockEntity stock = wmsLiveStockService.getById(id);
+        readAccess.requireViewRow(stock);
+        return R.ok(stock);
     }
 
     /**
@@ -178,8 +196,8 @@ public class WmsMaterialLiveStockController {
      */
     @ResponseExcel
     @GetMapping("/export")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsLiveStock_export')")
     public List<WmsLiveStockDetailExcelVO> export(WmsLiveStockQueryDTO wmsLiveStock, String[] ids) {
+        readAccess.requireExport(LiveStockMenuTypeEnum.STOCK_DETAIL, wmsLiveStock.getWarehouseCode());
         return wmsLiveStockService.listDetail(wmsLiveStock, ids);
     }
 
@@ -191,8 +209,8 @@ public class WmsMaterialLiveStockController {
      */
     @ResponseExcel
     @GetMapping("/exportByMat")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsLiveStock_export')")
     public List<WmsLiveStockByMaterialExcelVO> exportByMat(WmsLiveStockQueryDTO wmsLiveStock) {
+        readAccess.requireExport(LiveStockMenuTypeEnum.BY_MATERIAL, wmsLiveStock.getWarehouseCode());
         return wmsLiveStockService.listByMat(getQueryWrapperByMat(wmsLiveStock));
     }
 
@@ -204,8 +222,8 @@ public class WmsMaterialLiveStockController {
      */
     @ResponseExcel
     @GetMapping("/exportBySupplier")
-//	@PreAuthorize("@pms.hasPermission('wms_wmsLiveStock_export')")
     public List<WmsLiveStockBySupplierExcelVO> exportBySupplier(WmsLiveStockQueryDTO wmsLiveStock) {
+        readAccess.requireExport(LiveStockMenuTypeEnum.BY_SUPPLIER, wmsLiveStock.getWarehouseCode());
         return wmsLiveStockService.listBySupplier(getQueryWrapperBySupplier(wmsLiveStock));
     }
 
@@ -217,8 +235,29 @@ public class WmsMaterialLiveStockController {
      * @return ok fail
      */
     @PostMapping("/import")
-    public R importExcel(@RequestExcel List<WmsLiveStockImportExcelVO> excelVOS, BindingResult bindingResult, String warehouseCode, Long factoryCode) {
-        return wmsLiveStockService.importExcel(excelVOS, bindingResult, warehouseCode, String.valueOf(factoryCode));
+    public R importExcel(@RequestExcel List<WmsLiveStockImportExcelVO> excelVOS, BindingResult bindingResult,
+                         String warehouseCode) {
+        if (excelVOS == null || excelVOS.isEmpty()) {
+            throw new CheckedException("导入文件没有库存数据");
+        }
+        if (StrUtil.isNotBlank(warehouseCode)) {
+            readAccess.requireExport(LiveStockMenuTypeEnum.STOCK_DETAIL, warehouseCode);
+            for (WmsLiveStockImportExcelVO row : excelVOS) {
+                if (row == null || (StrUtil.isNotBlank(row.getWarehouseCode())
+                        && !warehouseCode.equals(row.getWarehouseCode()))) {
+                    throw new CheckedException("导入行仓库与目标仓库不一致");
+                }
+            }
+        } else {
+            for (WmsLiveStockImportExcelVO row : excelVOS) {
+                if (row == null || StrUtil.isBlank(row.getWarehouseCode())) {
+                    throw new CheckedException("导入行缺少仓库编码");
+                }
+                readAccess.requireExport(LiveStockMenuTypeEnum.STOCK_DETAIL, row.getWarehouseCode());
+            }
+        }
+        return wmsLiveStockService.importExcel(excelVOS, bindingResult, warehouseCode,
+                FactoryContextHolder.getFactoryCode());
     }
 
     /**
@@ -259,6 +298,7 @@ public class WmsMaterialLiveStockController {
     @Operation(summary = "动态分组查询库存", description = "根据指定字段动态分组查询库存，支持分页")
     @GetMapping("/liveStock/queryByDynamicGroup")
     public R queryByDynamicGroup(@ParameterObject SearchPage page, @ParameterObject WmsLiveStockDynamicGroupDTO queryDTO) {
+        readAccess.requireView(LiveStockMenuTypeEnum.STOCK_DETAIL, queryDTO.getWarehouseCode());
         return R.ok(wmsLiveStockService.queryByDynamicGroup(page.toMpPage(), queryDTO));
     }
 }

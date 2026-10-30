@@ -1,13 +1,18 @@
 package com.kitex.mom.plan.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.plan.entity.PlnAutomationEventEntity;
 import com.kitex.mom.plan.entity.PlnAutomationEventOperationEntity;
 import com.kitex.mom.plan.entity.PlnAutomationEventPolicyEntity;
 import com.kitex.mom.plan.mapper.PlnAutomationEventMapper;
 import com.kitex.mom.plan.mapper.PlnAutomationEventOperationMapper;
 import com.kitex.mom.plan.mapper.PlnAutomationEventPolicyMapper;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,8 +37,20 @@ public class PlnAutomationEventFailureService {
     @Transactional(rollbackFor = Exception.class, propagation = Propagation.REQUIRES_NEW)
     public Boolean markFailure(Long eventInboxId, Throwable failure, boolean retryable) {
         PlnAutomationEventEntity event = eventMapper.lockById(eventInboxId);
-        if (event == null || !("RECEIVED".equals(event.getStatus()) || "RETRY_WAIT".equals(event.getStatus())))
-            return false;
+        if (event == null
+                || !("RECEIVED".equals(event.getStatus())
+                || "RETRY_WAIT".equals(event.getStatus()))) return false;
+        require(
+                Objects.equals(event.getTenantId(), TenantContextHolder.getTenantId())
+                        && event.getTenantId() != null
+                        && event.getTenantId() > 0
+                        && Objects.equals(
+                        event.getFactoryCode(), FactoryContextHolder.getFactoryCode())
+                        && event.getFactoryCode() != null
+                        && !event.getFactoryCode().isBlank()
+                        && !TenantContextHolder.getTenantSkip()
+                        && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()),
+                "制造事件失败账必须进入实际租户工厂");
         int attempt = Objects.requireNonNullElse(event.getAttemptCount(), 0) + 1;
         int maxAttempts = Objects.requireNonNullElse(event.getMaxAttempts(), 5);
         String before = event.getStatus();
@@ -46,14 +63,55 @@ public class PlnAutomationEventFailureService {
             next = LocalDateTime.now().plusSeconds(backoffSeconds(event, attempt));
         }
         String message = compactMessage(failure);
-        event.setStatus(after).setAttemptCount(attempt).setNextAttemptTime(next).setLastStartedTime(LocalDateTime.now())
-                .setLastErrorCode(failure.getClass().getSimpleName()).setLastErrorMessage(message);
-        require(eventMapper.updateById(event) == 1, "事件失败状态保存失败");
-        require(operationMapper.insert(new PlnAutomationEventOperationEntity().setEventId(event.getId())
-                .setRequestId("FAIL:" + event.getEventNo() + ':' + attempt).setOperationType("PROCESS_FAILURE")
-                .setBeforeStatus(before).setAfterStatus(after).setAttemptNo(attempt).setContent(message)
-                .setOperatorCode("SYSTEM").setOperatorName("系统事件处理器").setOperationTime(LocalDateTime.now())
-                .setFactoryCode(event.getFactoryCode())) == 1, "事件失败履历保存失败");
+        event.setStatus(after)
+                .setAttemptCount(attempt)
+                .setNextAttemptTime(next)
+                .setLastStartedTime(LocalDateTime.now())
+                .setLastErrorCode(failure.getClass().getSimpleName())
+                .setLastErrorMessage(message);
+        require(
+                eventMapper.update(
+                        null,
+                        new LambdaUpdateWrapper<PlnAutomationEventEntity>()
+                                .eq(
+                                        PlnAutomationEventEntity::getTenantId,
+                                        event.getTenantId())
+                                .eq(
+                                        PlnAutomationEventEntity::getFactoryCode,
+                                        event.getFactoryCode())
+                                .eq(PlnAutomationEventEntity::getId, event.getId())
+                                .eq(PlnAutomationEventEntity::getStatus, before)
+                                .set(PlnAutomationEventEntity::getStatus, after)
+                                .set(PlnAutomationEventEntity::getAttemptCount, attempt)
+                                .set(PlnAutomationEventEntity::getNextAttemptTime, next)
+                                .set(
+                                        PlnAutomationEventEntity::getLastStartedTime,
+                                        event.getLastStartedTime())
+                                .set(
+                                        PlnAutomationEventEntity::getLastErrorCode,
+                                        event.getLastErrorCode())
+                                .set(PlnAutomationEventEntity::getLastErrorMessage, message)
+                                .set(
+                                        PlnAutomationEventEntity::getUpdateTime,
+                                        LocalDateTime.now()))
+                        == 1,
+                "事件失败状态保存失败");
+        require(
+                operationMapper.insert(
+                        new PlnAutomationEventOperationEntity()
+                                .setEventId(event.getId())
+                                .setRequestId("FAIL:" + event.getEventNo() + ':' + attempt)
+                                .setOperationType("PROCESS_FAILURE")
+                                .setBeforeStatus(before)
+                                .setAfterStatus(after)
+                                .setAttemptNo(attempt)
+                                .setContent(message)
+                                .setOperatorCode("SYSTEM")
+                                .setOperatorName("系统事件处理器")
+                                .setOperationTime(LocalDateTime.now())
+                                .setFactoryCode(event.getFactoryCode()))
+                        == 1,
+                "事件失败履历保存失败");
         return true;
     }
 

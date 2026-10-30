@@ -16,14 +16,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.Collection;
-import java.util.List;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
 
-/** 原号封存与成功报工互斥；不读取当前夹具关系或修改生产数量。 */
+/**
+ * 原号封存与成功报工互斥；不读取当前夹具关系或修改生产数量。
+ */
 @Service
 @RequiredArgsConstructor
 public class MesReportRequestCloseServiceImpl extends ServiceImpl<MesReportRequestCloseMapper, MesReportRequestCloseEntity>
@@ -39,7 +41,7 @@ public class MesReportRequestCloseServiceImpl extends ServiceImpl<MesReportReque
         String factory = factoryAccess.require("read");
         MesReportRequestCloseEntity row = baseMapper.findPermanent(TenantContextHolder.getTenantId(), requestId);
         require(row == null || (Objects.equals(row.getFactoryCode(), factory)
-                && Objects.equals(row.getActorId(), SecurityUtils.getUser().getId())),
+                        && Objects.equals(row.getActorId(), SecurityUtils.getUser().getId())),
                 "当前工厂下未找到本人原号封存证据");
         return row;
     }
@@ -60,7 +62,7 @@ public class MesReportRequestCloseServiceImpl extends ServiceImpl<MesReportReque
         commandMapper.lockRequest("MES_REPORT_REQUEST_LOCK_V2:" + tenant + ":"
                 + HexFormat.of().formatHex(captured.requestId().getBytes(StandardCharsets.UTF_8)));
         require(commandMapper.findPermanent(tenant, captured.requestId()) == null
-                && reportMapper.countHistoricalRequest(tenant, captured.requestId()) == 0,
+                        && reportMapper.countHistoricalRequest(tenant, captured.requestId()) == 0,
                 "原号已有生产事实或未知历史，不能封存为未受理，请查询原结果");
         MesReportRequestCloseEntity existing = findOwn(captured.requestId());
         if (existing != null) {
@@ -87,7 +89,9 @@ public class MesReportRequestCloseServiceImpl extends ServiceImpl<MesReportReque
         return row;
     }
 
-    /** 永久证据只能通过领域入口追加，禁止所有通用增删改。 */
+    /**
+     * 永久证据只能通过领域入口追加，禁止所有通用增删改。
+     */
     @Override
     public MesReportRequestCloseMapper getBaseMapper() {
         throw new CheckedException("原号封存账禁止通用CRUD");

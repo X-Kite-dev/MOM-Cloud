@@ -22,10 +22,12 @@ import com.kitex.mom.mes.enums.ReportStatusEnum;
 import com.kitex.mom.mes.enums.WarehouseInBizTypeEnum;
 import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
+import com.kitex.mom.mes.service.impl.MesMaterialConsumptionModeResolver;
 import com.kitex.mom.mes.util.MesMaterialSubstituteResolver;
 import com.kitex.mom.mes.util.MesTaskUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -47,6 +49,10 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
     protected final RemoteMaterialService matService;
 
     private final MesWarehouseFeedService feedService;
+
+    // 保留各报工执行器既有构造合同，模式由所有执行器共享的真实开工依据解析。
+    @Autowired
+    private MesMaterialConsumptionModeResolver consumptionModes;
 
     /**
      * 各报工模式共用的报工记录构造，避免模式之间形成不同的数据口径。
@@ -136,16 +142,10 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
     public void use(MesTaskReportVO params) {
         log.info("通用物料消耗");
 
-        var configuration = remoteParamService.getByKey("BACK_FLUSH");
-        if (configuration == null || !configuration.isOk()
-                || !("0".equals(configuration.getData()) || "1".equals(configuration.getData()))) {
-            throw new CheckedException("无法核定实际倒冲配置，不能默认为投料消耗");
-        }
-        String backFlushFlag = configuration.getData();
         MesTaskArrangeEntity arrange = params.getTaskArrange();
         MesTaskEntity task = params.getTask();
         // 倒冲则直接在线边库中扣除
-        if ("1".equals(backFlushFlag)) {
+        if (consumptionModes.resolve(arrange) == MesMaterialConsumptionModeResolver.Mode.BACKFLUSH) {
             ProcessProcedureDTO currentProcess = MesTaskUtils.getCurrentProcess(params.getTask().getProcessRouteSnapshot(),
                     arrange.getRouteCode(), arrange.getSourceRouteNodeCode());
             // 工序的物料信息
@@ -182,7 +182,7 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
         List<MesMaterialSubstituteResolver.Candidate> candidates = policy.candidates();
         if (!policy.allowMixed()) {
             candidates = policy.candidates().stream()
-                    .filter(candidate -> availableBackflush(arrange, candidate.actualMatCode())
+                    .filter(candidate -> availableBackflush(arrange, requirement.getMaterialCode(), candidate)
                             .compareTo(totalRequirement.multiply(candidate.ratio())) >= 0)
                     .findFirst().map(List::of)
                     .orElseThrow(() -> new CheckedException("需求物料[" + requirement.getMaterialCode()
@@ -192,7 +192,7 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
             if (remainingRequirement.compareTo(BigDecimal.ZERO) == 0) {
                 break;
             }
-            BigDecimal availableActual = availableBackflush(arrange, candidate.actualMatCode());
+            BigDecimal availableActual = availableBackflush(arrange, requirement.getMaterialCode(), candidate);
             if (availableActual.compareTo(BigDecimal.ZERO) <= 0) {
                 continue;
             }
@@ -235,9 +235,14 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
         }
     }
 
-    private BigDecimal availableBackflush(MesTaskArrangeEntity arrange, String actualMatCode) {
+    private BigDecimal availableBackflush(MesTaskArrangeEntity arrange, String requirement,
+                                          MesMaterialSubstituteResolver.Candidate candidate) {
         var request = new MesWarehouseLiveStockInoutDTO();
-        request.setMatCode(actualMatCode);
+        request.setMatCode(candidate.actualMatCode());
+        request.setBillNo(arrange.getCode());
+        request.setRequirementMatCode(requirement);
+        request.setSubstituteRatio(candidate.ratio());
+        request.setSubstituteFlag(candidate.substitute());
         request.setFactoryCode(arrange.getFactoryCode());
         request.setProduceTaskCode(arrange.getProduceTaskCode());
         request.setAllowUnassignedProduceTask(true);

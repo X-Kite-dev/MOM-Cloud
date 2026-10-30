@@ -11,9 +11,16 @@ import com.kitex.mom.plan.dto.PlnApsDecisionDTO;
  */
 public interface PlnApsSolverFacade {
 
-    /** 复核案件证据并预览现有 APS 求解范围，不产生情景。 */
+    /**
+     * 复核案件证据并预览现有 APS 求解范围，不产生情景。
+     */
     PlnApsDecisionDTO.Preview preview(Long caseId, PlnApsDecisionDTO.RunCommand command);
 
-    /** 复核证据后运行多候选求解，并把唯一情景原子绑定到案件。 */
+    /**
+     * 复核证据后运行多候选求解，并把唯一情景原子绑定到案件。
+     */
     PlanSchedulingAgentDTO.ScenarioEvidence run(Long caseId, PlnApsDecisionDTO.RunCommand command);
+
+    /** 在当前租户、工厂和案件内核对原求解回执，不触发重新求解。 */
+    PlnApsDecisionDTO.RequestReceipt lookupRequest(Long caseId, String requestId);
 }

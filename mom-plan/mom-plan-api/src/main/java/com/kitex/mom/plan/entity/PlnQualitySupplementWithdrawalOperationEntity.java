@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 补产撤回不可变操作履历，兼作所有人工命令的永久幂等账。 */
+/**
+ * 补产撤回不可变操作履历，兼作所有人工命令的永久幂等账。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

@@ -44,7 +44,9 @@ public interface MesWarehouseLiveStockService extends IService<MesWarehouseLiveS
      */
     List<MesWarehouseLiveStockEntity> previewOutCandidates(MesWarehouseLiveStockInoutDTO request);
 
-    /** 投料来源全集观察，明确按来源仓库筛选；不虚构扣库数量/谱系或承诺库存预留。 */
+    /**
+     * 投料来源全集观察，明确按来源仓库筛选；不虚构扣库数量/谱系或承诺库存预留。
+     */
     List<MesWarehouseLiveStockEntity> previewFeedSources(MesWarehouseLiveStockInoutDTO request);
 
     /**

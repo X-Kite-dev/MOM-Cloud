@@ -163,7 +163,7 @@ public class PrintTemplateController {
      */
     @GetMapping("/preview")
     public R<String> preview(String code) {
-        return R.ok(printTemplateService.preview(code));
+        return R.ok(printTemplateService.preview(code), null);
     }
 
     /**

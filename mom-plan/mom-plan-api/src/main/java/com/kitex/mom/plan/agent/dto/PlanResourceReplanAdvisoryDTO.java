@@ -80,7 +80,9 @@ public final class PlanResourceReplanAdvisoryDTO {
         private String issueStatus;
         private Boolean lockStatus;
         private Long lockTaskId;
-        /** NO_CASE/A2_SELECTION_REQUIRED/A3_REVIEW_REQUIRED/PUBLISHED/REASSESS_REQUIRED/NO_FEASIBLE_CANDIDATE。 */
+        /**
+         * NO_CASE/A2_SELECTION_REQUIRED/A3_REVIEW_REQUIRED/PUBLISHED/REASSESS_REQUIRED/NO_FEASIBLE_CANDIDATE。
+         */
         private String advisoryStatus;
         private String nextControlledAction;
         private Integer candidateCount;

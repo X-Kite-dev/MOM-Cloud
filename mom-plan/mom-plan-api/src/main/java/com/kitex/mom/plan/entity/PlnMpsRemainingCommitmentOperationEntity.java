@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 剩余责任领域命令的追加式永久回执，不可改删。 */
+/**
+ * 剩余责任领域命令的追加式永久回执，不可改删。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -20,53 +22,77 @@ import java.time.LocalDateTime;
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "剩余责任领域命令的追加式永久回执，不可改删")
 public class PlnMpsRemainingCommitmentOperationEntity extends BaseEntity<PlnMpsRemainingCommitmentOperationEntity> {
-    /** 合法剩余责任案件ID。 */
+    /**
+     * 合法剩余责任案件ID。
+     */
     @Schema(description = "合法剩余责任案件ID")
     @JsonSerialize(using = ToStringSerializer.class)
     private Long commitmentId;
 
-    /** 精确原MPS桶ID。 */
+    /**
+     * 精确原MPS桶ID。
+     */
     @Schema(description = "精确原MPS桶ID")
     @JsonSerialize(using = ToStringSerializer.class)
     private Long mpsLineId;
 
-    /** 本次领域命令永久号，与编制/复核/取消原号对应。 */
+    /**
+     * 本次领域命令永久号，与编制/复核/取消原号对应。
+     */
     @Schema(description = "本次领域命令永久号，与编制/复核/取消原号对应")
     private String requestId;
 
-    /** 规范化原载荷及实际实名指纹。 */
+    /**
+     * 规范化原载荷及实际实名指纹。
+     */
     @Schema(description = "规范化原载荷及实际实名指纹")
     private String requestFingerprint;
 
-    /** SUBMIT/CANCEL/REJECT/STALE/PUBLISH，不是任意状态编辑。 */
+    /**
+     * SUBMIT/CANCEL/REJECT/STALE/PUBLISH，不是任意状态编辑。
+     */
     @Schema(description = "SUBMIT/CANCEL/REJECT/STALE/PUBLISH，不是任意状态编辑")
     private String operationType;
 
-    /** 原状态，首次编制为空。 */
+    /**
+     * 原状态，首次编制为空。
+     */
     @Schema(description = "原状态，首次编制为空")
     private String beforeStatus;
 
-    /** 本次合法落账状态。 */
+    /**
+     * 本次合法落账状态。
+     */
     @Schema(description = "本次合法落账状态")
     private String afterStatus;
 
-    /** 实际认证实名账号。 */
+    /**
+     * 实际认证实名账号。
+     */
     @Schema(description = "实际认证实名账号")
     private String operatorCode;
 
-    /** 规范化原命令及合法前后状态证据。 */
+    /**
+     * 规范化原命令及合法前后状态证据。
+     */
     @Schema(description = "规范化原命令及合法前后状态证据")
     private String commandSnapshot;
 
-    /** 完整不可变回执，未知响应只能按原号核对。 */
+    /**
+     * 完整不可变回执，未知响应只能按原号核对。
+     */
     @Schema(description = "完整不可变回执，未知响应只能按原号核对")
     private String receiptSnapshot;
 
-    /** 实际领域命令落账时刻。 */
+    /**
+     * 实际领域命令落账时刻。
+     */
     @Schema(description = "实际领域命令落账时刻")
     private LocalDateTime operatedTime;
 
-    /** 实际授权工厂编码。 */
+    /**
+     * 实际授权工厂编码。
+     */
     @Schema(description = "实际授权工厂编码")
     private String factoryCode;
 }

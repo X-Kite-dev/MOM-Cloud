@@ -9,7 +9,9 @@ import lombok.experimental.Accessors;
 
 import java.util.List;
 
-/** OMS订单变更触发的已下达供应撤回、MRP重算和最终评审命令。 */
+/**
+ * OMS订单变更触发的已下达供应撤回、MRP重算和最终评审命令。
+ */
 public final class OmsOrderSupplyReplanDTO {
     private OmsOrderSupplyReplanDTO() {
     }

@@ -2,7 +2,6 @@ package com.kitex.mom.mes.agent.service;
 
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
-import com.kitex.mom.mes.agent.dto.MesProductionStatisticsDTO;
 import com.kitex.mom.mes.agent.dto.MesProductionStatisticsDTO.*;
 import com.kitex.mom.mes.mapper.agent.MesProductionStatisticsMapper;
 import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
@@ -15,13 +14,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 真实生产统计的固定只读合同。SQL先聚合全部命中再限返排名，明细上限不参与统计。
@@ -51,7 +44,8 @@ public class MesProductionStatisticsQueryService {
         for (Map<String, Object> row : rankRows) {
             String code = text(row.get("group_code"));
             BigDecimal value = decimal(row.get("metric_value"));
-            if ("UNKNOWN".equals(code) || value == null) gaps.add("排名存在归属或指标缺失组，不能把已知组当成完整正常结论");
+            if ("UNKNOWN".equals(code) || value == null)
+                gaps.add("排名存在归属或指标缺失组，不能把已知组当成完整正常结论");
             ranking.add(new Ranking().setRank(ranking.size() + 1).setGroupCode(code).setGroupName(code)
                     .setValue(value).setMaterialCode(query.getMaterialCode()).setReportUnit(query.getReportUnit()));
         }
@@ -97,7 +91,8 @@ public class MesProductionStatisticsQueryService {
                         .setQualityPendingQuantity(null).setQualityRejectedQuantity(null);
                 gaps.add(label + "存在未冻结物料或单位的报工，UNKNOWN组数量不具备可比口径并保持空，不能合并数量");
             }
-            if (result.getIncompleteQuantityCount() > 0) gaps.add(label + "存在缺失或非法数量，受影响数量保持空，不能按零或正常处理");
+            if (result.getIncompleteQuantityCount() > 0)
+                gaps.add(label + "存在缺失或非法数量，受影响数量保持空，不能按零或正常处理");
             return result;
         }).toList();
         return new WindowStatistics().setRangeStart(start).setRangeEnd(end)
@@ -119,7 +114,8 @@ public class MesProductionStatisticsQueryService {
         result.add(delta("effectiveReportCount", null, null, BigDecimal.valueOf(current.getEffectiveReportCount()), BigDecimal.valueOf(previous.getEffectiveReportCount())));
         result.add(delta("distinctReportedTaskCount", null, null, BigDecimal.valueOf(current.getDistinctReportedTaskCount()), BigDecimal.valueOf(previous.getDistinctReportedTaskCount())));
         Map<List<String>, QuantitySummary> a = groups(current), b = groups(previous);
-        Set<List<String>> keys = new LinkedHashSet<>(a.keySet()); keys.addAll(b.keySet());
+        Set<List<String>> keys = new LinkedHashSet<>(a.keySet());
+        keys.addAll(b.keySet());
         for (List<String> key : keys) {
             QuantitySummary left = a.get(key), right = b.get(key);
             // 不存在分组代表该窗无有效事件，缺失数量则保持空，二者不可混淆。
@@ -128,11 +124,13 @@ public class MesProductionStatisticsQueryService {
         }
         return result;
     }
+
     private Map<List<String>, QuantitySummary> groups(WindowStatistics window) {
         Map<List<String>, QuantitySummary> map = new LinkedHashMap<>();
         window.getQuantitySummaries().forEach(row -> map.put(List.of(row.getMaterialCode(), row.getReportUnit()), row));
         return map;
     }
+
     private Delta delta(String metric, String material, String unit, BigDecimal current, BigDecimal previous) {
         boolean known = current != null && previous != null && !"UNKNOWN".equals(material) && !"UNKNOWN".equals(unit);
         boolean baseline = known && previous.signum() != 0;
@@ -144,15 +142,19 @@ public class MesProductionStatisticsQueryService {
     }
 
     private void validate(Query q) {
-        for (String value : new String[]{q.getTaskCode(), q.getWorkshopCode(), q.getShiftCode(), q.getMaterialCode()}) require(value == null || value.matches("[A-Za-z0-9][A-Za-z0-9._/\\-]{1,99}"), "生产统计对象编码无效");
+        for (String value : new String[]{q.getTaskCode(), q.getWorkshopCode(), q.getShiftCode(), q.getMaterialCode()})
+            require(value == null || value.matches("[A-Za-z0-9][A-Za-z0-9._/\\-]{1,99}"), "生产统计对象编码无效");
         require(q.getReportUnit() == null || q.getReportUnit().matches("[A-Za-z0-9\\p{IsHan}._/\\-]{1,20}"), "报工冻结单位无效");
-        if (Boolean.TRUE.equals(q.getAllTime())) require(q.getStartTime() == null && q.getEndTime() == null && q.getComparisonKind() == null, "完整历史统计不能夹带时间或比较窗口");
+        if (Boolean.TRUE.equals(q.getAllTime()))
+            require(q.getStartTime() == null && q.getEndTime() == null && q.getComparisonKind() == null, "完整历史统计不能夹带时间或比较窗口");
         else window(q.getStartTime(), q.getEndTime());
         if (q.getComparisonKind() != null) {
             require(Set.of("EXPLICIT", "PREVIOUS_PERIOD", "PREVIOUS_YEAR").contains(q.getComparisonKind()), "比较类型未登记");
             window(q.getComparisonStart(), q.getComparisonEnd());
-            if ("PREVIOUS_YEAR".equals(q.getComparisonKind())) require(q.getStartTime().minusYears(1).equals(q.getComparisonStart()) && q.getEndTime().minusYears(1).equals(q.getComparisonEnd()), "同比时间窗与冻结类型不一致");
-            if ("PREVIOUS_PERIOD".equals(q.getComparisonKind())) require(q.getStartTime().equals(q.getComparisonEnd()) && q.getStartTime().minusSeconds(ChronoUnit.SECONDS.between(q.getStartTime(), q.getEndTime())).equals(q.getComparisonStart()), "环比必须为等时长上一窗口");
+            if ("PREVIOUS_YEAR".equals(q.getComparisonKind()))
+                require(q.getStartTime().minusYears(1).equals(q.getComparisonStart()) && q.getEndTime().minusYears(1).equals(q.getComparisonEnd()), "同比时间窗与冻结类型不一致");
+            if ("PREVIOUS_PERIOD".equals(q.getComparisonKind()))
+                require(q.getStartTime().equals(q.getComparisonEnd()) && q.getStartTime().minusSeconds(ChronoUnit.SECONDS.between(q.getStartTime(), q.getEndTime())).equals(q.getComparisonStart()), "环比必须为等时长上一窗口");
         } else require(q.getComparisonStart() == null && q.getComparisonEnd() == null, "比较日期缺少明确类型");
         if (q.getRankGroupBy() != null) {
             require(Set.of("WORKSHOP", "SHIFT", "TASK").contains(q.getRankGroupBy())
@@ -160,12 +162,30 @@ public class MesProductionStatisticsQueryService {
                     && q.getRankDirection() != null && Set.of("ASC", "DESC").contains(q.getRankDirection())
                     && q.getRankLimit() != null && q.getRankLimit() >= 1 && q.getRankLimit() <= 50, "排名必须指定固定分组、指标、方向和1至50返回上限");
             require(!("SHIFT".equals(q.getRankGroupBy()) && "TASK_COUNT".equals(q.getRankMetric())), "工单可能跨班次，班次排名请使用报工实绩指标");
-            if (q.getRankMetric().endsWith("QUANTITY")) require(q.getMaterialCode() != null && q.getReportUnit() != null, "数量排名须明确物料与报工冻结单位");
-        } else require(q.getRankMetric() == null && q.getRankDirection() == null && q.getRankLimit() == null, "排名参数不完整");
+            if (q.getRankMetric().endsWith("QUANTITY"))
+                require(q.getMaterialCode() != null && q.getReportUnit() != null, "数量排名须明确物料与报工冻结单位");
+        } else
+            require(q.getRankMetric() == null && q.getRankDirection() == null && q.getRankLimit() == null, "排名参数不完整");
     }
-    private void window(LocalDateTime start, LocalDateTime end) { require(start != null && end != null && end.isAfter(start) && !end.isAfter(start.plusDays(366)), "统计窗口必须有效且不能超过366天"); }
-    private long number(Map<String, Object> row, String key) { Object value = row == null ? null : row.get(key); return value instanceof Number number ? number.longValue() : 0L; }
-    private BigDecimal decimal(Object value) { return value == null ? null : value instanceof BigDecimal number ? number : new BigDecimal(value.toString()); }
-    private String text(Object value) { return value == null ? "UNKNOWN" : value.toString(); }
-    private void require(boolean value, String message) { if (!value) throw new CheckedException(message); }
+
+    private void window(LocalDateTime start, LocalDateTime end) {
+        require(start != null && end != null && end.isAfter(start) && !end.isAfter(start.plusDays(366)), "统计窗口必须有效且不能超过366天");
+    }
+
+    private long number(Map<String, Object> row, String key) {
+        Object value = row == null ? null : row.get(key);
+        return value instanceof Number number ? number.longValue() : 0L;
+    }
+
+    private BigDecimal decimal(Object value) {
+        return value == null ? null : value instanceof BigDecimal number ? number : new BigDecimal(value.toString());
+    }
+
+    private String text(Object value) {
+        return value == null ? "UNKNOWN" : value.toString();
+    }
+
+    private void require(boolean value, String message) {
+        if (!value) throw new CheckedException(message);
+    }
 }

@@ -12,7 +12,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
 
-/** PLAN、APS与MES精确消费已批准工程版本的内部合同。 */
+/**
+ * PLAN、APS与MES精确消费已批准工程版本的内部合同。
+ */
 @FeignClient(contextId = "remoteMdmRouteEngineeringService", value = Constants.Name)
 public interface RemoteMdmRouteEngineeringService {
 
@@ -25,13 +27,17 @@ public interface RemoteMdmRouteEngineeringService {
     R<List<MdmRouteEngineeringDTO.ProductionCandidate>> productionCandidates(
             @RequestParam("productCode") String productCode);
 
-    /** 按releaseId、contentHash和产品编码精确取包，并重新核验当前全部工程来源。 */
+    /**
+     * 按releaseId、contentHash和产品编码精确取包，并重新核验当前全部工程来源。
+     */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mdmRouteEngineeringRelease/internal/resolve-for-production")
     R<MdmRouteEngineeringDTO.ProductionPackage> resolveForProduction(
             @RequestBody MdmRouteEngineeringDTO.ProductionQuery query);
 
-    /** MES返工执行方案读取精确原生产版本、稳定节点下的已批准覆盖候选。 */
+    /**
+     * MES返工执行方案读取精确原生产版本、稳定节点下的已批准覆盖候选。
+     */
     @InternalCall(userTokenRequired = true)
     @GetMapping("/mdmRouteEngineeringRelease/internal/rework-override-candidates")
     R<List<MdmRouteEngineeringDTO.ReworkOverrideCandidate>> reworkOverrideCandidates(
@@ -39,7 +45,9 @@ public interface RemoteMdmRouteEngineeringService {
             @RequestParam("baseContentHash") String baseContentHash,
             @RequestParam("targetRouteNodeCode") String targetRouteNodeCode);
 
-    /** MES冻结选中的单节点返工覆盖包。 */
+    /**
+     * MES冻结选中的单节点返工覆盖包。
+     */
     @InternalCall(userTokenRequired = true)
     @PostMapping("/mdmRouteEngineeringRelease/internal/resolve-for-rework-override")
     R<MdmRouteEngineeringDTO.ReworkOverridePackage> resolveForReworkOverride(

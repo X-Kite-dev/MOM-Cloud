@@ -16,98 +16,102 @@ import lombok.experimental.Accessors;
 @Schema(description = "app入库参数")
 public class WmsInBillDetailAppDTO {
 
-    /**
-     * 通知单号
-     */
-    @NotNull(message = "通知单号不能为空")
-    @Schema(description = "通知单号")
-    private Long noticeId;
+	/**
+	 * 通知单号
+	 */
+	@NotNull(message = "通知单号不能为空")
+	@Schema(description = "通知单号")
+	private Long noticeId;
 
-    /**
-     * 入库单号
-     */
-    @Schema(description = "入库单号")
-    private String billNo;
+	/** 精确来源通知明细；历史调用未提供时，仅允许唯一匹配。 */
+	@Schema(description = "来源入库通知明细ID，用于精确选择同物料多批次或多归属明细")
+	private Long noticeDetailId;
 
-    /**
-     * 物料编码
-     */
-    @NotNull(message = "物料编码不能为空")
-    @Schema(description = "物料编码")
-    private String matCode;
+	/**
+	 * 入库单号
+	 */
+	@Schema(description = "入库单号")
+	private String billNo;
 
-    /**
-     * 物料名称
-     */
-    @Schema(description = "物料名称")
-    private String matName;
+	/**
+	 * 物料编码
+	 */
+	@NotNull(message = "物料编码不能为空")
+	@Schema(description = "物料编码")
+	private String matCode;
 
-    /**
-     * 物料条码
-     */
-    @Schema(description = "物料条码")
-    private String matBarcode;
+	/**
+	 * 物料名称
+	 */
+	@Schema(description = "物料名称")
+	private String matName;
 
-    /**
-     * 物料批次
-     */
-    @NotNull(message = "物料批次不能为空")
-    @Schema(description = "物料批次")
-    private String matBatch;
+	/**
+	 * 物料条码
+	 */
+	@Schema(description = "物料条码")
+	private String matBarcode;
 
-    /**
-     * 操作数量
-     */
-    @Schema(description = "操作数量")
-    private Double operateNum;
+	/**
+	 * 物料批次
+	 */
+	@NotNull(message = "物料批次不能为空")
+	@Schema(description = "物料批次")
+	private String matBatch;
 
-    /**
-     * 操作单位
-     */
-    @Schema(description = "操作单位")
-    private String operateUnit;
+	/**
+	 * 操作数量
+	 */
+	@Schema(description = "操作数量")
+	private Double operateNum;
 
-    /**
-     * 入库数量
-     */
-    @NotNull(message = "入库数量不能为空")
-    @Schema(description = "入库数量")
-    private Double matNum;
+	/**
+	 * 操作单位
+	 */
+	@Schema(description = "操作单位")
+	private String operateUnit;
 
-    /**
-     * 供应商编码
-     */
-    @Schema(description = "供应商编码")
-    private String supplierCode;
+	/**
+	 * 入库数量
+	 */
+	@NotNull(message = "入库数量不能为空")
+	@Schema(description = "入库数量")
+	private Double matNum;
 
-    /**
-     * 供应商名称
-     */
-    @Schema(description = "供应商名称")
-    private String supplierName;
+	/**
+	 * 供应商编码
+	 */
+	@Schema(description = "供应商编码")
+	private String supplierCode;
 
-    /**
-     * 库位编码
-     */
-    @NotNull(message = "库位编码不能为空")
-    @Schema(description = "库位编码")
-    private String siteCode;
+	/**
+	 * 供应商名称
+	 */
+	@Schema(description = "供应商名称")
+	private String supplierName;
 
-    /**
-     * 库位名称
-     */
-    @Schema(description = "库位名称")
-    private String siteName;
+	/**
+	 * 库位编码
+	 */
+	@NotNull(message = "库位编码不能为空")
+	@Schema(description = "库位编码")
+	private String siteCode;
 
-    /**
-     * 容器编码
-     */
-    @Schema(description = "容器编码")
-    private String containerCode;
+	/**
+	 * 库位名称
+	 */
+	@Schema(description = "库位名称")
+	private String siteName;
 
-    /**
-     * 组织id
-     */
+	/**
+	 * 容器编码
+	 */
+	@Schema(description = "容器编码")
+	private String containerCode;
+
+	/**
+	 * 组织id
+	 */
 //	@NotNull(message = "组织id不能为空")
 //	@Schema(description = "组织id")
 //	private String factoryCode;

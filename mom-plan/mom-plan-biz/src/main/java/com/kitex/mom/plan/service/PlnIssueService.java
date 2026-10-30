@@ -2,8 +2,8 @@ package com.kitex.mom.plan.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.github.yulichang.extension.mapping.base.MPJDeepService;
-import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
 import com.kitex.mom.mdm.dto.MdmRouteEngineeringDTO;
+import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
 import com.kitex.mom.plan.dto.MonthPlanQueryDTO;
 import com.kitex.mom.plan.dto.PlnEngineeringReleaseBindDTO;
 import com.kitex.mom.plan.dto.PlnIssueModuleDTO;
@@ -47,10 +47,14 @@ public interface PlnIssueService extends MPJDeepService<PlnIssueEntity> {
      */
     Boolean module(PlnIssueModuleDTO plnIssueModuleDTO);
 
-    /** 查询单张生产计划当前产品可选择的已发布工程版本。 */
+    /**
+     * 查询单张生产计划当前产品可选择的已发布工程版本。
+     */
     List<MdmRouteEngineeringDTO.ProductionCandidate> engineeringCandidates(Long issueId);
 
-    /** 在排程、合批或下达前绑定精确工程版本对并留下变更日志。 */
+    /**
+     * 在排程、合批或下达前绑定精确工程版本对并留下变更日志。
+     */
     PlnIssueEntity bindEngineeringRelease(PlnEngineeringReleaseBindDTO command);
 
     /**

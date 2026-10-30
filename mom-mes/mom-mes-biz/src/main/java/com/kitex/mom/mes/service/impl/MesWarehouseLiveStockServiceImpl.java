@@ -21,10 +21,7 @@ import com.kitex.mom.mes.dto.MesWarehouseLiveStockInoutDTO;
 import com.kitex.mom.mes.dto.MesWarehouseStockOutReceiptDTO;
 import com.kitex.mom.mes.entity.MesWarehouseInoutEntity;
 import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
-import com.kitex.mom.mes.enums.InOutEnum;
-import com.kitex.mom.mes.enums.MesWarehouseMatDetailTypeEnum;
-import com.kitex.mom.mes.enums.QualityQuantityStatusEnum;
-import com.kitex.mom.mes.enums.YesNoEnum;
+import com.kitex.mom.mes.enums.*;
 import com.kitex.mom.mes.mapper.MesWarehouseInoutMapper;
 import com.kitex.mom.mes.mapper.MesWarehouseLiveStockMapper;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
@@ -38,13 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -62,6 +53,7 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
     private final MesWarehouseInoutMapper mesWarehouseInoutMapper;
     private final MesActualFactoryAccessService factoryAccess;
     private final MesPhysicalTransformCodec proofCodec;
+    private final MesMaterialSourceEligibility sourceEligibility;
 
     @Override
     public List<MesWarehouseLiveStockDetailExcelVO> listDetailExcel(LambdaQueryWrapper<MesWarehouseLiveStockEntity> wrapper) {
@@ -156,8 +148,8 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
      * 预检与真实扣减共用资格查询；不在预检中预留或改库存。
      */
     private QueryWrapper<MesWarehouseLiveStockEntity> stockCandidates(MesWarehouseLiveStockInoutDTO liveStock,
-                                                                    String factory, java.time.LocalDate stockDate,
-                                                                    MesWarehouseStockOutReceiptDTO.Lineage lineage) {
+                                                                      String factory, java.time.LocalDate stockDate,
+                                                                      MesWarehouseStockOutReceiptDTO.Lineage lineage) {
         QueryWrapper<MesWarehouseLiveStockEntity> queryWrapper = new QueryWrapper<>();
         queryWrapper.lambda().eq(MesWarehouseLiveStockEntity::getMatCode, liveStock.getMatCode())
                 .isNull(MesWarehouseLiveStockEntity::getQualityCaseId)
@@ -197,6 +189,14 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
                                 QualityQuantityStatusEnum.NOT_REQUIRED.name(),
                                 QualityQuantityStatusEnum.RELEASED.name(),
                                 "QUALIFIED", "RELEASE", "RECEIVE", "EXEMPTION"));
+        if (WarehouseInBizTypeEnum.BACK_FLUSH_OUT.getCode().equals(liveStock.getBizType())
+                || WarehouseOutBizTypeEnum.FEEDING.getCode().equals(liveStock.getBizType())) {
+            var context = sourceEligibility.productionContext(liveStock, factory);
+            queryWrapper.lambda().and(scope -> scope.eq(MesWarehouseLiveStockEntity::getProduceTaskCode, context.produceTaskCode())
+                    .or().isNull(MesWarehouseLiveStockEntity::getProduceTaskCode).or().eq(MesWarehouseLiveStockEntity::getProduceTaskCode, ""));
+            sourceEligibility.constrain(queryWrapper, context.task(), liveStock.getRequirementMatCode(),
+                    liveStock.getMatCode(), liveStock.getSubstituteRatio());
+        }
         return queryWrapper;
     }
 
@@ -221,9 +221,11 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
         return previewCandidates(request, true);
     }
 
-    /** 共用单位、质量、数量完整性及FIFO资格；新观察仓库条件不改变旧齐套预检语义。 */
+    /**
+     * 共用单位、质量、数量完整性及FIFO资格；新观察仓库条件不改变旧齐套预检语义。
+     */
     private List<MesWarehouseLiveStockEntity> previewCandidates(MesWarehouseLiveStockInoutDTO request,
-                                                               boolean feedSources) {
+                                                                boolean feedSources) {
         String factory = requireStockScope(request);
         if (Boolean.TRUE.equals(request.getAllowQualityBlocked()))
             throw new CheckedException("生产齐套预检不能包含质量阻断库存");
@@ -263,7 +265,9 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
         return Boolean.TRUE;
     }
 
-    /** 内部业务须持有自己的事务；严格原单位回执不是独立业务执行许可。 */
+    /**
+     * 内部业务须持有自己的事务；严格原单位回执不是独立业务执行许可。
+     */
     @Override
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public MesWarehouseStockOutReceiptDTO outStockWithReceipt(MesWarehouseLiveStockInoutDTO request,
@@ -410,7 +414,9 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
         return List.copyOf(actualRows);
     }
 
-    /** 固定业务字段，不反射可变实体，也不以当前主数据重新解释原流水。 */
+    /**
+     * 固定业务字段，不反射可变实体，也不以当前主数据重新解释原流水。
+     */
     private MesWarehouseStockOutReceiptDTO.Line stockOutLine(MesWarehouseInoutEntity row) {
         return new MesWarehouseStockOutReceiptDTO.Line(row.getId(), row.getSourceStockId(),
                 row.getSourceReportId(), row.getMaterialReceiptId(), row.getTenantId(), row.getFactoryCode(),

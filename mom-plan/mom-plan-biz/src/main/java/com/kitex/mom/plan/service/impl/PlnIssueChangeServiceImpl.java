@@ -19,26 +19,8 @@ import com.kitex.mom.mes.dto.MesPlanWithdrawalDTO;
 import com.kitex.mom.plan.constant.IssueStatusEnum;
 import com.kitex.mom.plan.dto.PlanMrpSupplyWithdrawalDTO;
 import com.kitex.mom.plan.dto.PlnIssueChangeDTO;
-import com.kitex.mom.plan.entity.PlanMatMrpEntity;
-import com.kitex.mom.plan.entity.PlnIssueChangeEntity;
-import com.kitex.mom.plan.entity.PlnIssueChangeOperationEntity;
-import com.kitex.mom.plan.entity.PlnIssueEntity;
-import com.kitex.mom.plan.entity.PlnProductDemandChangeEntity;
-import com.kitex.mom.plan.entity.PlnProductDemandEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingBatchEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingBatchAllocationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
-import com.kitex.mom.plan.entity.PlnSchedulingTaskDetailEntity;
-import com.kitex.mom.plan.mapper.PlanMatMrpMapper;
-import com.kitex.mom.plan.mapper.PlnIssueChangeMapper;
-import com.kitex.mom.plan.mapper.PlnIssueChangeOperationMapper;
-import com.kitex.mom.plan.mapper.PlnIssueMapper;
-import com.kitex.mom.plan.mapper.PlnProductDemandChangeMapper;
-import com.kitex.mom.plan.mapper.PlnProductDemandMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingBatchAllocationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingBatchMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingOperationMapper;
-import com.kitex.mom.plan.mapper.PlnSchedulingTaskDetailMapper;
+import com.kitex.mom.plan.entity.*;
+import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.PlanMatMrpService;
 import com.kitex.mom.plan.service.PlnIssueChangeService;
 import com.kitex.mom.plan.service.PlnProductDemandService;
@@ -53,16 +35,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -144,9 +117,9 @@ public class PlnIssueChangeServiceImpl extends ServiceImpl<PlnIssueChangeMapper,
     @Override
     public PlnIssueChangeEntity review(PlnIssueChangeDTO.ReviewCommand command) {
         require(command != null && command.getChangeId() != null && command.getApproved() != null
-                        && StrUtil.isNotBlank(command.getRequestId())
-                        && StrUtil.isNotBlank(command.getExpectedEvidenceFingerprint())
-                        && StrUtil.isNotBlank(command.getReason()), "生产计划变更复核参数不完整");
+                && StrUtil.isNotBlank(command.getRequestId())
+                && StrUtil.isNotBlank(command.getExpectedEvidenceFingerprint())
+                && StrUtil.isNotBlank(command.getReason()), "生产计划变更复核参数不完整");
         String requestId = requestId(command.getRequestId(), "变更复核请求号");
         String reason = text(command.getReason(), 500, "复核说明");
         String expected = fingerprint(command.getExpectedEvidenceFingerprint());
@@ -324,7 +297,7 @@ public class PlnIssueChangeServiceImpl extends ServiceImpl<PlnIssueChangeMapper,
         List<PlanMatMrpEntity> mrpRows = mrpRows(entity.getDemandNo(), true);
         for (PlanMatMrpEntity row : mrpRows) {
             require(Boolean.TRUE.equals(mrpService.releaseForWithdrawal(row.getId(),
-                    limit("PIC-" + entity.getId() + "-MRP-" + row.getId(), 64), entity.getReason())),
+                            limit("PIC-" + entity.getId() + "-MRP-" + row.getId(), 64), entity.getReason())),
                     "MRP[" + row.getId() + "]库存预留释放失败");
         }
         entity.setWmsPhaseStatus("SUCCEEDED").setWmsPhaseMessage("已释放主料/替代料预留并同步库存Pegging")
@@ -380,9 +353,9 @@ public class PlnIssueChangeServiceImpl extends ServiceImpl<PlnIssueChangeMapper,
                         && zero(issue.getReworkQualifiedNum()) && zero(issue.getReworkRejectedNum()),
                 "生产计划已有报工或质量处置事实，必须走现场停止、退料和冲销流程");
         require(targetQuantity != null && targetQuantity.signum() > 0 && targetDemandDate != null
-                        && !targetDemandDate.isBefore(LocalDate.now()), "目标数量必须大于0且目标交期不能早于今天");
+                && !targetDemandDate.isBefore(LocalDate.now()), "目标数量必须大于0且目标交期不能早于今天");
         require(issue.getNum() != null && (issue.getNum().compareTo(targetQuantity) != 0
-                        || !Objects.equals(targetDemandDate, issue.getDemandTime())), "目标数量和交期均未变化");
+                || !Objects.equals(targetDemandDate, issue.getDemandTime())), "目标数量和交期均未变化");
         List<PlnProductDemandEntity> demands = demandMapper.selectList(new LambdaQueryWrapper<PlnProductDemandEntity>()
                 .eq(PlnProductDemandEntity::getDemandNo, issue.getIssueNo())
                 .eq(PlnProductDemandEntity::getProductCode, issue.getProductCode()).orderByAsc(PlnProductDemandEntity::getId));
@@ -446,7 +419,7 @@ public class PlnIssueChangeServiceImpl extends ServiceImpl<PlnIssueChangeMapper,
                         .orderByAsc(PlnSchedulingBatchAllocationEntity::getId));
         for (PlnSchedulingBatchAllocationEntity allocation : allocations) {
             require(batchAllocationMapper.selectCount(new LambdaQueryWrapper<PlnSchedulingBatchAllocationEntity>()
-                    .eq(PlnSchedulingBatchAllocationEntity::getBatchId, allocation.getBatchId())) == 1,
+                            .eq(PlnSchedulingBatchAllocationEntity::getBatchId, allocation.getBatchId())) == 1,
                     "APS批次[" + allocation.getBatchNo() + "]包含其他计划，须先拆批/重排");
         }
         if (Boolean.TRUE.equals(issue.getLockStatus())) {
@@ -496,7 +469,7 @@ public class PlnIssueChangeServiceImpl extends ServiceImpl<PlnIssueChangeMapper,
     }
 
     private MesPlanWithdrawalDTO.Command mesCommand(PlnIssueChangeEntity entity, PlnIssueEntity issue,
-                                                     boolean preview, String expectedEvidence) {
+                                                    boolean preview, String expectedEvidence) {
         MesPlanWithdrawalDTO.Command command = new MesPlanWithdrawalDTO.Command();
         command.setRequestId(preview ? limit("PIC-PREVIEW-" + issue.getId() + "-" + IdUtil.getSnowflakeNextIdStr(), 64)
                 : entity.getExecutionRequestId());
@@ -527,7 +500,7 @@ public class PlnIssueChangeServiceImpl extends ServiceImpl<PlnIssueChangeMapper,
                         .eq(PlnSchedulingBatchAllocationEntity::getIssueId, issue.getId()));
         for (PlnSchedulingBatchAllocationEntity allocation : allocations) {
             require(batchAllocationMapper.selectCount(new LambdaQueryWrapper<PlnSchedulingBatchAllocationEntity>()
-                    .eq(PlnSchedulingBatchAllocationEntity::getBatchId, allocation.getBatchId())) == 1,
+                            .eq(PlnSchedulingBatchAllocationEntity::getBatchId, allocation.getBatchId())) == 1,
                     "APS批次来源在审批后发生变化，禁止撤回");
             batchMapper.update(null, new LambdaUpdateWrapper<PlnSchedulingBatchEntity>()
                     .eq(PlnSchedulingBatchEntity::getId, allocation.getBatchId())
@@ -610,10 +583,10 @@ public class PlnIssueChangeServiceImpl extends ServiceImpl<PlnIssueChangeMapper,
     private void audit(PlnIssueChangeEntity entity, String requestId, String requestFingerprint,
                        String operationType, String before, String after, String content, MomUser user) {
         require(operationMapper.insert(new PlnIssueChangeOperationEntity().setChangeId(entity.getId())
-                .setRequestId(requestId).setRequestFingerprint(requestFingerprint).setOperationType(operationType)
-                .setBeforeStatus(before).setAfterStatus(after).setContent(limit(content, 1000))
-                .setOperatorCode(user.getUsername()).setOperatorName(userName(user))
-                .setOperationTime(LocalDateTime.now()).setFactoryCode(entity.getFactoryCode())) == 1,
+                        .setRequestId(requestId).setRequestFingerprint(requestFingerprint).setOperationType(operationType)
+                        .setBeforeStatus(before).setAfterStatus(after).setContent(limit(content, 1000))
+                        .setOperatorCode(user.getUsername()).setOperatorName(userName(user))
+                        .setOperationTime(LocalDateTime.now()).setFactoryCode(entity.getFactoryCode())) == 1,
                 "生产计划变更操作履历保存失败");
     }
 

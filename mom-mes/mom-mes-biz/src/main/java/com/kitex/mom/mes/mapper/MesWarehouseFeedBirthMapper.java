@@ -10,7 +10,9 @@ import org.apache.ibatis.annotations.Select;
 import java.util.List;
 import java.util.Map;
 
-/** 投料出生实际目录及完整原行读取；显式组织条件不能被软删除隐藏耗尽源。 */
+/**
+ * 投料出生实际目录及完整原行读取；显式组织条件不能被软删除隐藏耗尽源。
+ */
 @Mapper
 public interface MesWarehouseFeedBirthMapper extends MomBaseMapper<MesWarehouseFeedBirthEntity> {
     @InterceptorIgnore(tenantLine = "true", dataPermission = "true")
@@ -26,7 +28,9 @@ public interface MesWarehouseFeedBirthMapper extends MomBaseMapper<MesWarehouseF
     String sourceState(@Param("feedId") Long feedId, @Param("tenant") Long tenant,
                        @Param("factory") String factory);
 
-    /** 父工单和派工已经锁定；这里保留DB完整原字符串，包括微秒和所有原属性。 */
+    /**
+     * 父工单和派工已经锁定；这里保留DB完整原字符串，包括微秒和所有原属性。
+     */
     @InterceptorIgnore(tenantLine = "true", dataPermission = "true")
     @Select("""
             SELECT (to_jsonb(f)-ARRAY['used_num','is_lock','update_by','update_time',
@@ -43,10 +47,12 @@ public interface MesWarehouseFeedBirthMapper extends MomBaseMapper<MesWarehouseF
                 AND f.birth_version='MES_FEED_BIRTH_V1' AND f.birth_created_xid=txid_current()
             """)
     Map<String, Object> facts(@Param("feedId") Long feedId, @Param("taskId") Long taskId,
-                            @Param("arrangeId") Long arrangeId, @Param("tenant") Long tenant,
-                            @Param("factory") String factory);
+                              @Param("arrangeId") Long arrangeId, @Param("tenant") Long tenant,
+                              @Param("factory") String factory);
 
-    /** 一次读取本次真实feeding全集；历史无关联流水不被猜测认领。 */
+    /**
+     * 一次读取本次真实feeding全集；历史无关联流水不被猜测认领。
+     */
     @InterceptorIgnore(tenantLine = "true", dataPermission = "true")
     @Select("""
             SELECT f.id::text AS "outflowId",m.stock_id::text AS "stockId",
@@ -63,5 +69,5 @@ public interface MesWarehouseFeedBirthMapper extends MomBaseMapper<MesWarehouseF
             ORDER BY f.id
             """)
     List<Map<String, Object>> sources(@Param("feedId") Long feedId, @Param("tenant") Long tenant,
-                                    @Param("factory") String factory);
+                                      @Param("factory") String factory);
 }

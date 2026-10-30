@@ -42,24 +42,26 @@ public class PlanExecutionReplanEffectController {
     private final PlnSchedulingAgentService schedulingService;
     private final PlanExecutionReplanComparisonService comparisonService;
 
-    /** 核验发布链和来源后重采MES事实，并返回对应的情景与效果证据。 */
+    /**
+     * 核验发布链和来源后重采MES事实，并返回对应的情景与效果证据。
+     */
     @Inner
     @PostMapping("/execution-replan/capture")
     public R<Map<String, Object>> capture(@Valid @RequestBody Capture command) {
         String factory = FactoryContextHolder.getFactoryCode();
         require(TenantContextHolder.getTenantId() != null && !TenantContextHolder.getTenantSkip()
-                && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
-                && StrUtil.isNotBlank(factory) && Objects.equals(factory, command.factoryCode()),
+                        && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
+                        && StrUtil.isNotBlank(factory) && Objects.equals(factory, command.factoryCode()),
                 "效果采集必须保留真实租户与工厂过滤");
         var scenario = replanService.scenario(command.scenarioId());
         var header = scenario.getScenario();
         require(Objects.equals(header.getFactoryCode(), factory)
-                && "EXECUTION_DEVIATION_LOCAL_REPLAN".equals(header.getTriggerType())
-                && Set.of("PUBLISHED", "PARTIAL").contains(header.getScenarioStatus()),
+                        && "EXECUTION_DEVIATION_LOCAL_REPLAN".equals(header.getTriggerType())
+                        && Set.of("PUBLISHED", "PARTIAL").contains(header.getScenarioStatus()),
                 "仅允许采集当前工厂已发布的执行偏差重排情景");
         require(scenario.getCandidates() != null && scenario.getCandidates().size() == 3
-                && scenario.getCandidates().stream().allMatch(candidate ->
-                Objects.equals(command.sourceScenarioNo(), candidate.getEvidenceSourceNo())),
+                        && scenario.getCandidates().stream().allMatch(candidate ->
+                        Objects.equals(command.sourceScenarioNo(), candidate.getEvidenceSourceNo())),
                 "重排来源与Agent冻结的原排程不一致");
         var capture = new PlnSchedulingEffectReviewDTO.CaptureCommand();
         capture.setScenarioId(command.scenarioId());
@@ -83,16 +85,18 @@ public class PlanExecutionReplanEffectController {
         return R.ok(Map.of("scenario", scenario, "effect", effect, "comparison", comparison));
     }
 
-    /** 服务端固定对象与请求号，不接收URL、SQL或任意模型参数。 */
-    public record Capture(@NotNull @Positive Long scenarioId,
-                          @NotBlank @Size(max = 100) String factoryCode,
-                          @NotBlank @Size(max = 100) String sourceScenarioNo,
-                          @NotBlank @Size(max = 64) String requestId) {
-    }
-
     private void require(boolean condition, String message) {
         if (!condition) {
             throw new IllegalArgumentException(message);
         }
+    }
+
+    /**
+     * 服务端固定对象与请求号，不接收URL、SQL或任意模型参数。
+     */
+    public record Capture(@NotNull @Positive Long scenarioId,
+                          @NotBlank @Size(max = 100) String factoryCode,
+                          @NotBlank @Size(max = 100) String sourceScenarioNo,
+                          @NotBlank @Size(max = 64) String requestId) {
     }
 }

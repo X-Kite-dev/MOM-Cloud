@@ -33,7 +33,9 @@ public class MesDeviceGateServiceImpl implements MesDeviceGateService {
     private final RemoteTpmDeviceAvailabilityService availabilityService;
     private final MesDeviceGateRecordService recordService;
 
-    /** 仅当前线程的纯读预览范围；退出必恢复，正式执行仍写核验账。 */
+    /**
+     * 仅当前线程的纯读预览范围；退出必恢复，正式执行仍写核验账。
+     */
     private final ThreadLocal<Boolean> observationOnly = new ThreadLocal<>();
 
     @Override

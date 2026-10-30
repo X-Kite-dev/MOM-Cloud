@@ -16,7 +16,9 @@ import org.springframework.util.StringUtils;
 
 import java.util.Objects;
 
-/** 原业务事务之外持久保存执行意图；失败无法证明未写时保持UNCERTAIN、禁止再下发。 */
+/**
+ * 原业务事务之外持久保存执行意图；失败无法证明未写时保持UNCERTAIN、禁止再下发。
+ */
 @Service
 public class PlanAgentCommandProofService {
     private final PlanAgentCommandProofMapper proofs;
@@ -31,7 +33,9 @@ public class PlanAgentCommandProofService {
         this.scope = scope;
     }
 
-    /** 仅首次意图返回可执行；已有未确认意图一律故障关闭，不自动恢复写操作。 */
+    /**
+     * 仅首次意图返回可执行；已有未确认意图一律故障关闭，不自动恢复写操作。
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public Begin begin(PlanAgentCommandCodec.Frozen frozen) throws Exception {
         requireScope(FactoryContextHolder.getFactoryCode());
@@ -61,7 +65,9 @@ public class PlanAgentCommandProofService {
         return new Begin(proof.getId(), true, null);
     }
 
-    /** 只保存真实领域回执。已确认回执不可被另一响应或失败状态覆盖。 */
+    /**
+     * 只保存真实领域回执。已确认回执不可被另一响应或失败状态覆盖。
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public void confirm(Long id, Object receipt) throws Exception {
         PlanAgentCommandProofEntity proof = lock(id);
@@ -76,7 +82,9 @@ public class PlanAgentCommandProofService {
         proofs.updateById(proof);
     }
 
-    /** 原业务失败可能已在跨服务提交，诊断不能被解释为未执行。 */
+    /**
+     * 原业务失败可能已在跨服务提交，诊断不能被解释为未执行。
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public void uncertain(Long id, String reason) {
         PlanAgentCommandProofEntity proof = lock(id);
@@ -103,7 +111,9 @@ public class PlanAgentCommandProofService {
         }
     }
 
-    /** 不能使用内部跳过租户/工厂标记查询或写入永久意图账。 */
+    /**
+     * 不能使用内部跳过租户/工厂标记查询或写入永久意图账。
+     */
     public void requireScope(String requestedFactory) {
         scope.require(requestedFactory, "read");
         if (SecurityUtils.getUser() == null || TenantContextHolder.getTenantId() == null

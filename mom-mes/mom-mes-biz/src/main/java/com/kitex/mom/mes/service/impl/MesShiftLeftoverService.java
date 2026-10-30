@@ -17,15 +17,15 @@ import com.kitex.mom.mes.dto.MesShiftLeftoverCommand;
 import com.kitex.mom.mes.entity.MesShiftHandover;
 import com.kitex.mom.mes.entity.MesShiftHandoverLeftover;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.mapper.MesShiftHandoverMapper;
 import com.kitex.mom.mes.mapper.MesShiftHandoverLeftoverMapper;
+import com.kitex.mom.mes.mapper.MesShiftHandoverMapper;
 import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
@@ -53,11 +53,9 @@ public class MesShiftLeftoverService {
     private final MesShiftCommandJournal commands;
     private final PlatformTransactionManager transactionManager;
 
-    public record PlannedItem(MesShiftHandoverCommand.LeftoverDraft draft, MdmParticipantModels.Participant owner) { }
-    public record Carry(String id, int revision, String title, String status, String ownerUserId) { }
-    public record Plan(List<PlannedItem> created, List<Carry> carried) { }
-
-    /** 与正式交接一起冻结的责任计划。只能引用当前工厂原账，不能从名称创建虚构来源。 */
+    /**
+     * 与正式交接一起冻结的责任计划。只能引用当前工厂原账，不能从名称创建虚构来源。
+     */
     public Plan preview(String factory, MesShiftHandoverCommand command) {
         var drafts = command.getLeftoverItems() == null ? List.<MesShiftHandoverCommand.LeftoverDraft>of() : command.getLeftoverItems();
         var carryIds = command.getCarryForwardIds() == null ? List.<String>of() : command.getCarryForwardIds();
@@ -75,7 +73,8 @@ public class MesShiftLeftoverService {
             if ("MES_DISPATCH".equals(draft.getSourceType())) {
                 require(command.getArrangeCodes().contains(draft.getArrangeCode()), "遗留派工必须属于本次交接范围");
                 arrange(factory, draft.getArrangeCode());
-            } else require(draft.getArrangeCode() == null || draft.getArrangeCode().isBlank(), "人工现场事项不能夹带未核验的派工来源");
+            } else
+                require(draft.getArrangeCode() == null || draft.getArrangeCode().isBlank(), "人工现场事项不能夹带未核验的派工来源");
             created.add(new PlannedItem(draft, person(factory, draft.getOwnerUserId())));
         }
         List<Carry> carried = new ArrayList<>();
@@ -88,15 +87,20 @@ public class MesShiftLeftoverService {
         return new Plan(List.copyOf(created), List.copyOf(carried));
     }
 
-    /** 调用者已在交接SUBMIT事务，原请求重放不会再次进入本方法。 */
+    /**
+     * 调用者已在交接SUBMIT事务，原请求重放不会再次进入本方法。
+     */
     public void record(MesShiftHandover handover, MesShiftHandoverCommand command) {
         Plan plan = preview(handover.getFactoryCode(), command);
         // 再比对冻结计划，避免人员/原责任账在外部取证后发生变化却照旧提交。
         try {
             var original = JSON.readTree(handover.getFormalSnapshotJson()).path("leftovers");
             require(original.equals(JSON.valueToTree(plan)), "遗留责任计划已变化，请重新预览后提交");
-        } catch (CheckedException ex) { throw ex; }
-        catch (Exception ex) { throw new CheckedException("遗留冻结计划无法解析"); }
+        } catch (CheckedException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new CheckedException("遗留冻结计划无法解析");
+        }
         for (var planned : plan.created()) {
             var draft = planned.draft();
             var item = new MesShiftHandoverLeftover();
@@ -129,8 +133,9 @@ public class MesShiftLeftoverService {
         String factory = access.require("read");
         require(current > 0 && current <= 100000, "遗留页码无效");
         var query = scope(factory).eq(status != null && !status.isBlank(), MesShiftHandoverLeftover::getStatus, status);
-        if (handoverId != null) query.apply("id IN (SELECT leftover_id FROM mom_mes.mes_shift_handover_leftover_link WHERE tenant_id={0} AND factory_code={1} AND handover_id={2})",
-                TenantContextHolder.getTenantId(), factory, handoverId);
+        if (handoverId != null)
+            query.apply("id IN (SELECT leftover_id FROM mom_mes.mes_shift_handover_leftover_link WHERE tenant_id={0} AND factory_code={1} AND handover_id={2})",
+                    TenantContextHolder.getTenantId(), factory, handoverId);
         return items.selectPage(new Page<>(current, 20), query.orderByDesc(MesShiftHandoverLeftover::getId));
     }
 
@@ -158,12 +163,16 @@ public class MesShiftLeftoverService {
         return parse((String) rows.get(0).get("result_json"));
     }
 
-    /** 取消墓碑只终结未执行请求；已完成事项不会因封存操作回退。 */
+    /**
+     * 取消墓碑只终结未执行请求；已完成事项不会因封存操作回退。
+     */
     public Object cancelUnexecuted(String requestId) {
         return commands.cancel("LEFTOVER", access.require("write"), requestId);
     }
 
-    /** 同号异载荷先拒绝；同号重放回原响应，不执行第二次状态迁移。 */
+    /**
+     * 同号异载荷先拒绝；同号重放回原响应，不执行第二次状态迁移。
+     */
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Object act(String action, MesShiftLeftoverCommand command) {
         String factory = access.require("write");
@@ -200,7 +209,8 @@ public class MesShiftLeftoverService {
             evidence.put("sourceType", item.getSourceType());
             evidence.put("submittedEvidence", command.evidence());
             evidence.put("actorId", actor.toString());
-            if ("MES_DISPATCH".equals(item.getSourceType())) evidence.put("source", completedDispatch(factory, item.getArrangeCode()));
+            if ("MES_DISPATCH".equals(item.getSourceType()))
+                evidence.put("source", completedDispatch(factory, item.getArrangeCode()));
             item.setResolutionEvidenceJson(json(evidence));
             item.setResolutionFingerprint(hash(item.getResolutionEvidenceJson()));
             item.setCompletedBy(actor);
@@ -249,7 +259,7 @@ public class MesShiftLeftoverService {
                     .set(MesShiftHandoverLeftover::getResolutionFingerprint, null);
         }
         require(items.update(item, update) == 1, "遗留状态保存失败");
-        Map<String,Object> result = Map.of("requestId", command.requestId(), "action", action, "item", item);
+        Map<String, Object> result = Map.of("requestId", command.requestId(), "action", action, "item", item);
         jdbc.update("INSERT INTO mom_mes.mes_shift_handover_leftover_operation(tenant_id,factory_code,leftover_id,request_id,command_hash,action,actor_id,reason,evidence,result_json) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 TenantContextHolder.getTenantId(), factory, item.getId(), command.requestId(), commandHash, action, actor,
                 command.reason(), command.evidence(), json(result));
@@ -297,20 +307,54 @@ public class MesShiftLeftoverService {
         return new LambdaQueryWrapper<MesShiftHandoverLeftover>().eq(MesShiftHandoverLeftover::getTenantId, TenantContextHolder.getTenantId())
                 .eq(MesShiftHandoverLeftover::getFactoryCode, factory);
     }
+
     private Long id(String value) {
-        try { require(value != null && value.matches("[1-9][0-9]{0,18}"), "主键必须为正整数文本"); return Long.valueOf(value); }
-        catch (NumberFormatException ex) { throw new CheckedException("主键超出Long范围"); }
+        try {
+            require(value != null && value.matches("[1-9][0-9]{0,18}"), "主键必须为正整数文本");
+            return Long.valueOf(value);
+        } catch (NumberFormatException ex) {
+            throw new CheckedException("主键超出Long范围");
+        }
     }
-    private void text(String value, int max, String title) { require(value != null && !value.isBlank() && value.length() <= max, title + "必填且不能超过" + max + "字"); }
+
+    private void text(String value, int max, String title) {
+        require(value != null && !value.isBlank() && value.length() <= max, title + "必填且不能超过" + max + "字");
+    }
+
     private String json(Object value) {
-        try { return JSON.writeValueAsString(value); } catch (Exception ex) { throw new CheckedException("遗留证据序列化失败"); }
+        try {
+            return JSON.writeValueAsString(value);
+        } catch (Exception ex) {
+            throw new CheckedException("遗留证据序列化失败");
+        }
     }
+
     private com.fasterxml.jackson.databind.JsonNode parse(String value) {
-        try { return JSON.readTree(value); } catch (Exception ex) { throw new CheckedException("遗留原回执损坏"); }
+        try {
+            return JSON.readTree(value);
+        } catch (Exception ex) {
+            throw new CheckedException("遗留原回执损坏");
+        }
     }
+
     private String hash(String value) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
-        catch (Exception ex) { throw new IllegalStateException(ex); }
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new IllegalStateException(ex);
+        }
     }
-    private void require(boolean value, String message) { if (!value) throw new CheckedException(message); }
+
+    private void require(boolean value, String message) {
+        if (!value) throw new CheckedException(message);
+    }
+
+    public record PlannedItem(MesShiftHandoverCommand.LeftoverDraft draft, MdmParticipantModels.Participant owner) {
+    }
+
+    public record Carry(String id, int revision, String title, String status, String ownerUserId) {
+    }
+
+    public record Plan(List<PlannedItem> created, List<Carry> carried) {
+    }
 }

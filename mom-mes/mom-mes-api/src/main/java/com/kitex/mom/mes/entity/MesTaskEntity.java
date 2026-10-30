@@ -68,6 +68,12 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
     @Schema(description = "正式计划合同内容SHA-256")
     private String formalPlanContractFingerprint;
 
+    @Schema(description = "MES接收时逐正式合同明细的数量分配快照JSON；历史为空，不回填")
+    private String formalPlanAllocationSnapshot;
+
+    @Schema(description = "合同分配模型版本；1为逐行快照，历史为空")
+    private Integer formalPlanAllocationVersion;
+
     @Schema(description = "正式计划来源系统")
     private String sourceSystem;
 
@@ -243,7 +249,9 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
     @Schema(description = "工艺路线版本")
     private String processRouteCode;
 
-    /** 本工单在接收时精确核验的MDM工程版本。 */
+    /**
+     * 本工单在接收时精确核验的MDM工程版本。
+     */
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     @Schema(description = "精确工程版本ID")
     private Long engineeringReleaseId;
@@ -254,7 +262,9 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
     @Schema(description = "路线内工程显示版本号")
     private Integer engineeringVersionNo;
 
-    /** MDM经当前来源精确复核后返回的原始冻结UTF-8正文。 */
+    /**
+     * MDM经当前来源精确复核后返回的原始冻结UTF-8正文。
+     */
     @Schema(description = "MDM工程联合包原始冻结正文")
     private String engineeringBundleSnapshot;
 
@@ -306,14 +316,20 @@ public class MesTaskEntity extends BaseEntity<MesTaskEntity> {
     @Schema(description = "返工执行的原路线稳定节点；升级前历史返工允许为空")
     private String reworkRouteNodeCode;
 
-    /** 返工执行方案批准的跨工单时间口径；新节点返工必须显式批准NONE或WINDOW。 */
+    /**
+     * 返工执行方案批准的跨工单时间口径；新节点返工必须显式批准NONE或WINDOW。
+     */
     private String reworkTimingPolicySnapshot;
 
-    /** INHERIT_SOURCE或APPROVED_OVERRIDE，由首轮返工执行方案异人批准。 */
+    /**
+     * INHERIT_SOURCE或APPROVED_OVERRIDE，由首轮返工执行方案异人批准。
+     */
     @Schema(description = "返工SOP/参数工程口径")
     private String reworkEngineeringMode;
 
-    /** MDM已批准单节点返工覆盖版本；继承原节点时为空。 */
+    /**
+     * MDM已批准单节点返工覆盖版本；继承原节点时为空。
+     */
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     @Schema(description = "返工工程覆盖版本ID")
     private Long reworkEngineeringOverrideId;

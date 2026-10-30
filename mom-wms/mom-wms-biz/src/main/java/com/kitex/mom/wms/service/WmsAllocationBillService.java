@@ -3,6 +3,7 @@ package com.kitex.mom.wms.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.wms.dto.WmsAllocationBillAddDTO;
 import com.kitex.mom.wms.dto.WmsAllocationCancelDTO;
+import com.kitex.mom.wms.dto.WmsAllocationReturnDTO;
 import com.kitex.mom.wms.dto.WmsCrossWarehouseTransferDTO;
 import com.kitex.mom.wms.dto.app.WmsAllocationBillAppDTO;
 import com.kitex.mom.wms.entity.WmsAllocationBillEntity;
@@ -30,6 +31,8 @@ public interface WmsAllocationBillService extends IService<WmsAllocationBillEnti
     Boolean updateAllocationBill(WmsAllocationBillAddDTO wmsAllocationBillAdd);
 
     Boolean cancel(WmsAllocationCancelDTO command);
+
+    Boolean confirmReturn(WmsAllocationReturnDTO command);
 
     /**
      * 读取跨仓可调库存并按需求顺序分配，绝不在建议阶段锁定或修改库存。

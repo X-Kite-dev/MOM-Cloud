@@ -141,7 +141,7 @@ public class PlnMpsService {
         require(command.getLines().stream().noneMatch(Objects::isNull), "MPS候选不得包含空需求行");
         List<PlnMpsCommand.Line> targets = command.getLines().stream()
                 .sorted(Comparator.comparing(PlnMpsCommand.Line::getDemandId,
-                        Comparator.nullsFirst(Comparator.naturalOrder()))
+                                Comparator.nullsFirst(Comparator.naturalOrder()))
                         .thenComparing(PlnMpsCommand.Line::getBucketNo,
                                 Comparator.nullsFirst(Comparator.naturalOrder()))).toList();
         require(targets.size() <= 500 && targets.stream().allMatch(item -> item != null
@@ -351,7 +351,9 @@ public class PlnMpsService {
         return version;
     }
 
-    /** 继续执行失败版本，或恢复审批提交后尚未启动的已批准版本。 */
+    /**
+     * 继续执行失败版本，或恢复审批提交后尚未启动的已批准版本。
+     */
     @Transactional(rollbackFor = Exception.class)
     public PlnMpsVersionEntity retry(PlnMpsCommand.Retry command) {
         require(command != null && command.getVersionId() != null, "续跑必须提供MPS版本");
@@ -490,11 +492,11 @@ public class PlnMpsService {
                         && total.compareTo(demand.getNeedNum()) == 0
                         && activeLines.stream().allMatch(line ->
                         Objects.equals(line.getFactoryCode(), demand.getFactoryCode())
-                        && Objects.equals(line.getDemandNo(), demand.getDemandNo())
-                        && Objects.equals(line.getProductCode(), demand.getProductCode())
-                        && Objects.equals(line.getWarehouseCode(), demand.getDemandWarehouseCode())
-                        && StrUtil.isNotBlank(line.getBucketKey())
-                        && Objects.equals(line.getSourceFingerprint(), hash(sourceSnapshot(demand)))),
+                                && Objects.equals(line.getDemandNo(), demand.getDemandNo())
+                                && Objects.equals(line.getProductCode(), demand.getProductCode())
+                                && Objects.equals(line.getWarehouseCode(), demand.getDemandWarehouseCode())
+                                && StrUtil.isNotBlank(line.getBucketKey())
+                                && Objects.equals(line.getSourceFingerprint(), hash(sourceSnapshot(demand)))),
                 "已发布MPS来源需求、数量或仓库变化，须先受控修订版本");
         return activeLines;
     }
@@ -532,7 +534,9 @@ public class PlnMpsService {
                 .orderByDesc(PlnMpsVersionEntity::getSubmittedTime));
     }
 
-    /** MPS提交前预览当前需求组合的RCCP占用，不保存候选版本。 */
+    /**
+     * MPS提交前预览当前需求组合的RCCP占用，不保存候选版本。
+     */
     public com.kitex.mom.plan.dto.PlnMpsCapacityDTO.Preview capacityPreview(PlnMpsCommand.Submit command) {
         require(command != null && command.getLines() != null && !command.getLines().isEmpty(),
                 "RCCP预览至少需要一条需求");
@@ -544,7 +548,9 @@ public class PlnMpsService {
         return rccpService.preview(policy, candidates);
     }
 
-    /** 生成数量守恒的RCCP移期/拆量建议，不保存也不绕过MPS审批。 */
+    /**
+     * 生成数量守恒的RCCP移期/拆量建议，不保存也不绕过MPS审批。
+     */
     public PlnMpsCapacityBalanceDTO.Result capacityBalance(PlnMpsCommand.Submit command) {
         require(command != null && command.getHorizonStart() != null && command.getHorizonEnd() != null
                         && command.getLines() != null && !command.getLines().isEmpty(),
@@ -572,7 +578,7 @@ public class PlnMpsService {
     private List<PlnMpsLineEntity> capacityCandidates(PlnMpsCommand.Submit command, String factory) {
         List<PlnMpsCommand.Line> targets = command.getLines().stream().filter(Objects::nonNull)
                 .sorted(Comparator.comparing(PlnMpsCommand.Line::getDemandId,
-                        Comparator.nullsFirst(Comparator.naturalOrder()))
+                                Comparator.nullsFirst(Comparator.naturalOrder()))
                         .thenComparing(PlnMpsCommand.Line::getBucketNo,
                                 Comparator.nullsFirst(Comparator.naturalOrder()))).toList();
         require(targets.size() == command.getLines().size() && targets.size() <= 500
@@ -613,9 +619,11 @@ public class PlnMpsService {
         return lines;
     }
 
-    /** 查询可编入 MPS 的已接收需求和已形成可撤回 MRP 的需求。 */
+    /**
+     * 查询可编入 MPS 的已接收需求和已形成可撤回 MRP 的需求。
+     */
     public Page<PlnProductDemandEntity> eligibleDemands(SearchPage page, String factory,
-                                                         String productCode, String warehouseCode) {
+                                                        String productCode, String warehouseCode) {
         requireFactoryAccess(factory, "read");
         return demandMapper.selectPage(page.toMpPage(), new LambdaQueryWrapper<PlnProductDemandEntity>()
                 .eq(PlnProductDemandEntity::getFactoryCode, factory)
@@ -800,7 +808,9 @@ public class PlnMpsService {
         }
     }
 
-    /** 复核时既检查当前数量，也检查提交时策略版本和参数，禁止换版后的陈旧批准。 */
+    /**
+     * 复核时既检查当前数量，也检查提交时策略版本和参数，禁止换版后的陈旧批准。
+     */
     private void verifyLotPolicySnapshot(List<PlnMpsLineEntity> lines,
                                          PlnMpsLotSizingService.Catalog current) {
         require(lines.stream().allMatch(line -> StrUtil.isNotBlank(line.getLotPolicyEvidenceFingerprint())
@@ -875,7 +885,7 @@ public class PlnMpsService {
     }
 
     void audit(Long versionId, Long policyId, String requestId, String fingerprint,
-                       String type, String before, String after, String detail, String factory, MomUser user) {
+               String type, String before, String after, String detail, String factory, MomUser user) {
         require(operationMapper.insert(new PlnMpsOperationEntity()
                 .setVersionId(versionId).setPolicyId(policyId).setRequestId(requestId)
                 .setRequestFingerprint(fingerprint).setOperationType(type)

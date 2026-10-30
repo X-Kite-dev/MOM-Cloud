@@ -8,7 +8,9 @@ import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
-/** MES 接单时二次核验 PLAN 正式计划合同的内部客户端。 */
+/**
+ * MES 接单时二次核验 PLAN 正式计划合同的内部客户端。
+ */
 @FeignClient(contextId = "remotePlanFormalContractService", value = Constants.Name)
 public interface RemotePlanFormalContractService {
 

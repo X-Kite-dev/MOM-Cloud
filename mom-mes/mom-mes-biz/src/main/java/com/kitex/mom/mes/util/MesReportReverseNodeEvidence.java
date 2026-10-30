@@ -10,16 +10,9 @@ import com.kitex.mom.mes.entity.MesReportReverseRequestEntity;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
 import com.kitex.mom.mes.entity.MesTaskReportEntity;
 
-import java.util.ArrayList;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.Comparator;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 普通节点冲销的独立证据协议。不扩写旧每步V2事实或动态绑定永久协议。
@@ -38,7 +31,9 @@ public final class MesReportReverseNodeEvidence {
     private MesReportReverseNodeEvidence() {
     }
 
-    /** 完整图的确定性表述；ID用文本，避免前端长整型精度损失。 */
+    /**
+     * 完整图的确定性表述；ID用文本，避免前端长整型精度损失。
+     */
     public static List<Map<String, String>> executionNodes(List<MesProduceTaskEntity> tasks) {
         return tasks.stream().sorted(Comparator.comparing(MesProduceTaskEntity::getCode)).map(task -> {
             Map<String, String> node = new LinkedHashMap<>();
@@ -52,7 +47,9 @@ public final class MesReportReverseNodeEvidence {
         }).toList();
     }
 
-    /** 原报告必须真实归属派工，不能只因主工序相同就接受另一次执行。 */
+    /**
+     * 原报告必须真实归属派工，不能只因主工序相同就接受另一次执行。
+     */
     public static void assertReport(MesTaskReportEntity report, MesTaskArrangeEntity arrange) {
         require(report != null && arrange != null && report.getId() != null && arrange.getId() != null
                 && Objects.equals(report.getTenantId(), arrange.getTenantId())
@@ -74,12 +71,16 @@ public final class MesReportReverseNodeEvidence {
         return scope;
     }
 
-    /** 仅数据库原申请决定重采协议，不接受客户端降级参数。 */
+    /**
+     * 仅数据库原申请决定重采协议，不接受客户端降级参数。
+     */
     public static String originalVersion(MesReportReverseRequestEntity request) {
         return original(request).path("version").asText();
     }
 
-    /** 审批查看提交时节点，旧申请返回空列表，不用当前节点替历史补身份。 */
+    /**
+     * 审批查看提交时节点，旧申请返回空列表，不用当前节点替历史补身份。
+     */
     public static List<MesReportReverseRequestDTO.NodeScope> frozenScopes(MesReportReverseRequestEntity request) {
         JsonNode original = original(request);
         if (!Set.of(NODE_VERSION, BINDING_NODE_VERSION).contains(original.path("version").asText())) {
@@ -106,12 +107,12 @@ public final class MesReportReverseNodeEvidence {
 
     private static JsonNode original(MesReportReverseRequestEntity request) {
         require(request != null && request.getEvidenceSnapshot() != null
-                && Objects.equals(fingerprint(request.getEvidenceSnapshot()), request.getEvidenceFingerprint()),
+                        && Objects.equals(fingerprint(request.getEvidenceSnapshot()), request.getEvidenceFingerprint()),
                 "冲销申请原证据缺失或指纹不一致");
         try {
             JsonNode root = JSON.readTree(request.getEvidenceSnapshot());
             require(root != null && root.isObject() && root.path("version").isTextual()
-                    && Set.of(NODE_VERSION, LEGACY_VERSION, BINDING_VERSION, BINDING_NODE_VERSION).contains(root.get("version").asText()),
+                            && Set.of(NODE_VERSION, LEGACY_VERSION, BINDING_VERSION, BINDING_NODE_VERSION).contains(root.get("version").asText()),
                     "未知报工冲销证据协议，禁止重解释原申请");
             return root;
         } catch (CheckedException exception) {

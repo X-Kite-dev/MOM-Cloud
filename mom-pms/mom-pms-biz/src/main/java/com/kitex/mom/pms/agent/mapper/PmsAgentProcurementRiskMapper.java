@@ -16,12 +16,16 @@ public interface PmsAgentProcurementRiskMapper {
     PmsProcurementRiskRow.Summary selectSummary(
             @Param("tenantId") Long tenantId,
             @Param("factoryCode") String factoryCode,
+            @Param("orderId") Long orderId,
+            @Param("orderNo") String orderNo,
             @Param("observedAt") LocalDateTime observedAt,
             @Param("horizonEnd") LocalDateTime horizonEnd);
 
     List<PmsProcurementRiskRow.RiskLine> selectRiskLines(
             @Param("tenantId") Long tenantId,
             @Param("factoryCode") String factoryCode,
+            @Param("orderId") Long orderId,
+            @Param("orderNo") String orderNo,
             @Param("observedAt") LocalDateTime observedAt,
             @Param("horizonEnd") LocalDateTime horizonEnd,
             @Param("limit") Integer limit);

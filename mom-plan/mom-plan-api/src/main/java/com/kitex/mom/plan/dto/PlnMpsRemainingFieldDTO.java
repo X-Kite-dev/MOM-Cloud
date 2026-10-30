@@ -7,7 +7,9 @@ import lombok.experimental.Accessors;
 import java.util.ArrayList;
 import java.util.List;
 
-/** MES/PDA/工站按真实工单查询的受限只读摘要，不输出审批账或全量计划。 */
+/**
+ * MES/PDA/工站按真实工单查询的受限只读摘要，不输出审批账或全量计划。
+ */
 public final class PlnMpsRemainingFieldDTO {
     private PlnMpsRemainingFieldDTO() {
     }

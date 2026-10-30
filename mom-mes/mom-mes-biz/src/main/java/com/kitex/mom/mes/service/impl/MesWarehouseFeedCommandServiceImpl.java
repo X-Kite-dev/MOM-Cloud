@@ -110,7 +110,7 @@ public class MesWarehouseFeedCommandServiceImpl
                     && Objects.equals(arrange.getTaskCode(), initial.getTaskCode())
                     && Objects.equals(arrange.getProduceTaskCode(), feed.getProduceTaskCode())
                     && Objects.equals(arrange.getActualWorksiteCode() == null ? "" : arrange.getActualWorksiteCode(),
-                            commands.text(body, "receivingWorksiteCode")), "实际接收工位/工序/派工与期望不一致");
+                    commands.text(body, "receivingWorksiteCode")), "实际接收工位/工序/派工与期望不一致");
             var row = base(body, raw, factory, "APPLIED");
             feed.setFeedCommandId(row.getId());
             require(Boolean.TRUE.equals(feeds.saveFeed(feed)), "实际投料失败，原请求全部回滚");
@@ -119,7 +119,7 @@ public class MesWarehouseFeedCommandServiceImpl
                     && Objects.equals(birth.birth().getActorId(), actor())
                     && Objects.equals(birth.birth().getUnit(), commands.text(body, "expectedUnit"))
                     && Objects.equals(birth.birth().getReceivingWorksiteCode() == null ? "" : birth.birth().getReceivingWorksiteCode(),
-                            commands.text(body, "receivingWorksiteCode")), "真实投料原单位/本人/接收工位不一致，整笔回滚");
+                    commands.text(body, "receivingWorksiteCode")), "真实投料原单位/本人/接收工位不一致，整笔回滚");
             row.setFeedId(feed.getId());
             row.setBirthId(birth.birth().getId());
             freeze(row, birth);
@@ -168,7 +168,9 @@ public class MesWarehouseFeedCommandServiceImpl
         });
     }
 
-    /** 同租户跨工厂查询后再核本人，不能切厂将已有号误报ABSENT。 */
+    /**
+     * 同租户跨工厂查询后再核本人，不能切厂将已有号误报ABSENT。
+     */
     private MesWarehouseFeedCommandEntity original(String requestId, String factory) {
         var rows = baseMapper.original(tenant(), requestId);
         require(rows.size() <= 1, "投料原号有多个永久结果，禁止猜选");
@@ -179,12 +181,14 @@ public class MesWarehouseFeedCommandServiceImpl
         return row;
     }
 
-    /** 按永久原文和出生全集核回执，不依赖当前物料主数据或重新分配库存。 */
+    /**
+     * 按永久原文和出生全集核回执，不依赖当前物料主数据或重新分配库存。
+     */
     private MesWarehouseFeedCommandDTO.Receipt verified(MesWarehouseFeedCommandEntity row) {
         require(row != null && COMMAND_VERSION.equals(row.getCommandVersion())
-                && EVIDENCE_VERSION.equals(row.getEvidenceVersion())
-                && codec.fingerprint(COMMAND_VERSION, row.getCommandSnapshot()).equals(row.getCommandFingerprint())
-                && codec.fingerprint(EVIDENCE_VERSION, row.getEvidenceSnapshot()).equals(row.getEvidenceFingerprint()),
+                        && EVIDENCE_VERSION.equals(row.getEvidenceVersion())
+                        && codec.fingerprint(COMMAND_VERSION, row.getCommandSnapshot()).equals(row.getCommandFingerprint())
+                        && codec.fingerprint(EVIDENCE_VERSION, row.getEvidenceSnapshot()).equals(row.getEvidenceFingerprint()),
                 "投料永久原文版本或指纹无法核验");
         var body = commands.original(row.getCommandSnapshot(), row.getFactoryCode());
         require(row.getRequestId().equals(commands.text(body, "requestId")), "原请求号与原文不一致");
@@ -203,7 +207,9 @@ public class MesWarehouseFeedCommandServiceImpl
                 row.getFactoryCode(), row.getActorId().toString(), row, birth);
     }
 
-    /** 主键、实际组织、本人及微秒审计全部由服务端生成；原请求正文不重建。 */
+    /**
+     * 主键、实际组织、本人及微秒审计全部由服务端生成；原请求正文不重建。
+     */
     private MesWarehouseFeedCommandEntity base(JsonNode body, String raw, String factory, String state) {
         var row = new MesWarehouseFeedCommandEntity();
         row.setId(IdWorker.getId());
@@ -222,13 +228,17 @@ public class MesWarehouseFeedCommandServiceImpl
         return row;
     }
 
-    /** 固定结果正文和版本域指纹只在首次成功或首次永久作废时生成。 */
+    /**
+     * 固定结果正文和版本域指纹只在首次成功或首次永久作废时生成。
+     */
     private void freeze(MesWarehouseFeedCommandEntity row, MesWarehouseFeedBirthDTO birth) {
         row.setEvidenceSnapshot(codec.snapshot(facts(row, birth)));
         row.setEvidenceFingerprint(codec.fingerprint(EVIDENCE_VERSION, row.getEvidenceSnapshot()));
     }
 
-    /** 固定12字段，后续实体扩展不会改变既有成功/作废的原语义。 */
+    /**
+     * 固定12字段，后续实体扩展不会改变既有成功/作废的原语义。
+     */
     private TreeMap<String, String> facts(MesWarehouseFeedCommandEntity row, MesWarehouseFeedBirthDTO birth) {
         var map = new TreeMap<String, String>();
         map.put("version", EVIDENCE_VERSION);
@@ -246,7 +256,9 @@ public class MesWarehouseFeedCommandServiceImpl
         return map;
     }
 
-    /** 禁止调用方旧快照参与原号核账，实际投料核心仍加入本次独立事务。 */
+    /**
+     * 禁止调用方旧快照参与原号核账，实际投料核心仍加入本次独立事务。
+     */
     private TransactionTemplate independent(boolean readOnly) {
         var template = new TransactionTemplate(transactions);
         template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -255,12 +267,16 @@ public class MesWarehouseFeedCommandServiceImpl
         return template;
     }
 
-    /** 未完整升级时拒绝新协议，不回退到旧Boolean投料入口。 */
+    /**
+     * 未完整升级时拒绝新协议，不回退到旧Boolean投料入口。
+     */
     private void ready() {
         require(Boolean.TRUE.equals(baseMapper.ready()), "稳定投料原号/出生保护未完整部署，请先执行累计V2第261节");
     }
 
-    /** 执行和作废共用租户/原号锁；竞争时保留原文待核，不阻塞或另号执行。 */
+    /**
+     * 执行和作废共用租户/原号锁；竞争时保留原文待核，不阻塞或另号执行。
+     */
     private void lock(String requestId) {
         require(Boolean.TRUE.equals(baseMapper.tryRequest(codec.snapshot(java.util.List.of("MES_FEED_REQUEST_V1", tenant().toString(), requestId)))),
                 "投料原号仍在执行，请保留原号查询，禁止另号投料");

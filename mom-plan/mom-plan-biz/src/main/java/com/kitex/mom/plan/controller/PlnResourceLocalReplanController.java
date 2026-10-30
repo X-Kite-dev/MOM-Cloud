@@ -134,7 +134,9 @@ public class PlnResourceLocalReplanController {
         return R.ok(service.publish(command));
     }
 
-    /** 原号目录、应用及补偿均为只读查询，不在查询请求中自动补记或重新派工。 */
+    /**
+     * 原号目录、应用及补偿均为只读查询，不在查询请求中自动补记或重新派工。
+     */
     @GetMapping("/case/{caseId}/mps-publication-recovery")
     @PreAuthorize("@pms.hasPermission('plan_mps_view') and @pms.hasPermission('plan_resourceReplan_view')")
     public R<PlnMpsPublicationRecoveryDTO> mpsPublicationRecovery(@PathVariable("caseId") Long caseId) {

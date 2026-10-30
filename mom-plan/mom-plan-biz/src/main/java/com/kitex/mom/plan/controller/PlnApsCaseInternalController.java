@@ -2,16 +2,8 @@ package com.kitex.mom.plan.controller;
 
 import com.kitex.common.core.util.R;
 import com.kitex.common.security.annotation.Inner;
-import com.kitex.mom.plan.dto.PlnApsCaseDTO;
-import com.kitex.mom.plan.dto.PlnApsDecisionDTO;
-import com.kitex.mom.plan.dto.PlnApsReplanDTO;
-import com.kitex.mom.plan.dto.PlnApsResourceDTO;
-import com.kitex.mom.plan.dto.PlnSchedulingEffectReviewDTO;
-import com.kitex.mom.plan.service.PlnApsDecisionService;
-import com.kitex.mom.plan.service.PlnApsReplanAdapter;
-import com.kitex.mom.plan.service.PlnApsResourceSnapshotService;
-import com.kitex.mom.plan.service.PlnApsCaseService;
-import com.kitex.mom.plan.service.PlnSchedulingEffectReviewService;
+import com.kitex.mom.plan.dto.*;
+import com.kitex.mom.plan.service.*;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +28,12 @@ public class PlnApsCaseInternalController {
     private final PlnApsReplanAdapter replanAdapter;
     private final PlnSchedulingEffectReviewService effectReviewService;
 
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new com.kitex.common.core.exception.CheckedException(message);
+        }
+    }
+
     @GetMapping("/{caseId}")
     @Operation(summary = "按租户和factory-code读取案件上下文")
     public R<PlnApsCaseDTO> detail(@PathVariable Long caseId) {
@@ -45,7 +43,7 @@ public class PlnApsCaseInternalController {
     @GetMapping("/{caseId}/resources/{snapshotId}")
     @Operation(summary = "读取案件当前资源快照和预检问题")
     public R<PlnApsResourceDTO.Snapshot> resources(@PathVariable Long caseId,
-                                                    @PathVariable Long snapshotId) {
+                                                   @PathVariable Long snapshotId) {
         PlnApsCaseDTO apsCase = service.detail(caseId);
         require(snapshotId.toString().equals(apsCase.getResourceSnapshotId()),
                 "资源快照不属于当前APS案件或已经失效");
@@ -67,16 +65,10 @@ public class PlnApsCaseInternalController {
     @GetMapping("/{caseId}/effect/{reviewId}")
     @Operation(summary = "读取案件当前排程效果回评证据")
     public R<PlnSchedulingEffectReviewDTO.Detail> effect(@PathVariable Long caseId,
-                                                          @PathVariable Long reviewId) {
+                                                         @PathVariable Long reviewId) {
         PlnApsCaseDTO apsCase = service.detail(caseId);
         require(reviewId.toString().equals(apsCase.getEffectReviewId()),
                 "效果回评不属于当前APS案件或已经失效");
         return R.ok(effectReviewService.detail(reviewId));
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) {
-            throw new com.kitex.common.core.exception.CheckedException(message);
-        }
     }
 }

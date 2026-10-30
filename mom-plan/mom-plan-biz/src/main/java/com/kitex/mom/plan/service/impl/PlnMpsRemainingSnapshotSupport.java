@@ -1,7 +1,7 @@
 package com.kitex.mom.plan.service.impl;
 
-import cn.hutool.json.JSONUtil;
 import cn.hutool.json.JSONConfig;
+import cn.hutool.json.JSONUtil;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.plan.dto.PlnMpsRemainingCommitmentDTO;
 import com.kitex.mom.plan.entity.PlnMpsRemainingCommitmentEntity;
@@ -12,7 +12,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
 
-/** 不可变账正文核对，共用纯工具；不取用户、不访问数据库，损坏正文不退化成空数组。 */
+/**
+ * 不可变账正文核对，共用纯工具；不取用户、不访问数据库，损坏正文不退化成空数组。
+ */
 final class PlnMpsRemainingSnapshotSupport {
     private PlnMpsRemainingSnapshotSupport() {
     }
@@ -23,7 +25,9 @@ final class PlnMpsRemainingSnapshotSupport {
         return text;
     }
 
-    /** 新领域命令固定保留null数组槽，首版previous=null也须与浏览器原六项载荷一致。 */
+    /**
+     * 新领域命令固定保留null数组槽，首版previous=null也须与浏览器原六项载荷一致。
+     */
     static String commandSnapshot(Object value) {
         String text = JSONUtil.toJsonStr(value, JSONConfig.create().setIgnoreNullValue(false));
         require(text.getBytes(StandardCharsets.UTF_8).length <= 8 * 1024 * 1024, "完整命令超过8MiB，禁止截断");

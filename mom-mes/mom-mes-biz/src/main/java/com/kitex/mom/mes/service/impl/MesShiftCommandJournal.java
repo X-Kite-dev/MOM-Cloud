@@ -2,8 +2,8 @@ package com.kitex.mom.mes.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
@@ -31,7 +31,9 @@ public class MesShiftCommandJournal {
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     private final JdbcTemplate jdbc;
 
-    /** 必须在业务事务开始前调用，避免可重复读事务看不到独立占号事务。 */
+    /**
+     * 必须在业务事务开始前调用，避免可重复读事务看不到独立占号事务。
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public void reserve(String kind, String factory, String requestId, String action, String hash) {
         validate(kind, requestId);
@@ -57,7 +59,9 @@ public class MesShiftCommandJournal {
         }
     }
 
-    /** 行锁覆盖整个业务事务；与封存串行，禁止检查后被取消仍执行。 */
+    /**
+     * 行锁覆盖整个业务事务；与封存串行，禁止检查后被取消仍执行。
+     */
     @Transactional(propagation = Propagation.MANDATORY)
     public Object begin(String kind, String factory, String requestId, String action, String hash) {
         Map<String, Object> row = row(kind, factory, requestId, true);
@@ -71,8 +75,11 @@ public class MesShiftCommandJournal {
     @Transactional(propagation = Propagation.MANDATORY)
     public Object succeed(String kind, String factory, String requestId, Object result) {
         String value;
-        try { value = JSON.writeValueAsString(result); }
-        catch (Exception ex) { throw new CheckedException("交接原回执序列化失败"); }
+        try {
+            value = JSON.writeValueAsString(result);
+        } catch (Exception ex) {
+            throw new CheckedException("交接原回执序列化失败");
+        }
         require(jdbc.update("UPDATE mom_mes.mes_shift_command SET status='SUCCEEDED',result_json=?,finished_at=now() WHERE tenant_id=? AND factory_code=? AND command_kind=? AND request_id=? AND actor_id=? AND status='PENDING'",
                 value, tenant(), factory, kind, requestId, actor()) == 1, "命令已终结或作用域不一致");
         return result;
@@ -86,7 +93,9 @@ public class MesShiftCommandJournal {
         return result(row);
     }
 
-    /** 无原号也写取消墓碑，阻断尚在网络中、还未到达占号步骤的迟到命令。 */
+    /**
+     * 无原号也写取消墓碑，阻断尚在网络中、还未到达占号步骤的迟到命令。
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public Object cancel(String kind, String factory, String requestId) {
         validate(kind, requestId);
@@ -120,7 +129,9 @@ public class MesShiftCommandJournal {
                 ObjectNode result = (ObjectNode) JSON.readTree((String) row.get("result_json"));
                 result.put("commandStatus", "SUCCEEDED");
                 return result;
-            } catch (Exception ex) { throw new CheckedException("交接永久回执损坏，不能推断未执行"); }
+            } catch (Exception ex) {
+                throw new CheckedException("交接永久回执损坏，不能推断未执行");
+            }
         }
         return Map.of("requestId", row.get("request_id"), "action", row.get("action"),
                 "commandStatus", row.get("status"), "commandKind", row.get("command_kind"));
@@ -134,11 +145,21 @@ public class MesShiftCommandJournal {
     private void owner(Map<String, Object> row) {
         require(actor().toString().equals(String.valueOf(row.get("actor_id"))), "仅原操作者可读取或封存此请求");
     }
+
     private void validate(String kind, String requestId) {
         require(kind != null && Set.of("HANDOVER", "LEFTOVER").contains(kind)
                 && requestId != null && requestId.matches("[A-Za-z0-9_-]{16,64}"), "原请求号或命令分类无效");
     }
-    private Long tenant() { return TenantContextHolder.getTenantId(); }
-    private Long actor() { return SecurityUtils.getUser().getId(); }
-    private void require(boolean value, String message) { if (!value) throw new CheckedException(message); }
+
+    private Long tenant() {
+        return TenantContextHolder.getTenantId();
+    }
+
+    private Long actor() {
+        return SecurityUtils.getUser().getId();
+    }
+
+    private void require(boolean value, String message) {
+        if (!value) throw new CheckedException(message);
+    }
 }

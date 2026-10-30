@@ -12,7 +12,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** ERP 正式计划结构化收件箱；保存规范载荷而不是连接器密钥或未经治理的任意原文。 */
+/**
+ * ERP 正式计划结构化收件箱；保存规范载荷而不是连接器密钥或未经治理的任意原文。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

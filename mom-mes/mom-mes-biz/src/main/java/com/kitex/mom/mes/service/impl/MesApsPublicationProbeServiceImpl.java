@@ -36,6 +36,42 @@ public class MesApsPublicationProbeServiceImpl
         implements MesApsPublicationProbeService {
     private final MesApsScheduleSyncService scheduleService;
 
+    static String caseKey(String factory, Long caseId) {
+        return "MES_APS_CASE:" + TenantContextHolder.getTenantId() + ':' + factory + ':' + caseId;
+    }
+
+    @Override
+    @Transactional(readOnly = true, rollbackFor = Exception.class)
+    public MesApsPublicationProbeDTO.AuditReply audit(MesApsPublicationProbeDTO.AuditQuery query) {
+        require(query != null && query.getScope() != null, "原应用账核对范围不能为空");
+        var command = query.getScope();
+        validateScope(command.getFactoryCode(), command.getPlanNo(), command.getCaseId());
+        var ids = query.getRequestIds();
+        require(ids != null && !ids.isEmpty() && ids.size() <= 11
+                        && new HashSet<>(ids).size() == ids.size()
+                        && ids.stream().allMatch(id -> StrUtil.isNotBlank(id) && id.length() <= 100),
+                "须提供1至11个唯一精确原应用号");
+        String expected = query.getExpectedAfterFingerprint();
+        require(expected == null || expected.matches("[a-f0-9]{64}"), "原应用后指纹格式不正确");
+        var logs = list(scope(command.getFactoryCode())
+                .eq(MesApsScheduleSyncEntity::getReplanCaseId, command.getCaseId())
+                .eq(MesApsScheduleSyncEntity::getPlanNo, command.getPlanNo())
+                .eq(MesApsScheduleSyncEntity::getSyncStatus, "SUCCESS")
+                .in(MesApsScheduleSyncEntity::getRequestId, ids)
+                .select(MesApsScheduleSyncEntity::getRequestId, MesApsScheduleSyncEntity::getCreateBy,
+                        MesApsScheduleSyncEntity::getAppliedTime, MesApsScheduleSyncEntity::getUpdatedOperationCount,
+                        MesApsScheduleSyncEntity::getAfterExecutionFingerprint)
+                .orderByAsc(MesApsScheduleSyncEntity::getId));
+        var records = logs.stream().map(log -> new MesApsPublicationProbeDTO.AuditRecord()
+                .setRequestId(log.getRequestId()).setAppliedBy(log.getCreateBy()).setAppliedTime(log.getAppliedTime())
+                .setUpdatedOperationCount(log.getUpdatedOperationCount())
+                .setFingerprintMatched(expected == null ? null : expected.equals(log.getAfterExecutionFingerprint()))).toList();
+        long matched = records.stream().filter(row -> Boolean.TRUE.equals(row.getFingerprintMatched())).count();
+        String state = logs.isEmpty() ? "NOT_OBSERVED" : expected == null ? "OBSERVED_UNRECONCILED"
+                : matched == 1 ? "VERIFIED" : matched > 1 ? "AMBIGUOUS" : "FINGERPRINT_MISMATCH";
+        return new MesApsPublicationProbeDTO.AuditReply().setState(state).setRecords(records).setObservedTime(LocalDateTime.now());
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public MesApsPublicationProbeDTO.Reply probe(MesApsPublicationProbeDTO.Query query) {
@@ -54,8 +90,8 @@ public class MesApsPublicationProbeServiceImpl
                     "旧取证合同只允许唯一原主工序");
         } else {
             require(nodes.size() == query.getExpectedProcessCodes().size()
-                            && nodes.stream().allMatch(node -> node != null && node.matches("RN-[1-9][0-9]*"))
-                            && new HashSet<>(nodes).size() == nodes.size(), "原节点全集与主工序清单不完整或重复");
+                    && nodes.stream().allMatch(node -> node != null && node.matches("RN-[1-9][0-9]*"))
+                    && new HashSet<>(nodes).size() == nodes.size(), "原节点全集与主工序清单不完整或重复");
         }
         baseMapper.lockCase(caseKey(command.getFactoryCode(), command.getReplanCaseId()));
         baseMapper.lockRequest(command.getRequestId());
@@ -102,7 +138,9 @@ public class MesApsPublicationProbeServiceImpl
                 .eq(MesApsScheduleSyncEntity::getFactoryCode, factory);
     }
 
-    /** 不接受跳过组织隔离或匿名恢复；调用端还须已有MES读取岗位权限。 */
+    /**
+     * 不接受跳过组织隔离或匿名恢复；调用端还须已有MES读取岗位权限。
+     */
     private void validateScope(String factory, String planNo, Long caseId) {
         require(TenantContextHolder.getTenantId() != null && !TenantContextHolder.getTenantSkip()
                         && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
@@ -111,10 +149,6 @@ public class MesApsPublicationProbeServiceImpl
                         && StrUtil.isNotBlank(planNo) && caseId != null && caseId > 0
                         && SecurityUtils.getUser() != null && StrUtil.isNotBlank(SecurityUtils.getUser().getUsername()),
                 "跨账取证须实名选择实际租户、工厂及精确案件/根计划");
-    }
-
-    static String caseKey(String factory, Long caseId) {
-        return "MES_APS_CASE:" + TenantContextHolder.getTenantId() + ':' + factory + ':' + caseId;
     }
 
     private void require(boolean valid, String message) {

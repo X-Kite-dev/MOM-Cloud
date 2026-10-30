@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /**
  * 其他入库通知单
@@ -47,7 +48,8 @@ public class WmsOtherInNoticeController {
     private final String billType = InBillTypeEnum.OTHER_IN.getCode();
 
     // 其他入库所有类型，查询列表时的条件
-    private final List<String> otherBillTypes = Arrays.stream(OtherInBillTypeEnum.values()).map(OtherInBillTypeEnum::getCode).toList();
+    private final List<String> otherBillTypes = Stream.concat(Stream.of(billType),
+            Arrays.stream(OtherInBillTypeEnum.values()).map(OtherInBillTypeEnum::getCode)).toList();
 
     /**
      * 分页查询主表

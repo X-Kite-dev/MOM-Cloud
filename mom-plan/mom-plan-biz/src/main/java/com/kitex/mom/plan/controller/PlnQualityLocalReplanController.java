@@ -107,11 +107,19 @@ public class PlnQualityLocalReplanController {
     }
 
     @PostMapping("/supplement/review")
-    @SysLog("复核质量报废补产需求并生成MRP")
+    @SysLog("复核质量报废补产并接收独立需求")
     @PreAuthorize("@pms.hasPermission('plan_qualitySupplement_review')")
     public R<PlnQualitySupplementDemandEntity> reviewSupplement(
             @RequestBody PlanQualityLocalReplanDTO.SupplementReviewCommand command) {
         return R.ok(service.reviewSupplement(command));
+    }
+
+    @PostMapping("/supplement/plan")
+    @SysLog("继续质量补产MPS/MRP计划")
+    @PreAuthorize("@pms.hasPermission('plan_qualitySupplement_review')")
+    public R<PlnQualitySupplementDemandEntity> planSupplement(
+            @RequestBody PlanQualityLocalReplanDTO.SupplementPlanCommand command) {
+        return R.ok(service.planSupplement(command));
     }
 
     @PostMapping("/supplement/cancel")

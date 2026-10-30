@@ -12,6 +12,10 @@ import java.util.List;
 @Accessors(chain = true)
 public class PlanMrpShortageLineDTO {
     private Long mrpId;
+    /**
+     * 精确Agent范围下的产品需求主键；旧问数兼容范围可以为空。
+     */
+    private Long planDemandId;
     private String planDemandNo;
     private String saleOrderCode;
     private String materialCode;
@@ -44,7 +48,9 @@ public class PlanMrpShortageLineDTO {
     private LocalDate plannedReleaseDate;
     private LocalDate expectedSupplyDate;
     private LocalDateTime expectedSupplyTime;
-    /** MINUTE、DATE_END或INVENTORY_NOW。 */
+    /**
+     * MINUTE、DATE_END或INVENTORY_NOW。
+     */
     private String supplyTimePrecision;
     private String supplyDateBasis;
     private String supplyType;

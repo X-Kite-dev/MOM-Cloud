@@ -9,16 +9,8 @@ import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesPhysicalPositionSurveyDTO;
 import com.kitex.mom.mes.dto.MesPhysicalTransformSourceBundleDTO;
-import com.kitex.mom.mes.entity.MesPhysicalPositionAllocationEntity;
-import com.kitex.mom.mes.entity.MesPhysicalPositionOperationEntity;
-import com.kitex.mom.mes.entity.MesPhysicalPositionSlotEntity;
-import com.kitex.mom.mes.entity.MesPhysicalPositionSourceEntity;
-import com.kitex.mom.mes.entity.MesPhysicalPositionSurveyEntity;
-import com.kitex.mom.mes.mapper.MesPhysicalPositionAllocationMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalPositionOperationMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalPositionSlotMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalPositionSourceMapper;
-import com.kitex.mom.mes.mapper.MesPhysicalPositionSurveyMapper;
+import com.kitex.mom.mes.entity.*;
+import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.MesPhysicalPositionSurveyService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -29,12 +21,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.function.Supplier;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
@@ -49,9 +36,13 @@ import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 public class MesPhysicalPositionSurveyServiceImpl
         extends ServiceImpl<MesPhysicalPositionSurveyMapper, MesPhysicalPositionSurveyEntity>
         implements MesPhysicalPositionSurveyService {
-    /** 独立永久原号域，采集号和操作号共用，跨工厂不重复占用同租户号。 */
+    /**
+     * 独立永久原号域，采集号和操作号共用，跨工厂不重复占用同租户号。
+     */
     private static final String REQUEST_LOCK_VERSION = "MES_PHYSICAL_POSITION_REQUEST_V1";
-    /** 只用于比较已逐原版本验证的领域节点，不称为旧SOURCE_V2的SHA。 */
+    /**
+     * 只用于比较已逐原版本验证的领域节点，不称为旧SOURCE_V2的SHA。
+     */
     private static final String DOMAIN_COMPARISON_VERSION = "MES_PHYSICAL_POSITION_SOURCE_DOMAIN_V1";
     private final MesPhysicalPositionSourceMapper sourceRows;
     private final MesPhysicalPositionSlotMapper slotRows;
@@ -80,7 +71,7 @@ public class MesPhysicalPositionSurveyServiceImpl
             if (prior != null) {
                 assertScope(prior, owner);
                 require(owner.actorId().equals(prior.getActorId()) && owner.actorCode().equals(prior.getActorCode())
-                        && fingerprint.equals(prior.getSurveyFingerprint()) && rawJson.equals(prior.getSurveySnapshot()),
+                                && fingerprint.equals(prior.getSurveyFingerprint()) && rawJson.equals(prior.getSurveySnapshot()),
                         "原采集号属于另一本人或正文，不能覆盖或另号猜重投");
                 return receiptOf(prior, owner);
             }
@@ -178,7 +169,8 @@ public class MesPhysicalPositionSurveyServiceImpl
         return independent(() -> {
             requireAvailable();
             // 多原号按同一稳定序try锁，失败保留原号，不持部分锁等待另一端。
-            for (String key : List.of(requestId, operationRequestId).stream().sorted().toList()) requestLock(owner, key);
+            for (String key : List.of(requestId, operationRequestId).stream().sorted().toList())
+                requestLock(owner, key);
             var row = baseMapper.permanent(owner.tenantId(), requestId);
             assertScope(row, owner);
             var original = receiptOf(row, owner);
@@ -187,8 +179,8 @@ public class MesPhysicalPositionSurveyServiceImpl
             var previous = operations.permanent(owner.tenantId(), operationRequestId);
             if (previous != null) {
                 require(row.getId().equals(previous.getSurveyId()) && owner.factoryCode().equals(previous.getFactoryCode())
-                        && owner.actorId().equals(previous.getActorId()) && owner.actorCode().equals(previous.getActorCode())
-                        && rawJson.equals(previous.getRequestSnapshot()) && fingerprint.equals(previous.getRequestFingerprint()),
+                                && owner.actorId().equals(previous.getActorId()) && owner.actorCode().equals(previous.getActorCode())
+                                && rawJson.equals(previous.getRequestSnapshot()) && fingerprint.equals(previous.getRequestFingerprint()),
                         "原决策号已用于另一操作/本人/正文，不覆盖原事件");
                 return original;
             }
@@ -196,7 +188,7 @@ public class MesPhysicalPositionSurveyServiceImpl
             require("OBSERVED".equals(row.getStatus()) && Long.valueOf(1).equals(row.getRevision()), "原观察已终结，不重开或根据迟到响应覆盖");
             boolean cancel = "CANCEL".equals(input.getAction());
             require(cancel ? owner.actorId().equals(row.getActorId()) && owner.actorCode().equals(row.getActorCode())
-                    : !owner.actorId().equals(row.getActorId()) && !owner.actorCode().equals(row.getActorCode()),
+                            : !owner.actorId().equals(row.getActorId()) && !owner.actorCode().equals(row.getActorCode()),
                     cancel ? "只能由原采集本人取消" : "确认/驳回必须由不同用户及账号进行，不能本人会签");
             requireReady();
             scope.acquire(owner.tenantId(), owner.factoryCode());
@@ -242,7 +234,9 @@ public class MesPhysicalPositionSurveyServiceImpl
         });
     }
 
-    /** 异人比较所有原领域事实，仅顶层当次观察人不同；不重算/改写旧SOURCE的raw或SHA。 */
+    /**
+     * 异人比较所有原领域事实，仅顶层当次观察人不同；不重算/改写旧SOURCE的raw或SHA。
+     */
     private void verifyUnchangedSources(MesPhysicalPositionSurveyEntity row, MesPhysicalTransformSourceBundleDTO current) {
         require(current.getTenantId().equals(row.getTenantId().toString()) && current.getFactoryCode().equals(row.getFactoryCode()), "确认来源实际组织已变");
         var originalBundle = originalBundle(row);
@@ -260,7 +254,9 @@ public class MesPhysicalPositionSurveyServiceImpl
         require(originalDomain.equals(currentDomain), "原库存/报告/工程/任务图/全量同码库存或阻断事实已漂移，请驳回原观察后按真实新事实重新采集，不能覆盖原文");
     }
 
-    /** 独立比较域只排除V2两顶层观察人字段；不递归删除历史审计，不遗漏原V1/SHA、数组和完整图。 */
+    /**
+     * 独立比较域只排除V2两顶层观察人字段；不递归删除历史审计，不遗漏原V1/SHA、数组和完整图。
+     */
     private JsonNode domain(String raw, String sha) {
         var value = codec.objectDocument(raw, MesPhysicalPositionSurveyCodec.MAX_DOCUMENT);
         require(MesPhysicalTransformSourceFreezeService.SOURCE_VERSION.equals(value.path("version").textValue())
@@ -271,17 +267,19 @@ public class MesPhysicalPositionSurveyServiceImpl
                 MesPhysicalPositionSurveyCodec.MAX_EVIDENCE);
     }
 
-    /** 一条SQL同提交边界读主及全部子账；回执不读取当前库存，不推断未知提交结果。 */
+    /**
+     * 一条SQL同提交边界读主及全部子账；回执不读取当前库存，不推断未知提交结果。
+     */
     private MesPhysicalPositionSurveyDTO.Receipt receiptOf(MesPhysicalPositionSurveyEntity row, Identity owner) {
         assertScope(row, owner);
         var observed = surveyCodec.body(row.getSurveySnapshot());
         require(MesPhysicalPositionSurveyCodec.VERSION.equals(row.getSurveyVersion())
-                && row.getSurveyFingerprint().equals(codec.fingerprint(row.getSurveyVersion(), row.getSurveySnapshot()))
-                && MesPhysicalPositionSurveyCodec.EVIDENCE_VERSION.equals(row.getEvidenceVersion())
-                && row.getEvidenceFingerprint().equals(codec.fingerprint(row.getEvidenceVersion(), row.getEvidenceSnapshot()))
-                && row.getActorId().toString().equals(observed.getExpectedActorUserId())
-                && row.getTenantId().toString().equals(observed.getExpectedTenantId()) && row.getFactoryCode().equals(observed.getExpectedFactoryCode())
-                && Long.valueOf(1).equals(row.getPhysicalObjectCount()) && row.getObservedTime() != null && row.getRegistrationXid() != null,
+                        && row.getSurveyFingerprint().equals(codec.fingerprint(row.getSurveyVersion(), row.getSurveySnapshot()))
+                        && MesPhysicalPositionSurveyCodec.EVIDENCE_VERSION.equals(row.getEvidenceVersion())
+                        && row.getEvidenceFingerprint().equals(codec.fingerprint(row.getEvidenceVersion(), row.getEvidenceSnapshot()))
+                        && row.getActorId().toString().equals(observed.getExpectedActorUserId())
+                        && row.getTenantId().toString().equals(observed.getExpectedTenantId()) && row.getFactoryCode().equals(observed.getExpectedFactoryCode())
+                        && Long.valueOf(1).equals(row.getPhysicalObjectCount()) && row.getObservedTime() != null && row.getRegistrationXid() != null,
                 "永久位置观察版本、原文SHA或原实名/组织损坏");
         var evidence = codec.objectDocument(row.getEvidenceSnapshot(), MesPhysicalPositionSurveyCodec.MAX_EVIDENCE);
         require(row.getSurveySnapshot().equals(evidence.path("surveySnapshot").textValue())
@@ -332,7 +330,8 @@ public class MesPhysicalPositionSurveyServiceImpl
             if ("CONFIRM".equals(event.getAction())) {
                 require(event.getVerificationSnapshot() != null && Objects.equals(event.getVerificationFingerprint(), codec.fingerprint(
                         MesPhysicalTransformSourceFreezeService.BUNDLE_VERSION, event.getVerificationSnapshot())), "原确认完整重读证据缺失/损坏");
-            } else require(event.getVerificationSnapshot() == null && event.getVerificationFingerprint() == null, "非确认事件不能附假重读包");
+            } else
+                require(event.getVerificationSnapshot() == null && event.getVerificationFingerprint() == null, "非确认事件不能附假重读包");
             events.add(event);
         }
         require(row.getLastOperationId().toString().equals(events.get(events.size() - 1).getEventId())
@@ -354,7 +353,9 @@ public class MesPhysicalPositionSurveyServiceImpl
         return receipt;
     }
 
-    /** 双向集合比对全部来源/位置/分配，不以计数或首条source代替完整原账。 */
+    /**
+     * 双向集合比对全部来源/位置/分配，不以计数或首条source代替完整原账。
+     */
     private void verifyChildren(MesPhysicalPositionSurveyEntity row, MesPhysicalPositionSurveyDTO.Body body, JsonNode evidence, JsonNode ledger) {
         var expectedSources = new HashSet<String>();
         for (var entry : originalBundle(row).path("sources")) {
@@ -377,7 +378,8 @@ public class MesPhysicalPositionSurveyServiceImpl
         for (var slot : body.getPositions()) {
             String count = "UNKNOWN".equals(slot.getPresence()) ? null : "MISSING".equals(slot.getPresence()) ? "0" : "1";
             expectedPositions.add(tuple(slot.getPositionCode(), slot.getPresence(), count));
-            for (var edge : slot.getAllocations()) expectedEdges.add(tuple(slot.getPositionCode(), edge.getStockId(), quantity(edge.getQuantity())));
+            for (var edge : slot.getAllocations())
+                expectedEdges.add(tuple(slot.getPositionCode(), edge.getStockId(), quantity(edge.getQuantity())));
         }
         var actualPositions = new HashSet<String>();
         for (var slot : ledger.path("positions")) {
@@ -429,7 +431,7 @@ public class MesPhysicalPositionSurveyServiceImpl
     }
 
     private MesPhysicalPositionOperationEntity event(Identity owner, Long surveyId, String requestId, String action, Long revision,
-                                                    String raw, String version, LocalDateTime time) {
+                                                     String raw, String version, LocalDateTime time) {
         var row = new MesPhysicalPositionOperationEntity().setFactoryCode(owner.factoryCode()).setSurveyId(surveyId).setRequestId(requestId)
                 .setAction(action).setRevision(revision).setActorId(owner.actorId()).setActorCode(owner.actorCode()).setRequestVersion(version)
                 .setRequestSnapshot(raw).setRequestFingerprint(codec.fingerprint(version, raw)).setOccurredTime(time);

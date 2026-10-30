@@ -68,8 +68,8 @@ public interface MesReworkIdentifierUsageMapper extends BaseMapper<MesReworkIden
              LIMIT 1001
             """)
     List<MesReworkIdentifierCandidateDTO> selectCandidates(@Param("tenantId") Long tenantId,
-                                                            @Param("factoryCode") String factoryCode,
-                                                            @Param("sourceTaskId") Long sourceTaskId,
-                                                            @Param("sourceTaskCode") String sourceTaskCode,
-                                                            @Param("sourceProduceTaskCode") String sourceProduceTaskCode);
+                                                           @Param("factoryCode") String factoryCode,
+                                                           @Param("sourceTaskId") Long sourceTaskId,
+                                                           @Param("sourceTaskCode") String sourceTaskCode,
+                                                           @Param("sourceProduceTaskCode") String sourceProduceTaskCode);
 }

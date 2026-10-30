@@ -57,7 +57,7 @@ public class MesAndonRecordController {
     @GetMapping("/record/page")
     @PreAuthorize("@pms.hasPermission('andonRecord:show')")
     public R<IPage<MesAndonRecordEntity>> recordPage(Page<MesAndonRecordEntity> pageParam, MesAndonRecordEntity query,
-                                                    @RequestParam(required = false) Long preparationArrangeId) {
+                                                     @RequestParam(required = false) Long preparationArrangeId) {
         QueryWrapper<MesAndonRecordEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
         autoQueryWrapper.eq("factory_code", productionReleaseService.authorizeFactory("read"));
         if (preparationArrangeId != null) {

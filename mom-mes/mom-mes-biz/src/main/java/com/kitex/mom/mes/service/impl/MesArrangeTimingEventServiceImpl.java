@@ -9,10 +9,13 @@ import com.kitex.mom.mes.mapper.MesArrangeTimingEventMapper;
 import com.kitex.mom.mes.service.MesArrangeTimingEventService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+
 import java.time.LocalDateTime;
 import java.util.Objects;
 
-/** 同事务原事件只读查询；不能补造历史暂停，也不根据当前工序状态猜测整件停留。 */
+/**
+ * 同事务原事件只读查询；不能补造历史暂停，也不根据当前工序状态猜测整件停留。
+ */
 @Service
 public class MesArrangeTimingEventServiceImpl extends ServiceImpl<MesArrangeTimingEventMapper, MesArrangeTimingEventEntity>
         implements MesArrangeTimingEventService {

@@ -5,7 +5,9 @@ import com.kitex.mom.plan.entity.PlnErpPlanInboxEntity;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 
-/** ERP 正式计划收件箱 Mapper；JSON 载荷以 PostgreSQL jsonb 显式写入。 */
+/**
+ * ERP 正式计划收件箱 Mapper；JSON 载荷以 PostgreSQL jsonb 显式写入。
+ */
 @Mapper
 public interface PlnErpPlanInboxMapper extends MomBaseMapper<PlnErpPlanInboxEntity> {
 

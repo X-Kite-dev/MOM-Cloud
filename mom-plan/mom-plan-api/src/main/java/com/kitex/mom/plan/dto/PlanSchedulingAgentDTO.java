@@ -103,7 +103,9 @@ public final class PlanSchedulingAgentDTO {
         @Schema(description = "人工选案结论指纹")
         private String expectedSelectionFingerprint;
 
-        /** 由Agent受控执行器在执行时注入，不能由模型自行声明。 */
+        /**
+         * 由Agent受控执行器在执行时注入，不能由模型自行声明。
+         */
         @Schema(description = "Agent 受控执行审批主键，由执行器注入")
         private Long agentApprovalId;
         @Schema(description = "Agent 受控执行审批编号，由执行器注入")
@@ -330,6 +332,9 @@ public final class PlanSchedulingAgentDTO {
     @Accessors(chain = true)
     @Schema(description = "智能排产发布后的MES执行效果证据")
     public static class EffectEvidence {
+        @Schema(description = "观察使用的身份协议；历史未登记时不补造")
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        private String identityContractVersion;
         @Schema(description = "是否已形成可供复核的效果回评")
         private Boolean available;
         @Schema(description = "排产情景主键")
@@ -385,6 +390,15 @@ public final class PlanSchedulingAgentDTO {
         private Long issueId;
         private String issueNo;
         private String mesTaskCode;
+        @Schema(description = "原冻结APS工序主键、节点及MES真实工序身份；历史不补填")
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        private String schedulingOperationId;
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        private String sourceRouteNodeCode;
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        private String mesProduceTaskId;
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        private String mesProduceTaskCode;
         private String processCode;
         private String processName;
         private Integer operationSeq;

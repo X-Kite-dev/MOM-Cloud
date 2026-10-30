@@ -17,7 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/** 动态换码只有只读查询，现场写入复用正式报工权限和完整事务，不另开CRUD捷径。 */
+/**
+ * 动态换码只有只读查询，现场写入复用正式报工权限和完整事务，不另开CRUD捷径。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/mesIdentifierBinding")
@@ -31,14 +33,16 @@ public class MesIdentifierBindingController {
     @Operation(summary = "明确派工后预览单码/双码", description = "不占码、不写报工、不生成弱网许可")
     @PreAuthorize("@pms.hasPermission('mesTaskReport:show','mesTaskReport:report','mesStationPass:report','mesTaskReport:integration','mesAutoReport:event')")
     public R<MesIdentifierBindingPreviewDTO> preview(@RequestParam String arrangeCode, @RequestParam String identifier,
-                                                    @RequestParam(required = false) String externalIdentifier) {
+                                                     @RequestParam(required = false) String externalIdentifier) {
         return R.ok(bindings.preview(arrangeCode, identifier, externalIdentifier));
     }
 
     @GetMapping("/evidence")
     @Operation(summary = "查看精确占用实例，包括已释放历史")
     @PreAuthorize("@pms.hasPermission('mesTaskReport:show')")
-    public R<MesIdentifierBindingEntity> evidence(@RequestParam Long bindingId) { return R.ok(bindings.evidence(bindingId)); }
+    public R<MesIdentifierBindingEntity> evidence(@RequestParam Long bindingId) {
+        return R.ok(bindings.evidence(bindingId));
+    }
 
     @GetMapping("/operations")
     @Operation(summary = "查看精确实例的完整节点操作链")

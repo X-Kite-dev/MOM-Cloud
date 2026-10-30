@@ -28,6 +28,10 @@ public final class WmsInventoryHealthRow {
         private Long overReservedRowCount;
         private Long missingUnitRowCount;
         private Long missingLocationRowCount;
+        private Long exceptionRowCount;
+        private Long integrityRiskRowCount;
+        private Long dispositionReviewRowCount;
+        private Long earlyWarningRowCount;
     }
 
     @Data
@@ -53,19 +57,32 @@ public final class WmsInventoryHealthRow {
         private String warehouseName;
         private String siteCode;
         private String siteName;
+        private String containerCode;
         private String matCode;
         private String matName;
         private String matBatch;
+        private String matBarcode;
         private String matUnit;
+        private String supplierCode;
+        private String supplierName;
         private BigDecimal physicalNum;
         private BigDecimal productionReservedNum;
         private BigDecimal salesReservedNum;
         private BigDecimal availableNum;
         private String qualityStatus;
         private String qualityResult;
+        private String qualityHoldNo;
+        private String qualitySourceType;
+        private String qualitySourceId;
         private Integer lockStatus;
+        private Boolean locked;
+        private Boolean qualityOk;
+        private Boolean expired;
+        private Boolean nearExpiry;
+        private Boolean slowMoving;
         private LocalDateTime inTime;
         private LocalDate validEndDate;
+        private LocalDateTime stockUpdatedAt;
         private String exceptionCodes;
     }
 }

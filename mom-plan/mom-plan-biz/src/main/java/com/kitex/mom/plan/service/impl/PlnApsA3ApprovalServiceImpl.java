@@ -1,5 +1,7 @@
 package com.kitex.mom.plan.service.impl;
 
+import com.kitex.mom.plan.service.aps.PlnApsSourceRouting;
+
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -37,9 +39,26 @@ public class PlnApsA3ApprovalServiceImpl extends ServiceImpl<PlnApsA3ApprovalMap
     private final PlnSchedulingAgentService schedulingAgentService;
     private final PlnApsCaseMapper caseMapper;
 
+    private static boolean requestId(String value) {
+        return StrUtil.isNotBlank(value) && value.trim().length() <= 64;
+    }
+
+    private static boolean fingerprint(String value) {
+        return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    private static boolean reason(String value) {
+        return StrUtil.isNotBlank(value) && value.trim().length() <= 500;
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) throw new CheckedException(message);
+    }
+
     @Override
     public PlnApsDecisionDTO.Approval current(Long caseId) {
         PlnApsCaseDTO apsCase = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(apsCase);
         return summary(latest(apsCase));
     }
 
@@ -47,10 +66,10 @@ public class PlnApsA3ApprovalServiceImpl extends ServiceImpl<PlnApsA3ApprovalMap
     @Transactional(rollbackFor = Exception.class)
     public PlnApsDecisionDTO.Approval submit(Long caseId, PlnApsDecisionDTO.ApprovalSubmitCommand command) {
         require(command != null && requestId(command.getRequestId())
-                        && fingerprint(command.getExpectedCaseFingerprint())
-                        && fingerprint(command.getExpectedScenarioFingerprint())
-                        && fingerprint(command.getExpectedSelectionFingerprint())
-                        && reason(command.getReason()), "A3送审须填写原因并携带当前案件和A2证据");
+                && fingerprint(command.getExpectedCaseFingerprint())
+                && fingerprint(command.getExpectedScenarioFingerprint())
+                && fingerprint(command.getExpectedSelectionFingerprint())
+                && reason(command.getReason()), "A3送审须填写原因并携带当前案件和A2证据");
         PlnApsCaseDTO apsCase = lockCase(caseId);
         PlnApsA3ApprovalEntity previous = latest(apsCase);
         if (previous != null && Objects.equals(previous.getSubmitRequestId(), command.getRequestId().trim())) {
@@ -144,7 +163,7 @@ public class PlnApsA3ApprovalServiceImpl extends ServiceImpl<PlnApsA3ApprovalMap
 
     @Override
     public PlnApsA3ApprovalEntity requireApproved(Long caseId, PlnApsDecisionDTO.PublishCommand command,
-                                                    boolean replay) {
+                                                  boolean replay) {
         PlnApsCaseDTO apsCase = lockCase(caseId);
         PlnApsA3ApprovalEntity approval = latest(apsCase);
         require(approval != null && Objects.equals(String.valueOf(approval.getId()), command.getApprovalId())
@@ -175,6 +194,7 @@ public class PlnApsA3ApprovalServiceImpl extends ServiceImpl<PlnApsA3ApprovalMap
 
     private PlnApsCaseDTO lockCase(Long caseId) {
         PlnApsCaseDTO apsCase = caseService.detail(caseId);
+        PlnApsSourceRouting.requireStandard(apsCase);
         caseMapper.lock("APS_A3:" + apsCase.getFactoryCode() + ':' + caseId);
         return caseService.detail(caseId);
     }
@@ -221,21 +241,5 @@ public class PlnApsA3ApprovalServiceImpl extends ServiceImpl<PlnApsA3ApprovalMap
                 .setCaseFingerprint(row.getCaseFingerprint()).setScenarioFingerprint(row.getScenarioFingerprint())
                 .setSelectionFingerprint(row.getSelectionFingerprint()).setPublishRequestId(row.getPublishRequestId())
                 .setSubmittedTime(row.getSubmittedTime()).setDecidedTime(row.getDecidedTime());
-    }
-
-    private static boolean requestId(String value) {
-        return StrUtil.isNotBlank(value) && value.trim().length() <= 64;
-    }
-
-    private static boolean fingerprint(String value) {
-        return value != null && value.matches("[0-9a-f]{64}");
-    }
-
-    private static boolean reason(String value) {
-        return StrUtil.isNotBlank(value) && value.trim().length() <= 500;
-    }
-
-    private static void require(boolean condition, String message) {
-        if (!condition) throw new CheckedException(message);
     }
 }

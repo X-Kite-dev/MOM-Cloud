@@ -5,11 +5,11 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.mes.agent.dto.MesPlanTaskScopeDTO;
 import com.kitex.mom.mes.entity.MesApsBatchAllocationEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.entity.MesProduceTaskEntity;
+import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.enums.MesTaskStatusEnum;
-import com.kitex.mom.mes.mapper.MesProduceTaskMapper;
 import com.kitex.mom.mes.mapper.MesApsBatchAllocationMapper;
+import com.kitex.mom.mes.mapper.MesProduceTaskMapper;
 import com.kitex.mom.mes.mapper.MesTaskMapper;
 import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import lombok.RequiredArgsConstructor;
@@ -18,13 +18,8 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.Map;
-import java.util.HashMap;
 import java.time.LocalDateTime;
+import java.util.*;
 
 /**
  * 来源计划工单范围查询：包含直接生成工单和APS合批工单，严格执行实际工厂权限。
@@ -39,7 +34,9 @@ public class MesPlanTaskScopeQueryService {
     private final MesApsBatchAllocationMapper allocationMapper;
     private final MesProduceTaskMapper operationMapper;
 
-    /** 在同一只读快照中冻结计数、工单和来源映射。 */
+    /**
+     * 在同一只读快照中冻结计数、工单和来源映射。
+     */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public MesPlanTaskScopeDTO.Evidence query(MesPlanTaskScopeDTO.Query query) {
         String factory = factoryAccess.require("read");
@@ -66,10 +63,11 @@ public class MesPlanTaskScopeQueryService {
         List<Long> taskIds = tasks.stream().map(MesTaskEntity::getId).toList();
         List<MesApsBatchAllocationEntity> allAllocations = taskIds.isEmpty() ? List.of()
                 : allocationMapper.selectList(new LambdaQueryWrapper<MesApsBatchAllocationEntity>()
-                        .eq(MesApsBatchAllocationEntity::getFactoryCode, factory)
-                        .in(MesApsBatchAllocationEntity::getMesTaskId, taskIds)
-                        .orderByAsc(MesApsBatchAllocationEntity::getId).last("LIMIT 5001"));
-        if (allAllocations.size() > 5000) throw new CheckedException("整张合批数量账超过安全边界，不能输出伪完整数量归属");
+                .eq(MesApsBatchAllocationEntity::getFactoryCode, factory)
+                .in(MesApsBatchAllocationEntity::getMesTaskId, taskIds)
+                .orderByAsc(MesApsBatchAllocationEntity::getId).last("LIMIT 5001"));
+        if (allAllocations.size() > 5000)
+            throw new CheckedException("整张合批数量账超过安全边界，不能输出伪完整数量归属");
         List<MesPlanTaskScopeDTO.Link> links = new ArrayList<>();
         List<String> gaps = new ArrayList<>();
         for (MesTaskEntity task : tasks) {
@@ -145,7 +143,9 @@ public class MesPlanTaskScopeQueryService {
                 .setTasks(rows).setLinks(links).setDataGaps(gaps).setTruncated(count > tasks.size());
     }
 
-    /** 一次分组查询取得全部返回工单的工序统计，避免逐工单远程查询；租户拦截仍生效。 */
+    /**
+     * 一次分组查询取得全部返回工单的工序统计，避免逐工单远程查询；租户拦截仍生效。
+     */
     private Map<String, Map<String, Object>> operationCounts(String factory, List<MesTaskEntity> tasks) {
         List<String> codes = tasks.stream().map(MesTaskEntity::getCode)
                 .filter(StringUtils::hasText).distinct().toList();
@@ -154,18 +154,20 @@ public class MesPlanTaskScopeQueryService {
             return result;
         }
         operationMapper.selectMaps(new QueryWrapper<MesProduceTaskEntity>()
-                .select("task_code", "COUNT(*) AS operation_count",
-                        "SUM(CASE WHEN status='PAUSE' THEN 1 ELSE 0 END) AS paused_count",
-                        "SUM(CASE WHEN status IN ('WAIT','UN_RECEIVE','RECEIVE','PRODUCT','PAUSE','CLOSE','FINISH')"
-                                + " THEN 0 ELSE 1 END) AS unknown_status_count")
-                .eq("factory_code", factory).in("task_code", codes).groupBy("task_code"))
+                        .select("task_code", "COUNT(*) AS operation_count",
+                                "SUM(CASE WHEN status='PAUSE' THEN 1 ELSE 0 END) AS paused_count",
+                                "SUM(CASE WHEN status IN ('WAIT','UN_RECEIVE','RECEIVE','PRODUCT','PAUSE','CLOSE','FINISH')"
+                                        + " THEN 0 ELSE 1 END) AS unknown_status_count")
+                        .eq("factory_code", factory).in("task_code", codes).groupBy("task_code"))
                 .forEach(row -> result.put(String.valueOf(row.get("task_code")), row));
         return result;
     }
 
-    /** 保留未知事实，不将未维护日期/数量、无工序或关闭但无完工时间解释为正常。 */
+    /**
+     * 保留未知事实，不将未维护日期/数量、无工序或关闭但无完工时间解释为正常。
+     */
     private MesPlanTaskScopeDTO.Task riskTask(MesTaskEntity task, Map<String, Object> operations,
-                                             LocalDateTime observedAt) {
+                                              LocalDateTime observedAt) {
         List<String> gaps = new ArrayList<>();
         Boolean delayed = null;
         boolean knownStatus = java.util.Arrays.stream(MesTaskStatusEnum.values())

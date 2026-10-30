@@ -13,8 +13,8 @@ import com.kitex.mom.mes.service.impl.MesStartPreparationDrilldownService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -40,7 +40,7 @@ public class MesChangePointHandleController {
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('mesChangePointHandle:show')")
     public R<IPage<MesChangePointHandleEntity>> page(Page<MesChangePointHandleEntity> pageParam, MesChangePointHandleEntity query,
-                                                    @RequestParam(required = false) Long preparationArrangeId) {
+                                                     @RequestParam(required = false) Long preparationArrangeId) {
         if (preparationArrangeId != null) {
             // 父工单范围包含上级变化点，Mapper 的 task_code 已按等值过滤，不扩成相似工单。
             preparationDrilldown.require(preparationArrangeId, query.getArrangeCode(), query.getTaskCode());

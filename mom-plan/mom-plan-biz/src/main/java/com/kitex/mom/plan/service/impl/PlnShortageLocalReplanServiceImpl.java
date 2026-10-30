@@ -992,12 +992,13 @@ public class PlnShortageLocalReplanServiceImpl implements PlnShortageLocalReplan
                 if (!Objects.equals(assignment.getRouteCode(), operation.getRouteCode())
                         || !Objects.equals(assignment.getProcessCode(), operation.getProcessCode())) continue;
                 if (StrUtil.isNotBlank(operation.getSourceRouteNodeCode())) {
-                    if (Objects.equals(operation.getSourceRouteNodeCode(), assignment.getRouteNodeCode())) direct.add(PlnFrozenRouteNodeIdentity.key(operation));
+                    if (Objects.equals(operation.getSourceRouteNodeCode(), assignment.getRouteNodeCode()))
+                        direct.add(PlnFrozenRouteNodeIdentity.key(operation));
                 } else {
                     // A current material relation does not confer a node identity on a historical operation.
                     require(operations.stream().filter(row -> Objects.equals(row.getProcessCode(), operation.getProcessCode())).count() == 1
                             && response.getData().stream().filter(row -> Objects.equals(row.getRouteCode(), operation.getRouteCode())
-                            && Objects.equals(row.getProcessCode(), operation.getProcessCode())).map(MdmProcessProcedureMatEntity::getRouteNodeCode)
+                                    && Objects.equals(row.getProcessCode(), operation.getProcessCode())).map(MdmProcessProcedureMatEntity::getRouteNodeCode)
                             .distinct().count() == 1, "旧投料工序无法唯一桥接，禁止猜测原冻结身份");
                     direct.add(PlnFrozenRouteNodeIdentity.key(operation));
                 }

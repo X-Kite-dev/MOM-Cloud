@@ -22,12 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -95,8 +90,8 @@ public class MesOperationDurationReader {
     }
 
     private MesOperationDurationDTO.Operation operation(MesProduceTaskEntity produce,
-            List<MesTaskArrangeEntity> arrangements,
-            java.util.Map<Long, List<MesTaskExecutionSegmentEntity>> byArrange, LocalDateTime queried) {
+                                                        List<MesTaskArrangeEntity> arrangements,
+                                                        java.util.Map<Long, List<MesTaskExecutionSegmentEntity>> byArrange, LocalDateTime queried) {
         var result = new MesOperationDurationDTO.Operation().setProduceTaskCode(produce.getCode())
                 .setTenantId(produce.getTenantId().toString()).setFactoryCode(produce.getFactoryCode())
                 .setProduceTaskId(produce.getId().toString()).setTaskCode(produce.getTaskCode())
@@ -148,13 +143,16 @@ public class MesOperationDurationReader {
             String currentStation = arrange.getActualWorksiteCode();
             String currentDevice = StrUtil.emptyToNull(arrange.getPlannedDeviceCode());
             if (StrUtil.isBlank(currentStation)) gaps.add("派工[" + arrange.getCode() + "]缺实际工位");
-            if (station == null) { station = currentStation; device = currentDevice; }
-            else if (!Objects.equals(station, currentStation) || !Objects.equals(device, currentDevice))
+            if (station == null) {
+                station = currentStation;
+                device = currentDevice;
+            } else if (!Objects.equals(station, currentStation) || !Objects.equals(device, currentDevice))
                 gaps.add("同工序跨实际工位/设备，不能汇总为同资源生产历时");
             if (!validInterval(arrange.getStartTime(), arrange.getFinishTime(), queried)) {
                 gaps.add("派工[" + arrange.getCode() + "]开完工缺失、倒置或未来");
             } else {
-                if (last != null && arrange.getStartTime().isBefore(last)) gaps.add("派工区间重叠，不能把并行人时当历时");
+                if (last != null && arrange.getStartTime().isBefore(last))
+                    gaps.add("派工区间重叠，不能把并行人时当历时");
                 else if (last != null) interDispatchGap = Math.addExact(interDispatchGap,
                         Duration.between(last, arrange.getStartTime()).getSeconds());
                 if (first == null) first = arrange.getStartTime();
@@ -193,9 +191,11 @@ public class MesOperationDurationReader {
         return finish(result);
     }
 
-    /** 核对每个派工的完整段链；保留原整秒口径，不补造暂停原因或亚秒量。 */
+    /**
+     * 核对每个派工的完整段链；保留原整秒口径，不补造暂停原因或亚秒量。
+     */
     private SegmentDurations segments(MesProduceTaskEntity produce, MesTaskArrangeEntity arrange,
-            List<MesTaskExecutionSegmentEntity> rows, LocalDateTime queried, List<String> gaps) {
+                                      List<MesTaskExecutionSegmentEntity> rows, LocalDateTime queried, List<String> gaps) {
         if (rows.isEmpty()) {
             gaps.add("派工[" + arrange.getCode() + "]缺完整生产段");
             return new SegmentDurations(0, 0);
@@ -242,11 +242,8 @@ public class MesOperationDurationReader {
         return new SegmentDurations(sum, pauseGap);
     }
 
-    /** 段落账秒数与实际段间暂停秒数分别累加，不用墙钟减法推断暂停。 */
-    private record SegmentDurations(long runSeconds, long pauseGapSeconds) { }
-
     private MesOperationDurationDTO.Arrangement arrangement(MesTaskArrangeEntity row,
-            List<MesTaskExecutionSegmentEntity> segments) {
+                                                            List<MesTaskExecutionSegmentEntity> segments) {
         return new MesOperationDurationDTO.Arrangement().setId(row.getId().toString()).setCode(row.getCode())
                 .setTenantId(row.getTenantId().toString()).setFactoryCode(row.getFactoryCode())
                 .setTaskCode(row.getTaskCode()).setProduceTaskCode(row.getProduceTaskCode())
@@ -291,8 +288,25 @@ public class MesOperationDurationReader {
         return row;
     }
 
-    private String decimal(BigDecimal value) { return value == null ? null : value.stripTrailingZeros().toPlainString(); }
-    private String time(LocalDateTime value) { return value == null ? null : value.toString(); }
-    private boolean positive(BigDecimal value) { return value != null && value.signum() > 0; }
-    private void require(boolean valid, String message) { if (!valid) throw new CheckedException(message); }
+    private String decimal(BigDecimal value) {
+        return value == null ? null : value.stripTrailingZeros().toPlainString();
+    }
+
+    private String time(LocalDateTime value) {
+        return value == null ? null : value.toString();
+    }
+
+    private boolean positive(BigDecimal value) {
+        return value != null && value.signum() > 0;
+    }
+
+    private void require(boolean valid, String message) {
+        if (!valid) throw new CheckedException(message);
+    }
+
+    /**
+     * 段落账秒数与实际段间暂停秒数分别累加，不用墙钟减法推断暂停。
+     */
+    private record SegmentDurations(long runSeconds, long pauseGapSeconds) {
+    }
 }

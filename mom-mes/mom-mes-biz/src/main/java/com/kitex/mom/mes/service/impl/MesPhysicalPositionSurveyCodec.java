@@ -25,7 +25,9 @@ public class MesPhysicalPositionSurveyCodec {
     public static final int MAX_EVIDENCE = 64 * 1024 * 1024;
     private final MesPhysicalTransformCodec codec;
 
-    /** 原采集正文恰好八字段；母件码、工程、质量均由服务器沿原来源核定。 */
+    /**
+     * 原采集正文恰好八字段；母件码、工程、质量均由服务器沿原来源核定。
+     */
     public MesPhysicalPositionSurveyDTO.Body body(String raw) {
         var root = codec.objectDocument(raw, MAX_DOCUMENT);
         fields(root, Set.of("version", "expectedTenantId", "expectedFactoryCode", "expectedActorUserId",
@@ -96,7 +98,9 @@ public class MesPhysicalPositionSurveyCodec {
         return result;
     }
 
-    /** 九字段原决策；身份声明仅核对服务器本人，不从原采集人继承权限。 */
+    /**
+     * 九字段原决策；身份声明仅核对服务器本人，不从原采集人继承权限。
+     */
     public MesPhysicalPositionSurveyDTO.Decision decision(String raw) {
         var root = codec.objectDocument(raw, MAX_DOCUMENT);
         fields(root, Set.of("version", "expectedTenantId", "expectedFactoryCode", "expectedActorUserId",
@@ -123,7 +127,9 @@ public class MesPhysicalPositionSurveyCodec {
         return result;
     }
 
-    /** 严格文本，不调用asText把number/boolean转换为另一种原事实。 */
+    /**
+     * 严格文本，不调用asText把number/boolean转换为另一种原事实。
+     */
     private String text(JsonNode root, String key) {
         require(root.path(key).isTextual(), "位置采集字段" + key + "必须为文本");
         return root.get(key).textValue();

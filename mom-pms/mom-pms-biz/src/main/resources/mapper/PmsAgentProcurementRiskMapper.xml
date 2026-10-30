@@ -24,6 +24,8 @@
              AND d.factory_code = o.factory_code AND d.del_flag = '0'
             WHERE o.tenant_id = #{tenantId} AND o.factory_code = #{factoryCode}
               AND o.del_flag = '0' AND o.status IN ('2', '3', '4')
+              <if test="orderId != null">AND o.id = #{orderId}</if>
+              <if test="orderNo != null and orderNo != ''">AND o.pms_order_no = #{orderNo}</if>
               AND COALESCE(d.order_num, 0) - COALESCE(d.arrival_num, 0)
                   - COALESCE(d.cancelled_num, 0) &gt; 0
         ), commitment_source AS (
@@ -87,7 +89,10 @@
                COUNT(*) AS open_line_count,
                (SELECT COUNT(*) FROM "mom_pms".pms_order pending
                  WHERE pending.tenant_id = #{tenantId} AND pending.factory_code = #{factoryCode}
-                   AND pending.del_flag = '0' AND pending.status IN ('0', '1')) AS pending_approval_order_count,
+                   AND pending.del_flag = '0' AND pending.status IN ('0', '1')
+                   <if test="orderId != null">AND pending.id = #{orderId}</if>
+                   <if test="orderNo != null and orderNo != ''">AND pending.pms_order_no = #{orderNo}</if>)
+                   AS pending_approval_order_count,
                COUNT(*) FILTER (WHERE overdue_commitment_num &gt; 0) AS overdue_commitment_line_count,
                COUNT(*) FILTER (WHERE due_soon_commitment_num &gt; 0) AS due_soon_line_count,
                COUNT(*) FILTER (WHERE uncommitted_gap_num &gt; 0) AS uncommitted_gap_line_count,

@@ -5,21 +5,14 @@ import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.mes.dto.MesApsLocalScheduleDTO;
 import com.kitex.mom.plan.entity.PlnSchedulingOperationEntity;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 
-/** 局部重排只使用原正式排程冻结身份，不从今日路线补造历史节点。 */
+/**
+ * 局部重排只使用原正式排程冻结身份，不从今日路线补造历史节点。
+ */
 final class PlnFrozenRouteNodeIdentity {
-    private PlnFrozenRouteNodeIdentity() { }
+    private PlnFrozenRouteNodeIdentity() {
+    }
 
     static String key(PlnSchedulingOperationEntity operation) {
         return StrUtil.isNotBlank(operation.getSourceRouteNodeCode())
@@ -35,7 +28,9 @@ final class PlnFrozenRouteNodeIdentity {
                 ? operation.getPredecessorNodeCodes() : operation.getPredecessorCodes();
     }
 
-    /** 全组使用同一身份合同；任何重复、缺失或新旧混合均拒绝，不取首条。 */
+    /**
+     * 全组使用同一身份合同；任何重复、缺失或新旧混合均拒绝，不取首条。
+     */
     static Map<String, PlnSchedulingOperationEntity> index(List<PlnSchedulingOperationEntity> operations) {
         Map<String, PlnSchedulingOperationEntity> result = new LinkedHashMap<>();
         Boolean nodeMode = null;
@@ -58,7 +53,7 @@ final class PlnFrozenRouteNodeIdentity {
         Set<Long> ids = new HashSet<>();
         for (var state : Optional.ofNullable(bundle.getOperations()).orElse(List.of())) {
             check(state != null && StrUtil.isNotBlank(state.getRouteCode()) && state.getProduceTaskId() != null
-                    && StrUtil.isNotBlank(state.getProduceTaskCode()) && ids.add(state.getProduceTaskId()),
+                            && StrUtil.isNotBlank(state.getProduceTaskCode()) && ids.add(state.getProduceTaskId()),
                     "MES工序缺少真实任务身份或重复主键");
             boolean node = StrUtil.isNotBlank(state.getSourceRouteNodeCode());
             check(nodeMode == null || nodeMode == node, "MES节点合同混合不完整");
@@ -68,7 +63,9 @@ final class PlnFrozenRouteNodeIdentity {
         return result;
     }
 
-    /** 核对两侧完整集合；旧APS仅允许在原MES主工序唯一时桥接。 */
+    /**
+     * 核对两侧完整集合；旧APS仅允许在原MES主工序唯一时桥接。
+     */
     static Map<String, MesApsLocalScheduleDTO.OperationState> correspondence(
             List<PlnSchedulingOperationEntity> operations, MesApsLocalScheduleDTO.StateBundle bundle) {
         var plans = index(operations);
@@ -89,9 +86,9 @@ final class PlnFrozenRouteNodeIdentity {
         for (var operation : operations) {
             var state = states.get(key(operation));
             check(Objects.equals(operation.getProcessCode(), state.getRouteCode())
-                    && (StrUtil.isBlank(operation.getSourceRouteNodeCode())
-                    || Objects.equals(operation.getSourceRouteNodeCode(), state.getSourceRouteNodeCode()))
-                    && Objects.equals(operation.getOperationSeq(), state.getRouteOrder()),
+                            && (StrUtil.isBlank(operation.getSourceRouteNodeCode())
+                            || Objects.equals(operation.getSourceRouteNodeCode(), state.getSourceRouteNodeCode()))
+                            && Objects.equals(operation.getOperationSeq(), state.getRouteOrder()),
                     "冻结APS与MES节点、主工序或序号不一致");
         }
         return states;
@@ -107,7 +104,7 @@ final class PlnFrozenRouteNodeIdentity {
     }
 
     static List<String> selection(List<PlnSchedulingOperationEntity> operations,
-                                   Collection<String> processCodes, Collection<String> nodeCodes) {
+                                  Collection<String> processCodes, Collection<String> nodeCodes) {
         var index = index(operations);
         if (nodeCodes != null) {
             check(!nodeCodes.isEmpty() && new HashSet<>(nodeCodes).size() == nodeCodes.size()
@@ -128,18 +125,20 @@ final class PlnFrozenRouteNodeIdentity {
         return result;
     }
 
-    /** 替换/回退只改变计划属性，不能换原组织、路线、节点、前序或来源计划。 */
+    /**
+     * 替换/回退只改变计划属性，不能换原组织、路线、节点、前序或来源计划。
+     */
     static void sameIdentity(PlnSchedulingOperationEntity source, PlnSchedulingOperationEntity target) {
         check(source != null && target != null && Objects.equals(source.getSourceRouteNodeCode(), target.getSourceRouteNodeCode())
-                && Objects.equals(source.getProcessCode(), target.getProcessCode())
-                && Objects.equals(source.getRouteCode(), target.getRouteCode())
-                && Objects.equals(source.getRouteWorkingId(), target.getRouteWorkingId())
-                && Objects.equals(source.getPredecessorCodes(), target.getPredecessorCodes())
-                && Objects.equals(source.getPredecessorNodeCodes(), target.getPredecessorNodeCodes())
-                && Objects.equals(source.getOperationSeq(), target.getOperationSeq())
-                && Objects.equals(source.getIssueId(), target.getIssueId())
-                && Objects.equals(source.getFactoryCode(), target.getFactoryCode())
-                && Objects.equals(source.getTenantId(), target.getTenantId()),
+                        && Objects.equals(source.getProcessCode(), target.getProcessCode())
+                        && Objects.equals(source.getRouteCode(), target.getRouteCode())
+                        && Objects.equals(source.getRouteWorkingId(), target.getRouteWorkingId())
+                        && Objects.equals(source.getPredecessorCodes(), target.getPredecessorCodes())
+                        && Objects.equals(source.getPredecessorNodeCodes(), target.getPredecessorNodeCodes())
+                        && Objects.equals(source.getOperationSeq(), target.getOperationSeq())
+                        && Objects.equals(source.getIssueId(), target.getIssueId())
+                        && Objects.equals(source.getFactoryCode(), target.getFactoryCode())
+                        && Objects.equals(source.getTenantId(), target.getTenantId()),
                 "候选/回退工序与原冻结节点、路线或组织不一致，禁止跨节点覆盖");
     }
 
@@ -160,7 +159,9 @@ final class PlnFrozenRouteNodeIdentity {
         return key(original);
     }
 
-    /** 从真实直接受影响节点求后序闭包；先验证原冻结图无悬空、自环和循环。 */
+    /**
+     * 从真实直接受影响节点求后序闭包；先验证原冻结图无悬空、自环和循环。
+     */
     static Set<String> closure(List<PlnSchedulingOperationEntity> operations, Collection<String> direct) {
         var index = index(operations);
         Set<String> result = new LinkedHashSet<>(direct);
@@ -182,7 +183,8 @@ final class PlnFrozenRouteNodeIdentity {
         do {
             changed = false;
             for (var operation : operations) {
-                if (split(predecessors(operation)).stream().anyMatch(result::contains)) changed |= result.add(key(operation));
+                if (split(predecessors(operation)).stream().anyMatch(result::contains))
+                    changed |= result.add(key(operation));
             }
         } while (changed);
         return result;

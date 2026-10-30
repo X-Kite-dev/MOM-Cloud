@@ -31,7 +31,35 @@ public class PlanAgentObjectCandidateService {
     private final PlnSchedulingScenarioMapper scenarios;
     private final PlanAgentActualScopeAccess actualScopeAccess;
 
-    /** 有界分页仅读小摘要；失效权限、坏摘要或数据库故障必须明确失败。 */
+    /**
+     * 对齐浏览器 ECMAScript \s 边界判定，不能通过trim改变原业务编号。
+     */
+    private static boolean boundaryWhitespace(String value) {
+        int first = value.codePointAt(0);
+        int last = value.codePointBefore(value.length());
+        return first == 0xFEFF || Character.isWhitespace(first) || Character.isSpaceChar(first)
+                || last == 0xFEFF || Character.isWhitespace(last) || Character.isSpaceChar(last);
+    }
+
+    /**
+     * 可空文本保持原文，同时拒绝超长内容及所有ISO控制字符。
+     */
+    private static boolean bounded(String value, int limit) {
+        return value == null || value.length() <= limit && value.codePoints().noneMatch(Character::isISOControl);
+    }
+
+    /**
+     * 失败时返回明确业务错误，不伪装成当前工厂无对象。
+     */
+    private static void require(boolean valid, String message) {
+        if (!valid) {
+            throw new CheckedException(message);
+        }
+    }
+
+    /**
+     * 有界分页仅读小摘要；失效权限、坏摘要或数据库故障必须明确失败。
+     */
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ, propagation = Propagation.REQUIRES_NEW)
     public PlanAgentObjectCandidateDTO.CandidatePage candidates(PlanAgentObjectCandidateDTO.Query command) {
         require(command != null, "请提供情景候选查询");
@@ -56,7 +84,7 @@ public class PlanAgentObjectCandidateService {
         }
         Page<PlnSchedulingScenarioEntity> page = scenarios.selectPage(new Page<>(current, size), query);
         require(page.getCurrent() == current && page.getSize() == size && page.getTotal() >= 0
-                && page.getRecords() != null && page.getRecords().size() <= size,
+                        && page.getRecords() != null && page.getRecords().size() <= size,
                 "对象候选分页结果不完整或超过安全边界");
         Map<String, Boolean> duplicated = duplicateCodes(scope, page.getRecords());
         List<PlanAgentObjectCandidateDTO.Candidate> records = page.getRecords().stream()
@@ -65,7 +93,9 @@ public class PlanAgentObjectCandidateService {
                 "PLAN_SCHEDULING_SCENARIO", current, size, Long.toString(page.getTotal()), records);
     }
 
-    /** 复用PLAN实际权限校验，同时补齐候选合同的正租户及工厂文本边界。 */
+    /**
+     * 复用PLAN实际权限校验，同时补齐候选合同的正租户及工厂文本边界。
+     */
     private Scope scope(String requestedFactory) {
         Long tenant = TenantContextHolder.getTenantId();
         String factory = FactoryContextHolder.getFactoryCode();
@@ -75,7 +105,9 @@ public class PlanAgentObjectCandidateService {
         return new Scope(tenant, factory);
     }
 
-    /** 分页及重号查询都显式限制租户、工厂和未删除，不依赖通用列表或隐式插件补范围。 */
+    /**
+     * 分页及重号查询都显式限制租户、工厂和未删除，不依赖通用列表或隐式插件补范围。
+     */
     private LambdaQueryWrapper<PlnSchedulingScenarioEntity> rowScope(Scope scope) {
         return new LambdaQueryWrapper<PlnSchedulingScenarioEntity>().eq(PlnSchedulingScenarioEntity::getTenantId, scope.tenant())
                 .eq(PlnSchedulingScenarioEntity::getFactoryCode, scope.factory()).eq(PlnSchedulingScenarioEntity::getDelFlag, "0");
@@ -99,7 +131,9 @@ public class PlanAgentObjectCandidateService {
         return result;
     }
 
-    /** 坏原号保留不可选行；控制符或超展示边界的原号只置null，不清洗成另一个可用号。 */
+    /**
+     * 坏原号保留不可选行；控制符或超展示边界的原号只置null，不清洗成另一个可用号。
+     */
     private PlanAgentObjectCandidateDTO.Candidate candidate(PlnSchedulingScenarioEntity row, Map<String, Boolean> duplicated) {
         require(row.getId() != null && row.getId() > 0, "对象候选主键无效");
         String businessNo = row.getScenarioNo();
@@ -109,7 +143,7 @@ public class PlanAgentObjectCandidateService {
         String plannedStart = row.getScheduleDate() == null ? null : row.getScheduleDate().toString();
         String plannedEnd = null;
         require(bounded(label, 500) && bounded(status, 100) && bounded(description, 500)
-                && bounded(plannedStart, 40) && bounded(plannedEnd, 40),
+                        && bounded(plannedStart, 40) && bounded(plannedEnd, 40),
                 "对象候选摘要超限或含控制字符，不能返回部分候选页");
         String reason = unavailableReason(businessNo, duplicated);
         String displayedNo = bounded(businessNo, 500) ? businessNo : null;
@@ -117,7 +151,9 @@ public class PlanAgentObjectCandidateService {
                 description, plannedStart, plannedEnd, reason == null, reason);
     }
 
-    /** 不可选原因均为固定安全中文，不回显不受控原数据。 */
+    /**
+     * 不可选原因均为固定安全中文，不回显不受控原数据。
+     */
     private String unavailableReason(String businessNo, Map<String, Boolean> duplicated) {
         if (businessNo == null || businessNo.isEmpty()) {
             return "原业务编号缺失，无法选择";
@@ -137,27 +173,9 @@ public class PlanAgentObjectCandidateService {
         return null;
     }
 
-    /** 对齐浏览器 ECMAScript \s 边界判定，不能通过trim改变原业务编号。 */
-    private static boolean boundaryWhitespace(String value) {
-        int first = value.codePointAt(0);
-        int last = value.codePointBefore(value.length());
-        return first == 0xFEFF || Character.isWhitespace(first) || Character.isSpaceChar(first)
-                || last == 0xFEFF || Character.isWhitespace(last) || Character.isSpaceChar(last);
-    }
-
-    /** 可空文本保持原文，同时拒绝超长内容及所有ISO控制字符。 */
-    private static boolean bounded(String value, int limit) {
-        return value == null || value.length() <= limit && value.codePoints().noneMatch(Character::isISOControl);
-    }
-
-    /** 失败时返回明确业务错误，不伪装成当前工厂无对象。 */
-    private static void require(boolean valid, String message) {
-        if (!valid) {
-            throw new CheckedException(message);
-        }
-    }
-
-    /** 只保存已经核验的当前实名范围，不允许调用者传入租户。 */
+    /**
+     * 只保存已经核验的当前实名范围，不允许调用者传入租户。
+     */
     private record Scope(Long tenant, String factory) {
     }
 }

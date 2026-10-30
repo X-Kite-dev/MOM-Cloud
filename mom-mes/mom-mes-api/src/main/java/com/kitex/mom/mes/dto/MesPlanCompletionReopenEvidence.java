@@ -1,6 +1,9 @@
 package com.kitex.mom.mes.dto;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+
 import io.swagger.v3.oas.annotations.media.Schema;
+
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -16,6 +19,11 @@ import java.util.List;
 @Schema(description = "MES完工重新打开来源证据")
 public class MesPlanCompletionReopenEvidence {
 
+    /**
+     * 空值/1为原计划聚合来源；2为本次重新打开工单的完整来源分配。
+     */
+    private Integer sourceSchemaVersion;
+
     private Long tenantId;
     private String factoryCode;
     private Long outboxId;
@@ -30,13 +38,19 @@ public class MesPlanCompletionReopenEvidence {
     private BigDecimal completeQuantityAfter;
     private Integer completionVersionBefore;
     private Integer completionVersionAfter;
+
+    /**
+     * 通知时刻固定平台秒级格式；工时仍由原执行区间计量。
+     */
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime reopenedTime;
+
     private String payloadFingerprint;
     private Boolean sourceValid;
     private List<SourceLine> sourceLines;
 
     /**
-     * PLAN来源计划在本次重新打开后的聚合完成事实。
+     * 来源数量事实；含义由sourceSchemaVersion确定，历史载荷不改写。
      */
     @Data
     @Accessors(chain = true)

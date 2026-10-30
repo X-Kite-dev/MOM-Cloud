@@ -83,7 +83,7 @@ public class WmsAllocationBillEntity extends BaseEntity<WmsAllocationBillEntity>
     /**
      * 调拨状态；历史0/1由累计升级脚本转换为命名状态
      */
-    @Schema(description = "调拨状态：IN_TRANSIT/PARTIALLY_RECEIVED/RECEIVED/DISCREPANCY_PENDING/DISCREPANCY_RESOLVED/CANCELLED/PARTIALLY_CANCELLED")
+    @Schema(description = "调拨状态：IN_TRANSIT/PARTIALLY_RECEIVED/RETURN_PENDING/RETURN_EXCEPTION_PENDING/RETURN_EXCEPTION_CLOSED/RECEIVED/DISCREPANCY_PENDING/DISCREPANCY_RESOLVED/CANCELLED/PARTIALLY_CANCELLED")
     private String allocationState;
 
     @Schema(description = "源仓库存是否已在发起时扣减；历史单兼容标记")
@@ -148,6 +148,24 @@ public class WmsAllocationBillEntity extends BaseEntity<WmsAllocationBillEntity>
 
     @Schema(description = "取消时间")
     private LocalDateTime cancelTime;
+
+    @Schema(description = "实物退回确认永久幂等请求号")
+    private String returnRequestId;
+
+    @Schema(description = "实物退回确认请求快照")
+    private String returnRequestSnapshot;
+
+    @Schema(description = "实物退回证据")
+    private String returnEvidence;
+
+    @Schema(description = "实物退回确认人")
+    private String returnBy;
+
+    @Schema(description = "实物退回确认时间")
+    private LocalDateTime returnTime;
+
+    @Schema(description = "最近一次退回异常申报ID")
+    private Long returnExceptionCaseId;
 
     /**
      * 备注

@@ -50,8 +50,11 @@ public class MesStartPreparationQueryService {
     private final MesChangePointHandleService changes;
     private final MesDeviceGateService devices;
     private final MesMaterialStartGateService materials;
+    private final MesStartContractGuard startContractGuard;
 
-    /** 专用派工选择器：真实派工主键与工单关系来自本租户/工厂，不将报工记录ID冒充派工ID。 */
+    /**
+     * 专用派工选择器：真实派工主键与工单关系来自本租户/工厂，不将报工记录ID冒充派工ID。
+     */
     public Map<String, Object> candidates(long current, long size, String keyword) {
         String factory = FactoryContextHolder.getFactoryCode();
         authorize(factory);
@@ -67,16 +70,21 @@ public class MesStartPreparationQueryService {
         List<Map<String, Object>> records = page.getRecords().stream().map(row -> {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("id", row.getId().toString());
-            item.put("code", row.getCode()); item.put("taskCode", row.getTaskCode());
-            item.put("status", row.getStatus()); item.put("routeName", row.getRouteName());
-            item.put("workerName", row.getWorkerName()); item.put("matName", row.getMatName());
+            item.put("code", row.getCode());
+            item.put("taskCode", row.getTaskCode());
+            item.put("status", row.getStatus());
+            item.put("routeName", row.getRouteName());
+            item.put("workerName", row.getWorkerName());
+            item.put("matName", row.getMatName());
             return item;
         }).toList();
         return Map.of("records", records, "total", page.getTotal(), "current", current, "size", size,
                 "tenantId", tenant().toString(), "factoryCode", factory);
     }
 
-    /** 同一请求号/操作者/载荷仅形成一次观察；读来源失败按UNKNOWN记录而不是吞成通过。 */
+    /**
+     * 同一请求号/操作者/载荷仅形成一次观察；读来源失败按UNKNOWN记录而不是吞成通过。
+     */
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> query(MesStartPreparationDTO.Query query) {
         authorize(query.getFactoryCode());
@@ -142,7 +150,9 @@ public class MesStartPreparationQueryService {
         return JSONUtil.parseObj(json);
     }
 
-    /** 原请求回执：当前用户只可读取自己观察的操作资格，防止把他人签收替换为本人的。 */
+    /**
+     * 原请求回执：当前用户只可读取自己观察的操作资格，防止把他人签收替换为本人的。
+     */
     public Map<String, Object> receipt(String requestId) {
         authorize(FactoryContextHolder.getFactoryCode());
         require(requestId != null && requestId.matches("[A-Za-z0-9._:-]{8,100}"), "请求号格式无效");
@@ -152,7 +162,9 @@ public class MesStartPreparationQueryService {
         return decode(row);
     }
 
-    /** 已保存证据由模型读取时再次核验实际工厂、操作者和源派工存在性。 */
+    /**
+     * 已保存证据由模型读取时再次核验实际工厂、操作者和源派工存在性。
+     */
     public Map<String, Object> snapshot(MesStartPreparationDTO.SnapshotQuery query) {
         authorize(query.getFactoryCode());
         var row = snapshots.selectOne(scope().eq(MesStartPreparationCheck::getId, id(query.getSnapshotId())));
@@ -161,7 +173,9 @@ public class MesStartPreparationQueryService {
         return decode(row);
     }
 
-    /** 供正式交接复用的纯读现场观察：不新增准备快照，不修改设备/SOP或开工事实。 */
+    /**
+     * 供正式交接复用的纯读现场观察：不新增准备快照，不修改设备/SOP或开工事实。
+     */
     public Map<String, Object> observe(Long arrangeId) {
         authorize(FactoryContextHolder.getFactoryCode());
         MesTaskArrangeEntity task = arrange(arrangeId);
@@ -235,6 +249,7 @@ public class MesStartPreparationQueryService {
     }
 
     private Map<String, Object> tooling(MesTaskArrangeEntity task) {
+        startContractGuard.assertToolingBound(task);
         Set<String> planned = new TreeSet<>(csv(task.getPlannedToolingCodes()));
         if (planned.isEmpty()) return notApplicable("本派工未声明计划工装");
         var rows = toolings.selectList(new LambdaQueryWrapper<MesToolingExecutionEntity>()
@@ -292,6 +307,7 @@ public class MesStartPreparationQueryService {
     }
 
     private Map<String, Object> device(MesTaskArrangeEntity task) {
+        startContractGuard.assertDeviceBound(task);
         var result = devices.previewStart(task);
         Map<String, Object> facts = new LinkedHashMap<>();
         facts.put("deviceCode", result.getDeviceCode());
@@ -299,7 +315,8 @@ public class MesStartPreparationQueryService {
         facts.put("worksiteCode", result.getWorksiteCode());
         facts.put("unavailableWindows", result.getUnavailableWindows());
         if (uncertain(result.getMessage())) return unknown(result.getMessage(), facts);
-        if (StrUtil.isBlank(task.getPlannedDeviceCode()) && Boolean.TRUE.equals(result.getAllowed())) return notApplicable(result.getMessage());
+        if (StrUtil.isBlank(task.getPlannedDeviceCode()) && Boolean.TRUE.equals(result.getAllowed()))
+            return notApplicable(result.getMessage());
         return decision(Boolean.TRUE.equals(result.getAllowed()), result.getMessage(), facts);
     }
 
@@ -361,9 +378,19 @@ public class MesStartPreparationQueryService {
     private Map<String, Object> decision(boolean allowed, String reason, Object facts) {
         return result(allowed ? "READY" : "BLOCKED", reason, facts);
     }
-    private Map<String, Object> ready(String reason, Object facts) { return result("READY", reason, facts); }
-    private Map<String, Object> unknown(String reason, Object facts) { return result("UNKNOWN", reason, facts); }
-    private Map<String, Object> notApplicable(String reason) { return result("NOT_APPLICABLE", reason, Map.of()); }
+
+    private Map<String, Object> ready(String reason, Object facts) {
+        return result("READY", reason, facts);
+    }
+
+    private Map<String, Object> unknown(String reason, Object facts) {
+        return result("UNKNOWN", reason, facts);
+    }
+
+    private Map<String, Object> notApplicable(String reason) {
+        return result("NOT_APPLICABLE", reason, Map.of());
+    }
+
     private Map<String, Object> result(String status, String reason, Object facts) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("status", status);
@@ -371,13 +398,19 @@ public class MesStartPreparationQueryService {
         result.put("facts", facts);
         return result;
     }
-    private long count(List<Map<String, Object>> checks, String status) { return checks.stream().filter(row -> status.equals(row.get("status"))).count(); }
+
+    private long count(List<Map<String, Object>> checks, String status) {
+        return checks.stream().filter(row -> status.equals(row.get("status"))).count();
+    }
+
     private boolean uncertain(String message) {
         return message == null || List.of("未知", "缺失", "损坏", "失败", "无响应", "无有效响应", "不可核验", "无法", "超过", "不唯一", "仅本派工指定").stream().anyMatch(message::contains);
     }
+
     private List<String> csv(String value) {
         return StrUtil.isBlank(value) ? List.of() : Arrays.stream(value.split(",")).map(String::trim).filter(StrUtil::isNotBlank).distinct().sorted().toList();
     }
+
     private void authorize(String factory) {
         var user = SecurityUtils.getUser();
         require(user != null && user.getId() != null && tenant() != null && !TenantContextHolder.getTenantSkip()
@@ -386,16 +419,19 @@ public class MesStartPreparationQueryService {
         var response = factories.check(new MdmFactoryAccessCheck().setUserId(user.getId()).setFactoryCode(factory).setRequiredPermission("read"));
         require(response != null && response.isOk() && Boolean.TRUE.equals(response.getData()), "实际工厂权限不足或MDM不可核验");
     }
+
     private MesTaskArrangeEntity arrange(Long id) {
         var row = arranges.selectOne(new LambdaQueryWrapper<MesTaskArrangeEntity>().eq(MesTaskArrangeEntity::getId, id)
                 .eq(MesTaskArrangeEntity::getTenantId, tenant()).eq(MesTaskArrangeEntity::getFactoryCode, FactoryContextHolder.getFactoryCode()));
         require(row != null, "当前工厂派工不存在");
         return row;
     }
+
     private LambdaQueryWrapper<MesStartPreparationCheck> scope() {
         return new LambdaQueryWrapper<MesStartPreparationCheck>().eq(MesStartPreparationCheck::getTenantId, tenant())
                 .eq(MesStartPreparationCheck::getFactoryCode, FactoryContextHolder.getFactoryCode());
     }
+
     private Map<String, Object> decode(MesStartPreparationCheck row) {
         require(CONTRACT.equals(row.getContractVersion()), "快照合同不支持");
         var evidence = JSONUtil.parseObj(row.getSnapshotJson());
@@ -404,18 +440,36 @@ public class MesStartPreparationQueryService {
                 row.getOperatorId().toString(), row.getArrangeId().toString(), row.getTaskCode()), "checks", evidence.get("checks")))), "快照内容校验失败");
         return evidence;
     }
-    private Long tenant() { return TenantContextHolder.getTenantId(); }
-    private Long actor() { return SecurityUtils.getUser().getId(); }
-    private Long id(String value) {
-        try { return Long.valueOf(value); } catch (RuntimeException ex) { throw new CheckedException("主键不是合法长整数"); }
+
+    private Long tenant() {
+        return TenantContextHolder.getTenantId();
     }
-    private String text(String value) { return Objects.toString(value, ""); }
+
+    private Long actor() {
+        return SecurityUtils.getUser().getId();
+    }
+
+    private Long id(String value) {
+        try {
+            return Long.valueOf(value);
+        } catch (RuntimeException ex) {
+            throw new CheckedException("主键不是合法长整数");
+        }
+    }
+
+    private String text(String value) {
+        return Objects.toString(value, "");
+    }
+
     private String hash(Object value) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(JSONUtil.toJsonStr(canonical(JSONUtil.parse(JSONUtil.toJsonStr(value)))).getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception ex) { throw new IllegalStateException("准备事实摘要失败", ex); }
+        } catch (Exception ex) {
+            throw new IllegalStateException("准备事实摘要失败", ex);
+        }
     }
+
     private Object canonical(Object value) {
         if (value instanceof Map<?, ?> map) {
             var sorted = new TreeMap<String, Object>();
@@ -426,5 +480,8 @@ public class MesStartPreparationQueryService {
         if (value instanceof Long || value instanceof java.math.BigInteger) return value.toString();
         return value;
     }
-    private void require(boolean allowed, String message) { if (!allowed) throw new CheckedException(message); }
+
+    private void require(boolean allowed, String message) {
+        if (!allowed) throw new CheckedException(message);
+    }
 }

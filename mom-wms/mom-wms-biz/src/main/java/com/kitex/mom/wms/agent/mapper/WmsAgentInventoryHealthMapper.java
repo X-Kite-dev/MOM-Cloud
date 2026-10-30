@@ -17,6 +17,7 @@ public interface WmsAgentInventoryHealthMapper {
     WmsInventoryHealthRow.Summary selectSummary(
             @Param("tenantId") Long tenantId,
             @Param("factoryCode") String factoryCode,
+            @Param("warehouseCode") String warehouseCode,
             @Param("today") LocalDate today,
             @Param("nearExpiryEnd") LocalDate nearExpiryEnd,
             @Param("slowBefore") LocalDateTime slowBefore);
@@ -24,6 +25,7 @@ public interface WmsAgentInventoryHealthMapper {
     List<WmsInventoryHealthRow.Unit> selectUnitSummaries(
             @Param("tenantId") Long tenantId,
             @Param("factoryCode") String factoryCode,
+            @Param("warehouseCode") String warehouseCode,
             @Param("today") LocalDate today,
             @Param("nearExpiryEnd") LocalDate nearExpiryEnd,
             @Param("slowBefore") LocalDateTime slowBefore);
@@ -31,8 +33,21 @@ public interface WmsAgentInventoryHealthMapper {
     List<WmsInventoryHealthRow.ExceptionStock> selectExceptions(
             @Param("tenantId") Long tenantId,
             @Param("factoryCode") String factoryCode,
+            @Param("warehouseCode") String warehouseCode,
             @Param("today") LocalDate today,
             @Param("nearExpiryEnd") LocalDate nearExpiryEnd,
             @Param("slowBefore") LocalDateTime slowBefore,
             @Param("limit") Integer limit);
+
+    /**
+     * 精确库存行，未出现异常的行也必须可取；不存在时返回null。
+     */
+    WmsInventoryHealthRow.ExceptionStock selectStockById(
+            @Param("tenantId") Long tenantId,
+            @Param("factoryCode") String factoryCode,
+            @Param("warehouseCode") String warehouseCode,
+            @Param("stockId") Long stockId,
+            @Param("today") LocalDate today,
+            @Param("nearExpiryEnd") LocalDate nearExpiryEnd,
+            @Param("slowBefore") LocalDateTime slowBefore);
 }

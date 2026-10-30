@@ -13,8 +13,13 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-/** OMS异岗变更实际写入PLAN需求的逐交付行不可变回执。 */
-@Data @Accessors(chain = true) @TenantTable @EqualsAndHashCode(callSuper = true)
+/**
+ * OMS异岗变更实际写入PLAN需求的逐交付行不可变回执。
+ */
+@Data
+@Accessors(chain = true)
+@TenantTable
+@EqualsAndHashCode(callSuper = true)
 @TableName("oms_order_plan_revision")
 public class OmsOrderPlanRevisionEntity extends BaseEntity<OmsOrderPlanRevisionEntity> {
     private Long versionId;
@@ -22,7 +27,9 @@ public class OmsOrderPlanRevisionEntity extends BaseEntity<OmsOrderPlanRevisionE
     private Long demandId;
     private String orderCode;
     private String demandNo;
-    /** DRAFT_UPDATE、MRP_DRAFT_RECALCULATE或MRP_SUPPLY_CASCADE_RECALCULATE。 */
+    /**
+     * DRAFT_UPDATE、MRP_DRAFT_RECALCULATE或MRP_SUPPLY_CASCADE_RECALCULATE。
+     */
     private String applyMode;
     private String beforeState;
     private BigDecimal beforeQuantity;

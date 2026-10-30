@@ -20,7 +20,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
-/** 实际组织内精确工单→原直接/APS来源；只取身份，不以结算字段猜报工贡献。 */
+/**
+ * 实际组织内精确工单→原直接/APS来源；只取身份，不以结算字段猜报工贡献。
+ */
 @Service
 @RequiredArgsConstructor
 public class MesTaskCommitmentSourceReader {

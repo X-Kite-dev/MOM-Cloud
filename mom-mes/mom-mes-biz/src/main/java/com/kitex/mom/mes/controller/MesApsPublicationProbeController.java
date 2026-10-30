@@ -13,13 +13,23 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 跨账恢复专用只读内网契约，不暴露同步账CRUD或匿名回执查询。 */
+/**
+ * 跨账恢复专用只读内网契约，不暴露同步账CRUD或匿名回执查询。
+ */
 @RestController
 @RequestMapping("/mesApsPublicationProbe/internal")
 @RequiredArgsConstructor
 @Tag(name = "APS跨账永久应用回执核验")
 public class MesApsPublicationProbeController {
     private final MesApsPublicationProbeService service;
+
+    @Inner
+    @PostMapping("/audit")
+    @PreAuthorize("@pms.hasPermission('mesTask:show')")
+    @Operation(summary = "实名只读核对精确原应用账，不应用、补偿或修改计划")
+    public R<MesApsPublicationProbeDTO.AuditReply> audit(@RequestBody MesApsPublicationProbeDTO.AuditQuery query) {
+        return R.ok(service.audit(query));
+    }
 
     @Inner
     @PostMapping("/probe")

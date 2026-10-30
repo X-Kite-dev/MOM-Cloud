@@ -5,12 +5,16 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/** 工厂计划协同策略受控命令。 */
+/**
+ * 工厂计划协同策略受控命令。
+ */
 public final class MdmFactoryPlanningPolicyCommand {
     private MdmFactoryPlanningPolicyCommand() {
     }
 
-    /** 创建下一版草稿；工厂身份和版本号由服务端确定。 */
+    /**
+     * 创建下一版草稿；工厂身份和版本号由服务端确定。
+     */
     @Data
     public static class CreateDraft {
         private String factoryModelId;
@@ -26,12 +30,16 @@ public final class MdmFactoryPlanningPolicyCommand {
         private String requestId;
     }
 
-    /** 送审后执行异岗发布或预约生效。 */
+    /**
+     * 送审后执行异岗发布或预约生效。
+     */
     @Data
     public static class Publish {
         private String draftId;
         private String expectedFingerprint;
         private String impactConfirmationNo;
+        @Schema(description = "首次独立MOM启用，仅作用于新合同并保留历史单据")
+        private Boolean initialLocalActivation;
         private String requestId;
     }
 }

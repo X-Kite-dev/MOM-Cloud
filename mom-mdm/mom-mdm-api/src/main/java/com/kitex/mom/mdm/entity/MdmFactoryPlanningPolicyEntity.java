@@ -64,4 +64,6 @@ public class MdmFactoryPlanningPolicyEntity extends BaseEntity<MdmFactoryPlannin
     private String impactConfirmationNo;
     @Schema(description = "预约激活失败原因")
     private String activationFailureReason;
+    @Schema(description = "首次启用时冻结的新合同范围及影响证据JSON")
+    private String initialActivationSnapshot;
 }

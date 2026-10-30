@@ -40,11 +40,15 @@ public class PlnSchedulingOperationEntity extends BaseEntity<PlnSchedulingOperat
     private String routeCode;
     private String routeName;
     private Long routeWorkingId;
-    /** 排程实际采用的稳定路线节点；历史排程不从今日主数据回填。 */
+    /**
+     * 排程实际采用的稳定路线节点；历史排程不从今日主数据回填。
+     */
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     @Schema(description = "来源路线节点编码；空为旧主工序合同")
     private String sourceRouteNodeCode;
-    /** 节点前序与主工序前序分开冻结；新合同空字符串表示起点，null表示旧合同。 */
+    /**
+     * 节点前序与主工序前序分开冻结；新合同空字符串表示起点，null表示旧合同。
+     */
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     @Schema(description = "冻结前置节点编码，逗号分隔")
     private String predecessorNodeCodes;

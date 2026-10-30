@@ -152,31 +152,45 @@ public class MesTaskReportUnqualifiedEntity extends BaseEntity<MesTaskReportUnqu
     @Schema(description = "条码/流转码")
     private String transferCode;
 
-    /** 操作者原始输入；规范码独立保存在transferCode，原号恢复不重新解析今日映射。 */
+    /**
+     * 操作者原始输入；规范码独立保存在transferCode，原号恢复不重新解析今日映射。
+     */
     @Schema(description = "原始扫描标识，旧历史未留存时为空")
     private String submittedIdentifier;
 
-    /** 本次真实使用的静态映射主键；直接规范码或无码数量报工为空。 */
+    /**
+     * 本次真实使用的静态映射主键；直接规范码或无码数量报工为空。
+     */
     @Schema(description = "本次使用的静态标识映射ID")
     private Long identifierMappingId;
 
-    /** 当次解析类型；不根据今日映射推断历史类型。 */
+    /**
+     * 当次解析类型；不根据今日映射推断历史类型。
+     */
     @Schema(description = "当次标识类型，直接规范码为CANONICAL")
     private String identifierType;
 
-    /** 共用静态解析器的完整原字符串，包含当时映射版本和作用域。 */
+    /**
+     * 共用静态解析器的完整原字符串，包含当时映射版本和作用域。
+     */
     @Schema(description = "本次静态标识解析原证据")
     private String identifierResolutionSnapshot;
 
-    /** 独立于固定SOURCE_V1的双标识证据版本；历史保持NULL。 */
+    /**
+     * 独立于固定SOURCE_V1的双标识证据版本；历史保持NULL。
+     */
     @Schema(description = "不良双标识证据版本")
     private String identificationVersion;
 
-    /** 绑定原报告、原始输入、规范码与SOURCE_V1指纹的完整12字段证据。 */
+    /**
+     * 绑定原报告、原始输入、规范码与SOURCE_V1指纹的完整12字段证据。
+     */
     @Schema(description = "不良双标识原证据")
     private String identificationSnapshot;
 
-    /** 独立版本加竖线加原证据字符串的UTF-8 SHA-256。 */
+    /**
+     * 独立版本加竖线加原证据字符串的UTF-8 SHA-256。
+     */
     @Schema(description = "不良双标识原证据SHA-256")
     private String identificationFingerprint;
 

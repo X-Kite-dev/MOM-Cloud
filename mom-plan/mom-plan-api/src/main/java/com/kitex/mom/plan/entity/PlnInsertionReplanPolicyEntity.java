@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 紧急插单联合重排的版本化治理策略。 */
+/**
+ * 紧急插单联合重排的版本化治理策略。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -31,7 +33,9 @@ public class PlnInsertionReplanPolicyEntity extends BaseEntity<PlnInsertionRepla
     private Integer priority;
     private Integer policyVersion;
     private String policyFingerprint;
-    /** DRAFT、ACTIVE、RETIRED。 */
+    /**
+     * DRAFT、ACTIVE、RETIRED。
+     */
     private String status;
     private LocalDateTime effectiveFrom;
     private LocalDateTime effectiveTo;

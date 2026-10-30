@@ -5,7 +5,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** OMS交付行撤回：请求号必须由调用方在未知结果重试时复用。 */
+/**
+ * OMS交付行撤回：请求号必须由调用方在未知结果重试时复用。
+ */
 public class OmsDeliveryWithdrawalCommand {
     @Data
     public static class Submit {

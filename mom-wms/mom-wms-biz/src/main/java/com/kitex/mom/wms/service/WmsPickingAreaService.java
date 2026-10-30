@@ -14,10 +14,12 @@ public interface WmsPickingAreaService extends IService<WmsPickingAreaEntity> {
     /**
      * 将削减的库存物料放到拣货区
      *
-     * @param stockOuted
-     * @return
+     * @param stockOuted 实际扣减的库存行
+     * @param outBill 出库单
+     * @param outBillDetailId 本次出库明细ID
+     * @return 是否全部接收
      */
-    Boolean insertByStockList(List<WmsLiveStockEntity> stockOuted, String outBillNo);
+    Boolean insertByStockList(List<WmsLiveStockEntity> stockOuted, WmsOutBillEntity outBill, Long outBillDetailId);
 
     /**
      * 删除拣货区物料 记录出库流水

@@ -63,9 +63,13 @@ public class MesReworkIdentifierUsageEntity extends BaseEntity<MesReworkIdentifi
 
     @Override
     @JsonSerialize(using = ToStringSerializer.class)
-    public Long getId() { return super.getId(); }
+    public Long getId() {
+        return super.getId();
+    }
 
     @Override
     @JsonSerialize(using = ToStringSerializer.class)
-    public Long getTenantId() { return super.getTenantId(); }
+    public Long getTenantId() {
+        return super.getTenantId();
+    }
 }

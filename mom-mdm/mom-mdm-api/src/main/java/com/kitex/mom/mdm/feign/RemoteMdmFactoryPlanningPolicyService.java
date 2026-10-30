@@ -8,7 +8,9 @@ import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
-/** MDM 工厂计划权威内部只读客户端。 */
+/**
+ * MDM 工厂计划权威内部只读客户端。
+ */
 @FeignClient(contextId = "remoteMdmFactoryPlanningPolicyService", value = Constants.Name)
 public interface RemoteMdmFactoryPlanningPolicyService {
     @NoToken

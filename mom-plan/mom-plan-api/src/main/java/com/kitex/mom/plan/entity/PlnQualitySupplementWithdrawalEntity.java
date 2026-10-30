@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 质量补产下游受控撤回审批、分阶段执行和失败续跑主账。 */
+/**
+ * 质量补产下游受控撤回审批、分阶段执行和失败续跑主账。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -33,8 +35,14 @@ public class PlnQualitySupplementWithdrawalEntity extends BaseEntity<PlnQualityS
     private String mesEvidenceFingerprint;
     private String supplyEvidenceSnapshot;
     private String evidenceSnapshot;
+    /**
+     * null保留历史单计划快照；2复用完整需求下游协调器。
+     */
+    private Integer planningModelVersion;
     private String reason;
-    /** SUBMITTED、REJECTED、APPROVED、EXECUTING、PARTIAL、FAILED、SUCCEEDED、STALE。 */
+    /**
+     * SUBMITTED、REJECTED、APPROVED、EXECUTING、PARTIAL、FAILED、SUCCEEDED、STALE。
+     */
     private String status;
     private String applicantCode;
     private String applicantName;

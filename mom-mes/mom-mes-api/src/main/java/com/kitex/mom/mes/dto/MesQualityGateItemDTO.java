@@ -1,7 +1,9 @@
 package com.kitex.mom.mes.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+
 import io.swagger.v3.oas.annotations.media.Schema;
+
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -38,4 +40,11 @@ public class MesQualityGateItemDTO {
 
     @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime lastBlockedTime;
+
+    private Long qualityEventId;
+    private Long qualityEventSequence;
+    private String qualityEventFingerprint;
+    private Long qualityEventVersion;
+    private String qualityEventState;
+    private Long qualityBlockedEventId;
 }

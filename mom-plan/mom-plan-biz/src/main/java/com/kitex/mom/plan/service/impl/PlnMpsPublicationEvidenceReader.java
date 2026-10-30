@@ -10,10 +10,10 @@ import com.kitex.mom.plan.entity.PlnResourceReplanCaseEntity;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-import java.util.Objects;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.List;
+import java.util.Objects;
 
 /**
  * MPS永久发布链的只读取证器，不负责审批或修改正式计划。
@@ -27,13 +27,9 @@ public class PlnMpsPublicationEvidenceReader {
     private static final int MAX_SEGMENTS = 10;
     private final RemoteMesTaskService mesService;
 
-    /** 一个物理应用段；applied为空表示未观察到此段提交，须按正常A3重新复核。 */
-    public record Segment(String businessRequestId, String applyRequestId, String compensateRequestId,
-                          String beforeFingerprint, int index, MesApsPublicationProbeDTO.Reply applied,
-                          MesApsPublicationProbeDTO.Reply lastCompensation, String originalPublisher) {
-    }
-
-    /** 只读完整原号目录；不取最近一条猜测，也不把回退链当发布链。 */
+    /**
+     * 只读完整原号目录；不取最近一条猜测，也不把回退链当发布链。
+     */
     public List<MesApsPublicationProbeDTO.ReceiptRef> catalog(PlnResourceReplanCaseEntity source) {
         R<List<MesApsPublicationProbeDTO.ReceiptRef>> response = mesService.apsPublicationCatalog(
                 new MesApsPublicationProbeDTO.Scope().setCaseId(source.getId())
@@ -53,7 +49,9 @@ public class PlnMpsPublicationEvidenceReader {
         return read(source, requestId, proposed, originals, allCodes, null);
     }
 
-    /** 节点全集与主工序清单同序冻结；旧重放仍走原五参合同，不补节点或改变原命令。 */
+    /**
+     * 节点全集与主工序清单同序冻结；旧重放仍走原五参合同，不补节点或改变原命令。
+     */
     public Segment read(PlnResourceReplanCaseEntity source, String requestId,
                         List<MesApsLocalScheduleDTO.OperationUpdate> proposed,
                         List<MesApsLocalScheduleDTO.OperationUpdate> originals, List<String> allCodes,
@@ -92,7 +90,9 @@ public class PlnMpsPublicationEvidenceReader {
         throw new CheckedException("原发布链达到10段恢复上限，须核对失败原因，不得无限生成重投号");
     }
 
-    /** 最后一段尚未应用时，前一补偿必须仍对应当前完整MES计划。 */
+    /**
+     * 最后一段尚未应用时，前一补偿必须仍对应当前完整MES计划。
+     */
     public void requireRestored(Segment segment) {
         if (segment.lastCompensation() == null || segment.applied() != null) return;
         require("APPLIED_MATCHED".equals(segment.lastCompensation().getState())
@@ -112,7 +112,7 @@ public class PlnMpsPublicationEvidenceReader {
     }
 
     private MesApsPublicationProbeDTO.Reply probe(MesApsLocalScheduleDTO.ApplyCommand command,
-                                                 List<String> allCodes, List<String> allNodeCodes) {
+                                                  List<String> allCodes, List<String> allNodeCodes) {
         var response = mesService.probeApsPublication(new MesApsPublicationProbeDTO.Query()
                 .setExpectedCommand(command).setExpectedProcessCodes(allCodes).setExpectedSourceRouteNodeCodes(allNodeCodes));
         require(response != null && response.isOk() && response.getData() != null,
@@ -146,5 +146,13 @@ public class PlnMpsPublicationEvidenceReader {
 
     private void require(boolean valid, String message) {
         if (!valid) throw new CheckedException(message);
+    }
+
+    /**
+     * 一个物理应用段；applied为空表示未观察到此段提交，须按正常A3重新复核。
+     */
+    public record Segment(String businessRequestId, String applyRequestId, String compensateRequestId,
+                          String beforeFingerprint, int index, MesApsPublicationProbeDTO.Reply applied,
+                          MesApsPublicationProbeDTO.Reply lastCompensation, String originalPublisher) {
     }
 }

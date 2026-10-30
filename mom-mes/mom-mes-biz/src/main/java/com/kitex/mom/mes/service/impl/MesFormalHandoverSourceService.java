@@ -10,11 +10,11 @@ import com.kitex.mom.mdm.agent.dto.MdmParticipantModels;
 import com.kitex.mom.mdm.entity.MdmClassesEntity;
 import com.kitex.mom.mdm.feign.RemoteClassesService;
 import com.kitex.mom.mdm.feign.RemoteMdmParticipantService;
+import com.kitex.mom.mes.agent.service.MesStartPreparationQueryService;
 import com.kitex.mom.mes.dto.MesShiftHandoverCommand;
 import com.kitex.mom.mes.entity.MesShiftHandover;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
 import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
-import com.kitex.mom.mes.agent.service.MesStartPreparationQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -42,13 +42,9 @@ public class MesFormalHandoverSourceService {
     private final MesShiftLeftoverService leftovers;
     private final MesStartPreparationQueryService preparation;
 
-    public record Shift(String id, String code, String name, String start, String end) { }
-    public record Occurrence(String occurrenceId, String masterId, String code, String name,
-                             LocalDate date, LocalDateTime start, LocalDateTime end) { }
-    public record FormalSource(String snapshotJson, String fingerprint, String receiverId,
-                               LocalDateTime windowStart, LocalDateTime windowEnd) { }
-
-    /** 班次目录与真实参与人各自分页；不把全部人员塞进表单。 */
+    /**
+     * 班次目录与真实参与人各自分页；不把全部人员塞进表单。
+     */
     public List<Shift> shifts() {
         String factory = access.require("read");
         return activeShifts(factory).stream().map(row -> new Shift(row.getId().toString(), row.getShiftCode(),
@@ -73,7 +69,9 @@ public class MesFormalHandoverSourceService {
         return person;
     }
 
-    /** 预览/提交均取同一组权威主数据；不把observedAt计入摘要。 */
+    /**
+     * 预览/提交均取同一组权威主数据；不把observedAt计入摘要。
+     */
     public FormalSource resolve(String factory, MesShiftHandoverCommand command) {
         require(command != null, "交接命令不能为空");
         List<MdmClassesEntity> rules = activeShifts(factory);
@@ -147,7 +145,9 @@ public class MesFormalHandoverSourceService {
         return new FormalSource(snapshot, hash(snapshot), receiver.userId(), source.start(), source.end());
     }
 
-    /** 旧版本保持原异人规则；V3只允许指定负责人，撤权后不能凭旧快照接班。 */
+    /**
+     * 旧版本保持原异人规则；V3只允许指定负责人，撤权后不能凭旧快照接班。
+     */
     public void requireReceiver(MesShiftHandover handover, String factory) {
         if (handover.getFormalSnapshotJson() == null) return;
         require(handover.getFormalFingerprint() != null
@@ -186,16 +186,33 @@ public class MesFormalHandoverSourceService {
     }
 
     private String json(Object value) {
-        try { return JSON.writeValueAsString(value); }
-        catch (Exception ex) { throw new CheckedException("正式交接证据无法序列化"); }
+        try {
+            return JSON.writeValueAsString(value);
+        } catch (Exception ex) {
+            throw new CheckedException("正式交接证据无法序列化");
+        }
     }
 
     private String hash(String value) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
-        catch (Exception ex) { throw new IllegalStateException(ex); }
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new IllegalStateException(ex);
+        }
     }
 
     private void require(boolean condition, String message) {
         if (!condition) throw new CheckedException(message);
+    }
+
+    public record Shift(String id, String code, String name, String start, String end) {
+    }
+
+    public record Occurrence(String occurrenceId, String masterId, String code, String name,
+                             LocalDate date, LocalDateTime start, LocalDateTime end) {
+    }
+
+    public record FormalSource(String snapshotJson, String fingerprint, String receiverId,
+                               LocalDateTime windowStart, LocalDateTime windowEnd) {
     }
 }

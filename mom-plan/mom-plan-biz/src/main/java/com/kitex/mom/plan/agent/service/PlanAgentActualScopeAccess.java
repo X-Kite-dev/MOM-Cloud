@@ -12,7 +12,9 @@ import org.springframework.util.StringUtils;
 
 import java.util.Objects;
 
-/** 新Agent领域接口核验实际身份租户和MDM用户工厂授权，不把可伪造请求头当成权限。 */
+/**
+ * 新Agent领域接口核验实际身份租户和MDM用户工厂授权，不把可伪造请求头当成权限。
+ */
 @Service
 public class PlanAgentActualScopeAccess {
     private final RemoteMdmFactoryAccessService factories;

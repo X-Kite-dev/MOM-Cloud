@@ -10,7 +10,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** 采集排程时域内待检、不合格、紧急放行等质量约束证据。 */
+/**
+ * 采集排程时域内待检、不合格、紧急放行等质量约束证据。
+ */
 @Component
 public class QmsApsQualityCollector extends AbstractApsResourceCollector {
 
@@ -21,8 +23,15 @@ public class QmsApsQualityCollector extends AbstractApsResourceCollector {
         this.service = service;
     }
 
-    @Override public String module() { return "QMS"; }
-    @Override public int order() { return 60; }
+    @Override
+    public String module() {
+        return "QMS";
+    }
+
+    @Override
+    public int order() {
+        return 60;
+    }
 
     @Override
     public PlnApsResourceEvidence collect(PlnApsResourceCollectionContext context) {

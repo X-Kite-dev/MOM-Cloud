@@ -44,7 +44,8 @@ public class MdmUserShiftBindController {
         } else {
             shiftCode = bind.getShiftCode();
         }
-        return R.ok(shiftCode);
+        // R.ok(String)是提示消息重载，班次属于响应数据，须明确使用双参重载。
+        return R.ok(shiftCode, null);
     }
 
     @Operation(summary = "当前用户绑定信息", description = "当前用户绑定信息")

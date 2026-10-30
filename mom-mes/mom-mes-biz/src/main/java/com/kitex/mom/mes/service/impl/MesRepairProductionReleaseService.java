@@ -13,9 +13,12 @@ import com.kitex.mom.mdm.dto.MdmFactoryAccessCheck;
 import com.kitex.mom.mdm.feign.RemoteMdmDeviceRecoveryEventService;
 import com.kitex.mom.mdm.feign.RemoteMdmFactoryAccessService;
 import com.kitex.mom.mes.dto.MesDeviceGateDecision;
+import com.kitex.mom.mes.dto.MesRepairAgentReleaseEvidence;
 import com.kitex.mom.mes.dto.MesRepairProductionReleaseCommand;
+import com.kitex.mom.mes.dto.MesRepairResumeEvidence;
 import com.kitex.mom.mes.entity.MesRepairArrangeStop;
 import com.kitex.mom.mes.entity.MesRepairProductionRelease;
+import com.kitex.mom.mes.entity.MesRepairResumeOutbox;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
 import com.kitex.mom.mes.mapper.MesRepairArrangeStopMapper;
 import com.kitex.mom.mes.mapper.MesRepairProductionReleaseMapper;
@@ -51,40 +54,25 @@ public class MesRepairProductionReleaseService {
     }
 
     /**
-     * 仅用于“已锁原派工、确认原号无成功回执、尚未执行INSERT”的确定业务拒绝。
-     * 异常必须越过@Transactional代理完成回滚，再由本控制器编码；不用于依赖异常、写入失败或回执序列化失败。
+     * 调用位置严格位于去重之后、首次写入之前；其他require仍是结果未知的一般错误。
      */
-    public static final class CommandNotAcceptedException extends CheckedException {
-        private final Map<String, String> outcome;
-
-        private CommandNotAcceptedException(String message, MesRepairProductionReleaseCommand command) {
-            super(message);
-            outcome = Map.of("contract", "MES_REPAIR_RELEASE_COMMAND_RESULT_V1", "outcome", "REJECTED_BEFORE_INSERT",
-                    "requestId", command.getRequestId(), "stopId", command.getStopId().toString(),
-                    "tenantId", TenantContextHolder.getTenantId().toString(), "factoryCode", FactoryContextHolder.getFactoryCode(),
-                    "operatorId", SecurityUtils.getUser().getId().toString(), "action", command.getAction(),
-                    "expectedFingerprint", command.getExpectedFingerprint());
-        }
-
-        public Map<String, String> getOutcome() {
-            return outcome;
-        }
-    }
-
-    /** 调用位置严格位于去重之后、首次写入之前；其他require仍是结果未知的一般错误。 */
     private static void requireBeforeInsert(boolean okay, MesRepairProductionReleaseCommand command, String message) {
         if (!okay) throw new CommandNotAcceptedException(message, command);
     }
 
     @PreAuthorize("@pms.hasPermission('mesTaskArrange:show')")
     @Transactional(readOnly = true)
-    public com.baomidou.mybatisplus.core.metadata.IPage<MesRepairArrangeStop> page(long current, long size, String arrangeCode, String deviceCode, boolean exactArrange) {
+    public com.baomidou.mybatisplus.core.metadata.IPage<MesRepairArrangeStop> page(long current, long size,
+                                                                                   String arrangeCode, String deviceCode,
+                                                                                   Long repairTaskId, boolean exactArrange) {
         String factory = access("read");
         require(current >= 1 && size >= 1 && size <= 100, "停工账页码或页大小无效");
         require(!exactArrange || StrUtil.isNotBlank(arrangeCode), "精确派工查看必须提供原派工号");
+        require(repairTaskId == null || repairTaskId > 0, "维修任务主键无效");
         var query = new LambdaQueryWrapper<MesRepairArrangeStop>()
                 .eq(MesRepairArrangeStop::getTenantId, TenantContextHolder.getTenantId())
                 .eq(MesRepairArrangeStop::getFactoryCode, factory)
+                .eq(repairTaskId != null, MesRepairArrangeStop::getRepairTaskId, repairTaskId)
                 .like(!exactArrange && StrUtil.isNotBlank(arrangeCode), MesRepairArrangeStop::getArrangeCode, StrUtil.trim(arrangeCode))
                 .eq(exactArrange && StrUtil.isNotBlank(arrangeCode), MesRepairArrangeStop::getArrangeCode, StrUtil.trim(arrangeCode))
                 .eq(StrUtil.isNotBlank(deviceCode), MesRepairArrangeStop::getDeviceCode, StrUtil.trim(deviceCode))
@@ -99,31 +87,149 @@ public class MesRepairProductionReleaseService {
         require(current >= 1 && current <= 100000, "页码无效");
         MesRepairArrangeStop stop = stop(stopId, factory, false);
         MesTaskArrangeEntity arrange = arrange(stop, false);
-        boolean currentStop = Objects.equals(latestStop(arrange).getId(), stopId);
-        MesRepairProductionRelease latest = latest(stop.getId());
-        MdmDeviceRecoveryEventEvidence recovery = latestRecovery(stop);
-        boolean qualified = qualified(stop, recovery);
-        MesDeviceGateDecision readiness = qualified ? deviceGate.checkDeviceStart(stop.getDeviceCode(), worksite(arrange), factory) : null;
+        ReleaseDecision decision = inspect(stop, arrange, factory);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("stop", stop);
         result.put("arrange", arrange);
-        result.put("recovery", recovery);
-        result.put("currentStop", currentStop);
-        result.put("recoveryQualified", qualified);
-        result.put("deviceReadiness", readiness);
-        result.put("latest", latest);
-        result.put("fingerprint", fingerprint(evidence(stop, arrange, recovery)));
+        result.put("recovery", decision.recovery());
+        result.put("currentStop", decision.currentStop());
+        result.put("recoveryQualified", decision.recoveryQualified());
+        result.put("deviceReadiness", decision.readiness());
+        result.put("latest", decision.latest());
+        result.put("fingerprint", decision.fingerprint());
         var writeback = resumeEvents.byStop(stopId, factory);
         result.put("planWriteback", writeback);
         result.put("planWritebackHistory", resumeEvents.history(writeback == null ? null : writeback.getId(), factory));
-        result.put("allowed", currentStop && qualified && latest != null && "APPROVE".equals(latest.getAction())
-                && Objects.equals(latest.getEvidenceFingerprint(), result.get("fingerprint"))
-                && readiness != null && Boolean.TRUE.equals(readiness.getAllowed()));
+        result.put("allowed", decision.allowed());
         result.put("history", releases.selectPage(new Page<>(current, 20), new LambdaQueryWrapper<MesRepairProductionRelease>()
                 .eq(MesRepairProductionRelease::getTenantId, TenantContextHolder.getTenantId())
                 .eq(MesRepairProductionRelease::getFactoryCode, factory).eq(MesRepairProductionRelease::getStopId, stopId)
                 .orderByDesc(MesRepairProductionRelease::getId)));
         return result;
+    }
+
+    /**
+     * 从真实停工账逐行复核当前MES复产批准，不把TPM完成或MDM资格恢复自动推断为复产。
+     * 一个维修任务最多投影30条停工；超限明确失败，不能静默裁剪后宣称全部批准。
+     */
+    @Transactional(readOnly = true)
+    public MesRepairAgentReleaseEvidence.Result agentEvidence(MesRepairAgentReleaseEvidence.Query query) {
+        String factory = access("read");
+        require(query != null && factory.equals(query.getFactoryCode()), "MES维修调查工厂与当前实际工厂不一致");
+        Long taskId;
+        try {
+            require(query.getRepairTaskId() != null && query.getRepairTaskId().matches("[1-9][0-9]{0,18}"),
+                    "MES维修调查须指定精确维修任务主键");
+            taskId = Long.valueOf(query.getRepairTaskId());
+        } catch (NumberFormatException overflow) {
+            throw new CheckedException("MES维修任务主键超出数据库范围");
+        }
+        List<MesRepairArrangeStop> affected = stops.selectList(new LambdaQueryWrapper<MesRepairArrangeStop>()
+                .eq(MesRepairArrangeStop::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MesRepairArrangeStop::getFactoryCode, factory)
+                .eq(MesRepairArrangeStop::getRepairTaskId, taskId)
+                .orderByDesc(MesRepairArrangeStop::getId).last("LIMIT 31"));
+        require(affected.size() <= 30, "维修任务关联停工派工超过30条，须先由MES岗位分批核验");
+        var result = new MesRepairAgentReleaseEvidence.Result()
+                .setFactoryCode(factory).setRepairTaskId(taskId.toString())
+                .setObservedAt(LocalDateTime.now()).setAffectedStopCount(affected.size())
+                .setCurrentStopCount(0).setApprovedCurrentStopCount(0)
+                .setVerifiedResumeEventCount(0).setPlanReceivedEventCount(0)
+                .setReleaseApplicable(false).setAllCurrentStopsApproved(false);
+        for (MesRepairArrangeStop row : affected) {
+            var item = new MesRepairAgentReleaseEvidence.Stop()
+                    .setStopId(row.getId().toString()).setArrangeCode(row.getArrangeCode())
+                    .setDeviceCode(row.getDeviceCode()).setCurrentStop(false).setApproved(false);
+            result.getStops().add(item);
+            result.getEvidenceRefs().add("MES:mes_repair_arrange_stop:" + row.getId());
+            try {
+                ReleaseDecision decision = inspect(row, arrange(row, false), factory);
+                boolean active = decision.currentStop();
+                boolean approved = decision.allowed();
+                item.setCurrentStop(active).setApproved(active && approved);
+                if (active) result.setCurrentStopCount(result.getCurrentStopCount() + 1);
+                if (active && approved)
+                    result.setApprovedCurrentStopCount(result.getApprovedCurrentStopCount() + 1);
+                var release = decision.latest();
+                if (release != null) {
+                    item.setLatestReleaseId(release.getId().toString()).setLatestAction(release.getAction());
+                    result.getEvidenceRefs().add("MES:mes_repair_production_release:" + release.getId());
+                }
+                var recovery = decision.recovery();
+                if (recovery != null && recovery.getReceiptId() != null)
+                    item.setRecoveryReceiptId(recovery.getReceiptId().toString());
+            } catch (RuntimeException unavailable) {
+                result.getDataGaps().add("停工派工" + row.getId() + "的当前复产门禁不可核验");
+            }
+            appendActualResume(row, item, result, factory);
+        }
+        if (!affected.isEmpty() && result.getCurrentStopCount() == 0 && result.getDataGaps().isEmpty())
+            result.getDataGaps().add("原维修任务的停工派工均已被后续停工覆盖，不能以旧任务宣称当前复产");
+        result.setReleaseApplicable(result.getCurrentStopCount() > 0);
+        result.setAllCurrentStopsApproved(result.getDataGaps().isEmpty()
+                && result.getCurrentStopCount() > 0
+                && result.getCurrentStopCount().equals(result.getApprovedCurrentStopCount()));
+        result.setFactFingerprint(fingerprint(Arrays.asList(result.getFactoryCode(), result.getRepairTaskId(),
+                result.getAffectedStopCount(), result.getCurrentStopCount(),
+                result.getApprovedCurrentStopCount(), result.getVerifiedResumeEventCount(),
+                result.getPlanReceivedEventCount(), result.getStops(), result.getDataGaps(),
+                result.getResumeDataGaps())));
+        return result;
+    }
+
+    /**
+     * 从同停工的真实切段 Outbox 核验复工，不把复产批准或 PLAN 收件误记为车间已复工/PLAN 已处理。
+     * 无 Outbox 也可能是无 PLAN 计划号的派工，因此只能说“未见可核验事件”。
+     */
+    private void appendActualResume(MesRepairArrangeStop stop, MesRepairAgentReleaseEvidence.Stop item,
+                                    MesRepairAgentReleaseEvidence.Result result, String factory) {
+        try {
+            MesRepairResumeOutbox event = resumeEvents.byStop(stop.getId(), factory);
+            if (event == null) return;
+            MesRepairResumeEvidence proof = resumeEvents.evidence(event.getId(), factory);
+            if (!Boolean.TRUE.equals(proof.getSourceValid())
+                    || !Objects.equals(proof.getStopId(), stop.getId())
+                    || !Objects.equals(proof.getFactoryCode(), factory)) {
+                result.getResumeDataGaps().add("停工派工" + stop.getId() + "的复工切段来源不一致");
+                return;
+            }
+            item.setResumeOutboxId(event.getId().toString())
+                    .setResumeEventId(proof.getEventId())
+                    .setResumeSourceFingerprint(proof.getPayloadFingerprint())
+                    .setResumedAt(proof.getResumedTime())
+                    .setPlanDeliveryStatus(event.getStatus());
+            result.setVerifiedResumeEventCount(result.getVerifiedResumeEventCount() + 1);
+            result.getEvidenceRefs().add("MES:mes_repair_resume_outbox:" + event.getId());
+            if ("DELIVERED".equals(event.getStatus())) {
+                if (event.getPlanInboxId() == null) {
+                    result.getResumeDataGaps().add("复工事件" + event.getId() + "标记已投递但缺少PLAN收件回执");
+                } else {
+                    item.setPlanInboxId(event.getPlanInboxId().toString())
+                            .setPlanEventStatus(event.getPlanEventStatus());
+                    result.setPlanReceivedEventCount(result.getPlanReceivedEventCount() + 1);
+                }
+            }
+        } catch (RuntimeException unavailable) {
+            result.getResumeDataGaps().add("停工派工" + stop.getId() + "的真实复工事件无法核验");
+        }
+    }
+
+    /**
+     * 页面与Agent共用同一复产判定，Agent不额外拉取审批历史和PLAN写回历史。
+     */
+    private ReleaseDecision inspect(MesRepairArrangeStop stop, MesTaskArrangeEntity arrange, String factory) {
+        MesRepairArrangeStop current = latestStop(arrange);
+        boolean currentStop = current != null && Objects.equals(current.getId(), stop.getId());
+        MesRepairProductionRelease latest = latest(stop.getId());
+        MdmDeviceRecoveryEventEvidence recovery = latestRecovery(stop);
+        boolean qualified = qualified(stop, recovery);
+        MesDeviceGateDecision readiness = qualified
+                ? deviceGate.checkDeviceStart(stop.getDeviceCode(), worksite(arrange), factory) : null;
+        String evidenceFingerprint = fingerprint(evidence(stop, arrange, recovery));
+        boolean allowed = currentStop && qualified && latest != null && "APPROVE".equals(latest.getAction())
+                && Objects.equals(latest.getEvidenceFingerprint(), evidenceFingerprint)
+                && readiness != null && Boolean.TRUE.equals(readiness.getAllowed());
+        return new ReleaseDecision(currentStop, qualified, allowed, latest, recovery, readiness, evidenceFingerprint);
     }
 
     @PreAuthorize("@pms.hasPermission('mesRepairRelease:request')")
@@ -220,7 +326,9 @@ public class MesRepairProductionReleaseService {
         previewAllowed(arrange, stage);
     }
 
-    /** 只读核对真实停工、恢复回执和原复产批准；不发起恢复或批准命令。 */
+    /**
+     * 只读核对真实停工、恢复回执和原复产批准；不发起恢复或批准命令。
+     */
     public void previewAllowed(MesTaskArrangeEntity arrange, String stage) {
         require(TenantContextHolder.getTenantId() != null && !TenantContextHolder.getTenantSkip()
                 && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
@@ -236,13 +344,16 @@ public class MesRepairProductionReleaseService {
                 "维修停工派工未取得当前MDM恢复回执对应的异岗复产批准，阻断" + stage);
     }
 
-    /** 纯读保留停工、MDM恢复回执及当前复产批准的精确身份/指纹。 */
+    /**
+     * 纯读保留停工、MDM恢复回执及当前复产批准的精确身份/指纹。
+     */
     public Map<String, Object> previewStartEvidence(MesTaskArrangeEntity arrange) {
         require(Objects.equals(TenantContextHolder.getTenantId(), arrange.getTenantId())
                 && Objects.equals(FactoryContextHolder.getFactoryCode(), arrange.getFactoryCode())
                 && !TenantContextHolder.getTenantSkip() && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()), "维修观察缺少实际范围");
         var stop = latestStop(arrange);
-        if (stop == null) return Map.of("applicable", false, "approved", true, "reason", "无真实维修停工关联，不倒填审批");
+        if (stop == null)
+            return Map.of("applicable", false, "approved", true, "reason", "无真实维修停工关联，不倒填审批");
         var release = latest(stop.getId());
         var recovery = latestRecovery(stop);
         boolean approved = qualified(stop, recovery) && release != null && "APPROVE".equals(release.getAction())
@@ -366,5 +477,31 @@ public class MesRepairProductionReleaseService {
         } catch (Exception ex) {
             throw new IllegalStateException(ex);
         }
+    }
+
+    /**
+     * 仅用于“已锁原派工、确认原号无成功回执、尚未执行INSERT”的确定业务拒绝。
+     * 异常必须越过@Transactional代理完成回滚，再由本控制器编码；不用于依赖异常、写入失败或回执序列化失败。
+     */
+    public static final class CommandNotAcceptedException extends CheckedException {
+        private final Map<String, String> outcome;
+
+        private CommandNotAcceptedException(String message, MesRepairProductionReleaseCommand command) {
+            super(message);
+            outcome = Map.of("contract", "MES_REPAIR_RELEASE_COMMAND_RESULT_V1", "outcome", "REJECTED_BEFORE_INSERT",
+                    "requestId", command.getRequestId(), "stopId", command.getStopId().toString(),
+                    "tenantId", TenantContextHolder.getTenantId().toString(), "factoryCode", FactoryContextHolder.getFactoryCode(),
+                    "operatorId", SecurityUtils.getUser().getId().toString(), "action", command.getAction(),
+                    "expectedFingerprint", command.getExpectedFingerprint());
+        }
+
+        public Map<String, String> getOutcome() {
+            return outcome;
+        }
+    }
+
+    private record ReleaseDecision(boolean currentStop, boolean recoveryQualified, boolean allowed,
+                                   MesRepairProductionRelease latest, MdmDeviceRecoveryEventEvidence recovery,
+                                   MesDeviceGateDecision readiness, String fingerprint) {
     }
 }

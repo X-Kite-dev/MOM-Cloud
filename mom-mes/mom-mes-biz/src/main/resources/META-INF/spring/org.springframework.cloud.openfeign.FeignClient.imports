@@ -1,2 +1,3 @@
 com.kitex.mom.mes.api.feign.RemoteMesTaskService
 com.kitex.mom.mes.api.feign.RemoteWarehousePickingBillService
+com.kitex.mom.mes.api.feign.RemoteMesWarehouseLifecycleService

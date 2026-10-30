@@ -38,7 +38,7 @@ public class MesProcessProcedureMoldController {
     @Operation(summary = "按稳定路线节点查询模具绑定")
     @GetMapping("/getMoldByNode")
     public R<List<MesProcessProcedureMoldEntity>> getMoldByNode(@RequestParam("routeCode") String routeCode,
-            @RequestParam("routeNodeCode") String routeNodeCode) {
+                                                                @RequestParam("routeNodeCode") String routeNodeCode) {
         return R.ok(service.getMoldByNode(routeCode, routeNodeCode));
     }
 

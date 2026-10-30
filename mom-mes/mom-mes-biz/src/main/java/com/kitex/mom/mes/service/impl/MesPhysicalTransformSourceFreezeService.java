@@ -7,11 +7,7 @@ import com.kitex.mom.mdm.dto.MdmPhysicalTransformStandardDTO;
 import com.kitex.mom.mdm.support.MdmPhysicalTransformStandardCodec;
 import com.kitex.mom.mes.dto.MesPhysicalTransformDTO;
 import com.kitex.mom.mes.dto.MesPhysicalTransformSourceBundleDTO;
-import com.kitex.mom.mes.entity.MesProduceTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
-import com.kitex.mom.mes.entity.MesTaskEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
-import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.mapper.MesPhysicalTransformSourceLockMapper;
 import com.kitex.mom.mes.mapper.MesTaskReportMapper;
 import com.kitex.mom.mes.mapper.MesWarehouseLiveStockMapper;
@@ -21,14 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
 import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 
@@ -63,7 +52,9 @@ public class MesPhysicalTransformSourceFreezeService {
         return lockAndRead(stockIds);
     }
 
-    /** 后续真正prepare必须在其原号事务内重新调用；不能直接持久化客户端返回包。 */
+    /**
+     * 后续真正prepare必须在其原号事务内重新调用；不能直接持久化客户端返回包。
+     */
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public MesPhysicalTransformSourceBundleDTO lockAndRead(List<String> stockIds) {
         require(stockIds != null && !stockIds.isEmpty() && stockIds.size() <= MesPhysicalTransformCodec.MAX_SOURCES,
@@ -111,15 +102,15 @@ public class MesPhysicalTransformSourceFreezeService {
         for (var observed : observedReports) {
             var locked = locks.report(tenant, factory, observed.getId());
             require(locked != null && Objects.equals(observed.getTaskCode(), locked.getTaskCode())
-                    && Objects.equals(observed.getArrangeCode(), locked.getArrangeCode())
-                    && Objects.equals(observed.getProduceTaskCode(), locked.getProduceTaskCode()),
+                            && Objects.equals(observed.getArrangeCode(), locked.getArrangeCode())
+                            && Objects.equals(observed.getProduceTaskCode(), locked.getProduceTaskCode()),
                     "原报工归属在取锁时改变，不能持行锁补取另一工单");
             lockedReports.put(locked.getId(), locked);
         }
         for (var observed : observedStocks) {
             var locked = locks.stock(tenant, factory, observed.getId());
             require(locked != null && Objects.equals(observed.getSourceReportId(), locked.getSourceReportId())
-                    && Objects.equals(observed.getProduceTaskCode(), locked.getProduceTaskCode()),
+                            && Objects.equals(observed.getProduceTaskCode(), locked.getProduceTaskCode()),
                     "原库存来源在取锁时改变，不能更换另一来源");
         }
 
@@ -156,10 +147,12 @@ public class MesPhysicalTransformSourceFreezeService {
         return bundle;
     }
 
-    /** 原工程只消费本地原派工，不查询当前MDM标准修补历史。 */
+    /**
+     * 原工程只消费本地原派工，不查询当前MDM标准修补历史。
+     */
     private MesPhysicalTransformSourceBundleDTO.Entry entry(MesPhysicalTransformDTO.SourceFact fact, MesTaskReportEntity report,
-            MesTaskEntity task, MesTaskArrangeEntity arrange, List<MesProduceTaskEntity> graph,
-            List<Map<String, String>> capacities, MesPhysicalTransformDTO.SourceView owner) {
+                                                            MesTaskEntity task, MesTaskArrangeEntity arrange, List<MesProduceTaskEntity> graph,
+                                                            List<Map<String, String>> capacities, MesPhysicalTransformDTO.SourceView owner) {
         List<String> blocked = new ArrayList<>(fact.getBlockingReasons());
         // 正常派工后父工单保留DISPATCH，实际开工由下面的工序及原派工事实共同证明。
         check(blocked, task != null && Set.of("DISPATCH", "PRODUCT", "FINISH").contains(Objects.toString(task.getStatus(), "")),
@@ -170,12 +163,12 @@ public class MesPhysicalTransformSourceFreezeService {
         check(blocked, node != null && Set.of("PRODUCT", "PAUSE", "FINISH").contains(Objects.toString(node.getStatus(), "")),
                 "原实际工序缺失、不唯一、未实际开工或已关闭");
         check(blocked, task != null && arrange != null && node != null
-                && Objects.equals(task.getCode(), arrange.getTaskCode()) && Objects.equals(task.getCode(), node.getTaskCode())
-                && Objects.equals(node.getCode(), arrange.getProduceTaskCode()) && Objects.equals(node.getRouteCode(), arrange.getRouteCode())
-                && Objects.equals(task.getMatCode(), fact.getMaterialCode()) && Objects.equals(node.getMatCode(), fact.getMaterialCode())
-                && task.getProcessRouteId() != null && Objects.equals(task.getProcessRouteId(), node.getProcessRouteId())
-                && Objects.equals(task.getProcessRouteCode(), node.getProcessRouteCode())
-                && task.getProcessRouteSnapshot() != null && Objects.equals(task.getProcessRouteSnapshot(), node.getProcessRouteSnapshot()),
+                        && Objects.equals(task.getCode(), arrange.getTaskCode()) && Objects.equals(task.getCode(), node.getTaskCode())
+                        && Objects.equals(node.getCode(), arrange.getProduceTaskCode()) && Objects.equals(node.getRouteCode(), arrange.getRouteCode())
+                        && Objects.equals(task.getMatCode(), fact.getMaterialCode()) && Objects.equals(node.getMatCode(), fact.getMaterialCode())
+                        && task.getProcessRouteId() != null && Objects.equals(task.getProcessRouteId(), node.getProcessRouteId())
+                        && Objects.equals(task.getProcessRouteCode(), node.getProcessRouteCode())
+                        && task.getProcessRouteSnapshot() != null && Objects.equals(task.getProcessRouteSnapshot(), node.getProcessRouteSnapshot()),
                 "原工单/工序/派工物料、路线及实际来源归属不一致");
 
         MdmPhysicalTransformStandardDTO.Frozen standard = null;
@@ -183,15 +176,16 @@ public class MesPhysicalTransformSourceFreezeService {
         if (arrange != null) {
             var policy = policies.readFrozen(arrange);
             configuration = policy.getConfigurationJson();
-            if (MesPhysicalTransformPolicyValidator.NONE.equals(configuration)) blocked.add("原派工是NONE或缺转换工程，不能从当前模板补造转换资格");
+            if (MesPhysicalTransformPolicyValidator.NONE.equals(configuration))
+                blocked.add("原派工是NONE或缺转换工程，不能从当前模板补造转换资格");
             else {
                 standard = engineering.readFrozen(arrange, configuration);
                 var body = MdmPhysicalTransformStandardCodec.verifyFrozen(standard);
                 var dependency = codec.objectDocument(body.path("dependencySnapshot").textValue(), 4 * 1024 * 1024);
                 check(blocked, task != null && task.getProcessRouteId() != null
-                        && task.getProcessRouteId().toString().equals(body.path("processRouteId").textValue())
-                        && Objects.equals(task.getProcessRouteCode(), body.path("processRouteCode").textValue())
-                        && Objects.equals(task.getProcessRouteSnapshot(), dependency.path("route").path("procedureSnapshot").textValue()),
+                                && task.getProcessRouteId().toString().equals(body.path("processRouteId").textValue())
+                                && Objects.equals(task.getProcessRouteCode(), body.path("processRouteCode").textValue())
+                                && Objects.equals(task.getProcessRouteSnapshot(), dependency.path("route").path("procedureSnapshot").textValue()),
                         "原派工正式工程与实际原工单路线不一致，不能用当前路线修补");
                 if ("DEPANEL".equals(codec.policy(configuration).getOperationType()))
                     blocked.add("当前尚无永久母件实际位置及合格/报废/缺位余额账，批准布局不能代替实物位置");
@@ -236,7 +230,9 @@ public class MesPhysicalTransformSourceFreezeService {
         return entry;
     }
 
-    /** 明确全四列，没有能力证据时拒绝把空集合当8位小数容量。 */
+    /**
+     * 明确全四列，没有能力证据时拒绝把空集合当8位小数容量。
+     */
     private List<Map<String, String>> capacities() {
         var rows = locks.quantityColumns();
         require(rows != null && rows.size() == 4, "目标库库存/流水四个实际数量字段不可核验，不能假定Java精度等于PG容量");
@@ -251,7 +247,9 @@ public class MesPhysicalTransformSourceFreezeService {
         return result;
     }
 
-    /** 全文和外层均按UTF-16限制，超界拒绝，不截取图、履历或来源。 */
+    /**
+     * 全文和外层均按UTF-16限制，超界拒绝，不截取图、履历或来源。
+     */
     private String document(Object value) {
         String raw = codec.snapshot(value);
         codec.objectDocument(raw, MAX_SNAPSHOT);

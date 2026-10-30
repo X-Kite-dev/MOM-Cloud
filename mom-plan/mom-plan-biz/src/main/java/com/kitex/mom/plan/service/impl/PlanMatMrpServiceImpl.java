@@ -535,6 +535,31 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         if (StrUtil.isAllBlank(query.getPlanDemandNo(), query.getSaleOrderCode())) {
             throw new CheckedException("Agent缺料分析必须指定计划需求号或销售订单号");
         }
+        boolean exactDemandRequired = query.getSupplyEvidenceVersion() != null
+                && query.getSupplyEvidenceVersion() >= 9;
+        if (exactDemandRequired && query.getPlanDemandId() == null) {
+            throw new CheckedException("完整缺料决策Agent必须从产品需求页面携带需求主键和需求号发起");
+        }
+        PlnProductDemandEntity scopedDemand = null;
+        if (query.getPlanDemandId() != null) {
+            if (query.getPlanDemandId() <= 0 || StrUtil.isBlank(query.getPlanDemandNo())) {
+                throw new CheckedException("精确缺料分析必须同时提供有效需求主键和需求号");
+            }
+            scopedDemand = plnProductDemandMapper.selectOne(new LambdaQueryWrapper<PlnProductDemandEntity>()
+                    .eq(PlnProductDemandEntity::getId, query.getPlanDemandId())
+                    .eq(PlnProductDemandEntity::getFactoryCode, query.getFactoryCode()).last("LIMIT 1"));
+            if (scopedDemand == null || !Objects.equals(scopedDemand.getDemandNo(), query.getPlanDemandNo())
+                    || StrUtil.isNotBlank(query.getSaleOrderCode())
+                    && !Objects.equals(scopedDemand.getSaleOrderCode(), query.getSaleOrderCode())) {
+                throw new CheckedException("产品需求主键、需求号、销售订单或当前工厂不一致，请返回需求页面重新选择");
+            }
+            Long sameNo = plnProductDemandMapper.selectCount(new LambdaQueryWrapper<PlnProductDemandEntity>()
+                    .eq(PlnProductDemandEntity::getFactoryCode, query.getFactoryCode())
+                    .eq(PlnProductDemandEntity::getDemandNo, query.getPlanDemandNo()));
+            if (sameNo == null || sameNo != 1L) {
+                throw new CheckedException("当前工厂存在重复需求号，MRP无法唯一归属需求主键，请先完成计划数据治理");
+            }
+        }
         LambdaQueryWrapper<PlanMatMrpEntity> wrapper = new LambdaQueryWrapper<PlanMatMrpEntity>()
                 .eq(PlanMatMrpEntity::getFactoryCode, query.getFactoryCode())
                 .eq(StrUtil.isNotBlank(query.getPlanDemandNo()), PlanMatMrpEntity::getPlanDemandNo, query.getPlanDemandNo())
@@ -553,7 +578,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                 : plnIssueMapper.selectList(new LambdaQueryWrapper<PlnIssueEntity>()
                         .eq(PlnIssueEntity::getFactoryCode, query.getFactoryCode())
                         .and(scope -> scope.in(PlnIssueEntity::getSourceMrpId, recordIds)
-                                .or().and(legacy -> legacy.isNull(PlnIssueEntity::getSourceMrpId)
+                                .or(legacy -> legacy.isNull(PlnIssueEntity::getSourceMrpId)
                                         .in(PlnIssueEntity::getIssueNo, demandNos)))
                         .in(!materialCodes.isEmpty(), PlnIssueEntity::getProductCode, materialCodes)).stream()
                 .collect(Collectors.groupingBy(row -> supplyKey(row.getIssueNo(), row.getProductCode())));
@@ -590,9 +615,11 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                 ? loadOperationImpactEvidence(query.getFactoryCode(), demandNos, materialCodes)
                 : new OperationImpactEvidence(Map.of(), Set.of(), Set.of(), true);
 
+        final PlnProductDemandEntity frozenDemand = scopedDemand;
         List<PlanMrpShortageLineDTO> lines = records.stream().map(row -> {
             PlanMrpShortageLineDTO line = new PlanMrpShortageLineDTO();
             line.setMrpId(row.getId());
+            line.setPlanDemandId(frozenDemand == null ? null : frozenDemand.getId());
             line.setPlanDemandNo(row.getPlanDemandNo());
             line.setSaleOrderCode(row.getSaleOrderCode());
             line.setMaterialCode(row.getMatCode());
@@ -647,6 +674,12 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
 
         PlanMrpShortageAnalysisDTO result = new PlanMrpShortageAnalysisDTO();
         result.setDataAsOf(LocalDateTime.now());
+        result.setPlanDemandId(scopedDemand == null ? null : scopedDemand.getId());
+        result.setPlanDemandNo(query.getPlanDemandNo());
+        result.setSaleOrderCode(StrUtil.isNotBlank(query.getSaleOrderCode()) ? query.getSaleOrderCode()
+                : scopedDemand == null ? null : scopedDemand.getSaleOrderCode());
+        result.setFactoryCode(query.getFactoryCode());
+        result.setDemandScoped(scopedDemand != null);
         result.setScopeDescription("工厂=" + query.getFactoryCode()
                 + (StrUtil.isBlank(query.getPlanDemandNo()) ? "" : "，计划=" + query.getPlanDemandNo())
                 + (StrUtil.isBlank(query.getSaleOrderCode()) ? "" : "，订单=" + query.getSaleOrderCode()));
@@ -687,7 +720,48 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                     .filter(Objects::nonNull).max(LocalDateTime::compareTo).orElse(null));
         }
         result.setLines(lines);
+        result.setFactFingerprint(shortageFactFingerprint(result));
         return result;
+    }
+
+    /**
+     * 生成不含采集时间的缺料事实指纹。只纳入决定齐套、替代、调拨、采购和局部重排的字段，
+     * 供Agent责任行动回采识别事实漂移；它不是业务审批签名。
+     */
+    private String shortageFactFingerprint(PlanMrpShortageAnalysisDTO result) {
+        Map<String, Object> facts = new LinkedHashMap<>();
+        facts.put("factoryCode", result.getFactoryCode());
+        facts.put("planDemandId", result.getPlanDemandId());
+        facts.put("planDemandNo", result.getPlanDemandNo());
+        facts.put("saleOrderCode", result.getSaleOrderCode());
+        facts.put("demandScoped", result.getDemandScoped());
+        facts.put("materialAvailabilityStatus", result.getMaterialAvailabilityStatus());
+        facts.put("materialAvailableTime", result.getMaterialAvailableTime());
+        facts.put("lines", Optional.ofNullable(result.getLines()).orElse(List.of()).stream().map(line -> {
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("mrpId", line.getMrpId());
+            value.put("materialCode", line.getMaterialCode());
+            value.put("grossDemandNum", line.getGrossDemandNum());
+            value.put("allocatedNum", line.getAllocatedNum());
+            value.put("shortageNum", line.getShortageNum());
+            value.put("readinessStatus", line.getReadinessStatus());
+            value.put("substituteStatus", line.getSubstituteStatus());
+            value.put("substituteSuggestion", line.getSubstituteSuggestion());
+            value.put("reservationStatus", line.getReservationStatus());
+            value.put("reservationHealthy", line.getReservationHealthy());
+            value.put("mainReservationStatus", line.getMainReservationStatus());
+            value.put("mainReservationHealthy", line.getMainReservationHealthy());
+            value.put("supplyPlanStatus", line.getSupplyPlanStatus());
+            value.put("expectedSupplyTime", line.getExpectedSupplyTime());
+            value.put("transferStatus", line.getCrossWarehouseTransferStatus());
+            value.put("transferUncoveredNum", line.getTransferUncoveredNum());
+            value.put("transferFingerprint", line.getTransferEvidenceFingerprint());
+            value.put("purchaseUncoveredNum", line.getPurchaseUncoveredNum());
+            value.put("purchaseEvidenceStatus", line.getPurchaseEvidenceStatus());
+            value.put("recommendedActionCode", line.getRecommendedActionCode());
+            return value;
+        }).toList());
+        return sha256(JSONUtil.toJsonStr(facts));
     }
 
     private void enrichCrossWarehouseTransfers(String factoryCode, List<PlanMrpShortageLineDTO> lines,
@@ -872,10 +946,10 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
             return new OperationImpactEvidence(Map.of(), Set.of(), Set.of(), true);
         }
         List<PlnIssueEntity> sourceIssues = plnIssueMapper.selectList(new LambdaQueryWrapper<PlnIssueEntity>()
-                        .eq(PlnIssueEntity::getFactoryCode, factoryCode)
-                        .and(scope -> scope.in(PlnIssueEntity::getSourceDemandNo, demandNos)
-                                .or().and(legacy -> legacy.isNull(PlnIssueEntity::getSourceDemandNo)
-                                        .in(PlnIssueEntity::getIssueNo, demandNos))));
+                .eq(PlnIssueEntity::getFactoryCode, factoryCode)
+                .and(scope -> scope.in(PlnIssueEntity::getSourceDemandNo, demandNos)
+                        .or(legacy -> legacy.isNull(PlnIssueEntity::getSourceDemandNo)
+                                .in(PlnIssueEntity::getIssueNo, demandNos))));
         Set<String> issueNos = sourceIssues.stream().map(PlnIssueEntity::getIssueNo)
                 .filter(StrUtil::isNotBlank).collect(Collectors.toSet());
         if (issueNos.isEmpty()) {
@@ -2838,7 +2912,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
                 .map(PlnIssueEntity::getMpsLineId).filter(Objects::nonNull).collect(Collectors.toSet());
         Map<String, PlanMatMrpEntity> mpsRootMrp = mpsLineIds.isEmpty() ? Map.of()
                 : this.list(new LambdaQueryWrapper<PlanMatMrpEntity>()
-                .in(PlanMatMrpEntity::getMpsLineId, mpsLineIds)).stream()
+                        .in(PlanMatMrpEntity::getMpsLineId, mpsLineIds)).stream()
                 .filter(entity -> entity.getSubitemBomId() != null && entity.getSubitemBomId() == 0)
                 .collect(Collectors.toMap(
                         entity -> entity.getMpsLineId() + "_" + entity.getMatCode(),

@@ -10,11 +10,7 @@ import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesReportCorrectionSettlementDTO;
-import com.kitex.mom.mes.entity.MesReportCorrectionSettlementEntity;
-import com.kitex.mom.mes.entity.MesReportCorrectionSettlementOperationEntity;
-import com.kitex.mom.mes.entity.MesReportReverseRequestEntity;
-import com.kitex.mom.mes.entity.MesReportReverseOperationEntity;
-import com.kitex.mom.mes.entity.MesTaskReportEntity;
+import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.ReportStatusEnum;
 import com.kitex.mom.mes.mapper.MesReportCorrectionSettlementMapper;
 import com.kitex.mom.mes.mapper.MesReportCorrectionSettlementOperationMapper;
@@ -409,7 +405,9 @@ public class MesReportCorrectionSettlementServiceImpl
         require(operationMapper.insert(operation) == 1, "差异结案操作履历保存失败");
     }
 
-    /** 在原纠正申请履历中同步留下许可注销证据，便于从任一单据方向完成审计。 */
+    /**
+     * 在原纠正申请履历中同步留下许可注销证据，便于从任一单据方向完成审计。
+     */
     private void savePermitCancelOperation(MesReportReverseRequestEntity reverse,
                                            MesReportCorrectionSettlementEntity settlement,
                                            MomUser user, LocalDateTime now) {

@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /**
  * 其他出库通知单
@@ -44,7 +45,8 @@ public class WmsOtherOutNoticeController {
     private final String billType = OutBillTypeEnum.OTHER_OUT.getCode();
 
     // 其他出库所有类型，查询列表时的条件
-    private final List<String> otherBillTypes = Arrays.stream(OtherOutBillTypeEnum.values()).map(OtherOutBillTypeEnum::getCode).toList();
+    private final List<String> otherBillTypes = Stream.concat(Stream.of(billType),
+            Arrays.stream(OtherOutBillTypeEnum.values()).map(OtherOutBillTypeEnum::getCode)).toList();
 
     /**
      * 分页查询其他出库通知单

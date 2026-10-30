@@ -31,7 +31,7 @@ public interface WmsLiveStockService extends IService<WmsLiveStockEntity> {
      * @param detail 物料详情
      * @return R
      */
-    void materialSaveOrUpdate(WmsDetailDTO detail);
+    WmsStockMoveSlice materialSaveOrUpdate(WmsDetailDTO detail);
 
     /**
      * 分页查询库存明细
@@ -75,6 +75,11 @@ public interface WmsLiveStockService extends IService<WmsLiveStockEntity> {
      * @param wmsLiveStockMoveDTO 库存
      */
     Boolean billStockMove(WmsLiveStockMoveDTO wmsLiveStockMoveDTO);
+
+    /**
+     * 移动库存并返回每条实际来源库存的快照，供业务记录精确留痕。
+     */
+    List<WmsStockMoveSlice> billStockMoveWithEvidence(WmsLiveStockMoveDTO wmsLiveStockMoveDTO);
 
     /**
      * 发起调拨时按库存行加锁、保护生产预留并扣减源仓，返回被转出的权威属性快照。

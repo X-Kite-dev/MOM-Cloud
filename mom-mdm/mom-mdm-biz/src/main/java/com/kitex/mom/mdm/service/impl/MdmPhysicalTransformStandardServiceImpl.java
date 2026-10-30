@@ -11,20 +11,9 @@ import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.dto.MdmPhysicalTransformStandardDTO;
-import com.kitex.mom.mdm.entity.MdmMatUnitConversionEntity;
-import com.kitex.mom.mdm.entity.MdmMaterialEntity;
-import com.kitex.mom.mdm.entity.MdmPhysicalTransformStandardEntity;
-import com.kitex.mom.mdm.entity.MdmPhysicalTransformStandardLogEntity;
-import com.kitex.mom.mdm.entity.MdmProcessRouteEntity;
-import com.kitex.mom.mdm.entity.MdmProcessRouteWorkingEntity;
-import com.kitex.mom.mdm.mapper.MdmMatUnitConversionMapper;
-import com.kitex.mom.mdm.mapper.MdmMaterialMapper;
-import com.kitex.mom.mdm.mapper.MdmPhysicalTransformStandardLogMapper;
-import com.kitex.mom.mdm.mapper.MdmPhysicalTransformStandardMapper;
-import com.kitex.mom.mdm.mapper.MdmProcessRouteMapper;
-import com.kitex.mom.mdm.mapper.MdmProcessRouteWorkingMapper;
+import com.kitex.mom.mdm.entity.*;
+import com.kitex.mom.mdm.mapper.*;
 import com.kitex.mom.mdm.service.MdmPhysicalTransformStandardService;
-import com.kitex.mom.mdm.support.MdmPhysicalTransformStandardCodec;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
@@ -33,11 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.stream.Stream;
 
 import static com.kitex.mom.mdm.support.MdmPhysicalTransformStandardCodec.*;
@@ -105,16 +90,18 @@ public class MdmPhysicalTransformStandardServiceImpl
                 row.getProcessCode(), row.getProcessName(), "", "", "", row)).toList());
     }
 
-    /** 分页元数据仅控制页面；工程依据ID/比例及完整原记录全为文本。 */
+    /**
+     * 分页元数据仅控制页面；工程依据ID/比例及完整原记录全为文本。
+     */
     private Page<MdmPhysicalTransformStandardDTO.BasisOption> basisResult(Page<?> source,
-            List<MdmPhysicalTransformStandardDTO.BasisOption> records) {
+                                                                          List<MdmPhysicalTransformStandardDTO.BasisOption> records) {
         var result = new Page<MdmPhysicalTransformStandardDTO.BasisOption>(source.getCurrent(), source.getSize(), source.getTotal());
         result.setRecords(records);
         return result;
     }
 
     private MdmPhysicalTransformStandardDTO.BasisOption basisOption(Long id, String material, String code, String name,
-            String input, String output, String ratio, Object row) {
+                                                                    String input, String output, String ratio, Object row) {
         var result = new MdmPhysicalTransformStandardDTO.BasisOption();
         result.setId(id.toString());
         result.setMaterialCode(material);
@@ -256,10 +243,10 @@ public class MdmPhysicalTransformStandardServiceImpl
                 require(!contributor(owner, row.getId()), "本版本任一编制/修改参与人不能自行发布");
                 assertDependencies(row, owner);
                 require(baseMapper.selectCount(scope(owner).eq(MdmPhysicalTransformStandardEntity::getMaterialCode, row.getMaterialCode())
-                        .eq(MdmPhysicalTransformStandardEntity::getProcessRouteId, row.getProcessRouteId())
-                        .eq(MdmPhysicalTransformStandardEntity::getProcessCode, row.getProcessCode())
-                        .eq(MdmPhysicalTransformStandardEntity::getOperationType, row.getOperationType())
-                        .eq(MdmPhysicalTransformStandardEntity::getStatus, "RELEASED")) == 0,
+                                .eq(MdmPhysicalTransformStandardEntity::getProcessRouteId, row.getProcessRouteId())
+                                .eq(MdmPhysicalTransformStandardEntity::getProcessCode, row.getProcessCode())
+                                .eq(MdmPhysicalTransformStandardEntity::getOperationType, row.getOperationType())
+                                .eq(MdmPhysicalTransformStandardEntity::getStatus, "RELEASED")) == 0,
                         "相同物料/路线/工序/动作已有发布版，须明确退役原版本，不自动猜替换");
                 row.setStatus("RELEASED").setReleasedById(owner.user().getId())
                         .setReleasedBy(owner.user().getUsername()).setReleasedTime(now);
@@ -289,10 +276,10 @@ public class MdmPhysicalTransformStandardServiceImpl
                 "精确工程版本未正式发布或已经退役，不改查其他版本");
         expect(row, row.getContentFingerprint());
         require(Objects.equals(row.getMaterialCode(), query.getMaterialCode())
-                && Objects.equals(row.getProcessRouteId(), id(query.getProcessRouteId()))
-                && Objects.equals(row.getProcessRouteCode(), query.getProcessRouteCode())
-                && Objects.equals(row.getProcessCode(), query.getProcessCode())
-                && object(row.getPolicyJson(), 256 * 1024).equals(object(policy(query.getPolicyJson()), 256 * 1024)),
+                        && Objects.equals(row.getProcessRouteId(), id(query.getProcessRouteId()))
+                        && Objects.equals(row.getProcessRouteCode(), query.getProcessRouteCode())
+                        && Objects.equals(row.getProcessCode(), query.getProcessCode())
+                        && object(row.getPolicyJson(), 256 * 1024).equals(object(policy(query.getPolicyJson()), 256 * 1024)),
                 "精确发布工程版本与实际物料/路线/工序/政策不一致");
         var result = new MdmPhysicalTransformStandardDTO.Frozen();
         result.setVersion(VERSION);
@@ -307,7 +294,9 @@ public class MdmPhysicalTransformStandardServiceImpl
         return result;
     }
 
-    /** Copy以同依赖域锁分配下一永久版本；新版本重读当前真实依赖，原版不被重写。 */
+    /**
+     * Copy以同依赖域锁分配下一永久版本；新版本重读当前真实依赖，原版不被重写。
+     */
     private MdmPhysicalTransformStandardEntity copy(Identity owner, MdmPhysicalTransformStandardEntity original, String reason) {
         int max = baseMapper.maxVersion(owner.tenantId(), owner.factory(), original.getStandardNo());
         require(max < Integer.MAX_VALUE, "工程版本号容量已满");
@@ -332,7 +321,9 @@ public class MdmPhysicalTransformStandardServiceImpl
         return target;
     }
 
-    /** 全部真实依赖正文在保存、提交及发布时一致；发布后不再查当前基础行。 */
+    /**
+     * 全部真实依赖正文在保存、提交及发布时一致；发布后不再查当前基础行。
+     */
     private String content(MdmPhysicalTransformStandardEntity row, Identity owner) {
         var materialRows = materials.selectList(new LambdaQueryWrapper<MdmMaterialEntity>()
                 .eq(MdmMaterialEntity::getTenantId, owner.tenantId()).eq(MdmMaterialEntity::getFactoryCode, owner.factory())
@@ -446,7 +437,9 @@ public class MdmPhysicalTransformStandardServiceImpl
         return row;
     }
 
-    /** 框架自动填充审计时间存在JDBC纳秒到微秒转换；全部身份/领域事实仍逐项精确回读。 */
+    /**
+     * 框架自动填充审计时间存在JDBC纳秒到微秒转换；全部身份/领域事实仍逐项精确回读。
+     */
     private com.fasterxml.jackson.databind.JsonNode storedFacts(Object row) {
         var root = entityFacts(row);
         root.remove(List.of("createTime", "updateTime"));
@@ -458,12 +451,16 @@ public class MdmPhysicalTransformStandardServiceImpl
                 && expected.equals(fingerprint(VERSION, row.getContentSnapshot())), "工程正文已变化或指纹损坏，请重读原版本，不继续旧页面动作");
     }
 
-    /** 正文指纹不包含状态，所以还需精确最近动作号，不能跨审批轮次重放旧命令。 */
+    /**
+     * 正文指纹不包含状态，所以还需精确最近动作号，不能跨审批轮次重放旧命令。
+     */
     private void expectOperation(MdmPhysicalTransformStandardEntity row, String expected) {
         require(Objects.equals(row.getLastOperationId(), id(expected)), "工程生命周期已变化，请重读原版本及履历，不执行迟到动作");
     }
 
-    /** HTTP请求拦截器可能晚于点击切厂；正文期望值仅拒绝错厂写，不授予任何权限。 */
+    /**
+     * HTTP请求拦截器可能晚于点击切厂；正文期望值仅拒绝错厂写，不授予任何权限。
+     */
     private void expectScope(Identity owner, String tenant, String factory) {
         require(owner.tenantId().equals(id(tenant)) && owner.factory().equals(factory),
                 "页面期望组织与当前认证上下文不同，未执行工程写入；请重开当前工厂版本");
@@ -487,7 +484,7 @@ public class MdmPhysicalTransformStandardServiceImpl
         String factory = FactoryContextHolder.getFactoryCode();
         var user = SecurityUtils.getUser();
         require(tenant != null && tenant > 0 && !TenantContextHolder.getTenantSkip()
-                && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) && user != null && user.getId() != null && user.getId() > 0,
+                        && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) && user != null && user.getId() != null && user.getId() > 0,
                 "工程标准必须实名选择实际租户工厂，不允许跳过隔离");
         code(factory, 100, "实际工厂");
         code(user.getUsername(), 100, "实名账号");

@@ -8,11 +8,14 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.excel.annotation.RequestExcel;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
+import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.common.barcode.dto.req.PrintReq;
 import com.kitex.mom.mdm.entity.MdmWarehouseLocationEntity;
 import com.kitex.mom.mdm.service.MdmWarehouseLocationService;
@@ -28,6 +31,7 @@ import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 库位
@@ -109,6 +113,36 @@ public class MdmWarehouseLocationController {
             FactoryContextHolder.setFactorySkip();
         }
         return R.ok(mdmWarehouseLocationService.list(Wrappers.query(mdmWarehouseLocation)));
+    }
+
+    /**
+     * 内部布局清单不允许跨租户、跨工厂或不限定仓库查询。
+     */
+    @Inner
+    @GetMapping("/layoutLocations")
+    public R<List<MdmWarehouseLocationEntity>> layoutLocations(@RequestParam String warehouseCode) {
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        String warehouse = StrUtil.trim(warehouseCode);
+        if (tenant == null || StrUtil.isBlank(factory) || StrUtil.isBlank(warehouse)
+                || warehouse.contains("*") || Boolean.TRUE.equals(TenantContextHolder.getTenantSkip())
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())) {
+            throw new CheckedException("库位图查询必须指定当前租户、工厂和仓库");
+        }
+        List<MdmWarehouseLocationEntity> rows = mdmWarehouseLocationService.list(
+                new LambdaQueryWrapper<MdmWarehouseLocationEntity>()
+                        .eq(MdmWarehouseLocationEntity::getTenantId, tenant)
+                        .eq(MdmWarehouseLocationEntity::getFactoryCode, factory)
+                        .eq(MdmWarehouseLocationEntity::getWarehouseCode, warehouse)
+                        .orderByAsc(MdmWarehouseLocationEntity::getSort)
+                        .last("LIMIT 2001"));
+        if (rows == null || rows.size() > 2000 || rows.stream().anyMatch(row -> row == null
+                || !Objects.equals(tenant, row.getTenantId())
+                || !Objects.equals(factory, row.getFactoryCode())
+                || !Objects.equals(warehouse, row.getWarehouseCode()))) {
+            throw new CheckedException("库位图主数据读取不完整或范围不一致");
+        }
+        return R.ok(rows);
     }
 
     /**

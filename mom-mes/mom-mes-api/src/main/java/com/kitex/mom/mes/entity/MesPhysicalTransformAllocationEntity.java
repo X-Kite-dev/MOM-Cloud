@@ -10,7 +10,9 @@ import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
 
-/** 正式转换的逐来源至逐输出当量分配，不以单一sourceReportId代替多来源。 */
+/**
+ * 正式转换的逐来源至逐输出当量分配，不以单一sourceReportId代替多来源。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable

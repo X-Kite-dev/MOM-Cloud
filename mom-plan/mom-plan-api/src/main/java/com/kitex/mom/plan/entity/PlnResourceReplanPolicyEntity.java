@@ -11,7 +11,9 @@ import lombok.experimental.Accessors;
 
 import java.time.LocalDateTime;
 
-/** 设备、工装和人员异常局部重排的版本化治理策略。 */
+/**
+ * 设备、工装和人员异常局部重排的版本化治理策略。
+ */
 @Data
 @Accessors(chain = true)
 @TenantTable
@@ -20,16 +22,22 @@ import java.time.LocalDateTime;
 public class PlnResourceReplanPolicyEntity extends BaseEntity<PlnResourceReplanPolicyEntity> {
     private String policyCode;
     private String policyName;
-    /** ALL、DEVICE、TOOLING、EMPLOYEE。 */
+    /**
+     * ALL、DEVICE、TOOLING、EMPLOYEE。
+     */
     private String resourceType;
-    /** 空值表示该资源类型下通配。 */
+    /**
+     * 空值表示该资源类型下通配。
+     */
     private String resourceCode;
     private Integer freezeMinutes;
     private Integer maxDelayMinutes;
     private Integer priority;
     private Integer policyVersion;
     private String policyFingerprint;
-    /** DRAFT、ACTIVE、RETIRED。 */
+    /**
+     * DRAFT、ACTIVE、RETIRED。
+     */
     private String status;
     private LocalDateTime effectiveFrom;
     private LocalDateTime effectiveTo;

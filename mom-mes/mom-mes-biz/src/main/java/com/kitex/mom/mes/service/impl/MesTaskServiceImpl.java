@@ -19,6 +19,8 @@ import com.github.yulichang.wrapper.MPJLambdaWrapper;
 import com.kitex.admin.api.feign.RemoteParamService;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
@@ -118,7 +120,9 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     private final MesTerminalExecutionGuard terminalExecutionGuard;
     private final MesEngineeringPackageService engineeringPackages;
     private final MesFormalPlanReceiptVerifier formalPlanReceiptVerifier;
+    private final MesManualTaskService manualTasks;
     private final MesProductionOrderService productionOrderService;
+    private final MesPlanCompletionOutboxService planCompletionOutbox;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -1117,8 +1121,8 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
      * 不能在重复主工序路线里用findFirst猜选某一次加工。
      */
     private ReworkRouteSelection selectReworkRoute(MesTaskEntity source,
-                                                    List<MdmProcessRouteWorkingDTO> sourceRoute,
-                                                    MesTaskReceiveDTO receive) {
+                                                   List<MdmProcessRouteWorkingDTO> sourceRoute,
+                                                   MesTaskReceiveDTO receive) {
         boolean nodeGraph = sourceRoute.stream().anyMatch(route -> StrUtil.isNotBlank(route.getRouteNodeCode()));
         String requestedProcess = StrUtil.trim(receive.getReworkProcessCode());
         String sourceProduceTaskCode = StrUtil.trim(receive.getSourceProduceTaskCode());
@@ -1173,12 +1177,6 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         }
         return new ReworkRouteSelection(route, sourceProduceTask, sourceProduceTaskCode,
                 StrUtil.trim(route.getRouteNodeCode()));
-    }
-
-    private record ReworkRouteSelection(MdmProcessRouteWorkingDTO route,
-                                        MesProduceTaskEntity sourceProduceTask,
-                                        String sourceProduceTaskCode,
-                                        String routeNodeCode) {
     }
 
     @Override
@@ -1265,15 +1263,37 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         if (result == null || StrUtil.isBlank(result.getRequestId()) || result.getQmsTaskId() == null) {
             throw new CheckedException("返工复检同步缺少返工请求号或QMS任务ID");
         }
-        MesTaskEntity task = this.getOne(new LambdaQueryWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getReworkRequestId, result.getRequestId().trim()).last("FOR UPDATE"), false);
-        if (task == null || !"REWORK".equals(task.getResourceType())) {
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        if (tenant == null || tenant <= 0 || TenantContextHolder.getTenantSkip()
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) || StrUtil.isBlank(factory)) {
+            throw new CheckedException("返工复检同步缺少实际租户或工厂");
+        }
+        String requestId = result.getRequestId().trim();
+        var owners = this.list(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
+                .eq(MesTaskEntity::getReworkRequestId, requestId).last("LIMIT 2"));
+        if (owners.size() != 1 || !"REWORK".equals(owners.get(0).getResourceType())) {
             throw new CheckedException("未找到匹配的MES返工工单");
         }
+        MesTaskEntity observed = owners.get(0);
+        // 与普通报工、完工和质量同步同序：业务锁必须先于根行锁。
+        bindingGroups.lockDispatchTask(observed.getCode());
+        var locked = this.list(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
+                .eq(MesTaskEntity::getReworkRequestId, requestId).last("LIMIT 2 FOR UPDATE"));
+        if (locked.size() != 1 || !Objects.equals(observed.getId(), locked.get(0).getId())
+                || !Objects.equals(observed.getCode(), locked.get(0).getCode())
+                || !"REWORK".equals(locked.get(0).getResourceType())) {
+            throw new CheckedException("返工复检工单归属已变化，请重新同步");
+        }
+        MesTaskEntity task = locked.get(0);
         if (!Objects.equals(task.getReinspectionTaskId(), result.getQmsTaskId())) {
             throw new CheckedException("复检任务与MES返工工单登记不一致");
         }
         MesProduceTaskEntity finalTask = produceTaskService.getOne(new LambdaQueryWrapper<MesProduceTaskEntity>()
+                .eq(MesProduceTaskEntity::getTenantId, tenant)
+                .eq(MesProduceTaskEntity::getFactoryCode, factory)
                 .eq(MesProduceTaskEntity::getTaskCode, task.getCode())
                 .eq(MesProduceTaskEntity::getLastRoute, Boolean.TRUE));
         if (finalTask == null) {
@@ -1283,11 +1303,16 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         BigDecimal usable = BigDecimal.valueOf(Objects.requireNonNullElse(result.getUsableNum(), 0));
         BigDecimal handled = BigDecimal.valueOf(Objects.requireNonNullElse(result.getHandleNum(), 0));
         BigDecimal completed = Objects.requireNonNullElse(finalTask.getCompleteNum(), BigDecimal.ZERO);
-        if (total.signum() <= 0 || total.compareTo(completed) > 0 || handled.compareTo(total) > 0) {
+        if (total.signum() <= 0 || total.compareTo(completed) > 0 || usable.signum() < 0 || handled.signum() < 0
+                || usable.compareTo(handled) > 0 || handled.compareTo(total) > 0) {
             throw new CheckedException("返工复检总数、已处置数或MES完工数关系不正确");
         }
         boolean qualified = "QUALIFIED".equals(result.getResult());
         if (qualified) {
+            boolean defaultDisposition = usable.signum() == 0 && handled.signum() == 0;
+            if (!defaultDisposition && (usable.compareTo(total) != 0 || handled.compareTo(total) != 0)) {
+                throw new CheckedException("返工复检合格结论与显式处置数量不一致");
+            }
             usable = total;
             handled = total;
         }
@@ -1301,6 +1326,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
             throw new CheckedException("返工复检累计数量发生倒退，拒绝同步");
         }
         MesTaskEntity sourceTask = this.getOne(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
                 .eq(MesTaskEntity::getCode, task.getSourceTaskCode()));
         if (sourceTask == null) throw new CheckedException("返工复检缺少可归集的原生产工单");
         BigDecimal qualifiedDelta = newQualified.subtract(oldQualified);
@@ -1329,13 +1355,17 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         } else {
             status = "RELEASED";
         }
-        this.update(new LambdaUpdateWrapper<MesTaskEntity>().eq(MesTaskEntity::getId, task.getId())
+        if (!this.update(new LambdaUpdateWrapper<MesTaskEntity>().eq(MesTaskEntity::getId, task.getId())
+                .eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
+                .eq(MesTaskEntity::getCode, task.getCode())
                 .set(MesTaskEntity::getReworkQualifiedNum, newQualified)
                 .set(MesTaskEntity::getReworkRejectedNum, newRejected)
                 .set(MesTaskEntity::getReinspectionStatus, status)
                 .set(MesTaskEntity::getReinspectionMessage, "复检任务" + result.getQmsTaskId()
                         + "：放行" + quantity.getReleasedQuantity() + "，待判" + quantity.getPendingQuantity()
-                        + "，拒绝" + quantity.getRejectedQuantity()));
+                        + "，拒绝" + quantity.getRejectedQuantity()))) {
+            throw new CheckedException("返工复检结果保存失败，已回滚质量数量和库存变更");
+        }
     }
 
     @Override
@@ -1406,6 +1436,10 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         }
         if (!MesTaskStatusEnum.CREATE.name().equals(persisted.getStatus())) {
             throw new CheckedException("生产工单任务已下达或开始，无法进行编辑操作");
+        }
+        if (MesManualTaskService.owns(persisted)) {
+            manualTasks.editDraft(mesTask);
+            return;
         }
         mesTask.setStatus(persisted.getStatus());
         if (StrUtil.isNotBlank(persisted.getApsOperationSnapshot())) {
@@ -1493,7 +1527,6 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
             throw new CheckedException("已绑定工程版本的工单禁止在MES修改工程版本、产品、数量、路线或BOM；请从PLAN发起受控变更");
         }
     }
-
 
     /**
      * 查询详情
@@ -1817,7 +1850,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         Map<String, String> timingModes = new HashMap<>();
         byCode.forEach((code, route) -> timingModes.put(code, route.getType()));
         boolean uniqueProcesses = routeList.stream().map(route -> StrUtil.blankToDefault(
-                        route.getProcessCode(), route.getRouteCode())).distinct().count() == routeList.size();
+                route.getProcessCode(), route.getRouteCode())).distinct().count() == routeList.size();
         Map<String, String> nodeProcesses = nodeGraph ? byCode.entrySet().stream().collect(Collectors.toMap(
                 Map.Entry::getKey, entry -> StrUtil.blankToDefault(entry.getValue().getProcessCode(),
                         entry.getValue().getRouteCode()), (left, right) -> left, LinkedHashMap::new)) : Map.of();
@@ -2573,41 +2606,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     @Transactional(rollbackFor = Exception.class)
     public void feedbackPlanCompletion(MesTaskEntity task, BigDecimal completeNum) {
         if (task == null || StrUtil.isBlank(task.getPlanNo())) return;
-        String completionEvent = "COMPLETE_V" + Objects.requireNonNullElse(task.getCompletionVersion(), 0);
-        List<MesApsBatchAllocationEntity> allocations = batchAllocations(task, true);
-        List<OmsOrderLifeCycleDTO> callbacks = new ArrayList<>();
-        if (!allocations.isEmpty()) {
-            BigDecimal totalAllocated = allocations.stream().map(MesApsBatchAllocationEntity::getAllocatedQuantity)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-            BigDecimal completed = Objects.requireNonNullElse(completeNum, BigDecimal.ZERO);
-            if (completed.signum() < 0 || completed.compareTo(totalAllocated) > 0) {
-                throw new CheckedException("APS批次完工数量不能为负或超过来源计划分配总量");
-            }
-            BigDecimal assigned = BigDecimal.ZERO;
-            for (int index = 0; index < allocations.size(); index++) {
-                MesApsBatchAllocationEntity allocation = allocations.get(index);
-                BigDecimal target = index == allocations.size() - 1 ? completed.subtract(assigned)
-                        : completed.multiply(allocation.getAllocatedQuantity())
-                        .divide(totalAllocated, 8, RoundingMode.HALF_UP).min(allocation.getAllocatedQuantity());
-                assigned = assigned.add(target);
-                allocation.setCompletedQuantity(target);
-                if (apsBatchAllocationMapper.updateById(allocation) != 1) {
-                    throw new CheckedException("来源计划完工归属量保存失败");
-                }
-                callbacks.add(lifeCycleCallback(task, allocation.getIssueNo(), allocation.getIssueId(),
-                        completionEvent, "3", OrderLongStateEnum.SCHEDULE.getCode(), null, LocalDate.now(),
-                        String.format("APS批次【%s】MES工单【%s】已完工，批次完成量【%s】，来源归属完成量【%s】，操作时间【%s】",
-                                task.getApsBatchNo(), task.getCode(), completed, target, LocalDate.now())));
-            }
-        } else {
-            callbacks.add(lifeCycleCallback(task, task.getPlanNo(), null, completionEvent, "3",
-                    OrderLongStateEnum.SCHEDULE.getCode(), null, LocalDate.now(),
-                    String.format("工单编号【%s】,已完工,总生产数量【%s】,操作时间【%s】",
-                            task.getCode(), completeNum, LocalDate.now())));
-        }
-        if (!Boolean.TRUE.equals(remotePlnIssueService.edit(callbacks).getData())) {
-            throw new CheckedException(String.format("%s的工单推送生产计划模块失败", task.getCode()));
-        }
+        planCompletionOutbox.enqueue(task, completeNum);
     }
 
     private List<MesApsBatchAllocationEntity> batchAllocations(MesTaskEntity task, boolean lock) {
@@ -2680,12 +2679,16 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                 original == null ? null : original.getId().toString(), original == null ? null : original.getStatus());
     }
 
-    /** 保留新协议命名域，即使遗漏版本也不能回退旧发送路径。 */
+    /**
+     * 保留新协议命名域，即使遗漏版本也不能回退旧发送路径。
+     */
     private boolean isInWmsV2(MesTaskInWmsDTO command) {
         return command.getCommandVersion() != null || StrUtil.startWith(StrUtil.trim(command.getRequestId()), "IW2:");
     }
 
-    /** 旧V1指纹算法保持不变；另逐项核真实库存身份，不能只依赖拼接指纹或工厂过滤。 */
+    /**
+     * 旧V1指纹算法保持不变；另逐项核真实库存身份，不能只依赖拼接指纹或工厂过滤。
+     */
     private void assertInWmsReceipt(MesTaskInWmsReceiptEntity receipt, MesTaskInWmsDTO command,
                                     String factory, String fingerprint) {
         if (!Objects.equals(receipt.getFactoryCode(), factory)
@@ -2698,7 +2701,9 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         }
     }
 
-    /** 当前WMS仍为Double接口，预览和实际发送均禁止静默丢失精确数量。 */
+    /**
+     * 当前WMS仍为Double接口，预览和实际发送均禁止静默丢失精确数量。
+     */
     private double exactWmsInboundQuantity(BigDecimal quantity) {
         double value = quantity.doubleValue();
         if (!Double.isFinite(value) || BigDecimal.valueOf(value).compareTo(quantity) != 0) {
@@ -2907,6 +2912,12 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         vo.setPriority(isStarted ? 1 : 2);
 
         return vo;
+    }
+
+    private record ReworkRouteSelection(MdmProcessRouteWorkingDTO route,
+                                        MesProduceTaskEntity sourceProduceTask,
+                                        String sourceProduceTaskCode,
+                                        String routeNodeCode) {
     }
 
     private record InboundReportAllocation(MesTaskReportEntity report, BigDecimal quantity) {

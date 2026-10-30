@@ -17,11 +17,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * 原计划与重排计划的确定性同事实对照服务，不负责CRUD或模型推理。
@@ -43,7 +39,13 @@ public class PlanExecutionReplanComparisonService {
 
     private final ObjectMapper objectMapper;
 
-    /** 找到唯一选中案件和此次请求的观察，不允许用最新观察代替幂等请求的原始事实。 */
+    private static Long late(LocalDateTime planned, LocalDateTime actual) {
+        return planned == null || actual == null ? null : Math.max(0, Duration.between(planned, actual).toMinutes());
+    }
+
+    /**
+     * 找到唯一选中案件和此次请求的观察，不允许用最新观察代替幂等请求的原始事实。
+     */
     public Comparison compare(PlanResourceLocalReplanDTO.Scenario scenario,
                               PlnSchedulingEffectReviewDTO.Detail detail, String requestId) {
         var selected = scenario.getCandidates().stream()
@@ -61,7 +63,9 @@ public class PlanExecutionReplanComparisonService {
         return compare(selected.get(0), observations.get(0), detail.getReview().getPlannedScopeSnapshot());
     }
 
-    /** 汇总全范围，逐行展示最多100条；任何解析/全局来源缺口都不能输出虚假的零指标。 */
+    /**
+     * 汇总全范围，逐行展示最多100条；任何解析/全局来源缺口都不能输出虚假的零指标。
+     */
     private Comparison compare(PlnResourceReplanCaseEntity selected,
                                PlnSchedulingEffectObservationEntity observation, String plannedScopeSnapshot) {
         List<String> gaps = new ArrayList<>();
@@ -145,7 +149,9 @@ public class PlanExecutionReplanComparisonService {
                 gaps, summary, INTERPRETATION);
     }
 
-    /** 唯一键沿用PLAN/MES正式映射：计划号+工序编码；重复键故障关闭，禁止静默取第一条。 */
+    /**
+     * 唯一键沿用PLAN/MES正式映射：计划号+工序编码；重复键故障关闭，禁止静默取第一条。
+     */
     private Map<String, JsonNode> index(JsonNode rows) {
         if (!rows.isArray()) {
             throw new IllegalArgumentException("逐工序证据不是数组");
@@ -162,7 +168,9 @@ public class PlanExecutionReplanComparisonService {
         return indexed;
     }
 
-    /** 对照计划量不变且与本次采集目标一致；执行事实缺失/倒置/未来时刻不得推算收益。 */
+    /**
+     * 对照计划量不变且与本次采集目标一致；执行事实缺失/倒置/未来时刻不得推算收益。
+     */
     private String validate(JsonNode old, JsonNode after, JsonNode actual, JsonNode currentPlan,
                             LocalDateTime observed) {
         if (old == null || text(old, "issueId") == null || text(old, "operationSeq") == null
@@ -245,11 +253,9 @@ public class PlanExecutionReplanComparisonService {
         return text(row, field) == null ? null : objectMapper.convertValue(row.path(field), LocalDateTime.class);
     }
 
-    private static Long late(LocalDateTime planned, LocalDateTime actual) {
-        return planned == null || actual == null ? null : Math.max(0, Duration.between(planned, actual).toMinutes());
-    }
-
-    /** 单次对照的局部累加器，不跨观察窗口，也不持有数据库或共享状态。 */
+    /**
+     * 单次对照的局部累加器，不跨观察窗口，也不持有数据库或共享状态。
+     */
     private final class Aggregate {
         private int count;
         private int started;
