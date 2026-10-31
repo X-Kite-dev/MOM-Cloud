@@ -47,16 +47,41 @@ public class MesApsSourceQuantityServiceImpl implements MesApsSourceQuantityServ
 
     @Override
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY, rollbackFor = Exception.class)
-    public void recordDeferred(MesTaskEntity sourceTask, String requestId, MesSourceQuantityKind kind,
-                               BigDecimal quantityDelta, String sourceReference, String content) {
-        if (kind != MesSourceQuantityKind.QUALITY_REJECTED)
-            throw new CheckedException("正式检验来源通知仅处理质量判退事实");
-        recordQuantities(sourceTask, requestId, kind, quantityDelta, sourceReference, content, true);
+    public void recordDeferred(
+            MesTaskEntity sourceTask,
+            String requestId,
+            MesSourceQuantityKind kind,
+            BigDecimal quantityDelta,
+            String sourceReference,
+            String content) {
+        if (kind != MesSourceQuantityKind.QUALITY_REJECTED
+                && kind != MesSourceQuantityKind.REWORK_COMPLETED)
+            throw new CheckedException("正式来源待发仅处理质量判退或返工完工事实");
+        recordQuantities(
+                sourceTask, requestId, kind, quantityDelta, sourceReference, content, true);
     }
 
-    private void recordQuantities(MesTaskEntity sourceTask, String requestId, MesSourceQuantityKind kind,
-                                  BigDecimal quantityDelta, String sourceReference, String content, boolean deferred) {
-        if (sourceTask == null || sourceTask.getId() == null || StrUtil.isBlank(sourceTask.getCode())) {
+    private void recordQuantities(
+            MesTaskEntity sourceTask,
+            String requestId,
+            MesSourceQuantityKind kind,
+            BigDecimal quantityDelta,
+            String sourceReference,
+            String content,
+            boolean deferred) {
+        MesQualityGateSourceEvidence.scope();
+        if (sourceTask != null
+                && (!Objects.equals(
+                                sourceTask.getTenantId(),
+                                com.kitex.common.data.tenant.TenantContextHolder.getTenantId())
+                        || !Objects.equals(
+                                sourceTask.getFactoryCode(),
+                                com.kitex.common.data.orgFilter.FactoryContextHolder
+                                        .getFactoryCode())))
+            throw new CheckedException("来源数量必须属于实际租户和工厂");
+        if (sourceTask == null
+                || sourceTask.getId() == null
+                || StrUtil.isBlank(sourceTask.getCode())) {
             throw new CheckedException("执行偏差归集缺少原生产工单");
         }
         String request = StrUtil.trim(requestId);
@@ -66,25 +91,50 @@ public class MesApsSourceQuantityServiceImpl implements MesApsSourceQuantityServ
         if (kind == null || quantityDelta == null || quantityDelta.signum() == 0) {
             throw new CheckedException("执行偏差归集类型和非零数量不能为空");
         }
+        boolean reworkDeferred = deferred && kind == MesSourceQuantityKind.REWORK_COMPLETED;
+        if (reworkDeferred)
+            requireCompletedRework(sourceTask, request, quantityDelta, sourceReference);
         String fingerprint = fingerprint(sourceTask, kind, quantityDelta, sourceReference);
         eventMapper.lockRequest(request);
-        List<MesApsSourceQuantityEventEntity> existing = eventMapper.selectList(
-                new LambdaQueryWrapper<MesApsSourceQuantityEventEntity>()
-                        .eq(MesApsSourceQuantityEventEntity::getRequestId, request));
+        List<MesApsSourceQuantityEventEntity> existing =
+                eventMapper.selectList(
+                        new LambdaQueryWrapper<MesApsSourceQuantityEventEntity>()
+                                .eq(
+                                        MesApsSourceQuantityEventEntity::getTenantId,
+                                        sourceTask.getTenantId())
+                                .eq(
+                                        MesApsSourceQuantityEventEntity::getFactoryCode,
+                                        sourceTask.getFactoryCode())
+                                .eq(MesApsSourceQuantityEventEntity::getRequestId, request));
         if (!existing.isEmpty()) {
-            if (existing.stream().anyMatch(item -> !Objects.equals(item.getRequestFingerprint(), fingerprint))) {
+            if (existing.stream()
+                    .anyMatch(item -> !Objects.equals(item.getRequestFingerprint(), fingerprint))) {
                 throw new CheckedException("执行偏差归集请求号已使用且载荷不一致：" + request);
             }
-            if (deferred) planOutbox.requireExisting(sourceTask, request, fingerprint);
+            if (reworkDeferred) planOutbox.requireExistingRework(sourceTask, request, fingerprint);
+            else if (deferred) planOutbox.requireExisting(sourceTask, request, fingerprint);
             return;
         }
 
-        taskMapper.acquireApsBatchTransactionLock("SOURCE_QUANTITY:"
-                + StrUtil.blankToDefault(sourceTask.getApsBatchNo(), sourceTask.getCode()));
-        List<MesApsBatchAllocationEntity> allocations = StrUtil.isBlank(sourceTask.getApsBatchNo())
-                ? List.of() : allocationMapper.selectList(new LambdaQueryWrapper<MesApsBatchAllocationEntity>()
-                .eq(MesApsBatchAllocationEntity::getMesTaskId, sourceTask.getId())
-                .orderByAsc(MesApsBatchAllocationEntity::getAllocationSeq));
+        if (reworkDeferred) planOutbox.requireAbsentRework(sourceTask, request);
+        taskMapper.acquireApsBatchTransactionLock(
+                "SOURCE_QUANTITY:"
+                        + StrUtil.blankToDefault(sourceTask.getApsBatchNo(), sourceTask.getCode()));
+        List<MesApsBatchAllocationEntity> allocations =
+                StrUtil.isBlank(sourceTask.getApsBatchNo())
+                        ? List.of()
+                        : allocationMapper.selectList(
+                                new LambdaQueryWrapper<MesApsBatchAllocationEntity>()
+                                        .eq(
+                                                MesApsBatchAllocationEntity::getTenantId,
+                                                sourceTask.getTenantId())
+                                        .eq(
+                                                MesApsBatchAllocationEntity::getFactoryCode,
+                                                sourceTask.getFactoryCode())
+                                        .eq(
+                                                MesApsBatchAllocationEntity::getMesTaskId,
+                                                sourceTask.getId())
+                                        .orderByAsc(MesApsBatchAllocationEntity::getAllocationSeq));
         List<OmsOrderLifeCycleDTO> callbacks = new ArrayList<>();
         if (allocations.isEmpty()) {
             if (StrUtil.isBlank(sourceTask.getPlanNo())) {
@@ -93,26 +143,61 @@ public class MesApsSourceQuantityServiceImpl implements MesApsSourceQuantityServ
             BigDecimal currentTotal = legacyTotal(sourceTask.getId(), kind);
             BigDecimal afterTotal = currentTotal.add(quantityDelta);
             validateLegacyTotals(sourceTask, kind, afterTotal);
-            persist(event(sourceTask, request, fingerprint, kind, null, sourceTask.getPlanNo(),
-                    quantityDelta, afterTotal, sourceReference, content), deferred);
-            callbacks.add(callback(sourceTask, request, kind, null, sourceTask.getPlanNo(), quantityDelta, content));
+            persist(
+                    event(
+                            sourceTask,
+                            request,
+                            fingerprint,
+                            kind,
+                            null,
+                            sourceTask.getPlanNo(),
+                            quantityDelta,
+                            afterTotal,
+                            sourceReference,
+                            content),
+                    deferred);
+            callbacks.add(
+                    callback(
+                            sourceTask,
+                            request,
+                            kind,
+                            null,
+                            sourceTask.getPlanNo(),
+                            quantityDelta,
+                            content));
         } else {
-            BigDecimal allocatedTotal = allocations.stream().map(MesApsBatchAllocationEntity::getAllocatedQuantity)
-                    .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
-            if (sourceTask.getNoticeNum() == null || allocatedTotal.compareTo(sourceTask.getNoticeNum()) != 0) {
+            BigDecimal allocatedTotal =
+                    allocations.stream()
+                            .map(MesApsBatchAllocationEntity::getAllocatedQuantity)
+                            .filter(Objects::nonNull)
+                            .reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (sourceTask.getNoticeNum() == null
+                    || allocatedTotal.compareTo(sourceTask.getNoticeNum()) != 0) {
                 throw new CheckedException("APS来源账与工单数量不守恒：" + sourceTask.getApsBatchNo());
             }
-            BigDecimal currentTotal = allocations.stream().map(item -> current(item, kind))
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal currentTotal =
+                    allocations.stream()
+                            .map(item -> current(item, kind))
+                            .reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal afterTotal = currentTotal.add(quantityDelta);
             validateTotals(allocations, kind, afterTotal, allocatedTotal);
+            List<BigDecimal> reworkIncrements =
+                    reworkDeferred
+                            ? MesReworkSourceQuantityAllocation.increments(
+                                    allocations, quantityDelta)
+                            : List.of();
             BigDecimal assigned = BigDecimal.ZERO;
             for (int index = 0; index < allocations.size(); index++) {
                 MesApsBatchAllocationEntity allocation = allocations.get(index);
-                BigDecimal target = index == allocations.size() - 1 ? afterTotal.subtract(assigned)
-                        : afterTotal.multiply(allocation.getAllocatedQuantity())
-                        .divide(allocatedTotal, 8, RoundingMode.HALF_UP);
                 BigDecimal before = current(allocation, kind);
+                BigDecimal target =
+                        reworkDeferred
+                                ? before.add(reworkIncrements.get(index))
+                                : index == allocations.size() - 1
+                                        ? afterTotal.subtract(assigned)
+                                        : afterTotal
+                                                .multiply(allocation.getAllocatedQuantity())
+                                                .divide(allocatedTotal, 8, RoundingMode.HALF_UP);
                 BigDecimal delta = target.subtract(before);
                 if (target.signum() < 0) {
                     throw new CheckedException("来源计划执行偏差累计量不能为负：" + allocation.getIssueNo());
@@ -123,26 +208,82 @@ public class MesApsSourceQuantityServiceImpl implements MesApsSourceQuantityServ
                 }
                 assigned = assigned.add(target);
                 if (delta.signum() != 0) {
-                    persist(event(sourceTask, request, fingerprint, kind, allocation.getIssueId(),
-                            allocation.getIssueNo(), delta, target, sourceReference, content), deferred);
-                    callbacks.add(callback(sourceTask, request, kind, allocation.getIssueId(),
-                            allocation.getIssueNo(), delta, content));
+                    persist(
+                            event(
+                                    sourceTask,
+                                    request,
+                                    fingerprint,
+                                    kind,
+                                    allocation.getIssueId(),
+                                    allocation.getIssueNo(),
+                                    delta,
+                                    target,
+                                    sourceReference,
+                                    content),
+                            deferred);
+                    callbacks.add(
+                            callback(
+                                    sourceTask,
+                                    request,
+                                    kind,
+                                    allocation.getIssueId(),
+                                    allocation.getIssueNo(),
+                                    delta,
+                                    content));
                 }
             }
         }
-        if (deferred) {
+        if (reworkDeferred) {
+            planOutbox.enqueueRework(sourceTask, request, fingerprint, callbacks);
+        } else if (deferred) {
             planOutbox.enqueue(sourceTask, request, fingerprint, callbacks);
         } else if (!callbacks.isEmpty()) {
             R<Boolean> result = remotePlnIssueService.edit(callbacks);
-            if (result == null || !Boolean.TRUE.equals(result.getData())) {
+            if (result == null || !result.isOk() || !Boolean.TRUE.equals(result.getData())) {
                 throw new CheckedException("执行偏差归集回写PLAN失败：" + sourceTask.getCode());
             }
         }
     }
 
+    private void requireCompletedRework(
+            MesTaskEntity source, String request, BigDecimal delta, String reference) {
+        var actual =
+                taskMapper.selectOne(
+                        new LambdaQueryWrapper<MesTaskEntity>()
+                                .eq(MesTaskEntity::getId, source.getId())
+                                .eq(MesTaskEntity::getTenantId, source.getTenantId())
+                                .eq(MesTaskEntity::getFactoryCode, source.getFactoryCode()));
+        var rework =
+                taskMapper.selectOne(
+                        new LambdaQueryWrapper<MesTaskEntity>()
+                                .eq(MesTaskEntity::getCode, StrUtil.trim(reference))
+                                .eq(MesTaskEntity::getTenantId, source.getTenantId())
+                                .eq(MesTaskEntity::getFactoryCode, source.getFactoryCode())
+                                .last("FOR UPDATE"));
+        if (actual == null
+                || rework == null
+                || !"REWORK".equals(rework.getResourceType())
+                || !"FINISH".equals(rework.getStatus())
+                || Objects.equals(actual.getId(), rework.getId())
+                || !Objects.equals(actual.getCode(), source.getCode())
+                || !Objects.equals(actual.getMatCode(), source.getMatCode())
+                || !Objects.equals(actual.getPlanNo(), source.getPlanNo())
+                || !Objects.equals(actual.getApsBatchNo(), source.getApsBatchNo())
+                || actual.getNoticeNum() == null
+                || source.getNoticeNum() == null
+                || actual.getNoticeNum().compareTo(source.getNoticeNum()) != 0
+                || !Objects.equals(rework.getSourceTaskCode(), source.getCode())
+                || StrUtil.isBlank(rework.getReworkRequestId())
+                || !request.equals("REWORK-COMPLETED:" + rework.getReworkRequestId())
+                || delta == null
+                || delta.signum() <= 0
+                || rework.getCompleteNum() == null
+                || rework.getCompleteNum().compareTo(delta) != 0)
+            throw new CheckedException("返工来源通知必须对应实际原工单、已完工返工单和准确累计量");
+    }
+
     private void persist(MesApsSourceQuantityEventEntity event, boolean deferred) {
-        if (eventMapper.insert(event) != 1 && deferred)
-            throw new CheckedException("来源数量事实未保存，已整体回滚");
+        if (eventMapper.insert(event) != 1) throw new CheckedException("来源数量事实未保存，已整体回滚");
     }
 
     private void validateTotals(List<MesApsBatchAllocationEntity> allocations, MesSourceQuantityKind kind,
@@ -208,11 +349,23 @@ public class MesApsSourceQuantityServiceImpl implements MesApsSourceQuantityServ
     }
 
     private BigDecimal legacyTotal(Long taskId, MesSourceQuantityKind kind) {
-        return eventMapper.selectList(new LambdaQueryWrapper<MesApsSourceQuantityEventEntity>()
-                        .eq(MesApsSourceQuantityEventEntity::getMesTaskId, taskId)
-                        .eq(MesApsSourceQuantityEventEntity::getEventKind, kind.name()))
-                .stream().map(MesApsSourceQuantityEventEntity::getQuantityDelta)
-                .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return eventMapper
+                .selectList(
+                        new LambdaQueryWrapper<MesApsSourceQuantityEventEntity>()
+                                .eq(MesApsSourceQuantityEventEntity::getMesTaskId, taskId)
+                                .eq(
+                                        MesApsSourceQuantityEventEntity::getTenantId,
+                                        com.kitex.common.data.tenant.TenantContextHolder
+                                                .getTenantId())
+                                .eq(
+                                        MesApsSourceQuantityEventEntity::getFactoryCode,
+                                        com.kitex.common.data.orgFilter.FactoryContextHolder
+                                                .getFactoryCode())
+                                .eq(MesApsSourceQuantityEventEntity::getEventKind, kind.name()))
+                .stream()
+                .map(MesApsSourceQuantityEventEntity::getQuantityDelta)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private BigDecimal sum(List<MesApsBatchAllocationEntity> allocations, MesSourceQuantityKind kind) {
@@ -248,17 +401,35 @@ public class MesApsSourceQuantityServiceImpl implements MesApsSourceQuantityServ
         }
     }
 
-    private MesApsSourceQuantityEventEntity event(MesTaskEntity task, String requestId, String fingerprint,
-                                                  MesSourceQuantityKind kind, Long issueId, String issueNo,
-                                                  BigDecimal delta, BigDecimal after, String reference,
-                                                  String content) {
-        return new MesApsSourceQuantityEventEntity().setRequestId(requestId)
-                .setRequestFingerprint(fingerprint).setEventKind(kind.name())
-                .setMesTaskId(task.getId()).setMesTaskCode(task.getCode()).setApsBatchNo(task.getApsBatchNo())
-                .setSourceIssueId(issueId).setSourceIssueNo(issueNo).setQuantityDelta(delta)
-                .setQuantityAfter(after).setSourceReference(StrUtil.trim(reference))
-                .setEventContent(StrUtil.maxLength(StrUtil.trim(content), 1000))
-                .setOccurredTime(LocalDateTime.now()).setFactoryCode(task.getFactoryCode());
+    private MesApsSourceQuantityEventEntity event(
+            MesTaskEntity task,
+            String requestId,
+            String fingerprint,
+            MesSourceQuantityKind kind,
+            Long issueId,
+            String issueNo,
+            BigDecimal delta,
+            BigDecimal after,
+            String reference,
+            String content) {
+        var row =
+                new MesApsSourceQuantityEventEntity()
+                        .setRequestId(requestId)
+                        .setRequestFingerprint(fingerprint)
+                        .setEventKind(kind.name())
+                        .setMesTaskId(task.getId())
+                        .setMesTaskCode(task.getCode())
+                        .setApsBatchNo(task.getApsBatchNo())
+                        .setSourceIssueId(issueId)
+                        .setSourceIssueNo(issueNo)
+                        .setQuantityDelta(delta)
+                        .setQuantityAfter(after)
+                        .setSourceReference(StrUtil.trim(reference))
+                        .setEventContent(StrUtil.maxLength(StrUtil.trim(content), 1000))
+                        .setOccurredTime(LocalDateTime.now())
+                        .setFactoryCode(task.getFactoryCode());
+        row.setTenantId(task.getTenantId());
+        return row;
     }
 
     private OmsOrderLifeCycleDTO callback(MesTaskEntity task, String requestId, MesSourceQuantityKind kind,

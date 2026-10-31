@@ -16,6 +16,7 @@ import com.kitex.mom.mes.mapper.MesTaskArrangeMapper;
 import com.kitex.mom.mes.service.MesAutoReportCaptureService;
 import com.kitex.mom.mes.service.MesExecutionTemplateService;
 import com.kitex.mom.mes.service.MesIdentifierBindingService;
+import com.kitex.mom.mes.util.MesWorksiteTriggerProjection;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
@@ -56,7 +57,7 @@ public class MesAutoReportCaptureServiceImpl extends ServiceImpl<MesAutoReportEv
         var policy = contract.getIdentifierNodePolicy();
         nodeReadiness.assertReady(nodeReadiness.execution(arrange, contract, com.kitex.mom.mes.enums.MesReportChannelEnum.DEVICE));
         require(!"NONE".equals(policy.getAction()) && "ONE_CODE".equals(contract.getReportMode())
-                        && contract.getAllowedTriggers().contains("AUTO_EVENT") && "AUTO".equals(arrange.getWorksiteTypes())
+                        && contract.getAllowedTriggers().contains("AUTO_EVENT") && MesWorksiteTriggerProjection.forExecution(null, arrange) == com.kitex.mom.mes.enums.WorksiteTypeEnum.AUTO
                         && "PRODUCT".equals(arrange.getStatus()) && Objects.equals(event.getDeviceCode(), arrange.getPlannedDeviceCode()),
                 "V2动态采集须为允许设备触发的生产中单件原节点及锁定设备");
         var preview = bindings.preview(arrange.getCode(), event.getTransferCode(), input.getExternalIdentifier());

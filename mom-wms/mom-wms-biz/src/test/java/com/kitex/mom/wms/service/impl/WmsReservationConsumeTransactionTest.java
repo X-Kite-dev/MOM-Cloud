@@ -642,6 +642,20 @@ class WmsReservationConsumeTransactionTest {
 	}
 
 	@Test
+	void separateIssueDetailsCanConsumeTheSameReservedStockInPartialExecutions() {
+		sales.consume(command(true, 2d).setSourceStockId(2L));
+		var next = command(true, 3d).setSourceStockId(2L);
+		next.setId(502L);
+
+		sales.consume(next);
+
+		assertEquals(5d, amount("stock", "mat_num", 2));
+		assertEquals(5d, amount("detail", "consumed_num", 201));
+		assertEquals(5d, amount("reservation", "consumed_num", 20));
+		assertEquals(2, audits());
+	}
+
+	@Test
 	void salesSameOriginalBillDetailCannotConsumeTwice() {
 		sales.consume(command(true, 2d));
 

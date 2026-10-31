@@ -21,12 +21,16 @@ import com.kitex.mom.wms.service.impl.WmsWarehouseMenuServiceImpl;
 import com.kitex.mom.wms.vo.WmsWarehouseBizCheckVO;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.*;
+
 import java.util.*;
+
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-/** 服务边界回归：调用真实配置校验、APP菜单过滤和同步回执逻辑。 */
+/**
+ * 服务边界回归：调用真实配置校验、APP菜单过滤和同步回执逻辑。
+ */
 class WmsWarehouseMenuIntegrityTest {
 	private WmsWarehouseBizService biz;
 	private RemoteWarehouseService warehouses;
@@ -42,7 +46,9 @@ class WmsWarehouseMenuIntegrityTest {
 		biz = mock(WmsWarehouseBizService.class);
 		warehouses = mock(RemoteWarehouseService.class);
 		menus = mock(RemoteMenuService.class);
-		service = new WmsWarehouseMenuServiceImpl(biz, warehouses, menus, mock(RemoteUserService.class)) {
+		var mobileGuard = mock(WmsWarehouseBusinessGuard.class);
+		when(mobileGuard.mobileEnabled("W1")).thenReturn(true);
+		service = new WmsWarehouseMenuServiceImpl(biz, warehouses, menus, mock(RemoteUserService.class), mobileGuard) {
 			@Override
 			public List<Tree<Long>> treeMenu(Long parent, String name, String type) {
 				return List.of();
@@ -125,7 +131,7 @@ class WmsWarehouseMenuIntegrityTest {
 		when(mapper.selectList(any(Wrapper.class))).thenReturn(List.of());
 		when(mapper.insert(any(WmsWarehouseMenuEntity.class))).thenReturn(1);
 		WmsWarehouseMenuServiceImpl generator = new WmsWarehouseMenuServiceImpl(
-				biz, warehouses, menus, mock(RemoteUserService.class));
+				biz, warehouses, menus, mock(RemoteUserService.class), mock(WmsWarehouseBusinessGuard.class));
 		ReflectionTestUtils.setField(generator, "baseMapper", mapper);
 		MdmWarehouseEntity warehouse = warehouses.getMenuConfigurationWarehouses().getData().get(0);
 
@@ -139,6 +145,50 @@ class WmsWarehouseMenuIntegrityTest {
 				row.getPath() != null && row.getPath().startsWith(MenuOutBizTypeEnum.OTHER_OUT.getValue() + "/")));
 		assertTrue(inserted.getAllValues().stream().noneMatch(row ->
 				row.getPath() != null && row.getPath().startsWith("wms:other_out:")));
+	}
+
+	@Test
+	void returnReceiptActionsRequireReturnParentAndReadCapability() {
+		String parent = MenuInBizTypeEnum.RETURN.getValue();
+		String view = "wms:return_receipt:view";
+		String finish = "wms:return_receipt:finalize";
+		assertThrows(CheckedException.class,
+				() -> service.commitCheckBiz(List.of(command("W1", List.of(view)))));
+		assertThrows(CheckedException.class,
+				() -> service.commitCheckBiz(List.of(command("W1", List.of(parent, finish)))));
+		assertTrue(service.commitCheckBiz(List.of(command("W1", List.of(parent, view, finish)))));
+	}
+
+	@Test
+	void returnReceiptPreviewContainsOnlySelectedWarehouseActions() {
+		var mapper = mock(WmsWarehouseMenuMapper.class);
+		when(mapper.selectList(any(Wrapper.class))).thenReturn(List.of());
+		when(mapper.insert(any(WmsWarehouseMenuEntity.class))).thenReturn(1);
+		var generator = new WmsWarehouseMenuServiceImpl(biz, warehouses, menus, mock(RemoteUserService.class), mock(WmsWarehouseBusinessGuard.class));
+		ReflectionTestUtils.setField(generator, "baseMapper", mapper);
+		var masters = warehouses.getMenuConfigurationWarehouses().getData();
+		var selection = List.of(MenuInBizTypeEnum.RETURN.getValue(), MenuInBizTypeEnum.PURCHASE.getValue(),
+				"wms:return_receipt:view", "wms:return_receipt:finalize");
+		generator.updateMenu(List.of(command("W1", selection)), masters);
+		var inserted = org.mockito.ArgumentCaptor.forClass(WmsWarehouseMenuEntity.class);
+		verify(mapper, atLeastOnce()).insert(inserted.capture());
+		var rows = inserted.getAllValues();
+		var permissions = rows.stream().map(WmsWarehouseMenuEntity::getPermission)
+				.filter(Objects::nonNull).filter(p -> p.startsWith("wms_return_receipt_")).toList();
+		assertEquals(Set.of("wms_return_receipt_view_W1", "wms_return_receipt_finalize_W1"),
+				new HashSet<>(permissions));
+		assertEquals(2, permissions.size());
+		var parent = rows.stream().filter(r -> "/wms/inBiz/return/inNotice/index/W1".equals(r.getPath()))
+				.findFirst().orElseThrow();
+		assertTrue(rows.stream().filter(r -> permissions.contains(r.getPermission()))
+				.allMatch(r -> parent.getId().equals(r.getParentId())));
+		assertTrue(rows.stream().noneMatch(r -> r.getPath() != null && r.getPath().startsWith("wms:")));
+		clearInvocations(mapper);
+		generator.updateMenu(List.of(command("W1", List.of(MenuInBizTypeEnum.RETURN.getValue()))), masters);
+		var legacy = org.mockito.ArgumentCaptor.forClass(WmsWarehouseMenuEntity.class);
+		verify(mapper, atLeastOnce()).insert(legacy.capture());
+		assertTrue(legacy.getAllValues().stream().noneMatch(r -> r.getPermission() != null
+				&& r.getPermission().startsWith("wms_return_receipt_")));
 	}
 
 	@Test
@@ -258,7 +308,7 @@ class WmsWarehouseMenuIntegrityTest {
 	void realEmptyPreviewIsReturnedAsAnEmptyArray() {
 		TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), "preview"),
 				WmsWarehouseMenuEntity.class);
-		var real = new WmsWarehouseMenuServiceImpl(biz, warehouses, menus, mock(RemoteUserService.class));
+		var real = new WmsWarehouseMenuServiceImpl(biz, warehouses, menus, mock(RemoteUserService.class), mock(WmsWarehouseBusinessGuard.class));
 		var mapper = mock(WmsWarehouseMenuMapper.class);
 		when(mapper.selectList(any(Wrapper.class))).thenReturn(List.of());
 		ReflectionTestUtils.setField(real, "baseMapper", mapper);

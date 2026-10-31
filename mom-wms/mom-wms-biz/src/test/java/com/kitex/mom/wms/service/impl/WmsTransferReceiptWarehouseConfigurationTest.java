@@ -1,5 +1,9 @@
 package com.kitex.mom.wms.service.impl;
 
+import com.kitex.common.data.tenant.TenantContextHolder;
+import org.springframework.security.core.context.SecurityContextHolder;
+import com.kitex.common.security.service.MomUser;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.security.component.PermissionService;
@@ -25,11 +29,18 @@ class WmsTransferReceiptWarehouseConfigurationTest {
     @AfterEach
     void clearScope() {
         FactoryContextHolder.clear();
+        TenantContextHolder.clear();
+        SecurityContextHolder.clearContext();
     }
 
     @Test
     void partialReceiptRechecksTargetWarehouseBusinessBeforeWritingStock() {
         FactoryContextHolder.setFactoryCode("F1");
+        TenantContextHolder.setTenantId(1L);
+        var actor = mock(MomUser.class);
+        when(actor.getUsername()).thenReturn("operator");
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(actor, null, List.of()));
         var service = mock(WmsTransferVarianceServiceImpl.class, CALLS_REAL_METHODS);
         var bills = mock(WmsAllocationBillMapper.class);
         var receipts = mock(WmsTransferReceiptMapper.class);
@@ -43,6 +54,7 @@ class WmsTransferReceiptWarehouseConfigurationTest {
         var bill = new WmsAllocationBillEntity().setNewWarehouseCode("W2")
                 .setFactoryCode("F1").setSourceDeducted(true).setAllocationState("IN_TRANSIT");
         bill.setId(7L);
+        bill.setTenantId(1L);
         when(bills.selectOne(any())).thenReturn(bill);
         doThrow(new CheckedException("目标仓未配置调拨接收")).when(guard).check("W2", "allocation", true);
         var command = new WmsTransferReceiptDTO.Command();

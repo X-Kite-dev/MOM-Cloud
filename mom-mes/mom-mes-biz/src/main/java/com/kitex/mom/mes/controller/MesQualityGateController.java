@@ -21,7 +21,7 @@ public class MesQualityGateController {
     private final MesQualityQuantityService qualityQuantityService;
     private final MesActualFactoryAccessService factoryAccess;
 
-    @GetMapping("/sync")
+    @PostMapping("/sync")
     @Operation(summary = "同步并查询工序质量门状态")
     @PreAuthorize("@pms.hasPermission('mesInspectionGenRecord:show')")
     public R<MesQualityGateDecision> sync(@RequestParam String produceTaskCode) {

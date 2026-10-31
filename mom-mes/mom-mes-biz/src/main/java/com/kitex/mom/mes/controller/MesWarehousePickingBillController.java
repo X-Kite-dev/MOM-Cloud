@@ -5,6 +5,7 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.kitex.common.core.entity.SearchPage;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.RequestExcel;
 import com.kitex.common.excel.annotation.ResponseExcel;
@@ -111,7 +112,7 @@ public class MesWarehousePickingBillController {
     @Operation(summary = "新增生产领料单", description = "新增生产领料单")
     @SysLog("新增生产领料单")
     @PostMapping
-//	@PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_add')")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_add')")
     public R save(@Validated @RequestBody MesWarehousePickingBillEntity mesWarehousePickingBill) {
         return R.ok(mesWarehousePickingBillService.saveDeep(mesWarehousePickingBill));
     }
@@ -125,7 +126,7 @@ public class MesWarehousePickingBillController {
     @Operation(summary = "修改生产领料单", description = "修改生产领料单")
     @SysLog("修改生产领料单")
     @PutMapping
-//	@PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_edit')")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_edit')")
     public R updateById(@RequestBody MesWarehousePickingBillEntity mesWarehousePickingBill) {
         return R.ok(mesWarehousePickingBillService.updateDeep(mesWarehousePickingBill));
     }
@@ -139,7 +140,7 @@ public class MesWarehousePickingBillController {
     @Operation(summary = "提交生产领料单", description = "提交生产领料单")
     @SysLog("提交生产领料单")
     @GetMapping("/commitBill")
-//	@PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_edit')")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_edit')")
     public R commitBill(@RequestParam Long id) {
         return R.ok(mesWarehousePickingBillService.commitBill(id));
     }
@@ -153,7 +154,7 @@ public class MesWarehousePickingBillController {
     @Operation(summary = "撤回领料出库单", description = "撤回领料出库单")
     @SysLog("撤回领料出库单")
     @GetMapping("/withdraw")
-//	@PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_edit')")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_edit')")
     public R withdraw(@RequestParam Long id) {
         return R.ok(mesWarehousePickingBillService.withdraw(id));
     }
@@ -195,7 +196,7 @@ public class MesWarehousePickingBillController {
     @Operation(summary = "通过id删除生产领料单", description = "通过id删除生产领料单")
     @SysLog("通过id删除生产领料单")
     @DeleteMapping
-//	@PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_del')")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_del')")
     public R removeById(@RequestBody Long[] ids) {
         return R.ok(mesWarehousePickingBillService.removeDeep(ids));
     }
@@ -209,7 +210,7 @@ public class MesWarehousePickingBillController {
     @Operation(summary = "通过id删除生产领料单子表数据", description = "通过id删除生产领料单子表数据")
     @SysLog("通过id删除生产领料单子表数据")
     @DeleteMapping("/child")
-//	@PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_del')")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_del')")
     public R removeChild(@RequestBody Long[] ids) {
         return R.ok(mesWarehousePickingBillService.removeChild(ids));
     }
@@ -229,15 +230,15 @@ public class MesWarehousePickingBillController {
     }
 
     /**
-     * 导入excel 表
+     * 保留历史导入地址；仅有主单的Excel不能确认工单冻结明细，禁止绕过受控领料。
      *
      * @param list          对象实体列表
      * @param bindingResult 错误信息列表
      * @return ok fail
      */
     @PostMapping("/import")
-//	@PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_export')")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehousePickingBill_add')")
     public R importExcel(@RequestExcel List<MesWarehousePickingBillEntity> list, BindingResult bindingResult) {
-        return R.ok(mesWarehousePickingBillService.saveBatch(list));
+        throw new CheckedException("生产领料暂不支持Excel导入，请从生产工单发起并确认领料明细");
     }
 }

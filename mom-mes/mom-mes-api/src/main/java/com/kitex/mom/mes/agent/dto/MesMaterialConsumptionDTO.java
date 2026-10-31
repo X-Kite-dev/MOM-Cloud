@@ -47,6 +47,8 @@ public final class MesMaterialConsumptionDTO {
         private List<String> dataGaps = new ArrayList<>();
         private List<String> evidenceRefs = new ArrayList<>();
         private Boolean truncated;
+        @Schema(description = "四域原实耗与投料账独立完整核验；无原实耗权限时返回缺证，兼容统计不代表净耗")
+        private MesMaterialIntegrityDTO.Evidence materialIntegrity;
     }
 
     @Data

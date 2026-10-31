@@ -1,17 +1,20 @@
 package com.kitex.mom.qms.service.impl;
 
+import static com.kitex.mom.qms.service.impl.QmsProcedureInspectionChecks.require;
+
 import cn.afterturn.easypoi.excel.ExcelExportUtil;
 import cn.afterturn.easypoi.excel.entity.TemplateExportParams;
-import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.query.enums.CommonQuery;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.common.security.service.MomUser;
@@ -29,10 +32,12 @@ import com.kitex.mom.qms.enums.*;
 import com.kitex.mom.qms.mapper.QmsInspectionProcedureTaskMapper;
 import com.kitex.mom.qms.mapper.QmsProcedureSourceWithdrawalReceiptMapper;
 import com.kitex.mom.qms.service.*;
+
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
+
 import org.apache.poi.ss.usermodel.Workbook;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -88,108 +93,126 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
     private final QmsPlanEventOutboxService qmsPlanEventOutboxService;
 
     private final QmsProcedureSourceWithdrawalReceiptMapper sourceWithdrawalReceiptMapper;
+    private final QmsInspectionHistorySupport inspectionAccess;
+    private final QmsInspectionBasisService inspectionBasis;
+    private final QmsInspectionPieceService inspectionPieces;
 
     /**
      * 创建质检任务
      */
     @Transactional(rollbackFor = Exception.class)
     public Long create(InspectionProcedureCreateParam createParam) {
-        if (createParam == null || StrUtil.isBlank(createParam.getMatCode())
-                || StrUtil.isBlank(createParam.getProcessCode()) || StrUtil.isBlank(createParam.getLabelType())) {
+        inspectionAccess.requireScope();
+        if (createParam == null
+                || StrUtil.isBlank(createParam.getMatCode())
+                || StrUtil.isBlank(createParam.getProcessCode())
+                || StrUtil.isBlank(createParam.getLabelType())) {
             throw new RuntimeException("工序质检必须提供物料、工序和首中末标签类型");
         }
         if (createParam.getNum() == null || createParam.getNum() <= 0) {
             throw new RuntimeException("工序质检数量必须大于0");
         }
+        String originalCommand = QmsInspectionBasisJson.creation(createParam);
+        if (StrUtil.isBlank(createParam.getSourceRequestId())) createParam.setSourceRequestId(null);
         if (StrUtil.isNotBlank(createParam.getSourceRequestId())) {
             String sourceRequestId = createParam.getSourceRequestId().trim();
             if (sourceRequestId.length() > 200) {
                 throw new RuntimeException("质检来源请求号长度不能超过200位");
             }
-            boolean v2Source = sourceRequestId.startsWith(InspectionProcedureSourceContract.REQUEST_PREFIX);
+            boolean v2Source =
+                    sourceRequestId.startsWith(InspectionProcedureSourceContract.REQUEST_PREFIX);
             if (v2Source) {
                 if (StrUtil.isBlank(createParam.getSourceTaskCode())) {
                     throw new RuntimeException("V2工序质检来源必须指定MES工序任务编码");
                 }
-                String expectedFingerprint = InspectionProcedureSourceContract.fingerprint(createParam);
-                if (!Objects.equals(expectedFingerprint, createParam.getSourceRequestFingerprint())) {
+                String expectedFingerprint =
+                        InspectionProcedureSourceContract.fingerprint(createParam);
+                if (!Objects.equals(
+                        expectedFingerprint, createParam.getSourceRequestFingerprint())) {
                     throw new RuntimeException("V2工序质检来源完整参数摘要不一致");
                 }
             } else if (StrUtil.isNotBlank(createParam.getSourceRequestFingerprint())) {
                 throw new RuntimeException("旧质检来源请求不得夹带V2参数摘要");
             }
-            QmsInspectionProcedureTaskEntity existing = this.lambdaQuery()
-                    .eq(QmsInspectionProcedureTaskEntity::getSourceRequestId, sourceRequestId).one();
+            QmsInspectionProcedureTaskEntity existing =
+                    this.lambdaQuery()
+                            .eq(
+                                    QmsInspectionProcedureTaskEntity::getSourceRequestId,
+                                    sourceRequestId)
+                            .eq(
+                                    QmsInspectionProcedureTaskEntity::getTenantId,
+                                    TenantContextHolder.getTenantId())
+                            .eq(
+                                    QmsInspectionProcedureTaskEntity::getFactoryCode,
+                                    FactoryContextHolder.getFactoryCode())
+                            .one();
             if (existing != null) {
-                if ((!v2Source || Objects.equals(existing.getSourceRequestFingerprint(), createParam.getSourceRequestFingerprint()))
-                        && Objects.equals(existing.getSourceTaskCode(), createParam.getSourceTaskCode())
+                if (inspectionBasis.sameCreation("PROCEDURE", existing.getId(), originalCommand))
+                    return existing.getId();
+                // 既有V2摘要已经包含原始参数，缺新增依据时仅保留这条已验证兼容路径。
+                if (v2Source
+                        && Objects.equals(
+                                existing.getSourceRequestFingerprint(),
+                                createParam.getSourceRequestFingerprint())
+                        && Objects.equals(
+                                existing.getSourceTaskCode(), createParam.getSourceTaskCode())
                         && Objects.equals(existing.getMatCode(), createParam.getMatCode())
                         && Objects.equals(existing.getProcessCode(), createParam.getProcessCode())
-                        && Objects.equals(existing.getLabelType(), createParam.getLabelType())) {
+                        && Objects.equals(existing.getLabelType(), createParam.getLabelType()))
                     return existing.getId();
-                }
-                throw new RuntimeException("质检来源请求号已被参数不同的业务使用");
+                throw new CheckedException("原任务缺少可验证的原始报检命令，请按原任务核对");
             }
             createParam.setSourceRequestId(sourceRequestId);
-        } else if (this.existTask(createParam.getMatCode(), createParam.getProcessCode(), createParam.getBatchNo())) {
+        } else if (this.existTask(
+                createParam.getMatCode(), createParam.getProcessCode(), createParam.getBatchNo())) {
             // 兼容没有来源请求号的旧调用。
             throw new RuntimeException("已经有同类型的任务,无法继续创建");
         }
-        // 获取关联质检标准
-        QmsQualityStandardEntity qualityStandard;
-        if (createParam.getStandardId() == null) {
-            qualityStandard = qualityStandardService.getOne(new LambdaQueryWrapper<QmsQualityStandardEntity>()
-                    .eq(QmsQualityStandardEntity::getMatCode, createParam.getMatCode())
-                    .eq(QmsQualityStandardEntity::getInspectionType, InspectionTaskTypeEnum.PROCEDURE.name())
-                    .eq(QmsQualityStandardEntity::getPublished, 1));
-        } else {
-            qualityStandard = qualityStandardService.getById(createParam.getStandardId());
-        }
-        if (qualityStandard == null) {
-            throw new RuntimeException("未找到已发布的工序质检标准，请先维护质量标准");
-        }
-        if (!InspectionTaskTypeEnum.PROCEDURE.name().equals(qualityStandard.getInspectionType())
-                || !Objects.equals(qualityStandard.getPublished(), 1)
-                || !Objects.equals(qualityStandard.getMatCode(), createParam.getMatCode())) {
-            throw new RuntimeException("指定质量标准未发布、不是工序检验类型或与当前物料不匹配");
-        }
-
+        var productionContext = inspectionBasis.freezeSource(createParam);
+        var qualityStandard =
+                publishedStandard(createParam.getStandardId(), createParam.getMatCode());
         // 创建质检任务
-        val task = new QmsInspectionProcedureTaskEntity().setBatchNo(createParam.getBatchNo())
-                .setSourceTaskCode(StrUtil.blankToDefault(createParam.getSourceTaskCode(), createParam.getTaskCode()))
-                .setSourceRequestId(createParam.getSourceRequestId())
-                .setSourceRequestFingerprint(createParam.getSourceRequestFingerprint())
-                .setMatCode(createParam.getMatCode()).setMatName(createParam.getMatName()).setMatSpec(createParam.getMatSpec())
-                .setProcessCode(createParam.getProcessCode()).setProcessName(createParam.getProcessName())
-                .setStandardId(qualityStandard.getId()).setStandardName(qualityStandard.getStandardName())
-                .setNum(createParam.getNum()).setStatus(InspectionTaskStatusEnum.WAIT.name())
-                .setHandleNum(0)
-                .setInspectionNum(createParam.getInspectionNum())
-                .setLabelType(createParam.getLabelType())
-                .setMatBarcode(createParam.getMatBarcode())
-                .setOrderNo(createParam.getOrderNo())
-                .setOrderId(createParam.getOrderId())
-                .setDeptCode(createParam.getDeptCode())
-                .setLatestAppendTime(new Date());
-        if (InspectionMethodEnum.FULL.name().equals(qualityStandard.getInspectionMethod())) {
-            task.setInspectionNum(createParam.getNum());
-        }
-        if (InspectionMethodEnum.FIXED.name().equals(qualityStandard.getInspectionMethod())) {
-            task.setInspectionNum(qualityStandard.getNum());
-        }
-        this.save(task);
-
-        // 生成任务质检项
-        val details = this.generateDetail(task, qualityStandard);
-        if (InspectionMethodEnum.RANDOM.name().equals(qualityStandard.getInspectionMethod())) {
-            Optional<Integer> maxNum = details.stream().map(QmsInspectionProcedureTaskDetailEntity::getTotalNum).max(Integer::compareTo);
-            if (maxNum.isPresent()) {
-                task.setInspectionNum(maxNum.get());
-                this.updateById(task);
-            }
-        }
-
-        procedureTaskDetailService.saveBatch(details);
+        val task =
+                new QmsInspectionProcedureTaskEntity()
+                        .setBatchNo(createParam.getBatchNo())
+                        .setSourceTaskCode(
+                                StrUtil.blankToDefault(
+                                        createParam.getSourceTaskCode(), createParam.getTaskCode()))
+                        .setSourceRequestId(createParam.getSourceRequestId())
+                        .setSourceRequestFingerprint(createParam.getSourceRequestFingerprint())
+                        .setMatCode(createParam.getMatCode())
+                        .setMatName(createParam.getMatName())
+                        .setMatSpec(createParam.getMatSpec())
+                        .setProcessCode(createParam.getProcessCode())
+                        .setProcessName(createParam.getProcessName())
+                        .setStandardId(qualityStandard.getId())
+                        .setStandardName(qualityStandard.getStandardName())
+                        .setNum(createParam.getNum())
+                        .setStatus(InspectionTaskStatusEnum.WAIT.name())
+                        .setHandleNum(0)
+                        .setInspectionNum(createParam.getInspectionNum())
+                        .setLabelType(createParam.getLabelType())
+                        .setMatBarcode(createParam.getMatBarcode())
+                        .setOrderNo(createParam.getOrderNo())
+                        .setOrderId(createParam.getOrderId())
+                        .setDeptCode(createParam.getDeptCode())
+                        .setLatestAppendTime(new Date());
+        task.setTenantId(TenantContextHolder.getTenantId());
+        task.setFactoryCode(FactoryContextHolder.getFactoryCode());
+        require(this.save(task) && task.getId() != null && task.getId() > 0, "工序质检任务保存失败");
+        var frozenPlan =
+                inspectionBasis.prepare(
+                        "PROCEDURE", qualityStandard, task.getNum(), task.getInspectionNum());
+        var details = generateDetail(task, frozenPlan);
+        int sampleCount =
+                details.stream()
+                        .mapToInt(QmsInspectionProcedureTaskDetailEntity::getTotalNum)
+                        .max()
+                        .orElseThrow();
+        task.setInspectionNum(sampleCount);
+        require(this.updateById(task), "工序质检实际抽样数量保存失败");
+        for (var detail : details) require(procedureTaskDetailService.save(detail), "工序检验项目保存失败");
+        inspectionBasis.record(task, details, frozenPlan, "CREATE", originalCommand, productionContext);
         // 保存历史
         historyService.create(task);
         return task.getId();
@@ -212,37 +235,86 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         return resultMap;
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long createManual(InspectionProcedureCreateParam createParam) {
+        inspectionAccess.requireWrite();
+        requireManualSource(createParam);
+        return create(createParam);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Long> batchCreateManual(List<InspectionProcedureCreateParam> createParams) {
+        inspectionAccess.requireWrite();
+        require(
+                createParams != null && !createParams.isEmpty() && createParams.size() <= 5000,
+                "请提交有界的人工报检任务");
+        createParams.forEach(this::requireManualSource);
+        return batchCreate(createParams);
+    }
+
+    private void requireManualSource(InspectionProcedureCreateParam param) {
+        require(
+                param != null
+                        && StrUtil.isBlank(param.getSourceRequestFingerprint())
+                        && (param.getSourceRequestId() == null
+                                || !param.getSourceRequestId()
+                                        .trim()
+                                        .startsWith(
+                                                InspectionProcedureSourceContract.REQUEST_PREFIX)),
+                "人工报检不能冒用MES冻结来源，请从原生产任务发起");
+    }
+
     /**
      * 修改质检任务
      *
      * @param updateParam
      */
+    @Transactional(rollbackFor = Exception.class)
     public void update(InspectionProcedureCreateParam updateParam) {
-        QmsInspectionProcedureTaskEntity task = Optional.ofNullable(this.getById(updateParam.getId()))
-                .orElseThrow(() -> new RuntimeException("获取质检任务信息失败！"));
-        // 获取关联质检标准
-        val qualityStandard = qualityStandardService.getById(updateParam.getStandardId());
-        task.setName(updateParam.getName()).setStandardId(qualityStandard.getId())
+        inspectionAccess.requireWrite();
+        require(updateParam != null, "请指定需要修改的检验任务");
+        var task = lockInspection(updateParam.getId());
+        assertInspectionWritable(task);
+        requireMutableSource(task);
+        inspectionPieces.anonymous(task);
+        require("WAIT".equals(task.getStatus()), "已经开始检验的任务不能更换标准");
+        var oldDetails = inspectionDetails(task.getId());
+        QmsProcedureInspectionChecks.completion(
+                task,
+                oldDetails,
+                baseMapper.inspectionSamples(
+                        task.getId(), task.getTenantId(), task.getFactoryCode()));
+        require(oldDetails.stream().allMatch(d -> d.getFinishNum() == 0), "已有检验样本的任务不能更换标准");
+        var qualityStandard = publishedStandard(updateParam.getStandardId(), task.getMatCode());
+        task.setName(updateParam.getName())
+                .setStandardId(qualityStandard.getId())
                 .setStandardName(qualityStandard.getStandardName());
-        this.updateById(task);
-        // 生成任务质检项
-        val details = this.generateDetail(task, qualityStandard);
-        // 过滤出所有的任务taskId
-        List<Long> collect = details.stream().map(QmsInspectionProcedureTaskDetailEntity::getTaskId)
-                .collect(Collectors.toList());
-        // 查询明细表是否有改任务，如果有则修改，没有则新增
-        List<QmsInspectionProcedureTaskDetailEntity> listed = procedureTaskDetailService
-                .list(Wrappers.<QmsInspectionProcedureTaskDetailEntity>lambdaQuery()
-                        .in(QmsInspectionProcedureTaskDetailEntity::getTaskId, collect));
-
-        for (QmsInspectionProcedureTaskDetailEntity item : listed) {
-            for (Long taskId : collect) {
-                if (item.getTaskId().equals(taskId)) {
-                    details.stream().filter(i -> i.getTaskId().equals(taskId)).forEach(i -> i.setId(item.getId()));
-                }
-            }
-        }
-        procedureTaskDetailService.saveOrUpdateBatch(details);
+        var frozenPlan =
+                inspectionBasis.prepare(
+                        "PROCEDURE",
+                        qualityStandard,
+                        task.getNum(),
+                        updateParam.getInspectionNum() == null
+                                ? task.getInspectionNum()
+                                : updateParam.getInspectionNum());
+        var details = generateDetail(task, frozenPlan);
+        require(
+                procedureTaskDetailService.remove(
+                        detailScope()
+                                .eq(
+                                        QmsInspectionProcedureTaskDetailEntity::getTaskId,
+                                        task.getId())),
+                "旧检验项目替换失败");
+        for (var detail : details) require(procedureTaskDetailService.save(detail), "新检验项目保存失败");
+        task.setInspectionNum(
+                details.stream()
+                        .mapToInt(QmsInspectionProcedureTaskDetailEntity::getTotalNum)
+                        .max()
+                        .orElseThrow());
+        require(updateById(task), "检验任务标准与数量保存失败");
+        inspectionBasis.record(task, details, frozenPlan, "RECONFIGURE", null);
     }
 
     /**
@@ -250,29 +322,99 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
      */
     @Transactional(rollbackFor = Exception.class)
     public void append(InspectionAppendParam appendParam) {
-        // 查询出来质检任务和任务项明细
-        val task = this.getById(appendParam.getId());
-        if (Objects.isNull(task)) {
-            throw new RuntimeException("质检任务未找到");
+        inspectionAccess.requireWrite();
+        require(
+                appendParam != null && appendParam.getNum() != null && appendParam.getNum() > 0,
+                "追加受检数量必须大于0");
+        var task = lockInspection(appendParam.getId());
+        assertInspectionWritable(task);
+        requireMutableSource(task);
+        inspectionPieces.anonymous(task);
+        var details = inspectionDetails(task.getId());
+        QmsProcedureInspectionChecks.completion(
+                task,
+                details,
+                baseMapper.inspectionSamples(
+                        task.getId(), task.getTenantId(), task.getFactoryCode()));
+        var frozenPlan = inspectionBasis.validateCurrent(task, details);
+        if (frozenPlan != null) {
+            appendFrozen(task, details, frozenPlan, appendParam.getNum());
+            return;
         }
-        val taskDetails = procedureTaskDetailService.lambdaQuery()
-                .eq(QmsInspectionProcedureTaskDetailEntity::getTaskId, task.getId()).list();
-        // 查询关联的质检标准
-        val qualityStandard = qualityStandardService.getById(task.getStandardId());
-
-        // 更新任务基础信息
-        task.setNum(task.getNum() + appendParam.getNum());
-
-        // 计算质检项是否需要更新, 过滤出需要更新的任务详情进行更新
-        val details = taskDetails.stream().map(o -> this.updateTaskDetails(o, task, qualityStandard))
-                .filter(Objects::nonNull).collect(Collectors.toList());
-
-        // 保存
-        procedureTaskDetailService.updateBatchById(details);
-        task.setLatestAppendTime(new Date()).setStatus(InspectionTaskStatusEnum.RUNNING.name());
-        this.updateById(task);
+        var qualityStandard = publishedStandard(task.getStandardId(), task.getMatCode());
+        int previousBatch = task.getNum();
+        try {
+            task.setNum(Math.addExact(task.getNum(), appendParam.getNum()));
+        } catch (ArithmeticException e) {
+            throw new CheckedException("追加后的受检数量超出范围", e);
+        }
+        var items = standardItems(task, qualityStandard);
+        QmsInspectionEvidenceChecks.sameItems(
+                details.stream()
+                        .map(QmsInspectionProcedureTaskDetailEntity::getStandardItemId)
+                        .toList(),
+                items.stream().map(QmsQualityStandardItemEntity::getId).toList());
+        for (var detail : details) {
+            updateTaskDetails(
+                    detail,
+                    task,
+                    previousBatch,
+                    qualityStandard,
+                    findQualityStandardItemByTaskDetail(items, detail));
+            require(procedureTaskDetailService.updateById(detail), "追加检验项目保存失败");
+        }
+        task.setInspectionNum(
+                details.stream()
+                        .mapToInt(QmsInspectionProcedureTaskDetailEntity::getTotalNum)
+                        .max()
+                        .orElseThrow());
+        task.setLatestAppendTime(new Date());
+        require(updateById(task), "追加检验任务数量保存失败");
         // 保存历史
         historyService.append(task, appendParam.getNum());
+    }
+
+    /** 追加沿原方案求值，保留实际样本和原始创建依据。 */
+    private void appendFrozen(
+            QmsInspectionProcedureTaskEntity task,
+            List<QmsInspectionProcedureTaskDetailEntity> details,
+            QmsFrozenInspectionPlan plan,
+            int increment) {
+        int batch;
+        try {
+            batch = Math.addExact(task.getNum(), increment);
+        } catch (ArithmeticException e) {
+            throw new CheckedException("追加后的受检数量超出范围", e);
+        }
+        var targets = new HashMap<Long, QmsFrozenInspectionPlan.Target>();
+        for (var t : plan.targets(batch)) targets.put(t.item().standardItemId(), t);
+        for (var detail : details) {
+            var target = targets.get(detail.getStandardItemId());
+            require(
+                    target != null
+                            && target.count() >= detail.getTotalNum()
+                            && detail.getRecords() != null,
+                    "冻结方案追加不能缩减原应检量或缺少样本占位依据");
+            int difference = target.count() - detail.getTotalNum();
+            detail.getRecords()
+                    .addAll(
+                            IntStream.range(0, difference)
+                                    .mapToObj(i -> new InspectionItemResultRecord())
+                                    .toList());
+            detail.setTotalNum(target.count())
+                    .setWaitNum(target.count() - detail.getFinishNum())
+                    .setAc(target.ac())
+                    .setRe(target.re());
+            if (detail.getFinishNum() > 0)
+                detail.setQualifiedStatus(
+                        detail.getUnqualifiedNum() <= (target.ac() == null ? 0 : target.ac()));
+            QmsProcedureInspectionChecks.counters(detail);
+            require(procedureTaskDetailService.updateById(detail), "冻结追加检验项目保存失败");
+        }
+        task.setNum(batch).setInspectionNum(plan.maximum(batch)).setLatestAppendTime(new Date());
+        require(updateById(task), "冻结追加检验任务保存失败");
+        inspectionBasis.record(task, details, plan, "APPEND", null);
+        historyService.append(task, increment);
     }
 
     /**
@@ -280,16 +422,15 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
      */
     @Transactional(rollbackFor = Exception.class)
     public void canceled(Long taskId, String reason) {
-        val task = this.getById(taskId);
-        if (Objects.isNull(task)) {
-            throw new RuntimeException("质检任务未找到");
-        }
-        if (!Objects.equals(task.getStatus(), InspectionTaskStatusEnum.WAIT.name())) {
+        inspectionAccess.requireWrite();
+        var task = lockInspection(taskId);
+        if (!Objects.equals(task.getStatus(), InspectionTaskStatusEnum.WAIT.name())
+                || StrUtil.isNotBlank(task.getResult())) {
             throw new RuntimeException("只有未开始质检的任务才可以作废");
         }
         task.setStatus(InspectionTaskStatusEnum.FINISHED.name());
         task.setResult(InspectionTaskResultEnum.CANCELED.name());
-        this.updateById(task);
+        require(updateById(task), "检验任务作废保存失败");
         // 保存历史
         historyService.canceled(task, reason);
     }
@@ -317,9 +458,17 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
                 "MES工序任务编码或QMS任务ID不能为空、重复");
         requireWithdrawal(sourceTaskCodes.size() <= 200 && taskIds.size() <= 200,
                 "单次来源质检撤回最多支持200个工序和200张质检任务");
-        String taskSetFingerprint = sha256Withdrawal(factoryCode + '|'
-                + String.join(",", sourceTaskCodes) + '|' + taskIds.stream().map(String::valueOf).collect(Collectors.joining(",")));
-        String expectedEvidence = StrUtil.blankToDefault(command.getExpectedEvidenceFingerprint(), "").trim();
+        String taskSetFingerprint =
+                sha256Withdrawal(
+                        factoryCode
+                                + '|'
+                                + String.join(",", sourceTaskCodes)
+                                + '|'
+                                + taskIds.stream()
+                                        .map(String::valueOf)
+                                        .collect(Collectors.joining(",")));
+        String expectedEvidence =
+                StrUtil.blankToDefault(command.getExpectedEvidenceFingerprint(), "").trim();
         requireWithdrawal(Boolean.TRUE.equals(command.getPreview()) || expectedEvidence.length() == 64,
                 "执行QMS来源质检撤回必须提供64位冻结证据指纹");
         String requestFingerprint = sha256Withdrawal(taskSetFingerprint + '|' + expectedEvidence + '|' + reason);
@@ -355,12 +504,20 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         requireWithdrawal(tasks.stream().allMatch(task -> sourceTaskCodes.contains(task.getSourceTaskCode())),
                 "QMS任务与MES工序来源不一致");
 
-        QmsProcedureSourceWithdrawalReceiptEntity completed = sourceWithdrawalReceiptMapper.selectOne(
-                new LambdaQueryWrapper<QmsProcedureSourceWithdrawalReceiptEntity>()
-                        .eq(QmsProcedureSourceWithdrawalReceiptEntity::getTaskSetFingerprint, taskSetFingerprint)
-                        .eq(QmsProcedureSourceWithdrawalReceiptEntity::getStatus, "SUCCEEDED")
-                        .orderByDesc(QmsProcedureSourceWithdrawalReceiptEntity::getHandledTime)
-                        .orderByDesc(QmsProcedureSourceWithdrawalReceiptEntity::getId).last("LIMIT 1"));
+        QmsProcedureSourceWithdrawalReceiptEntity completed =
+                sourceWithdrawalReceiptMapper.selectOne(
+                        new LambdaQueryWrapper<QmsProcedureSourceWithdrawalReceiptEntity>()
+                                .eq(
+                                        QmsProcedureSourceWithdrawalReceiptEntity
+                                                ::getTaskSetFingerprint,
+                                        taskSetFingerprint)
+                                .eq(
+                                        QmsProcedureSourceWithdrawalReceiptEntity::getStatus,
+                                        "SUCCEEDED")
+                                .orderByDesc(
+                                        QmsProcedureSourceWithdrawalReceiptEntity::getHandledTime)
+                                .orderByDesc(QmsProcedureSourceWithdrawalReceiptEntity::getId)
+                                .last("LIMIT 1"));
         if (completed != null) {
             requireWithdrawal(tasks.stream().allMatch(task -> InspectionTaskStatusEnum.FINISHED.name().equals(task.getStatus())
                             && InspectionTaskResultEnum.CANCELED.name().equals(task.getResult())),
@@ -390,12 +547,35 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
             requireWithdrawal(resultCount == 0 && handleCount == 0,
                     "QMS工序质检任务[" + task.getId() + "]已有检验或处置记录，不能直接作废");
             Map<String, Object> fact = new LinkedHashMap<>();
-            fact.put("task", Arrays.asList(task.getId(), task.getSourceTaskCode(), task.getSourceRequestId(),
-                    task.getOrderNo(), task.getMatCode(), task.getProcessCode(), task.getLabelType(), task.getNum(),
-                    task.getStatus(), task.getResult(), task.getUsableNum(), task.getHandleNum(),
-                    task.getLatestAppendTime(), task.getLatestInspectionTime(), task.getFactoryCode()));
-            fact.put("history", histories.stream().map(history -> Arrays.asList(history.getId(), history.getType(),
-                    history.getNum(), history.getTime())).toList());
+            fact.put(
+                    "task",
+                    Arrays.asList(
+                            task.getId(),
+                            task.getSourceTaskCode(),
+                            task.getSourceRequestId(),
+                            task.getOrderNo(),
+                            task.getMatCode(),
+                            task.getProcessCode(),
+                            task.getLabelType(),
+                            task.getNum(),
+                            task.getStatus(),
+                            task.getResult(),
+                            task.getUsableNum(),
+                            task.getHandleNum(),
+                            task.getLatestAppendTime(),
+                            task.getLatestInspectionTime(),
+                            task.getFactoryCode()));
+            fact.put(
+                    "history",
+                    histories.stream()
+                            .map(
+                                    history ->
+                                            Arrays.asList(
+                                                    history.getId(),
+                                                    history.getType(),
+                                                    history.getNum(),
+                                                    history.getTime()))
+                            .toList());
             fact.put("itemResultCount", resultCount);
             fact.put("handleCount", handleCount);
             taskFacts.add(fact);
@@ -407,11 +587,18 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         String evidenceSnapshot = JSONUtil.toJsonStr(evidenceFacts);
         String actualEvidence = sha256Withdrawal(evidenceSnapshot);
         if (Boolean.TRUE.equals(command.getPreview())) {
-            return new QmsProcedureSourceWithdrawalDTO.Receipt().setRequestId(requestId).setStatus("ELIGIBLE")
-                    .setCancelledTaskCount(0).setTaskIds(taskIds).setEvidenceFingerprint(actualEvidence)
-                    .setEvidenceSnapshot(evidenceSnapshot).setHandledTime(LocalDateTime.now())
-                    .setMessage(tasks.isEmpty() ? "MES工序没有关联QMS质检任务，无需作废"
-                            : "关联QMS工序质检任务均未开始，可随MES计划受控作废");
+            return new QmsProcedureSourceWithdrawalDTO.Receipt()
+                    .setRequestId(requestId)
+                    .setStatus("ELIGIBLE")
+                    .setCancelledTaskCount(0)
+                    .setTaskIds(taskIds)
+                    .setEvidenceFingerprint(actualEvidence)
+                    .setEvidenceSnapshot(evidenceSnapshot)
+                    .setHandledTime(LocalDateTime.now())
+                    .setMessage(
+                            tasks.isEmpty()
+                                    ? "MES工序没有关联QMS质检任务，无需作废"
+                                    : "关联QMS工序质检任务均未开始，可随MES计划受控作废");
         }
         requireWithdrawal(Objects.equals(expectedEvidence, actualEvidence),
                 "QMS工序质检事实已变化，请重新申请计划撤回");
@@ -462,23 +649,22 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
      */
     @Transactional(rollbackFor = Exception.class)
     public void exemption(Long taskId) {
-        val task = this.getById(taskId);
-        if (Objects.isNull(task)) {
-            throw new RuntimeException("质检任务未找到");
-        }
+        inspectionAccess.requireWrite();
+        var task = lockInspection(taskId);
         if (Objects.equals(task.getResult(), InspectionTaskResultEnum.CANCELED.name())) {
             throw new RuntimeException("已作废的任务无法免检");
         }
         if (Objects.equals(task.getResult(), InspectionTaskResultEnum.EXEMPTION.name())) {
             throw new RuntimeException("任务已经免检");
         }
-        if (!InspectionTaskStatusEnum.WAIT.name().equals(task.getStatus())) {
+        if (!InspectionTaskStatusEnum.WAIT.name().equals(task.getStatus())
+                || StrUtil.isNotBlank(task.getResult())) {
             throw new RuntimeException("只有尚未开始的质检任务可以免检，不合格任务必须走正式处置");
         }
         task.setStatus(InspectionTaskStatusEnum.FINISHED.name());
         task.setResult(InspectionTaskResultEnum.EXEMPTION.name());
         task.setUsableNum(task.getNum()).setHandleNum(task.getNum()).setHandleResult(InspectionTaskResultEnum.EXEMPTION.name());
-        this.updateById(task);
+        require(updateById(task), "检验任务免检保存失败");
         // 保存历史
         historyService.exemption(task);
     }
@@ -527,164 +713,205 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
     /**
      * 检查并更新质检项
      *
-     * @param detail          质检项
-     * @param task            质检任务
-     * @param qualityStandard 质检标准
-     * @return 发生更新情况下进行返回对象
+     * @param detail 质检项
+     * @param task 质检任务
+     * @param standard 质检标准
+     * @param item 原项目关联的标准项
      */
-    private QmsInspectionProcedureTaskDetailEntity updateTaskDetails(QmsInspectionProcedureTaskDetailEntity detail,
-                                                                     QmsInspectionProcedureTaskEntity task, QmsQualityStandardEntity qualityStandard) {
-        // 查询关联质检项配置
-        List<QmsQualityStandardItemEntity> items = qualityStandardItemService.list(new LambdaQueryWrapper<QmsQualityStandardItemEntity>()
-                .eq(QmsQualityStandardItemEntity::getStandardId, qualityStandard.getId()));
-        val standardItem = this.findQualityStandardItemByTaskDetail(items, detail);
-
-        Integer n = null;
-        Integer ac = null;
-        Integer re = null;
-        // 全检
-        if (InspectionMethodEnum.FULL.name().equals(qualityStandard.getInspectionMethod())) {
-            n = task.getNum();
-        }
-        if (InspectionMethodEnum.FIXED.name().equals(qualityStandard.getInspectionMethod())) {
-            n = qualityStandard.getNum();
-        }
-        if (InspectionMethodEnum.PENDING.name().equals(qualityStandard.getInspectionMethod())) {
-            n = task.getInspectionNum();
-        }
-        if (InspectionMethodEnum.RANDOM.name().equals(qualityStandard.getInspectionMethod())) {
-            // 获取当前抽样标准
-            Frequency frequency = this.getInspectionFrequency(task.getNum(), standardItem);
-            // 判断是否需要全检
-            n = frequency.getN();
-            ac = frequency.getAc();
-            re = frequency.getRe();
-        }
-
-        int difference;
-        if (n == 0) {
-            difference = task.getNum() - detail.getTotalNum();
-        } else {
-            difference = n - detail.getTotalNum();
-        }
-
-        // 判断是否需要更新任务项的检测数量
-        if (difference > 0) {
-            val records = detail.getRecords();
-            val collect = IntStream.range(0, difference).mapToObj(i -> new InspectionItemResultRecord())
-                    .collect(Collectors.toList());
-            records.addAll(collect);
-
-            return detail.setTotalNum(n).setWaitNum(detail.getWaitNum() + difference)
-                    .setAc(ac).setRe(re).setRecords(records);
-        } else {
-            return null;
-        }
+    private void updateTaskDetails(
+            QmsInspectionProcedureTaskDetailEntity detail,
+            QmsInspectionProcedureTaskEntity task,
+            int previousBatch,
+            QmsQualityStandardEntity standard,
+            QmsQualityStandardItemEntity item) {
+        var frequencies =
+                "RANDOM".equals(standard.getInspectionMethod()) ? samplingFrequencies(item) : null;
+        var previousFrequency =
+                frequencies == null
+                        ? null
+                        : QmsProcedureInspectionChecks.frequency(previousBatch, frequencies);
+        var frequency =
+                frequencies == null
+                        ? null
+                        : QmsProcedureInspectionChecks.frequency(task.getNum(), frequencies);
+        int previousCount =
+                QmsProcedureInspectionChecks.sampleSize(
+                        previousBatch,
+                        standard.getInspectionMethod(),
+                        standard.getNum(),
+                        task.getInspectionNum(),
+                        previousFrequency);
+        int count =
+                QmsProcedureInspectionChecks.sampleSize(
+                        task.getNum(),
+                        standard.getInspectionMethod(),
+                        standard.getNum(),
+                        task.getInspectionNum(),
+                        frequency);
+        int ac = detail.getAc() == null ? 0 : detail.getAc(),
+                re = detail.getRe() == null ? 1 : detail.getRe();
+        require(
+                previousCount == detail.getTotalNum()
+                        && ac == (previousFrequency == null ? 0 : previousFrequency.getAc())
+                        && re == (previousFrequency == null ? 1 : previousFrequency.getRe())
+                        && ac == (frequency == null ? 0 : frequency.getAc())
+                        && re == (frequency == null ? 1 : frequency.getRe())
+                        && Objects.equals(detail.getCheckType(), item.getCheckType())
+                        && Objects.equals(detail.getUpperLimit(), item.getUpperLimit())
+                        && Objects.equals(detail.getLowerLimit(), item.getLowerLimit()),
+                "当前抽样或判定配置与原检验要求不兼容，请新建受控检验任务");
+        // 旧任务未保存完整抽样计划；原来等量全检的事实不能被追加解释成少量抽检。
+        require(
+                detail.getTotalNum() != previousBatch || count == task.getNum(),
+                "原任务没有可证明的抽样上限，追加后必须保持全检；请新建检验任务");
+        require(count >= detail.getTotalNum(), "追加检验不能缩减原应检数量，请核对抽样配置");
+        int difference = count - detail.getTotalNum();
+        require(detail.getRecords() != null, "原检验项目缺少样本占位信息，请先核对原记录");
+        detail.getRecords()
+                .addAll(
+                        IntStream.range(0, difference)
+                                .mapToObj(i -> new InspectionItemResultRecord())
+                                .collect(Collectors.toList()));
+        detail.setTotalNum(count).setWaitNum(count - detail.getFinishNum());
+        QmsProcedureInspectionChecks.counters(detail);
     }
 
-    /**
-     * 生成质检任务项目
-     */
-    private List<QmsInspectionProcedureTaskDetailEntity> generateDetail(QmsInspectionProcedureTaskEntity task,
-                                                                        QmsQualityStandardEntity qualityStandard) {
-        // 从质检标准中获取质检项列表
-        List<QmsQualityStandardItemEntity> items = qualityStandardItemService.list(new LambdaQueryWrapper<QmsQualityStandardItemEntity>()
-                .eq(QmsQualityStandardItemEntity::getStandardId, qualityStandard.getId()));
-        return items.stream().map(standardItem -> this.generateDetail(task, qualityStandard, standardItem))
-                .collect(Collectors.toList());
+    private QmsQualityStandardEntity publishedStandard(Long id, String matCode) {
+        var query =
+                new LambdaQueryWrapper<QmsQualityStandardEntity>()
+                        .eq(
+                                QmsQualityStandardEntity::getTenantId,
+                                TenantContextHolder.getTenantId())
+                        .eq(
+                                QmsQualityStandardEntity::getFactoryCode,
+                                FactoryContextHolder.getFactoryCode())
+                        .eq(QmsQualityStandardEntity::getMatCode, matCode)
+                        .eq(
+                                QmsQualityStandardEntity::getInspectionType,
+                                InspectionTaskTypeEnum.PROCEDURE.name())
+                        .eq(QmsQualityStandardEntity::getPublished, 1)
+                        .eq(id != null, QmsQualityStandardEntity::getId, id);
+        var standard = qualityStandardService.getOne(query);
+        require(
+                standard != null
+                        && (id == null || Objects.equals(id, standard.getId()))
+                        && Objects.equals(standard.getMatCode(), matCode)
+                        && Objects.equals(standard.getPublished(), 1)
+                        && "PROCEDURE".equals(standard.getInspectionType())
+                        && Objects.equals(standard.getTenantId(), TenantContextHolder.getTenantId())
+                        && Objects.equals(
+                                standard.getFactoryCode(), FactoryContextHolder.getFactoryCode()),
+                "当前实际组织不存在匹配物料的已发布工序检验标准");
+        return standard;
     }
 
-    /**
-     * 生成质检任务项目
-     */
-    private QmsInspectionProcedureTaskDetailEntity generateDetail(QmsInspectionProcedureTaskEntity task, QmsQualityStandardEntity standard,
-                                                                  QmsQualityStandardItemEntity standardItem) {
-//        if (task.getNum() < 2) {
-//            throw new RuntimeException("抽检数量错误");
-//        }
-        Integer totalNum = 0;
-        Integer waitNum = 0;
-        Integer ac = null;
-        Integer re = null;
-        // 全检
-        List<InspectionItemResultRecord> records = new ArrayList<>();
-        if (InspectionMethodEnum.FULL.name().equals(standard.getInspectionMethod())) {
-            records = IntStream.range(0, task.getNum())
-                    .mapToObj(o -> new InspectionItemResultRecord())
-                    .collect(Collectors.toList());
-            totalNum = task.getNum();
-            waitNum = task.getNum();
-        }
-        // 固定数量
-        if (InspectionMethodEnum.FIXED.name().equals(standard.getInspectionMethod())) {
-            // 若设置的固定数量大于质检数量, 则说明全检 设置检验数量为质检数量
-            int checkNum = Math.min(standard.getNum(), task.getNum());
-            records = IntStream.range(0, checkNum)
-                    .mapToObj(o -> new InspectionItemResultRecord())
-                    .collect(Collectors.toList());
-            totalNum = checkNum;
-            waitNum = checkNum;
-        }
-        // 发起质检时确定
-        if (InspectionMethodEnum.PENDING.name().equals(standard.getInspectionMethod())) {
-            // 若设置的固定数量大于质检数量, 则说明全检 设置检验数量为质检数量
-            int checkNum = Math.min(task.getInspectionNum(), task.getNum());
-            records = IntStream.range(0, checkNum)
-                    .mapToObj(o -> new InspectionItemResultRecord())
-                    .collect(Collectors.toList());
-            totalNum = checkNum;
-            waitNum = checkNum;
-        }
-        // 抽检
-        if (InspectionMethodEnum.RANDOM.name().equals(standard.getInspectionMethod())) {
-            // 抽样数量
-            Frequency frequency = this.getInspectionFrequency(task.getNum(), standardItem);
-            // 是否是全检
-            Integer n = frequency.getN();
-            records = IntStream.range(0, n > 0 ? n : task.getNum()).mapToObj(o -> new InspectionItemResultRecord())
-                    .collect(Collectors.toList());
-            totalNum = frequency.getN();
-            waitNum = frequency.getN();
-            ac = frequency.getAc();
-            re = frequency.getRe();
-        }
-
-        return new QmsInspectionProcedureTaskDetailEntity().setTaskId(task.getId()).setStandardItemId(standardItem.getId())
-                .setCheckType(standardItem.getCheckType()).setUpperLimit(standardItem.getUpperLimit())
-                .setLowerLimit(standardItem.getLowerLimit()).setName(standardItem.getName())
-                .setDemand(standardItem.getDemand()).setMethod(standardItem.getMethod())
-                .setCheckClassify(standardItem.getCheckClassify())
-                .setPosition(standardItem.getPosition()).setTotalNum(totalNum).setWaitNum(waitNum)
-                .setAc(ac).setRe(re).setRecords(records);
+    private void requireMutableSource(QmsInspectionProcedureTaskEntity task) {
+        require(
+                StrUtil.isBlank(task.getSourceRequestFingerprint())
+                        && (task.getSourceRequestId() == null
+                                || !task.getSourceRequestId()
+                                        .startsWith(
+                                                InspectionProcedureSourceContract.REQUEST_PREFIX)),
+                "MES已冻结下发的检验任务不能直接改量或更换标准，请由原生产来源重新发起");
     }
 
-    /**
-     * 根据任务数量或抽样配置
-     */
-    private Frequency getInspectionFrequency(int num, QmsQualityStandardItemEntity standardItem) {
-        // 获取ID并转为数字类型
-        Long samplingId = Long.parseLong(standardItem.getSamplingStrategiesId().toString());
-        // 获取获取关联的抽样配置 质检标准 -> AQL配置 -> 关联抽样策略
-        QmsQualitySamplingStrategiesEntity samplingStrategies = samplingStrategiesService.getById(samplingId);
-        List<Frequency> frequencies = samplingStrategies.getFrequency();
-        if (CollUtil.isEmpty(frequencies)) {
-            throw new RuntimeException("抽样策略中没有抽样配置");
-        }
+    private List<QmsInspectionProcedureTaskDetailEntity> inspectionDetails(Long taskId) {
+        return procedureTaskDetailService.list(
+                detailScope()
+                        .eq(QmsInspectionProcedureTaskDetailEntity::getTaskId, taskId)
+                        .last("LIMIT 5001"));
+    }
 
-        Frequency maxFrequency = frequencies.stream().filter(frequency -> Objects.isNull(frequency.getE())).findFirst()
-                .orElseThrow(() -> new RuntimeException(standardItem.getName() + "质检标准项的抽样策略配置错误"));
-        // 1个默认全检
-        if (num == 1) {
-            return new Frequency().setAc(0).setS(1).setE(1).setRe(1).setN(1);
-        }
-        // 最大及无限数量抽样
-        if (num >= maxFrequency.getS()) {
-            return maxFrequency;
-        }
+    private List<QmsQualityStandardItemEntity> standardItems(
+            QmsInspectionProcedureTaskEntity task, QmsQualityStandardEntity standard) {
+        var items =
+                qualityStandardItemService.list(
+                        new LambdaQueryWrapper<QmsQualityStandardItemEntity>()
+                                .eq(QmsQualityStandardItemEntity::getStandardId, standard.getId())
+                                .eq(QmsQualityStandardItemEntity::getTenantId, task.getTenantId())
+                                .eq(
+                                        QmsQualityStandardItemEntity::getFactoryCode,
+                                        task.getFactoryCode())
+                                .last("LIMIT 5001"));
+        require(items != null && !items.isEmpty() && items.size() <= 5000, "质检标准没有完整有界的检验项目");
+        var ids = new HashSet<Long>();
+        for (var item : items)
+            require(
+                    item != null
+                            && item.getId() != null
+                            && ids.add(item.getId())
+                            && Objects.equals(item.getStandardId(), standard.getId())
+                            && Objects.equals(item.getTenantId(), task.getTenantId())
+                            && Objects.equals(item.getFactoryCode(), task.getFactoryCode()),
+                    "检验标准项缺失、重复或不属于当前标准/组织");
+        return items;
+    }
 
-        // 计算出检测数量
-        return frequencies.stream().filter(o -> o.getS() <= num && num <= o.getE()).findFirst()
-                .orElseThrow(() -> new RuntimeException(standardItem.getName() + "抽样策略中没有此数量范围的抽样配置"));
+    /** 由完整冻结方案生成不同的实际项目。 */
+    private List<QmsInspectionProcedureTaskDetailEntity> generateDetail(
+            QmsInspectionProcedureTaskEntity task, QmsFrozenInspectionPlan plan) {
+        return plan.targets(task.getNum()).stream()
+                .map(
+                        target -> {
+                            var item = target.item();
+                            int count = target.count();
+                            var detail =
+                                    new QmsInspectionProcedureTaskDetailEntity()
+                                            .setTaskId(task.getId())
+                                            .setStandardItemId(item.standardItemId())
+                                            .setCheckType(item.checkType())
+                                            .setUpperLimit(item.upperLimit())
+                                            .setLowerLimit(item.lowerLimit())
+                                            .setName(item.name())
+                                            .setDemand(item.demand())
+                                            .setMethod(item.testMethod())
+                                            .setCheckClassify(item.checkClassify())
+                                            .setPosition(item.position())
+                                            .setTotalNum(count)
+                                            .setWaitNum(count)
+                                            .setAc(target.ac())
+                                            .setRe(target.re())
+                                            .setRecords(
+                                                    IntStream.range(0, count)
+                                                            .mapToObj(
+                                                                    i ->
+                                                                            new InspectionItemResultRecord())
+                                                            .collect(Collectors.toList()))
+                                            .setFactoryCode(task.getFactoryCode());
+                            detail.setTenantId(task.getTenantId());
+                            return detail;
+                        })
+                .toList();
+    }
+
+private List<Frequency> samplingFrequencies(QmsQualityStandardItemEntity item) {
+        require(
+                item.getSamplingStrategiesId() != null
+                        && item.getSamplingStrategiesId().matches("[1-9][0-9]{0,18}"),
+                "检验项缺少有效抽样策略");
+        Long id;
+        try {
+            id = Long.valueOf(item.getSamplingStrategiesId());
+        } catch (NumberFormatException e) {
+            throw new CheckedException("抽样策略编号超出范围", e);
+        }
+        var strategy =
+                samplingStrategiesService.getOne(
+                        new LambdaQueryWrapper<QmsQualitySamplingStrategiesEntity>()
+                                .eq(QmsQualitySamplingStrategiesEntity::getId, id)
+                                .eq(
+                                        QmsQualitySamplingStrategiesEntity::getTenantId,
+                                        TenantContextHolder.getTenantId())
+                                .eq(
+                                        QmsQualitySamplingStrategiesEntity::getFactoryCode,
+                                        FactoryContextHolder.getFactoryCode()));
+        require(
+                strategy != null
+                        && Objects.equals(strategy.getTenantId(), TenantContextHolder.getTenantId())
+                        && Objects.equals(
+                                strategy.getFactoryCode(), FactoryContextHolder.getFactoryCode()),
+                "当前组织不存在检验抽样策略");
+        return strategy.getFrequency();
     }
 
     /**
@@ -745,216 +972,202 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
      */
     @Transactional(rollbackFor = Exception.class)
     public void temporarilySave(InspectionCheckResultParam param) {
-        val taskDetail = procedureTaskDetailService.getById(param.getDetailId());
-        if (Objects.isNull(taskDetail)) {
-            throw new RuntimeException("质检详情不存在");
-        }
-        // 获取关联任务
-        QmsInspectionProcedureTaskEntity task = this.getById(taskDetail.getTaskId());
-        if (Objects.isNull(task)) {
-            throw new RuntimeException("质检任务不存在");
-        }
+        inspectionAccess.requireWrite();
+        require(
+                param != null && param.getDetailId() != null && param.getRecord() != null,
+                "请填写指定检验项目的结果");
+        var initial =
+                procedureTaskDetailService.getOne(
+                        detailScope()
+                                .eq(
+                                        QmsInspectionProcedureTaskDetailEntity::getId,
+                                        param.getDetailId()));
+        require(initial != null, "当前组织不存在指定检验项目");
+        var task = lockInspection(initial.getTaskId());
         assertInspectionWritable(task);
-        if (taskDetail.getWaitNum() == null || taskDetail.getWaitNum() <= 0) {
-            throw new RuntimeException("该质检项已达到应检数量，请勿重复提交");
+        var detail = requireDetail(param.getDetailId(), task.getId());
+        inspectionPieces.anonymous(task);
+        collect(task, detail, param.getRecord());
+        if ("WAIT".equals(task.getStatus())) {
+            task.setStatus("RUNNING");
+            require(updateById(task), "检验任务开始状态保存失败");
         }
-        // 获取关联质检标准
-        val qualityStandard = qualityStandardService.getById(task.getStandardId());
-        // 查询关联质检项配置
-        List<QmsQualityStandardItemEntity> items = qualityStandardItemService.list(new LambdaQueryWrapper<QmsQualityStandardItemEntity>()
-                .eq(QmsQualityStandardItemEntity::getStandardId, qualityStandard.getId()));
-        val standardItem = this.findQualityStandardItemByTaskDetail(items, taskDetail);
-
-        InspectionItemResultRecord submitRecord = param.getRecord();
-        submitRecord.setQualified(qualityStandardItemService.judgementCheckResult(param.getRecord(), standardItem));
-        submitRecord.setTaskId(task.getId());
-        submitRecord.setDetailId(taskDetail.getId());
-        submitRecord.setDetailName(taskDetail.getName());
-        submitRecord.setTime(new Date());
-
-        QmsInspectionProcedureItemResultRecordEntity submit = BeanUtil.copyProperties(submitRecord, QmsInspectionProcedureItemResultRecordEntity.class);
-        recordService.save(submit);
-
-        // 不合格数量
-        int unqualifiedNum = submitRecord.getQualified() ? 0 : 1;
-
-        // 根据RE值, 计算是否通过AQL校验, 将填写的记录写到质检任务中, RE与AC的差值, 一般情况下只差 1 , 只用其中一个就可以判断是否合格
-        int ac = Objects.isNull(taskDetail.getAc()) ? 0 : taskDetail.getAc();
-
-        // 存储结果
-        taskDetail.setFinishNum(taskDetail.getFinishNum() + 1).setWaitNum(taskDetail.getWaitNum() - 1)
-                .setUnqualifiedNum(taskDetail.getUnqualifiedNum() + unqualifiedNum);
-
-        taskDetail.setQualifiedStatus(taskDetail.getUnqualifiedNum() <= ac);
-        procedureTaskDetailService.updateById(taskDetail);
-
-        if (Objects.equals(InspectionTaskStatusEnum.WAIT.name(), task.getStatus())) {
-            task.setStatus(InspectionTaskStatusEnum.RUNNING.name());
-            this.updateById(task);
-        }
-
     }
 
-    /**
-     * 批量暂存
-     *
-     * @param param
-     */
     @Transactional(rollbackFor = Exception.class)
     public void batchTemporarilySave(InspectionCheckResultBatchParam param) {
-        QmsInspectionProcedureTaskEntity task = this.getById(param.getTaskId());
-        if (task == null) {
-            throw new RuntimeException("质检任务不存在");
-        }
+        inspectionAccess.requireWrite();
+        require(
+                param != null
+                        && param.getResults() != null
+                        && !param.getResults().isEmpty()
+                        && param.getResults().size() <= 5000,
+                "请填写有界的检验结果");
+        var task = lockInspection(param.getTaskId());
         assertInspectionWritable(task);
-        if (CollUtil.isEmpty(param.getResults())) {
-            throw new RuntimeException("请填写质检结果");
+        inspectionPieces.anonymous(task);
+        Set<Long> details = new HashSet<>();
+        for (var result : param.getResults()) {
+            require(
+                    result != null
+                            && result.getDetailId() != null
+                            && result.getRecord() != null
+                            && details.add(result.getDetailId()),
+                    "检验项目或结果缺失，或同一项目重复提交");
+            collect(task, requireDetail(result.getDetailId(), task.getId()), result.getRecord());
         }
-        long distinctDetails = param.getResults().stream().map(InspectionCheckResultParam::getDetailId)
-                .filter(Objects::nonNull).distinct().count();
-        if (distinctDetails != param.getResults().size()) {
-            throw new RuntimeException("同一质检项不能在一次提交中重复出现");
-        }
-        val qualityStandard = qualityStandardService.getById(task.getStandardId());
-        List<QmsQualityStandardItemEntity> items = qualityStandardItemService.list(new LambdaQueryWrapper<QmsQualityStandardItemEntity>()
-                .eq(QmsQualityStandardItemEntity::getStandardId, qualityStandard.getId()));
-        List<InspectionCheckResultParam> results = param.getResults();
-        List<QmsInspectionProcedureItemResultRecordEntity> saveRecords = new ArrayList<>();
-        List<QmsInspectionProcedureTaskDetailEntity> updateDetails = new ArrayList<>();
-        results.forEach(result -> {
-            val taskDetail = procedureTaskDetailService.getById(result.getDetailId());
-            if (taskDetail == null || !Objects.equals(taskDetail.getTaskId(), task.getId())) {
-                throw new RuntimeException("质检项不属于当前任务");
-            }
-            if (taskDetail.getWaitNum() == null || taskDetail.getWaitNum() <= 0) {
-                throw new RuntimeException("质检项[" + taskDetail.getName() + "]已达到应检数量，请勿重复提交");
-            }
-            InspectionItemResultRecord submitRecord = result.getRecord();
-            val standardItem = this.findQualityStandardItemByTaskDetail(items, taskDetail);
-            submitRecord.setQualified(qualityStandardItemService.judgementCheckResult(submitRecord, standardItem));
-            submitRecord.setTaskId(task.getId());
-            submitRecord.setDetailId(taskDetail.getId());
-            submitRecord.setDetailName(taskDetail.getName());
-            submitRecord.setTime(new Date());
-            submitRecord.setId(null);
-
-            QmsInspectionProcedureItemResultRecordEntity submit = BeanUtil.copyProperties(submitRecord, QmsInspectionProcedureItemResultRecordEntity.class);
-            saveRecords.add(submit);
-
-            // 不合格数量
-            int unqualifiedNum = submitRecord.getQualified() ? 0 : 1;
-
-            // 根据RE值, 计算是否通过AQL校验, 将填写的记录写到质检任务中, RE与AC的差值, 一般情况下只差 1 , 只用其中一个就可以判断是否合格
-            int ac = Objects.isNull(taskDetail.getAc()) ? 0 : taskDetail.getAc();
-
-            // 存储结果
-            taskDetail.setFinishNum(taskDetail.getFinishNum() + 1).setWaitNum(taskDetail.getWaitNum() - 1)
-                    .setUnqualifiedNum(taskDetail.getUnqualifiedNum() + unqualifiedNum);
-
-            taskDetail.setQualifiedStatus(taskDetail.getUnqualifiedNum() <= ac);
-
-            updateDetails.add(taskDetail);
-        });
-        recordService.saveBatch(saveRecords);
-        procedureTaskDetailService.updateBatchById(updateDetails);
-
-        if (Objects.equals(InspectionTaskStatusEnum.WAIT.name(), task.getStatus())) {
-            task.setStatus(InspectionTaskStatusEnum.RUNNING.name());
-            this.updateById(task);
-        }
-
-        // 保存附件
+        boolean changed = "WAIT".equals(task.getStatus());
+        if (changed) task.setStatus("RUNNING");
         if (StrUtil.isNotBlank(param.getAnnex())) {
             task.setAnnex(param.getAnnex());
-            this.updateById(task);
+            changed = true;
         }
-
-        // 查询到质检项
-        val taskDetails = procedureTaskDetailService.lambdaQuery()
-                .eq(QmsInspectionProcedureTaskDetailEntity::getTaskId, task.getId()).list();
-        // 是否全部检测完毕
-        boolean canEnd = taskDetails.stream().anyMatch(o -> o.getWaitNum() > 0);
-        if (!canEnd) {
-            // TODO 获取配置 如果不需要自动判断结果 则不更新不合格状态  由人工判断 调用别的接口
-            boolean qualified = taskDetails.stream().allMatch(o -> Objects.equals(o.getQualifiedStatus(), Boolean.TRUE));
-            if (qualified) {
-                task.setStatus(InspectionTaskStatusEnum.FINISHED.name()).setLatestInspectionTime(new Date());
-                task.setResult(InspectionTaskResultEnum.QUALIFIED.name())
-                        .setUsableNum(task.getNum()).setHandleNum(task.getNum());
-            } else {
-                task.setStatus(InspectionTaskStatusEnum.UNHANDLED.name()).setLatestInspectionTime(new Date());
-                task.setResult(InspectionTaskResultEnum.UN_QUALIFIED.name())
-                        .setUsableNum(0).setHandleNum(0);
-            }
-            this.updateById(task);
-
-            if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())) {
-                badInfoService.add(new QmsBadInfoEntity().setResourceTaskId(task.getId())
-                        .setResourceType(InspectionTaskTypeEnum.PROCEDURE.name()).setNum(task.getNum() == null ? null : java.math.BigDecimal.valueOf(task.getNum()))
-                        .setMatCode(task.getMatCode()).setMatName(task.getMatName()).setBatchNo(task.getBatchNo()));
-            }
-
-            // 保存历史
-            historyService.check(task);
-            if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())
-                    && StrUtil.isNotBlank(task.getOrderNo())) {
-                qmsPlanEventOutboxService.enqueueIsolation("PROCEDURE", task.getId());
-            }
-        }
-
+        if (changed) require(updateById(task), "检验任务状态或附件保存失败");
+        finishInspection(task, false);
     }
 
-    /**
-     * 提交质检记录结果
-     */
+    /** 实物标识、原请求、实际样本、累计和正式判定在同一父任务事务中提交。 */
+    @Transactional(rollbackFor = Exception.class)
+    public com.kitex.mom.qms.dto.QmsInspectionPieceDTO.Receipt collectPiece(
+            com.kitex.mom.qms.dto.QmsInspectionPieceDTO.Command command) {
+        inspectionAccess.requireWrite();
+        require(command != null, "请提供逐件检验原请求");
+        var task = lockInspection(QmsInspectionPieceService.id(command.taskId()));
+        var actual = inspectionDetails(task.getId());
+        var context = inspectionPieces.begin(task, actual, command);
+        if (context.replay() != null) return context.replay();
+        assertInspectionWritable(task);
+        for (var detail : actual) {
+            var input = QmsInspectionPieceService.input(detail, context.results().get(detail.getId()));
+            inspectionPieces.attach(context, task, collect(task, detail, input));
+        }
+        if ("WAIT".equals(task.getStatus())) {
+            task.setStatus("RUNNING");
+            require(updateById(task), "检验任务开始状态保存失败");
+        }
+        finishInspection(task, false);
+        return inspectionPieces.completed(context);
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public void submitInspectionResult(Long taskId) {
-        val task = this.getById(taskId);
-        if (Objects.isNull(task)) {
-            throw new RuntimeException("质检任务未找到");
-        }
-        if (StrUtil.isNotBlank(task.getResult())) {
+        inspectionAccess.requireWrite();
+        var task = lockInspection(taskId);
+        if (StrUtil.isNotBlank(task.getResult())) return;
+        assertInspectionWritable(task);
+        finishInspection(task, true);
+    }
+
+    private QmsInspectionProcedureTaskEntity lockInspection(Long id) {
+        require(id != null && id > 0, "工序检验任务编号无效");
+        require(
+                org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive(),
+                "工序检验写入必须在原业务事务中");
+        var task =
+                baseMapper.lockForInspection(
+                        id,
+                        TenantContextHolder.getTenantId(),
+                        FactoryContextHolder.getFactoryCode());
+        require(
+                task != null
+                        && Objects.equals(task.getId(), id)
+                        && Objects.equals(task.getTenantId(), TenantContextHolder.getTenantId())
+                        && Objects.equals(
+                                task.getFactoryCode(), FactoryContextHolder.getFactoryCode()),
+                "当前实际组织不存在工序检验任务");
+        inspectionBasis.validateCurrent(task, inspectionDetails(task.getId()));
+        return task;
+    }
+
+    private LambdaQueryWrapper<QmsInspectionProcedureTaskDetailEntity> detailScope() {
+        return new LambdaQueryWrapper<QmsInspectionProcedureTaskDetailEntity>()
+                .eq(
+                        QmsInspectionProcedureTaskDetailEntity::getTenantId,
+                        TenantContextHolder.getTenantId())
+                .eq(
+                        QmsInspectionProcedureTaskDetailEntity::getFactoryCode,
+                        FactoryContextHolder.getFactoryCode());
+    }
+
+    private QmsInspectionProcedureTaskDetailEntity requireDetail(Long id, Long taskId) {
+        var detail =
+                procedureTaskDetailService.getOne(
+                        detailScope()
+                                .eq(QmsInspectionProcedureTaskDetailEntity::getId, id)
+                                .eq(QmsInspectionProcedureTaskDetailEntity::getTaskId, taskId));
+        require(detail != null, "检验项目不属于当前实际任务");
+        return detail;
+    }
+
+    private QmsInspectionProcedureItemResultRecordEntity collect(
+            QmsInspectionProcedureTaskEntity task,
+            QmsInspectionProcedureTaskDetailEntity detail,
+            InspectionItemResultRecord input) {
+        QmsProcedureInspectionChecks.counters(detail);
+        require(detail.getWaitNum() > 0, "该检验项已达到应检数量，请勿重复提交");
+        boolean qualified = QmsProcedureInspectionChecks.judge(detail, input);
+        var record =
+                new QmsInspectionProcedureItemResultRecordEntity()
+                        .setTaskId(task.getId())
+                        .setDetailId(detail.getId())
+                        .setDetailName(detail.getName())
+                        .setDoubleValue(input.getDoubleValue())
+                        .setQualified(qualified)
+                        .setTime(new Date());
+        require(recordService.save(record), "实际检验样本保存失败");
+        detail.setFinishNum(detail.getFinishNum() + 1)
+                .setWaitNum(detail.getWaitNum() - 1)
+                .setUnqualifiedNum(detail.getUnqualifiedNum() + (qualified ? 0 : 1));
+        detail.setQualifiedStatus(
+                detail.getUnqualifiedNum() <= (detail.getAc() == null ? 0 : detail.getAc()));
+        require(procedureTaskDetailService.updateById(detail), "检验项目累计数量保存失败");
+        return record;
+    }
+
+    private void finishInspection(QmsInspectionProcedureTaskEntity task, boolean strict) {
+        var details =
+                procedureTaskDetailService.list(
+                        detailScope()
+                                .eq(QmsInspectionProcedureTaskDetailEntity::getTaskId, task.getId())
+                                .last("LIMIT 5001"));
+        inspectionBasis.validateCurrent(task, details);
+        var completion =
+                QmsProcedureInspectionChecks.completion(
+                        task,
+                        details,
+                        baseMapper.inspectionSamples(
+                                task.getId(), task.getTenantId(), task.getFactoryCode()));
+        if (!completion.ready()) {
+            require(!strict, "检验任务尚未填写完毕，请核对待检项目");
             return;
         }
-
-        // 查询到质检项
-        val taskDetails = procedureTaskDetailService.lambdaQuery()
-                .eq(QmsInspectionProcedureTaskDetailEntity::getTaskId, task.getId()).list();
-        // 是否全部检测完毕
-        boolean canEnd = taskDetails.stream().anyMatch(o -> o.getWaitNum() > 0);
-        if (canEnd) {
-            throw new RuntimeException("质检任务未填写完毕, 请检查");
-        }
-
-        // 判断是否都都已经及格
-        // TODO 获取配置 如果不需要自动判断结果 则不更新不合格状态  由人工判断 调用别的接口
-        boolean qualified = taskDetails.stream().allMatch(o -> Objects.equals(o.getQualifiedStatus(), Boolean.TRUE));
-        task.setResult(qualified ? InspectionTaskResultEnum.QUALIFIED.name() : InspectionTaskResultEnum.UN_QUALIFIED.name())
-                .setStatus(qualified ? InspectionTaskStatusEnum.FINISHED.name() : InspectionTaskStatusEnum.UNHANDLED.name())
-                .setLatestInspectionTime(new Date());
-        this.updateById(task);
-
-        // 如果不合格 入不合格品管理
-        if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())) {
-            badInfoService.add(new QmsBadInfoEntity().setResourceTaskId(taskId).setResourceType(InspectionTaskTypeEnum.PROCEDURE.name())
-                    .setNum(task.getNum() == null ? null : java.math.BigDecimal.valueOf(task.getNum())).setMatCode(task.getMatCode()).setMatName(task.getMatName())
-                    .setBatchNo(task.getBatchNo()));
-        }
-
-        // 保存历史
+        task.setStatus(completion.qualified() ? "FINISHED" : "UNHANDLED")
+                .setResult(completion.qualified() ? "QUALIFIED" : "UN_QUALIFIED")
+                .setLatestInspectionTime(new Date())
+                .setUsableNum(completion.qualified() ? task.getNum() : 0)
+                .setHandleNum(completion.qualified() ? task.getNum() : 0);
+        require(updateById(task), "检验正式判定保存失败");
+        if (!completion.qualified())
+            badInfoService.add(
+                    new QmsBadInfoEntity()
+                            .setResourceTaskId(task.getId())
+                            .setResourceType("PROCEDURE")
+                            .setNum(BigDecimal.valueOf(task.getNum()))
+                            .setMatCode(task.getMatCode())
+                            .setMatName(task.getMatName())
+                            .setBatchNo(task.getBatchNo()));
         historyService.check(task);
-        if (InspectionTaskResultEnum.UN_QUALIFIED.name().equals(task.getResult())
-                && StrUtil.isNotBlank(task.getOrderNo())) {
+        if (!completion.qualified() && StrUtil.isNotBlank(task.getOrderNo()))
             qmsPlanEventOutboxService.enqueueIsolation("PROCEDURE", task.getId());
-        }
-        reworkResultPublisher.publish(InspectionTaskTypeEnum.PROCEDURE.name(), task.getId());
+        reworkResultPublisher.publish("PROCEDURE", task.getId());
     }
 
     private void assertInspectionWritable(QmsInspectionProcedureTaskEntity task) {
-        if (!InspectionTaskStatusEnum.WAIT.name().equals(task.getStatus())
-                && !InspectionTaskStatusEnum.RUNNING.name().equals(task.getStatus())) {
-            throw new RuntimeException("当前质检任务已结束或进入处置，不能继续填写检验结果");
-        }
+        require(
+                ("WAIT".equals(task.getStatus()) || "RUNNING".equals(task.getStatus()))
+                        && StrUtil.isBlank(task.getResult()),
+                "当前检验任务已结束或进入处置，不能继续填写结果");
     }
 
 
@@ -1088,8 +1301,11 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
             record.put("totalNum", detail.getTotalNum());
             record.put("checkClassify", detail.getCheckClassify());
             record.put("checkType", this.getCheckTypeName(detail));
-            record.put("qualifiedStatus",
-                    Objects.nonNull(detail.getQualifiedStatus()) && detail.getQualifiedStatus() ? "合格" : "不合格");
+            record.put(
+                    "qualifiedStatus",
+                    Objects.nonNull(detail.getQualifiedStatus()) && detail.getQualifiedStatus()
+                            ? "合格"
+                            : "不合格");
             List<QmsInspectionProcedureItemResultRecordEntity> itemList = recordService.list(new LambdaQueryWrapper<QmsInspectionProcedureItemResultRecordEntity>()
                     .eq(QmsInspectionProcedureItemResultRecordEntity::getDetailId, detail.getId()));
             if (CollUtil.isEmpty(itemList)) {
@@ -1142,9 +1358,12 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
             return;
         }
         // 锁定质检任务，避免两个不同请求同时处置导致累计数量越界。
-        QmsInspectionProcedureTaskEntity task = this.getOne(
-                new LambdaQueryWrapper<QmsInspectionProcedureTaskEntity>()
-                        .eq(QmsInspectionProcedureTaskEntity::getId, dto.getId()).last("FOR UPDATE"), false);
+        QmsInspectionProcedureTaskEntity task =
+                this.getOne(
+                        new LambdaQueryWrapper<QmsInspectionProcedureTaskEntity>()
+                                .eq(QmsInspectionProcedureTaskEntity::getId, dto.getId())
+                                .last("FOR UPDATE"),
+                        false);
         if (task == null) {
             throw new RuntimeException("工序质检任务不存在");
         }
@@ -1296,7 +1515,8 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
      */
     @SneakyThrows
     public ResponseEntity<byte[]> download(Long taskId, Integer num) {
-        TemplateExportParams params = new TemplateExportParams(StrUtil.format("templates/procedureReport1.xlsx"));
+        TemplateExportParams params =
+                new TemplateExportParams(StrUtil.format("templates/procedureReport1.xlsx"));
         // 开启横向遍历 开启横向遍历 开启横向遍历
         params.setColForEach(true);
         Map<String, Object> map = new HashMap<String, Object>();
@@ -1313,8 +1533,13 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
         map.put("standardName", qmsInspectionProcedureTaskEntity.getStandardName());
         map.put("num", qmsInspectionProcedureTaskEntity.getNum());
         SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-        map.put("latestInspectionTime", simpleDateFormat.format(qmsInspectionProcedureTaskEntity.getLatestInspectionTime()));
-        map.put("status", "QUALIFIED".equals(qmsInspectionProcedureTaskEntity.getResult()) ? "合格" : "不合格");
+        map.put(
+                "latestInspectionTime",
+                simpleDateFormat.format(
+                        qmsInspectionProcedureTaskEntity.getLatestInspectionTime()));
+        map.put(
+                "status",
+                "QUALIFIED".equals(qmsInspectionProcedureTaskEntity.getResult()) ? "合格" : "不合格");
         // 构造 竖向打印数据
         List<QmsInspectionProcedureTaskDetailEntity> list = procedureTaskDetailService.lambdaQuery()
                 .eq(QmsInspectionProcedureTaskDetailEntity::getTaskId, taskId).list();
@@ -1359,8 +1584,11 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
             map.put("position", detail.getPosition());
             map.put("totalNum", detail.getTotalNum().toString());
             map.put("checkType", checkTypeEnum.getValue());
-            map.put("qualifiedStatus",
-                    Objects.nonNull(detail.getQualifiedStatus()) && detail.getQualifiedStatus() ? "合格" : "不合格");
+            map.put(
+                    "qualifiedStatus",
+                    Objects.nonNull(detail.getQualifiedStatus()) && detail.getQualifiedStatus()
+                            ? "合格"
+                            : "不合格");
             listMap_x.add(map);
             // 构建横向排列数据
             List<QmsInspectionProcedureItemResultRecordEntity> itemList = recordService.list(new LambdaQueryWrapper<QmsInspectionProcedureItemResultRecordEntity>()
@@ -1390,5 +1618,8 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
             listMap_y.add(map);
         }
     }
+
+
+
 
 }

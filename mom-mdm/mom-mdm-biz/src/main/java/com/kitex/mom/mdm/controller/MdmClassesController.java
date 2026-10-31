@@ -221,7 +221,7 @@ public class MdmClassesController {
     @Operation(summary = "获取班次规则", description = "获取班次规则")
     @GetMapping("/rule")
     public R<String> getClassesRule(@RequestParam("dateTime") LocalDateTime dateTime) {
-        return R.ok(mdmClassesService.getClassesRule(dateTime));
+        return R.ok(mdmClassesService.getClassesRule(dateTime), null);
     }
 
     /**

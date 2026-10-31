@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.security.service.MomUser;
@@ -50,12 +51,17 @@ public class MesMaterialReconcileIssueServiceImpl
     private final RemoteMaterialReservationService remoteReservationService;
     private final RemotePlanMatMrpReconcileService remotePlanReconcileService;
     private final MesMaterialReconcileCompensationMapper compensationMapper;
+    private final MesActualFactoryAccessService factoryAccess;
 
     @Override
     public IPage<MesMaterialReconcileIssueEntity> queryPage(Page<MesMaterialReconcileIssueEntity> page,
                                                             MesMaterialReconcileIssueEntity query) {
         query = query == null ? new MesMaterialReconcileIssueEntity() : query;
+        String factory = factoryAccess.require("read");
         return page(page, new LambdaQueryWrapper<MesMaterialReconcileIssueEntity>()
+                .eq(MesMaterialReconcileIssueEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MesMaterialReconcileIssueEntity::getFactoryCode, factory)
+                .eq(query.getId() != null, MesMaterialReconcileIssueEntity::getId, query.getId())
                 .eq(StrUtil.isNotBlank(query.getStatus()), MesMaterialReconcileIssueEntity::getStatus, query.getStatus())
                 .eq(StrUtil.isNotBlank(query.getSeverity()), MesMaterialReconcileIssueEntity::getSeverity, query.getSeverity())
                 .eq(StrUtil.isNotBlank(query.getIssueType()), MesMaterialReconcileIssueEntity::getIssueType, query.getIssueType())

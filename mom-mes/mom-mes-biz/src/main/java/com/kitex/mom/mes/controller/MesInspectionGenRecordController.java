@@ -8,6 +8,10 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.mom.mes.entity.MesInspectionGenRecordEntity;
 import com.kitex.mom.mes.service.MesInspectionGenRecordService;
+import com.kitex.mom.mes.service.impl.MesInspectionRecordQuery;
+import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
+import com.kitex.mom.mes.dto.MesInspectionRecordWorkbenchDTO;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -33,6 +37,21 @@ import org.springframework.web.bind.annotation.RestController;
 public class MesInspectionGenRecordController {
 
     private final MesInspectionGenRecordService mesInspectionGenRecordService;
+    private final MesInspectionRecordQuery workbenchQuery;
+    private final MesActualFactoryAccessService factoryAccess;
+
+    @GetMapping("/workbench")
+    @PreAuthorize("@pms.hasPermission('mesInspectionGenRecord:show')")
+    public R<MesInspectionRecordWorkbenchDTO.PageView> workbench(
+            MesInspectionRecordWorkbenchDTO.Query query) {
+        return R.ok(workbenchQuery.page(query));
+    }
+
+    @GetMapping("/workbench/{id}")
+    @PreAuthorize("@pms.hasPermission('mesInspectionGenRecord:show')")
+    public R<MesInspectionRecordWorkbenchDTO.Detail> workbenchDetail(@PathVariable Long id) {
+        return R.ok(workbenchQuery.detail(id));
+    }
 
     /**
      * 分页查询
@@ -46,7 +65,9 @@ public class MesInspectionGenRecordController {
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('mesInspectionGenRecord:show')")
     public R<IPage<MesInspectionGenRecordEntity>> getMesInspectionGenRecordPage(Page<MesInspectionGenRecordEntity> page, MesInspectionGenRecordEntity query) {
+        String factory = factoryAccess.require("read");
         QueryWrapper<MesInspectionGenRecordEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
+        autoQueryWrapper.eq("tenant_id", TenantContextHolder.getTenantId()).eq("factory_code", factory);
         return R.ok(mesInspectionGenRecordService.page(page, autoQueryWrapper));
     }
 
@@ -60,7 +81,9 @@ public class MesInspectionGenRecordController {
     @GetMapping("/{id}")
     @PreAuthorize("@pms.hasPermission('mesInspectionGenRecord:show')")
     public R getById(@PathVariable("id") Long id) {
-        return R.ok(mesInspectionGenRecordService.getById(id));
+        String factory = factoryAccess.require("read");
+        return R.ok(mesInspectionGenRecordService.getOne(new QueryWrapper<MesInspectionGenRecordEntity>()
+                .eq("id", id).eq("tenant_id", TenantContextHolder.getTenantId()).eq("factory_code", factory)));
     }
 
 }

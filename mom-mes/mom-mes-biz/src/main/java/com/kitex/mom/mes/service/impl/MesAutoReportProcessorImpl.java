@@ -17,6 +17,7 @@ import com.kitex.mom.mes.enums.WorksiteTypeEnum;
 import com.kitex.mom.mes.mapper.MesAutoReportEventMapper;
 import com.kitex.mom.mes.mapper.MesAutoReportRuleMapper;
 import com.kitex.mom.mes.service.*;
+import com.kitex.mom.mes.util.MesWorksiteTriggerProjection;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -270,7 +271,7 @@ public class MesAutoReportProcessorImpl implements MesAutoReportProcessor {
         if (!Objects.equals(event.getDeviceCode(), arrange.getPlannedDeviceCode())) {
             throw new CheckedException("事件设备与派工任务的APS锁定设备不一致");
         }
-        if (!WorksiteTypeEnum.AUTO.name().equalsIgnoreCase(arrange.getWorksiteTypes())) {
+        if (MesWorksiteTriggerProjection.forExecution(null, arrange) != WorksiteTypeEnum.AUTO) {
             throw new CheckedException("派工任务不是自动报工工位，禁止设备事件驱动报工");
         }
         if (!matchesRuleScope(arrange, rule)) {

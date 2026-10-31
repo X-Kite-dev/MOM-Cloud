@@ -96,7 +96,8 @@ public class QmsReworkResultPublisherTransactionTest {
                         QmsInspectionProcedureTaskEntity.class,
                         QmsInspectionProductTaskEntity.class,
                         QmsInspectionProcedureHandleRecordEntity.class,
-                        QmsInspectionProductHandleRecordEntity.class)) table(config, type);
+                        QmsInspectionProductHandleRecordEntity.class,
+                        QmsInspectionProductItemResultRecordEntity.class)) table(config, type);
         for (var type :
                 List.of(
                         QmsReworkResultOutboxMapper.class,
@@ -113,6 +114,9 @@ public class QmsReworkResultPublisherTransactionTest {
                             public net.sf.jsqlparser.expression.Expression getTenantId() {
                                 return new net.sf.jsqlparser.expression.LongValue(
                                         TenantContextHolder.getTenantId());
+                            }
+                            public boolean ignoreTable(String table) {
+                                return table.toLowerCase(java.util.Locale.ROOT).endsWith("_item_result_record");
                             }
                         }));
         var factory = new MybatisSqlSessionFactoryBean();
@@ -1090,7 +1094,7 @@ public class QmsReworkResultPublisherTransactionTest {
                             ? "bigint"
                             : t == Integer.class
                                     ? "integer"
-                                    : t == BigDecimal.class
+                                    : t == Boolean.class ? "boolean" : t == Double.class ? "double" : t == BigDecimal.class
                                             ? "decimal(24,8)"
                                             : t == LocalDateTime.class || t == Date.class
                                                     ? "timestamp"

@@ -4,6 +4,7 @@ import com.kitex.common.core.util.R;
 import com.kitex.mom.wms.dto.app.WmsInBillDetailAppDTO;
 import com.kitex.mom.wms.entity.WmsInNoticeEntity;
 import com.kitex.mom.wms.service.inBill.WmsInBillFactory;
+import com.kitex.mom.wms.service.WmsReturnReceiptAccessService;
 import com.kitex.mom.wms.service.inBill.WmsInBillHandler;
 import com.kitex.mom.wms.service.inNotice.DefaultWmsInNoticeService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -27,31 +28,37 @@ import org.springframework.web.bind.annotation.*;
 @SecurityRequirement(name = HttpHeaders.AUTHORIZATION)
 public class AppInBillController {
 
-    private final DefaultWmsInNoticeService inNoticeService;
+	private final DefaultWmsInNoticeService inNoticeService;
+	private final WmsReturnReceiptAccessService returnReceiptAccess;
 
-    /**
-     * 查询入库通知单详情
-     *
-     * @return R  对象
-     */
-    @Operation(summary = "查询入库通知单详情", description = "查询入库通知单详情")
-    @GetMapping("/detailsById")
-    public R getDetails(@RequestParam Long id) {
-        return R.ok(inNoticeService.selectByIdApp(id));
-    }
+	/**
+	 * 查询入库通知单详情
+	 *
+	 * @return R  对象
+	 */
+	@Operation(summary = "查询入库通知单详情", description = "查询入库通知单详情")
+	@GetMapping("/detailsById")
+	public R getDetails(@RequestParam Long id) {
+		WmsInNoticeEntity notice = inNoticeService.selectByIdApp(id);
+		if (notice != null && "return".equals(notice.getBillType())
+				&& "mom_mes.mes_warehouse_stock_feed_judge".equals(notice.getDocumentTable())) {
+			notice.setReturnReceiptCapabilities(returnReceiptAccess.capabilities(notice));
+		}
+		return R.ok(notice);
+	}
 
-    /**
-     * 入库
-     * 提交某一条物料数量，更新入库单已收数量或生成入库单
-     *
-     * @return R  对象
-     */
-    @Operation(summary = "入库", description = "入库")
-    @PostMapping("/setInBillNum")
-    public R setInBillNum(@RequestBody @Valid WmsInBillDetailAppDTO params) {
-        WmsInNoticeEntity inNotice = inNoticeService.selectById(params.getNoticeId());
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(inNotice.getBillType());
-        String billNo = handler.setInBillNum(params);
-        return R.ok(billNo);
-    }
+	/**
+	 * 入库
+	 * 提交某一条物料数量，更新入库单已收数量或生成入库单
+	 *
+	 * @return R  对象
+	 */
+	@Operation(summary = "入库", description = "入库")
+	@PostMapping("/setInBillNum")
+	public R setInBillNum(@RequestBody @Valid WmsInBillDetailAppDTO params) {
+		WmsInNoticeEntity inNotice = inNoticeService.selectById(params.getNoticeId());
+		WmsInBillHandler handler = WmsInBillFactory.getHandler(inNotice.getBillType());
+		String billNo = handler.setInBillNum(params);
+		return R.ok(billNo);
+	}
 }

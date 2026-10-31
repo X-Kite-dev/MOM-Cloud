@@ -113,6 +113,9 @@ public class WmsOutNoticeEntity extends BaseEntity<WmsOutNoticeEntity> {
     @TableField(fill = FieldFill.INSERT)
     private String factoryCode;
 
+    /** MES来源受理修订号；旧来源按第1次修订处理。 */
+    private Integer sourceAcceptanceRevision;
+
     @ExcelIgnore
     @TableField(exist = false)
     @EntityMapping(thisField = "id", joinField = "noticeId")

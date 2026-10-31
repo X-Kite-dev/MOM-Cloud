@@ -16,8 +16,10 @@ import com.kitex.mom.wms.dto.WmsAllocationCancelDTO;
 import com.kitex.mom.wms.dto.WmsAllocationReturnDTO;
 import com.kitex.mom.wms.dto.WmsCrossWarehouseTransferDTO;
 import com.kitex.mom.wms.dto.app.WmsAllocationBillAppDTO;
+import com.kitex.mom.wms.dto.app.WmsAllocationMobileReceiptDTO;
 import com.kitex.mom.wms.entity.WmsAllocationBillEntity;
 import com.kitex.mom.wms.service.WmsAllocationBillService;
+import com.kitex.mom.wms.service.WmsAllocationMobileReceiptService;
 import com.kitex.mom.wms.vo.WmsAllocationBillExcelVO;
 import com.kitex.mom.wms.vo.WmsAllocationBillVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -48,6 +50,8 @@ import java.util.stream.Collectors;
 public class WmsAllocationBillController {
 
     private final WmsAllocationBillService wmsAllocationBillService;
+
+    private final WmsAllocationMobileReceiptService mobileReceiptService;
 
     private final PermissionService permissionService;
 
@@ -177,6 +181,20 @@ public class WmsAllocationBillController {
     @PostMapping("/app")
     public R<Boolean> appSave(@RequestBody @Valid WmsAllocationBillAppDTO wmsAllocationBillAdd) {
         return R.ok(wmsAllocationBillService.appSaveAllocationBill(wmsAllocationBillAdd));
+    }
+
+    @Operation(summary = "撤销未执行的即时调拨原请求")
+    @PostMapping("/app/receipts/cancel")
+    public R<WmsAllocationMobileReceiptDTO.View> cancelMobileOriginal(
+            @Valid @RequestBody WmsAllocationMobileReceiptDTO.Cancellation input) {
+        return R.ok(mobileReceiptService.cancel(input));
+    }
+
+    @Operation(summary = "查询即时调拨原办理结果")
+    @GetMapping("/app/receipts/{requestId}")
+    public R<WmsAllocationMobileReceiptDTO.View> appReceipt(@PathVariable String requestId,
+                                                          @RequestParam String warehouseCode) {
+        return R.ok(mobileReceiptService.lookup(requestId, warehouseCode));
     }
 
     /**

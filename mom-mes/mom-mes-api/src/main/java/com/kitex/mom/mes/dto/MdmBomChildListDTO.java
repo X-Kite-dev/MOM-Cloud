@@ -9,6 +9,6 @@ import java.util.List;
 @AllArgsConstructor
 public class MdmBomChildListDTO extends MdmBomChildDTO {
 
-    private List<MdmBomChildDTO> children;
+    private List<MdmBomChildListDTO> children;
 
 }

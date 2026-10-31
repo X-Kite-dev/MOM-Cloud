@@ -90,12 +90,12 @@ public class MesTaskArrangeEntity extends BaseEntity<MesTaskArrangeEntity> {
     @TableField(updateStrategy = FieldStrategy.NEVER)
     private String routeExecutionSchemaVersion;
 
-    @Schema(description = "原工序任务的冻结前序节点CSV")
-    @TableField(updateStrategy = FieldStrategy.NEVER)
+    @Schema(description = "原工序任务的冻结前序节点CSV；起点空串须原样复制")
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL, updateStrategy = FieldStrategy.NEVER)
     private String predecessorNodeCodes;
 
-    @Schema(description = "原工序任务的冻结后序节点CSV")
-    @TableField(updateStrategy = FieldStrategy.NEVER)
+    @Schema(description = "原工序任务的冻结后序节点CSV；终点空串须原样复制")
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL, updateStrategy = FieldStrategy.NEVER)
     private String successorNodeCodes;
 
     @Schema(description = "原工序任务的冻结节点时间规则JSON")
@@ -141,10 +141,12 @@ public class MesTaskArrangeEntity extends BaseEntity<MesTaskArrangeEntity> {
     @Schema(description = "工序顺序")
     private Integer routeOrder;
 
-    @Schema(description = "前置工序编码，多个逗号分隔")
+    @Schema(description = "前置工序编码，多个逗号分隔；新执行图起点须保留空串")
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL)
     private String predecessorCodes;
 
-    @Schema(description = "后置工序编码，多个逗号分隔")
+    @Schema(description = "后置工序编码，多个逗号分隔；新执行图终点须保留空串")
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL)
     private String successorCodes;
 
     @Schema(description = "允许达到转移批量后放行后序")

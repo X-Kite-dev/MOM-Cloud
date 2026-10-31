@@ -3,10 +3,14 @@ package com.kitex.mom.mes.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
+import com.kitex.mom.mes.entity.MesProduceTaskEntity;
 import com.kitex.mom.mes.entity.MesToolingExecutionEntity;
 import com.kitex.mom.mes.enums.MesDeviceGateStageEnum;
 import com.kitex.mom.mes.enums.WorksiteTypeEnum;
 import com.kitex.mom.mes.mapper.MesToolingExecutionMapper;
+import com.kitex.mom.mes.mapper.MesProduceTaskMapper;
+import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
+import com.kitex.mom.mes.util.MesWorksiteTriggerProjection;
 import com.kitex.mom.mes.service.MesChangePointHandleService;
 import com.kitex.mom.mes.service.MesDeviceGateService;
 import com.kitex.mom.mes.service.MesExecutionTemplateService;
@@ -27,6 +31,7 @@ import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 @RequiredArgsConstructor
 public class MesProductionNgAdmission {
     private final MesExecutionTemplateService templates;
+    private final MesProduceTaskMapper parents;
     private final MesToolingExecutionMapper tooling;
     private final MesDeviceGateService devices;
     private final MesChangePointHandleService changePoints;
@@ -47,7 +52,15 @@ public class MesProductionNgAdmission {
                 "当前认证员工不是该原派工的指定执行人");
         require(worksite != null && !worksite.isBlank() && Objects.equals(worksite, arrange.getActualWorksiteCode()),
                 "采集工站须与原派工接收时确认的实际工站相同");
-        require(WorksiteTypeEnum.fromCode(arrange.getWorksiteTypes()) != WorksiteTypeEnum.AUTO
+        var originalParents = parents.selectList(new LambdaQueryWrapper<MesProduceTaskEntity>()
+                .eq(MesProduceTaskEntity::getTenantId, arrange.getTenantId())
+                .eq(MesProduceTaskEntity::getFactoryCode, arrange.getFactoryCode())
+                .eq(MesProduceTaskEntity::getTaskCode, arrange.getTaskCode())
+                .eq(MesProduceTaskEntity::getCode, arrange.getProduceTaskCode()).last("LIMIT 2"));
+        require(originalParents.size() == 1, "原派工工序归属缺失或不唯一，无法核对报工方式");
+        var parent = originalParents.get(0);
+        MesFrozenExecutionGraph.assertArrangement(parent, arrange);
+        require(MesWorksiteTriggerProjection.forExecution(parent, arrange) != WorksiteTypeEnum.AUTO
                 || !overrideReason.isBlank(), "自动工站人工接管必须明确原因");
         require(!Boolean.TRUE.equals(contract.getDeviceRequired())
                         || arrange.getPlannedDeviceCode() != null && !arrange.getPlannedDeviceCode().isBlank(),

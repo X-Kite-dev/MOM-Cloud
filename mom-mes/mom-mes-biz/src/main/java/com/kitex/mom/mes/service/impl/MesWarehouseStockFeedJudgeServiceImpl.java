@@ -16,6 +16,7 @@ import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
 import com.kitex.mom.mes.dto.MesMaterialReturnWithdrawDTO;
+import com.kitex.mom.mes.dto.MesMaterialReturnActionDTO;
 import com.kitex.mom.mes.dto.MesWarehouseFeedDTO;
 import com.kitex.mom.mes.dto.MesWarehouseFeedJudgeDTO;
 import com.kitex.mom.mes.entity.*;
@@ -29,7 +30,9 @@ import com.kitex.mom.wms.entity.WmsInNoticeDetailEntity;
 import com.kitex.mom.wms.entity.WmsInNoticeEntity;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -67,11 +70,133 @@ public class MesWarehouseStockFeedJudgeServiceImpl
     }
 
     @Override
+    @PreAuthorize("@pms.hasPermission('stockFeedJudge:judge')")
+    public MesMaterialReturnActionDTO.Context reviewContext() {
+        return actionContext("REVIEW");
+    }
+
+    @Override
+    @PreAuthorize("@pms.hasPermission('stockFeedJudge:submit')")
+    public MesMaterialReturnActionDTO.Context withdrawContext() {
+        return actionContext("WITHDRAW");
+    }
+
+    @Override
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    @PreAuthorize("@pms.hasPermission('stockFeedJudge:judge')")
+    public MesMaterialReturnActionDTO.Receipt reviewReceipt(String requestId) {
+        return actionReceipt(requestId, actionContext("REVIEW"));
+    }
+
+    @Override
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    @PreAuthorize("@pms.hasPermission('stockFeedJudge:submit')")
+    public MesMaterialReturnActionDTO.Receipt withdrawReceipt(String requestId) {
+        return actionReceipt(requestId, actionContext("WITHDRAW"));
+    }
+
+    private MesMaterialReturnActionDTO.Context actionContext(String kind) {
+        String factory = factoryAccess.require("read");
+        MomUser user = actor();
+        return new MesMaterialReturnActionDTO.Context("MES_RETURN_ACTION_CONTEXT_V1", kind,
+                TenantContextHolder.getTenantId().toString(), factory, user.getId().toString(), user.getUsername());
+    }
+
+    private MesMaterialReturnActionDTO.Receipt actionReceipt(String requestId, MesMaterialReturnActionDTO.Context context) {
+        require(validRequestId(requestId), "请提供原审核或撤回操作号");
+        Long tenant = Long.valueOf(context.tenantId());
+        Long actor = Long.valueOf(context.actorUserId());
+        List<String> types = "REVIEW".equals(context.kind())
+                ? List.of("APPROVE", "REJECT", "MARK_STALE") : List.of("WITHDRAW");
+        var operation = operationMapper.selectOne(new LambdaQueryWrapper<MesMaterialReturnOperationEntity>()
+                .eq(MesMaterialReturnOperationEntity::getTenantId, tenant)
+                .eq(MesMaterialReturnOperationEntity::getFactoryCode, context.factoryCode())
+                .eq(MesMaterialReturnOperationEntity::getOperatorId, actor)
+                .eq(MesMaterialReturnOperationEntity::getOperatorCode, context.actorCode())
+                .eq(MesMaterialReturnOperationEntity::getRequestId, requestId)
+                .in(MesMaterialReturnOperationEntity::getOperationType, types));
+        MesWarehouseStockFeedJudgeEntity request = null;
+        if (operation != null) {
+            require(Objects.equals(operation.getTenantId(), tenant)
+                            && Objects.equals(operation.getFactoryCode(), context.factoryCode())
+                            && Objects.equals(operation.getOperatorId(), actor)
+                            && Objects.equals(operation.getOperatorCode(), context.actorCode())
+                            && Objects.equals(operation.getRequestId(), requestId)
+                            && types.contains(operation.getOperationType())
+                            && operation.getReturnRequestId() != null && operation.getReturnRequestId() > 0
+                            && "SUBMITTED".equals(operation.getBeforeStatus())
+                            && validFingerprint(operation.getRequestFingerprint()), "原退料操作归属、类型或依据不一致");
+            request = baseMapper.selectOne(new LambdaQueryWrapper<MesWarehouseStockFeedJudgeEntity>()
+                    .eq(MesWarehouseStockFeedJudgeEntity::getId, operation.getReturnRequestId())
+                    .eq(MesWarehouseStockFeedJudgeEntity::getTenantId, tenant)
+                    .eq(MesWarehouseStockFeedJudgeEntity::getFactoryCode, context.factoryCode()));
+            require(request != null && Objects.equals(request.getId(), operation.getReturnRequestId())
+                            && Objects.equals(request.getTenantId(), tenant)
+                            && Objects.equals(request.getFactoryCode(), context.factoryCode())
+                            && "V2".equals(request.getWorkflowVersion()), "原操作的退料申请不可核验");
+            String expected = switch (operation.getOperationType()) {
+                case "APPROVE" -> "APPROVED";
+                case "REJECT" -> "REJECTED";
+                case "MARK_STALE" -> "STALE";
+                default -> "WITHDRAWN";
+            };
+            require(expected.equals(operation.getAfterStatus()) && expected.equals(request.getStatus()),
+                    "原操作与申请终态不一致");
+            if ("REVIEW".equals(context.kind())) {
+                require(Objects.equals(request.getReviewRequestId(), requestId)
+                                && Objects.equals(request.getReviewFingerprint(), operation.getRequestFingerprint())
+                                && Objects.equals(request.getReviewerId(), actor)
+                                && Objects.equals(request.getJudgePersonCode(), context.actorCode()), "原审核没有绑定本人永久操作");
+            } else {
+                require(Objects.equals(request.getApplicantId(), actor)
+                                && Objects.equals(request.getApplicantCode(), context.actorCode()), "原撤回不属于当前申请人");
+            }
+        }
+        return new MesMaterialReturnActionDTO.Receipt("MES_RETURN_ACTION_RECEIPT_V1", context, requestId, operation, request);
+    }
+
+    @Override
+    @PreAuthorize("@pms.hasPermission('stockFeedJudge:submit')")
+    public MesWarehouseFeedDTO.SubmissionContext submissionContext() {
+        String factory = factoryAccess.require("read");
+        MomUser user = actor();
+        return new MesWarehouseFeedDTO.SubmissionContext("MES_RETURN_SUBMISSION_CONTEXT_V1",
+                TenantContextHolder.getTenantId().toString(), factory, user.getId().toString(), user.getUsername());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    @PreAuthorize("@pms.hasPermission('stockFeedJudge:submit')")
+    public MesWarehouseFeedDTO.Submission submissionReceipt(String requestId) {
+        var context = submissionContext();
+        require(validRequestId(requestId), "请提供原退料提交请求号");
+        var request = baseMapper.selectOne(new LambdaQueryWrapper<MesWarehouseStockFeedJudgeEntity>()
+                .eq(MesWarehouseStockFeedJudgeEntity::getTenantId, Long.valueOf(context.tenantId()))
+                .eq(MesWarehouseStockFeedJudgeEntity::getFactoryCode, context.factoryCode())
+                .eq(MesWarehouseStockFeedJudgeEntity::getApplicantId, Long.valueOf(context.actorUserId()))
+                .eq(MesWarehouseStockFeedJudgeEntity::getApplicantCode, context.actorCode())
+                .eq(MesWarehouseStockFeedJudgeEntity::getRequestId, requestId));
+        if (request != null) {
+            require(Objects.equals(request.getTenantId(), Long.valueOf(context.tenantId()))
+                            && Objects.equals(request.getFactoryCode(), context.factoryCode())
+                            && Objects.equals(request.getApplicantId(), Long.valueOf(context.actorUserId()))
+                            && Objects.equals(request.getApplicantCode(), context.actorCode())
+                            && Objects.equals(request.getRequestId(), requestId)
+                            && "V2".equals(request.getWorkflowVersion()), "原退料申请身份、版本或请求号不一致");
+        }
+        return new MesWarehouseFeedDTO.Submission("MES_RETURN_SUBMISSION_V1", context, requestId, request);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public IPage<MesWarehouseStockFeedJudgeEntity> pageRequests(Page<MesWarehouseStockFeedJudgeEntity> page,
                                                                 MesWarehouseStockFeedJudgeEntity query) {
         String factory = factoryAccess.require("read");
+        page.setCurrent(Math.max(1, page.getCurrent()));
+        page.setSize(Math.min(100, Math.max(1, page.getSize())));
         LambdaQueryWrapper<MesWarehouseStockFeedJudgeEntity> wrapper = new LambdaQueryWrapper<MesWarehouseStockFeedJudgeEntity>()
+                // 列表不读取逐库存行冻结快照；原申请详情仍完整提供。
+                .select(MesWarehouseStockFeedJudgeEntity.class, field -> !"evidence_snapshot".equals(field.getColumn()))
                 .eq(MesWarehouseStockFeedJudgeEntity::getFactoryCode, factory)
                 .eq(StrUtil.isNotBlank(query.getStatus()), MesWarehouseStockFeedJudgeEntity::getStatus, query.getStatus())
                 .like(StrUtil.isNotBlank(query.getCode()), MesWarehouseStockFeedJudgeEntity::getCode, query.getCode())
@@ -224,7 +349,7 @@ public class MesWarehouseStockFeedJudgeServiceImpl
         String wmsRequestId = "MES-MATERIAL-RETURN:" + request.getId();
         R<Boolean> result = inNoticeService.produceReturn(buildInNotice(request, wmsRequestId));
         require(result != null && result.isOk() && Boolean.TRUE.equals(result.getData()),
-                "WMS未确认生产退料通知；结果不明时请使用新的审批操作号重新批准，WMS来源号保持幂等");
+                "WMS未确认生产退料通知；请保留原审核操作核对并同号重试，WMS来源号保持不变");
         request.setWmsRequestId(wmsRequestId).setWmsStatus("ACCEPTED")
                 .setWmsReceiptStatus("WAITING").setWmsActualReceivedNum(BigDecimal.ZERO)
                 .setWmsShortageNum(request.getNum()).setWmsOverageNum(BigDecimal.ZERO)

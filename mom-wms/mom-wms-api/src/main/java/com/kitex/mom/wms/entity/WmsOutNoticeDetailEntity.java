@@ -27,6 +27,10 @@ import java.time.LocalDate;
 @Schema(description = "wms_out_notice_detail")
 public class WmsOutNoticeDetailEntity extends BaseEntity<WmsOutNoticeDetailEntity> {
 
+    /** 原MES领料明细标识，仅用于建立永久受理关联，不改变documentId含义。 */
+    @TableField(exist = false)
+    private Long sourceDocumentDetailId;
+
     @Schema(description = "指定出库库存货权：OWNED/CUSTOMER_SUPPLIED/CONSIGNED")
     private String stockOwnerType;
 

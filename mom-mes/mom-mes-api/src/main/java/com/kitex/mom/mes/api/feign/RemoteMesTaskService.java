@@ -38,6 +38,7 @@ public interface RemoteMesTaskService {
     R<MesTaskIssueReceiptDTO> recoverReceiveReceipt(
             @RequestBody List<MesTaskReceiveDTO> candidates);
 
+    @InternalCall
     @PostMapping("/mesTask/rework")
     R<String> addRework(@RequestBody MesTaskReceiveDTO receive);
 

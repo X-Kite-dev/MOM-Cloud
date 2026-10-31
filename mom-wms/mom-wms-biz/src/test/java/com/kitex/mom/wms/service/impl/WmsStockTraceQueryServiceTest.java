@@ -11,6 +11,7 @@ import com.kitex.common.security.component.PermissionService;
 import com.kitex.mom.mdm.entity.MdmWarehouseEntity;
 import com.kitex.mom.mdm.feign.RemoteWarehouseService;
 import com.kitex.mom.wms.dto.WmsStockTraceDTO;
+import com.kitex.mom.wms.repository.WmsOrganizationTransferRepository;
 import com.kitex.mom.wms.entity.WmsInoutFlowEntity;
 import com.kitex.mom.wms.entity.WmsLiveStockEntity;
 import com.kitex.mom.wms.entity.WmsMaterialMoveSiteEntity;
@@ -49,9 +50,11 @@ class WmsStockTraceQueryServiceTest {
             mock(WmsSalesStockReservationDetailMapper.class);
     private final PermissionService permissions = mock(PermissionService.class);
     private final RemoteWarehouseService warehouses = mock(RemoteWarehouseService.class);
+    private final WmsOrganizationTransferRepository organizationTransfers =
+            mock(WmsOrganizationTransferRepository.class);
     private final WmsStockTraceQueryService service = new WmsStockTraceQueryService(stocks, flows, moves, pickings,
             pickingEvents,
-            reservations, salesReservations, permissions, warehouses);
+            reservations, salesReservations, permissions, warehouses, organizationTransfers);
 
     @BeforeAll
     static void initializeTableMetadata() {

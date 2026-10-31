@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mes.mapper.MesInspectionGenRecordMapper">
+    <sql id="workbenchColumns">r.id,r.tenant_id,r.factory_code,r.task_code,r.produce_task_code,r.rule_code,r.rule_name,r.inspection_id,r.inspection_type,r.source_request_id,r.gen_flag,r.gen_remark,r.gen_time,r.inspection_status,r.inspection_result,r.gate_status,r.qms_total_num,r.qms_usable_num,r.qms_handle_num,r.qms_handle_result,r.blocked_count,r.sync_message,r.last_sync_time,r.last_blocked_time</sql>
+    <sql id="workbenchScope">
+        r.tenant_id=#{tenant} AND r.factory_code=#{factory} AND r.del_flag='0'
+    </sql>
+    <sql id="workbenchFilters">
+        <include refid="workbenchScope"/>
+        <if test="q.taskCode != null">AND r.task_code=#{q.taskCode}</if>
+        <if test="q.produceTaskCode != null">AND r.produce_task_code=#{q.produceTaskCode}</if>
+        <if test="q.gateStatus != null">AND r.gate_status=#{q.gateStatus}</if>
+        <if test="q.inspectionType != null">
+            AND CASE UPPER(TRIM(r.inspection_type)) WHEN '首检' THEN 'FIRST' WHEN '中检' THEN 'MIDDLE'
+                WHEN '末检' THEN 'LAST' ELSE UPPER(TRIM(r.inspection_type)) END = #{q.inspectionType}
+        </if>
+        <if test="q.generationStatus == 'GENERATED'">AND r.gen_flag='1' AND r.inspection_id &gt; 0</if>
+        <if test="q.generationStatus == 'NOT_GENERATED'">AND (r.gen_flag IS DISTINCT FROM '1' OR r.inspection_id IS NULL OR r.inspection_id &lt;= 0)</if>
+    </sql>
+    <select id="workbenchCount" resultType="long">
+        SELECT COUNT(*) FROM mom_mes.mes_inspection_gen_record r WHERE <include refid="workbenchFilters"/>
+    </select>
+    <select id="workbenchRows" resultType="com.kitex.mom.mes.entity.MesInspectionGenRecordEntity">
+        SELECT <include refid="workbenchColumns"/> FROM mom_mes.mes_inspection_gen_record r WHERE <include refid="workbenchFilters"/>
+        ORDER BY r.gen_time DESC NULLS LAST,r.id DESC LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="workbenchDetail" resultType="com.kitex.mom.mes.entity.MesInspectionGenRecordEntity">
+        SELECT <include refid="workbenchColumns"/> FROM mom_mes.mes_inspection_gen_record r WHERE <include refid="workbenchScope"/> AND r.id=#{id}
+    </select>
+</mapper>

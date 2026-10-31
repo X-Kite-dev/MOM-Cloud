@@ -92,6 +92,10 @@ public interface WmsLiveStockService extends IService<WmsLiveStockEntity> {
     void transferIn(WmsInoutFlowEntity sourceFlow, String warehouseCode, String warehouseName,
                     String siteCode, String siteName, String containerCode);
 
+    /** 组织调拨在接收方实际上下文写入库存并返回独立实物标识。 */
+    Long transferInWithEvidence(WmsInoutFlowEntity sourceFlow, String warehouseCode, String warehouseName,
+                                String siteCode, String siteName, String containerCode);
+
     /**
      * 按不可变销售发运证据恢复一条独立库存行，供尚未离场的受控红冲使用。
      */

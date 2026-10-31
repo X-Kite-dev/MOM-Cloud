@@ -93,6 +93,8 @@ public class WmsWarehouseLifecycleService {
 						.longValue()) {
 			throw new CheckedException("清理仓库业务配置失败");
 		}
+		int organizationPolicies = mapper.disableOrganizationPolicy(tenant, factory, warehouseCode);
+		if (organizationPolicies < 0 || organizationPolicies > 1) throw new CheckedException("库存组织停用结果不确定，禁止删除仓库");
 		Long policyCount = mapper.countDashboardPolicy(tenant, factory, warehouseCode);
 		if (policyCount == null || mapper.deleteDashboardPolicy(tenant, factory, warehouseCode) != policyCount) {
 			throw new CheckedException("清理仓库看板配置失败");

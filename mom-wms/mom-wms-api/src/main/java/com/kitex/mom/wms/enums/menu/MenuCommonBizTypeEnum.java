@@ -53,7 +53,8 @@ public enum MenuCommonBizTypeEnum {
     /**
      * 调拨接收
      */
-    ALLOCATION_RECEIVE("allocation_receive", "调拨接收", "/wms/commonBiz/allocationBill/receive/index", "", 22),
+    ALLOCATION_RECEIVE("allocation_receive", "调拨接收", "/wms/commonBiz/allocationBill/receive/index", "/pages-wms/order/allocationBill/inTransit", 22),
+    ORGANIZATION_TRANSFER("organization_transfer", "组织调拨", "/wms/commonBiz/organizationTransfer/index", "/pages-wms/order/organizationTransfer/index", 23),
     /**
      * 库内移动
      */

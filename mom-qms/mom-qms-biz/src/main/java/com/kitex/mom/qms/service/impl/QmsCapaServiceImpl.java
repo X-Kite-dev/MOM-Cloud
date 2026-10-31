@@ -81,10 +81,36 @@ public class QmsCapaServiceImpl extends ServiceImpl<QmsCapaMapper, QmsCapaEntity
                 .eq(QmsCapaActionEntity::getCapaId, capaId)
                 .orderByAsc(QmsCapaActionEntity::getCycleNo)
                 .orderByAsc(QmsCapaActionEntity::getCreateTime));
-        LocalDateTime now = LocalDateTime.now();
-        list.forEach(item -> item.setOverdueFlag(item.getDueTime() != null && item.getDueTime().isBefore(now)
-                && !Set.of("COMPLETED", "REJECTED", "CANCELLED").contains(item.getStatus())));
+        list.forEach(this::markActionOverdue);
         return list;
+    }
+
+    /** 先按原案件鉴权，再在数据库分页前限制措施范围。定位不到不回退到其他措施。 */
+    @Override
+    public Page<QmsCapaActionEntity> actionPage(Long capaId, long current, long size, Integer cycleNo, String status, Long actionId) {
+        require(capaId != null && capaId > 0 && current > 0 && current <= 100000 && size > 0 && size <= 100,
+                "措施分页范围无效，每页最多100条");
+        require(cycleNo == null || cycleNo > 0, "措施周期必须为正数");
+        require(actionId == null || actionId > 0, "原措施主键无效");
+        require(status == null || status.isBlank() || Set.of("PENDING_ACCEPT", "IN_PROGRESS", "COMPLETED", "REJECTED", "CANCELLED").contains(status),
+                "措施状态不合法");
+        getDetail(capaId);
+        var result = actionMapper.selectPage(new Page<QmsCapaActionEntity>(current, size), new LambdaQueryWrapper<QmsCapaActionEntity>()
+                .eq(QmsCapaActionEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(QmsCapaActionEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
+                .eq(QmsCapaActionEntity::getCapaId, capaId)
+                .eq(cycleNo != null, QmsCapaActionEntity::getCycleNo, cycleNo)
+                .eq(status != null && !status.isBlank(), QmsCapaActionEntity::getStatus, status)
+                .eq(actionId != null, QmsCapaActionEntity::getId, actionId)
+                .orderByDesc(QmsCapaActionEntity::getCycleNo).orderByDesc(QmsCapaActionEntity::getId));
+        result.getRecords().forEach(this::markActionOverdue);
+        return result;
+    }
+
+    /** 展示派生逾期状态，不修改原期限、执行状态或有效性验证。 */
+    private void markActionOverdue(QmsCapaActionEntity item) {
+        item.setOverdueFlag(item.getDueTime() != null && item.getDueTime().isBefore(LocalDateTime.now())
+                && !Set.of("COMPLETED", "REJECTED", "CANCELLED").contains(item.getStatus()));
     }
 
     @Override

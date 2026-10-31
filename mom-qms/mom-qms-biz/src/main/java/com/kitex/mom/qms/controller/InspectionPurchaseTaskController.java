@@ -22,9 +22,12 @@ import com.kitex.mom.qms.service.InspectionPurchaseHandleRecordService;
 import com.kitex.mom.qms.service.InspectionPurchaseHistoryService;
 import com.kitex.mom.qms.service.InspectionPurchaseTaskService;
 import com.kitex.mom.qms.service.QmsReworkOrderService;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -58,10 +61,12 @@ public class InspectionPurchaseTaskController {
         return R.ok(service.existTask(matCode, supplierCode, batchNo));
     }
 
-    @Operation(summary = "根据物料/供应商/批次号 查询质检任务, 创建质检时使用", description = "根据物料/供应商/批次号 查询质检任务, 创建质检时使用")
+    @Operation(
+            summary = "根据物料/供应商/批次号 查询质检任务, 创建质检时使用",
+            description = "根据物料/供应商/批次号 查询质检任务, 创建质检时使用")
     @GetMapping("/getTaskByMatCodeAndSupplierCodeAndBatchNo")
-    public R<QmsInspectionPurchaseTaskEntity> getTaskByMatCodeAndSupplierCodeAndBatchNo(String matCode,
-                                                                                        String supplierCode, String batchNo) {
+    public R<QmsInspectionPurchaseTaskEntity> getTaskByMatCodeAndSupplierCodeAndBatchNo(
+            String matCode, String supplierCode, String batchNo) {
         return R.ok(service.getTaskByMatCodeAndSupplierCodeAndBatchNo(matCode, supplierCode, batchNo));
     }
 
@@ -192,7 +197,7 @@ public class InspectionPurchaseTaskController {
     @Operation(summary = "返工返修", description = "返工返修")
     @PostMapping("/handleRework")
     public R<com.kitex.mom.qms.entity.QmsReworkOrderEntity> handleRework(Long id) {
-        return R.ok(reworkOrderService.create("PURCHASE", id));
+        return R.ok(reworkOrderService.createManual("PURCHASE", id));
     }
 
     /**

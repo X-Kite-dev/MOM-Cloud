@@ -5,7 +5,7 @@ import cn.hutool.extra.spring.SpringUtil;
 import java.util.Map;
 
 /**
- * 入库单工厂类
+ * 出库单处理器工厂
  */
 public class WmsOutBillFactory {
 

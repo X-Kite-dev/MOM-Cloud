@@ -55,6 +55,7 @@ public class MesWarehouseFeedCommandServiceImpl
     private final MesWarehouseFeedBirthService births;
     private final PlatformTransactionManager transactions;
     private final MesWarehouseFeedPreparationReader preparation;
+    private final MesWarehouseFeedHandoffReader handoff;
 
     @Override
     @PreAuthorize("@pms.hasPermission('mes_mesWarehouseFeed_add')")
@@ -62,6 +63,24 @@ public class MesWarehouseFeedCommandServiceImpl
         String factory = access.require("read");
         ready();
         return new MesWarehouseFeedCommandDTO.Context(tenant().toString(), factory, actor().toString(), COMMAND_VERSION);
+    }
+
+    @Override
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehouseFeed_add')")
+    @Transactional(propagation = Propagation.NEVER)
+    public MesWarehouseFeedPreparationDTO.ReceiptSeed receiptSeed(Long noticeId) {
+        var template = independent(true);
+        template.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+        return template.execute(status -> handoff.receiptSeed(noticeId, context()));
+    }
+
+    @Override
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehouseFeed_add')")
+    @Transactional(propagation = Propagation.NEVER)
+    public MesWarehouseFeedPreparationDTO.Candidates candidates(long current, long size, String taskCode, String keyword) {
+        var template = independent(true);
+        template.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+        return template.execute(status -> handoff.candidates(current, size, taskCode, keyword, context()));
     }
 
     @Override

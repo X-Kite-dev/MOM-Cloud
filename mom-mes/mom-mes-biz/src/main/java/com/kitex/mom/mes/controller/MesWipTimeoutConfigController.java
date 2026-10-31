@@ -1,16 +1,22 @@
 package com.kitex.mom.mes.controller;
 
 import cn.hutool.core.collection.CollUtil;
+
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.mom.mes.entity.MesWipTimeoutConfigEntity;
 import com.kitex.mom.mes.service.MesWipTimeoutConfigService;
+import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,13 +27,19 @@ import org.springframework.web.bind.annotation.*;
 public class MesWipTimeoutConfigController {
 
     private final MesWipTimeoutConfigService service;
+    private final MesActualFactoryAccessService access;
 
     @Operation(summary = "分页查询")
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('mesWipTimeoutConfig:show')")
-    public R<IPage<MesWipTimeoutConfigEntity>> page(Page<MesWipTimeoutConfigEntity> pageParam, MesWipTimeoutConfigEntity query) {
+    public R<IPage<MesWipTimeoutConfigEntity>> page(
+            Page<MesWipTimeoutConfigEntity> pageParam, MesWipTimeoutConfigEntity query) {
         QueryWrapper<MesWipTimeoutConfigEntity> qw = QueryGenerator.initQueryWrapper(query);
-        qw.lambda().orderByDesc(MesWipTimeoutConfigEntity::getCreateTime);
+        String factory = access.require("read");
+        qw.lambda()
+                .eq(MesWipTimeoutConfigEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MesWipTimeoutConfigEntity::getFactoryCode, factory)
+                .orderByDesc(MesWipTimeoutConfigEntity::getCreateTime);
         return R.ok(service.page(pageParam, qw));
     }
 
@@ -50,7 +62,7 @@ public class MesWipTimeoutConfigController {
     @GetMapping("/getById")
     @PreAuthorize("@pms.hasPermission('mesWipTimeoutConfig:show')")
     public R<MesWipTimeoutConfigEntity> getById(Long id) {
-        return R.ok(service.getById(id));
+        return R.ok(service.readData(id));
     }
 
     @Operation(summary = "删除")

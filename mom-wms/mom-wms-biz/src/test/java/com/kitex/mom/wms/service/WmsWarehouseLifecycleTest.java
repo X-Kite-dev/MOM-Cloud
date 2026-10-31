@@ -91,7 +91,11 @@ class WmsWarehouseLifecycleTest {
 				+ ";DB_CLOSE_DELAY=-1", "sa", "");
 		source.setDriverClassName("org.h2.Driver");
 		db = new JdbcTemplate(source);
-		Map<String, Set<String>> columns = new LinkedHashMap<>();
+		db.execute("CREATE SCHEMA mom_wms");
+        var organizationSql = java.nio.file.Files.readString(java.nio.file.Path.of("../database/wms-organization-transfer-pg.sql"));
+        var organizationTables = java.util.regex.Pattern.compile("CREATE TABLE IF NOT EXISTS[\\s\\S]*?;").matcher(organizationSql);
+        while (organizationTables.find()) db.execute(organizationTables.group());
+        Map<String, Set<String>> columns = new LinkedHashMap<>();
 		for (String fixture : REFERENCES) {
 			String[] fields = fixture.split(",");
 			columns.computeIfAbsent(fields[0], ignored -> new LinkedHashSet<>()).add(fields[1]);
@@ -402,4 +406,13 @@ class WmsWarehouseLifecycleTest {
 
 		assertThrows(RuntimeException.class, () -> service.references("W1"));
 	}
+ @Test
+ void unusedOrganizationPolicyIsDeactivatedDuringCleanupAndBindingIsRetained() {
+  db.update("INSERT INTO mom_wms.wms_org_transfer_policy VALUES(1,1,'F1','W1','原辅仓','CA','甲公司',true,true,1,'admin',CURRENT_TIMESTAMP)");
+  service.cleanup("W1");
+  assertFalse(db.queryForObject("SELECT enabled FROM mom_wms.wms_org_transfer_policy WHERE id=1",Boolean.class));
+  assertEquals("CA",db.queryForObject("SELECT company_code FROM mom_wms.wms_org_transfer_policy WHERE id=1",String.class));
+  assertEquals(2,db.queryForObject("SELECT version FROM mom_wms.wms_org_transfer_policy WHERE id=1",Integer.class));
+ }
+
 }

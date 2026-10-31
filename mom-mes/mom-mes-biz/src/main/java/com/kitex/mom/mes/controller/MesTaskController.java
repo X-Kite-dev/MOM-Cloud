@@ -2,6 +2,7 @@ package com.kitex.mom.mes.controller;
 
 
 import cn.hutool.core.util.StrUtil;
+
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -13,9 +14,12 @@ import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.service.MesTaskService;
 import com.kitex.mom.mes.service.impl.MesTaskInWmsCoordinator;
 import com.kitex.mom.mes.vo.MesTaskReportOmsVO;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -55,9 +59,10 @@ public class MesTaskController {
     }
 
     @Operation(summary = "接收QMS返工工单", description = "按原工单冻结BOM和指定返工工序创建可执行返工工单，永久幂等")
+    @Inner
     @PostMapping("/rework")
     public R<String> addRework(@RequestBody MesTaskReceiveDTO receive) {
-        return R.ok(service.addRework(receive));
+        return R.ok(service.addRework(receive), null);
     }
 
     @Operation(summary = "重试返工完工回传", description = "对已完工但QMS复检任务创建失败的返工工单进行幂等重试")
@@ -99,11 +104,13 @@ public class MesTaskController {
         return R.ok(service.withdrawPlan(command));
     }
 
-    @Operation(summary = "内部查询来源数量请求映射",
+    @Operation(
+            summary = "内部查询来源数量请求映射",
             description = "按MES请求号返回本次实际归集到各PLAN计划的数量增量，供QMS等事实源精确核对回执")
     @GetMapping("/internal/source-quantity-mapping")
-    public R<MesSourceQuantityMappingDTO> sourceQuantityMapping(@RequestParam("requestId") String requestId,
-                                                                @RequestParam("factoryCode") String factoryCode) {
+    public R<MesSourceQuantityMappingDTO> sourceQuantityMapping(
+            @RequestParam("requestId") String requestId,
+            @RequestParam("factoryCode") String factoryCode) {
         return R.ok(service.sourceQuantityMapping(requestId, factoryCode));
     }
 

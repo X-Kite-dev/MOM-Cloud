@@ -11,6 +11,10 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.mom.wms.dto.WmsInNoticeDetailQueryDTO;
 import com.kitex.mom.wms.dto.WmsInNoticeQueryDTO;
+import com.kitex.mom.wms.dto.WmsProductionNoticeAcceptanceDTO;
+import com.kitex.mom.wms.dto.WmsProductionNoticeProgressDTO;
+import com.kitex.mom.wms.service.noticeAcceptance.WmsProductionNoticeAcceptanceService;
+import com.kitex.mom.wms.service.noticeAcceptance.WmsProductionNoticeProgressService;
 import com.kitex.mom.wms.entity.WmsOutBillEntity;
 import com.kitex.mom.wms.entity.WmsOutNoticeEntity;
 import com.kitex.mom.wms.enums.OutBillTypeEnum;
@@ -34,6 +38,9 @@ import java.util.Map;
 @RequestMapping("/produce/picking/outNotice")
 @Tag(description = "ProductionPickingOutNotice", name = "生产领料出库通知单")
 public class WmsProductionPickingOutNoticeController {
+
+    private final WmsProductionNoticeAcceptanceService acceptance;
+    private final WmsProductionNoticeProgressService progress;
 
     // 生产领料编码
     private final String billType = OutBillTypeEnum.PRODUCE_OUT.getCode();
@@ -78,11 +85,50 @@ public class WmsProductionPickingOutNoticeController {
      */
     @PostMapping("/add")
     @Operation(summary = "新增生产领料出库通知单", description = "新增生产领料出库通知单")
-    public R add(@RequestBody WmsOutNoticeEntity wmsOutNoticeEntity) {
+    public R<Boolean> add(@RequestBody WmsOutNoticeEntity wmsOutNoticeEntity) {
         wmsOutNoticeEntity.setBillType(billType);
         WmsOutNoticeHandler handler = WmsOutNoticeFactory.getHandler(billType);
         Boolean result = handler.saveDeep(wmsOutNoticeEntity);
-        return result ? R.ok() : R.failed();
+        return Boolean.TRUE.equals(result) ? R.ok(Boolean.TRUE) : R.failed();
+    }
+
+    @PostMapping("/v1/accept")
+    @Operation(summary = "受理生产领料通知并返回永久回执")
+    public R<WmsProductionNoticeAcceptanceDTO.Receipt> accept(
+            @RequestBody WmsProductionNoticeAcceptanceDTO.Command command) {
+        return R.ok(acceptance.accept(command));
+    }
+
+    @PostMapping("/v1/batch")
+    @Operation(summary = "在同一WMS事务内受理多仓生产领料通知")
+    public R<List<WmsProductionNoticeAcceptanceDTO.Receipt>> acceptBatch(
+            @RequestBody List<WmsProductionNoticeAcceptanceDTO.Command> commands) {
+        return R.ok(acceptance.acceptBatch(commands));
+    }
+
+    @GetMapping("/v1/source")
+    public R<WmsProductionNoticeAcceptanceDTO.Source> receiptBySource(@RequestParam String warehouseCode,
+                                                                      @RequestParam Long documentId,
+                                                                      @RequestParam int sourceRevision) {
+        return R.ok(acceptance.source(warehouseCode, documentId, sourceRevision));
+    }
+
+    @GetMapping("/v1/notices/{noticeId}/progress")
+    @Operation(summary = "按当前仓库通知单核对受理、分配及关联出库单")
+    public R<WmsProductionNoticeProgressDTO> progress(@PathVariable Long noticeId, @RequestParam String warehouseCode) {
+        return R.ok(progress.progress(warehouseCode, noticeId));
+    }
+
+    @GetMapping("/v1/requests/{requestId}")
+    public R<WmsProductionNoticeAcceptanceDTO.Lookup> receiptByRequest(@PathVariable String requestId,
+                                                                       @RequestParam(defaultValue = "") String warehouseCode) {
+        return R.ok(acceptance.lookup(warehouseCode, requestId));
+    }
+
+    @PostMapping("/v1/cancel")
+    public R<WmsProductionNoticeAcceptanceDTO.Receipt> cancelSource(
+            @RequestBody WmsProductionNoticeAcceptanceDTO.Cancel command) {
+        return R.ok(acceptance.cancel(command));
     }
 
     /**
@@ -99,7 +145,7 @@ public class WmsProductionPickingOutNoticeController {
     /**
      * 查询生产领料出库通知单详情
      */
-    @GetMapping("/detailsById")
+    @GetMapping({"/detailsById", "/details"})
     @Operation(summary = "查询生产领料出库通知单详情", description = "查询生产领料出库通知单详情")
     public R details(Long id) {
         WmsOutNoticeHandler handler = WmsOutNoticeFactory.getHandler(billType);
@@ -197,7 +243,8 @@ public class WmsProductionPickingOutNoticeController {
         }
         wrapper.lambda().like(StrUtil.isNotBlank(queryDTO.getId()), WmsOutNoticeEntity::getId, queryDTO.getId())
                 .eq(StrUtil.isNotBlank(queryDTO.getState()), WmsOutNoticeEntity::getState, queryDTO.getState())
-                .like(StrUtil.isNotBlank(queryDTO.getWarehouseCode()), WmsOutNoticeEntity::getWarehouseCode, queryDTO.getWarehouseCode())
+                .like(StrUtil.isNotBlank(queryDTO.getWarehouseCode()), WmsOutNoticeEntity::getWarehouseCode,
+                        queryDTO.getWarehouseCode())
                 .like(StrUtil.isNotBlank(queryDTO.getCreateBy()), BaseCore::getCreateBy, queryDTO.getCreateBy())
                 .eq(WmsOutNoticeEntity::getBillType, billType)
                 .orderByAsc(WmsOutNoticeEntity::getState)
@@ -214,7 +261,8 @@ public class WmsProductionPickingOutNoticeController {
             }
         }
         wrapper.lambda().like(StrUtil.isNotBlank(queryDTO.getId()), WmsOutNoticeEntity::getId, queryDTO.getId())
-                .like(StrUtil.isNotBlank(queryDTO.getWarehouseCode()), WmsOutNoticeEntity::getWarehouseCode, queryDTO.getWarehouseCode())
+                .like(StrUtil.isNotBlank(queryDTO.getWarehouseCode()), WmsOutNoticeEntity::getWarehouseCode,
+                        queryDTO.getWarehouseCode())
                 .like(StrUtil.isNotBlank(queryDTO.getCreateBy()), BaseCore::getCreateBy, queryDTO.getCreateBy())
                 .eq(WmsOutNoticeEntity::getBillType, billType);
         return wrapper;

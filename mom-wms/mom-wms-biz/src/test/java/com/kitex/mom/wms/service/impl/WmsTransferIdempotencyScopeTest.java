@@ -3,6 +3,7 @@ package com.kitex.mom.wms.service.impl;
 import cn.hutool.json.JSONUtil;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.component.PermissionService;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.mom.wms.dto.WmsTransferReceiptDTO;
@@ -50,6 +51,7 @@ class WmsTransferIdempotencyScopeTest {
 
     @BeforeEach
     void setUser() {
+        TenantContextHolder.setTenantId(1L);
         MomUser user = mock(MomUser.class);
         when(user.getUsername()).thenReturn("receiver-a");
         SecurityContextHolder.getContext().setAuthentication(
@@ -59,6 +61,7 @@ class WmsTransferIdempotencyScopeTest {
     @AfterEach
     void clearScope() {
         FactoryContextHolder.clear();
+        TenantContextHolder.clear();
         SecurityContextHolder.clearContext();
     }
 
@@ -191,6 +194,7 @@ class WmsTransferIdempotencyScopeTest {
         WmsAllocationBillEntity bill = new WmsAllocationBillEntity().setFactoryCode("F1")
                 .setNewWarehouseCode("W2").setAllocationState("RECEIVED");
         bill.setId(7L);
+        bill.setTenantId(1L);
         return bill;
     }
 

@@ -1,0 +1,9 @@
+package com.kitex.mom.wms.mapper;
+
+import com.kitex.common.data.datascope.MomBaseMapper;
+import com.kitex.mom.wms.entity.WmsAllocationReturnExceptionLineEntity;
+import org.apache.ibatis.annotations.Mapper;
+
+@Mapper
+public interface WmsAllocationReturnExceptionLineMapper extends MomBaseMapper<WmsAllocationReturnExceptionLineEntity> {
+}

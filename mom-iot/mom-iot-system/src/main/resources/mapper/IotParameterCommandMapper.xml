@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.iot.parameter.IotParameterCommandMapper">
+    <sql id="scope">tenant_id=#{tenant} AND factory_code=#{factory}</sql>
+    <select id="find" resultType="com.kitex.mom.iot.parameter.IotParameterCommand">
+        SELECT * FROM mom_iot.iot_parameter_command WHERE <include refid="scope"/> AND request_id=#{request}
+    </select>
+    <select id="lock" resultType="com.kitex.mom.iot.parameter.IotParameterCommand">
+        SELECT * FROM mom_iot.iot_parameter_command WHERE <include refid="scope"/> AND request_id=#{request} FOR UPDATE
+    </select>
+    <select id="list" resultType="com.kitex.mom.iot.parameter.IotParameterCommand">
+        SELECT * FROM mom_iot.iot_parameter_command WHERE <include refid="scope"/> AND task_code=#{task}
+        <if test="before != null">AND request_id &lt; #{before}</if> ORDER BY request_id DESC LIMIT 21
+    </select>
+    <select id="active" resultType="int">
+        SELECT COUNT(*) FROM mom_iot.iot_parameter_command WHERE <include refid="scope"/> AND device_code=#{device}
+        AND request_id != #{except} AND state IN ('REQUESTED','RECEIVED','EXECUTED','UNKNOWN')
+    </select>
+    <insert id="insertCommand">
+        INSERT INTO mom_iot.iot_parameter_command(tenant_id,factory_code,request_id,actor_id,request_hash,request_json,context_hash,context_json,task_code,arrange_code,device_id,device_code,firmware_version,device_snapshot,mode,scenario,state,created_at,requested_at,updated_at)
+        VALUES(#{tenantId},#{factoryCode},#{requestId},#{actorId},#{requestHash},#{requestJson},#{contextHash},#{contextJson},#{taskCode},#{arrangeCode},#{deviceId},#{deviceCode},#{firmwareVersion},#{deviceSnapshot},#{mode},#{scenario},#{state},#{createdAt},#{requestedAt},#{updatedAt})
+    </insert>
+    <update id="updateState">
+        UPDATE mom_iot.iot_parameter_command SET state=#{state},requested_at=#{requestedAt},updated_at=#{updatedAt}
+        WHERE tenant_id=#{tenantId} AND factory_code=#{factoryCode} AND request_id=#{requestId}
+    </update>
+    <select id="receipts" resultType="com.kitex.mom.iot.parameter.IotParameterReceipt">
+        SELECT * FROM mom_iot.iot_parameter_receipt WHERE <include refid="scope"/> AND request_id=#{request} ORDER BY stage
+    </select>
+    <insert id="insertReceipt">
+        INSERT INTO mom_iot.iot_parameter_receipt(tenant_id,factory_code,request_id,stage,fact_json,fact_hash,received_at)
+        VALUES(#{tenantId},#{factoryCode},#{requestId},#{stage},#{factJson},#{factHash},#{receivedAt})
+    </insert>
+    <select id="journal" resultType="com.kitex.mom.iot.parameter.IotParameterSimExecution">
+        SELECT * FROM mom_iot.iot_parameter_sim_execution WHERE <include refid="scope"/> AND request_id=#{request}
+    </select>
+    <insert id="insertJournal">
+        INSERT INTO mom_iot.iot_parameter_sim_execution(tenant_id,factory_code,request_id,command_hash,device_code,firmware_version,outcome,execution_count,values_json,received_at,executed_at,read_back_at)
+        VALUES(#{tenantId},#{factoryCode},#{requestId},#{commandHash},#{deviceCode},#{firmwareVersion},#{outcome},#{executionCount},#{valuesJson},#{receivedAt},#{executedAt},#{readBackAt})
+    </insert>
+</mapper>

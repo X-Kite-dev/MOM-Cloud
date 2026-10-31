@@ -64,6 +64,15 @@ public class QmsCapaController {
         return R.ok(service.causes(id));
     }
 
+    /** 沿原CAPA查看权限，按精确案件读取措施；不承接Agent自动执行动作。 */
+    @GetMapping("/{id}/actions/page")
+    @PreAuthorize("@pms.hasPermission('capa:show')")
+    public R<?> actionPage(@PathVariable Long id, @RequestParam(defaultValue = "1") long current,
+                          @RequestParam(defaultValue = "20") long size, @RequestParam(required = false) Integer cycleNo,
+                          @RequestParam(required = false) String status, @RequestParam(required = false) Long actionId) {
+        return R.ok(service.actionPage(id, current, size, cycleNo, status, actionId));
+    }
+
     @GetMapping("/{id}/operations")
     @PreAuthorize("@pms.hasPermission('capa:show')")
     public R<?> operations(@PathVariable Long id) {

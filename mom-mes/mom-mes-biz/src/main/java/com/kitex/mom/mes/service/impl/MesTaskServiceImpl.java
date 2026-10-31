@@ -40,10 +40,8 @@ import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
 import com.kitex.mom.oms.enums.OrderLongStateEnum;
 import com.kitex.mom.plan.feign.RemotePlnIssueService;
 import com.kitex.mom.qms.api.feign.RemoteProcedureService;
-import com.kitex.mom.qms.api.feign.RemoteQmsReworkService;
 import com.kitex.mom.qms.api.feign.RemoteQualityStandardService;
 import com.kitex.mom.qms.dto.QmsProcedureSourceWithdrawalDTO;
-import com.kitex.mom.qms.dto.QmsReworkCompletionDTO;
 import com.kitex.mom.qms.dto.inspection.InspectionProcedureCreateParam;
 import com.kitex.mom.qms.entity.QmsQualityStandardEntity;
 import com.kitex.mom.qms.enums.InspectionMethodEnum;
@@ -85,7 +83,8 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     private final RemoteMaterialService materialService;
     private final MesInspectionRuleService inspectionRuleService;
     private final RemoteProcedureService remoteProcedureService;
-    private final MesQmsInspectionCoordinator qmsInspectionCoordinator;
+    private final MesQmsInspectionCommandService qmsInspectionCommands;
+    private final MesInspectionGenerationDispatcher inspectionGeneration;
     private final RemoteQualityStandardService remoteQualityStandardService;
     private final RemoteParamService remoteParamService;
     private final RemoteClassesService remoteClassesService;
@@ -94,7 +93,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     private final RemoteProductInNoticeService inNoticeService;
     private final RemoteMaterialService matService;
     private final MesTaskArrangeMapper mesTaskArrangeMapper;
-    private final RemoteQmsReworkService remoteQmsReworkService;
+    private final MesReworkCompletionCoordinator reworkCompletions;
     private final MesReworkMaterialPlanService reworkMaterialPlans;
     private final MesQualityQuantityService qualityQuantityService;
     private final MesApsBatchAllocationMapper apsBatchAllocationMapper;
@@ -971,32 +970,50 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         if (requestId.length() > 64) {
             throw new CheckedException("返工请求号长度不能超过64位");
         }
-        MesTaskEntity existing = this.getOne(new LambdaQueryWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getReworkRequestId, requestId), false);
-        if (existing != null) {
-            if (!Objects.equals(existing.getSourceInspectionType(), receive.getSourceInspectionType())
-                    || !Objects.equals(existing.getSourceInspectionTaskId(), receive.getSourceInspectionTaskId())
-                    || !Objects.equals(existing.getSourceHandleRecordId(), receive.getSourceHandleRecordId())
-                    || StrUtil.isNotBlank(existing.getSourceProduceTaskCode())
-                    && !Objects.equals(existing.getSourceProduceTaskCode(), StrUtil.trim(receive.getSourceProduceTaskCode()))) {
-                throw new CheckedException("返工请求号已被其他质量处置使用");
-            }
-            return existing.getCode();
-        }
-        if (StrUtil.isBlank(receive.getSourceTaskCode()) || receive.getNoticeNum() == null
-                || receive.getNoticeNum().signum() <= 0) {
-            throw new CheckedException("返工必须提供原生产工单和大于0的返工数量");
-        }
-        String inspectionType = StrUtil.trim(receive.getSourceInspectionType());
+        MesQualityGateSourceEvidence.scope();
+        String inspectionType = optionalReworkCode(receive.getSourceInspectionType());
         inspectionType = inspectionType == null ? null : inspectionType.toUpperCase(Locale.ROOT);
-        if (!Set.of("PROCEDURE", "PRODUCT").contains(inspectionType)) {
-            throw new CheckedException("当前仅允许过程检或成品检处置生成MES返工工单");
-        }
-        MesTaskEntity source = this.getOne(new LambdaQueryWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getCode, receive.getSourceTaskCode().trim()));
-        if (source == null) {
-            throw new CheckedException("未找到质量处置对应的原生产工单：" + receive.getSourceTaskCode());
-        }
+        if (inspectionType == null
+                || !Set.of("PROCEDURE", "PRODUCT").contains(inspectionType)
+                || StrUtil.isBlank(receive.getSourceTaskCode())
+                || StrUtil.isBlank(receive.getMatCode())
+                || receive.getNoticeNum() == null
+                || receive.getNoticeNum().signum() <= 0
+                || receive.getSourceInspectionTaskId() == null
+                || receive.getSourceInspectionTaskId() <= 0
+                || receive.getSourceHandleRecordId() == null
+                || receive.getSourceHandleRecordId() <= 0)
+            throw new CheckedException("返工必须提供实际来源工单、检验处置、物料和正数数量");
+        MesTaskEntity existing =
+                this.getOne(
+                        new LambdaQueryWrapper<MesTaskEntity>()
+                                .eq(MesTaskEntity::getReworkRequestId, requestId)
+                                .eq(MesTaskEntity::getTenantId, TenantContextHolder.getTenantId())
+                                .eq(
+                                        MesTaskEntity::getFactoryCode,
+                                        FactoryContextHolder.getFactoryCode()));
+        if (existing != null) return replayRework(existing, receive, inspectionType);
+        MesTaskEntity source =
+                this.getOne(
+                        new LambdaQueryWrapper<MesTaskEntity>()
+                                .eq(MesTaskEntity::getCode, receive.getSourceTaskCode().trim())
+                                .eq(MesTaskEntity::getTenantId, TenantContextHolder.getTenantId())
+                                .eq(
+                                        MesTaskEntity::getFactoryCode,
+                                        FactoryContextHolder.getFactoryCode())
+                                .last("FOR UPDATE"));
+        if (source == null) throw new CheckedException("当前实际组织不存在返工来源生产工单");
+        // 与首次空查询用不同SQL重查，避免原事务一级缓存掩盖并发首笔提交。
+        existing =
+                this.getOne(
+                        new LambdaQueryWrapper<MesTaskEntity>()
+                                .eq(MesTaskEntity::getReworkRequestId, requestId)
+                                .eq(MesTaskEntity::getTenantId, TenantContextHolder.getTenantId())
+                                .eq(
+                                        MesTaskEntity::getFactoryCode,
+                                        FactoryContextHolder.getFactoryCode())
+                                .last("FOR UPDATE"));
+        if (existing != null) return replayRework(existing, receive, inspectionType);
         if (source.getBomId() == null || source.getProcessRouteId() == null
                 || StrUtil.isBlank(source.getBomSnapshot()) || StrUtil.isBlank(source.getProcessRouteSnapshot())) {
             throw new CheckedException("原生产工单缺少冻结BOM或工艺路线，不能生成可执行返工工单");
@@ -1034,8 +1051,19 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         reworkRoute.setIsInspection("0");
 
         MesTaskEntity rework = new MesTaskEntity();
-        BeanUtil.copyProperties(source, rework, "id", "code", "status", "planNo", "materialReservationSnapshot",
-                "apsOperationSnapshot", "createBy", "createTime", "updateBy", "updateTime");
+        BeanUtil.copyProperties(
+                source,
+                rework,
+                "id",
+                "code",
+                "status",
+                "planNo",
+                "materialReservationSnapshot",
+                "apsOperationSnapshot",
+                "createBy",
+                "createTime",
+                "updateBy",
+                "updateTime");
         rework.setCode(remoteSeqConfigService.create("mes_task").getData());
         if (StrUtil.isBlank(rework.getCode())) {
             throw new CheckedException("返工工单编码生成失败");
@@ -1116,6 +1144,35 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         return rework.getCode();
     }
 
+    private String replayRework(
+            MesTaskEntity row, MesTaskReceiveDTO command, String inspectionType) {
+        if (!"REWORK".equals(row.getResourceType())
+                || StrUtil.isBlank(row.getCode())
+                || !Objects.equals(row.getSourceInspectionType(), inspectionType)
+                || !Objects.equals(
+                        row.getSourceInspectionTaskId(), command.getSourceInspectionTaskId())
+                || !Objects.equals(row.getSourceHandleRecordId(), command.getSourceHandleRecordId())
+                || !Objects.equals(row.getSourceTaskCode(), command.getSourceTaskCode().trim())
+                || !Objects.equals(
+                        optionalReworkCode(row.getSourceProduceTaskCode()),
+                        optionalReworkCode(command.getSourceProduceTaskCode()))
+                || !Objects.equals(row.getMatCode(), command.getMatCode())
+                || row.getNoticeNum() == null
+                || row.getNoticeNum().compareTo(command.getNoticeNum()) != 0
+                || !Objects.equals(
+                        optionalReworkCode(row.getReworkReason()),
+                        optionalReworkCode(command.getReworkReason()))
+                || StrUtil.isNotBlank(command.getReworkProcessCode())
+                        && !Objects.equals(
+                                row.getReworkProcessCode(), command.getReworkProcessCode().trim()))
+            throw new CheckedException("返工原请求号对应不同来源、物料、数量、工序或原因，不能重复成功");
+        return row.getCode();
+    }
+
+    private String optionalReworkCode(String value) {
+        return StrUtil.isBlank(value) ? null : value.trim();
+    }
+
     /**
      * 正式返工先锁定原实际工序任务，再解析稳定节点。主工序编码只用于核对和兼容旧唯一路线，
      * 不能在重复主工序路线里用findFirst猜选某一次加工。
@@ -1180,81 +1237,15 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public Long notifyReworkCompletion(Long taskId, String produceTaskCode, BigDecimal completedQuantity) {
-        MesTaskEntity task = this.getOne(new LambdaQueryWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getId, taskId).last("FOR UPDATE"));
-        if (task == null || !"REWORK".equals(task.getResourceType())) {
-            return null;
-        }
-        if ("SUCCEEDED".equals(task.getReworkCallbackStatus()) && task.getReinspectionTaskId() != null) {
-            return task.getReinspectionTaskId();
-        }
-        MesProduceTaskEntity produceTask = produceTaskService.getOne(new LambdaQueryWrapper<MesProduceTaskEntity>()
-                .eq(MesProduceTaskEntity::getCode, produceTaskCode));
-        if (produceTask == null || !Boolean.TRUE.equals(produceTask.getLastRoute())) {
-            throw new CheckedException("返工完工回传必须关联最终返工工序");
-        }
-        int callbackCount = Objects.requireNonNullElse(task.getReworkCallbackCount(), 0) + 1;
-        MesTaskEntity sourceTask = this.getOne(new LambdaQueryWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getCode, task.getSourceTaskCode()));
-        if (sourceTask == null) throw new CheckedException("返工工单缺少可归集的原生产工单");
-        if (sourceTask.getPlanNo() != null || sourceTask.getApsBatchNo() != null) {
-            sourceQuantityService.record(sourceTask, "REWORK-COMPLETED:" + task.getReworkRequestId(),
-                    MesSourceQuantityKind.REWORK_COMPLETED, completedQuantity, task.getCode(),
-                    "返工工单【" + task.getCode() + "】完工，数量【" + completedQuantity + "】");
-        }
-        try {
-            QmsReworkCompletionDTO command = new QmsReworkCompletionDTO();
-            command.setRequestId(task.getReworkRequestId());
-            command.setMesTaskCode(task.getCode());
-            command.setMesProduceTaskCode(produceTask.getCode());
-            command.setCompletedQuantity(completedQuantity);
-            command.setProcessCode(produceTask.getRouteCode());
-            command.setProcessName(produceTask.getRouteName());
-            R<Long> response = remoteQmsReworkService.mesComplete(command);
-            if (response == null || !response.isOk() || response.getData() == null) {
-                throw new IllegalStateException(response == null ? "QMS未返回复检任务" : response.getMsg());
-            }
-            if (!this.update(new LambdaUpdateWrapper<MesTaskEntity>()
-                    .eq(MesTaskEntity::getId, task.getId())
-                    .set(MesTaskEntity::getReworkCallbackStatus, "SUCCEEDED")
-                    .set(MesTaskEntity::getReworkCallbackMessage, "已创建返工复检任务")
-                    .set(MesTaskEntity::getReworkCallbackCount, callbackCount)
-                    .set(MesTaskEntity::getReinspectionTaskId, response.getData())
-                    .set(MesTaskEntity::getReinspectionStatus, "WAIT")
-                    .set(MesTaskEntity::getReinspectionMessage, "等待QMS返工复检结论"))) {
-                throw new CheckedException("返工完工回传成功但本地复检事实保存失败");
-            }
-            return response.getData();
-        } catch (Exception exception) {
-            this.update(new LambdaUpdateWrapper<MesTaskEntity>()
-                    .eq(MesTaskEntity::getId, task.getId())
-                    .set(MesTaskEntity::getReworkCallbackStatus, "FAILED")
-                    .set(MesTaskEntity::getReworkCallbackMessage,
-                            StrUtil.maxLength(rootMessage(exception), 1000))
-                    .set(MesTaskEntity::getReworkCallbackCount, callbackCount));
-            return null;
-        }
+        return reworkCompletions.notifyCompletion(taskId, produceTaskCode, completedQuantity);
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public Long retryReworkCallback(Long taskId) {
-        MesTaskEntity task = this.getById(taskId);
-        if (task == null || !"REWORK".equals(task.getResourceType())) {
-            throw new CheckedException("返工工单不存在");
-        }
-        if (!MesTaskStatusEnum.FINISH.name().equals(task.getStatus())) {
-            throw new CheckedException("返工工单尚未完工，不能创建复检任务");
-        }
-        MesProduceTaskEntity finalTask = produceTaskService.getOne(new LambdaQueryWrapper<MesProduceTaskEntity>()
-                .eq(MesProduceTaskEntity::getTaskCode, task.getCode())
-                .eq(MesProduceTaskEntity::getLastRoute, Boolean.TRUE));
-        if (finalTask == null) {
-            throw new CheckedException("返工工单缺少最终工序");
-        }
-        return notifyReworkCompletion(taskId, finalTask.getCode(), task.getCompleteNum());
+        MesQualityGateSourceEvidence.scope();
+        factoryAccess.require("write");
+        return reworkCompletions.retry(taskId);
     }
 
     @Override
@@ -1577,7 +1568,9 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
             throw new CheckedException("请先维护工艺路线信息");
         }
         // 根据工艺路线保存生产工序任务表
-        List<MdmProcessRouteWorkingDTO> routeList = JSONUtil.toList(mesTask.getProcessRouteSnapshot(), MdmProcessRouteWorkingDTO.class);
+        List<MdmProcessRouteWorkingDTO> routeList = engineering == null
+                ? JSONUtil.toList(mesTask.getProcessRouteSnapshot(), MdmProcessRouteWorkingDTO.class)
+                : engineeringPackages.executionRoutes(engineering);
         normalizeRouteGraph(routeList);
         // 新正式返工在QMS派发时已经用原实际工序锁定稳定节点，可冻结单节点执行合同；
         // 升级前没有节点身份的历史返工继续沿原合同，不能在下达时借当前MDM补造节点。
@@ -1940,73 +1933,111 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         // 根据物料查询质检任务生成规则
         MesInspectionRuleEntity inspectionRule = inspectionRuleService.getRuleByMatCode(matCode);
         List<MesInspectionGenRecordEntity> recordList = new ArrayList<>();
+        List<MesInspectionGenRecordEntity> delivery = new ArrayList<>();
         // 生成质检任务
-        saveTaskList.forEach(task -> {
-            // 需要质检
-            if ("1".equals(task.getIsInspection())) {
-                // 设置了规则才创建
-                if (Objects.nonNull(inspectionRule) && containsInspectionType(inspectionRule,
-                        ProcedureLabelTypeEnum.FIRST)) {
-                    String sourceRequestId = "MES_QMS_V2:" + task.getCode() + ":FIRST";
-                    InspectionProcedureCreateParam createParam = null;
-                    Long procedureTaskId = null;
-                    String genFlag = "1";
-                    String msg = "生成质检任务成功";
-                    try {
-                        QmsQualityStandardEntity standard = remoteQualityStandardService.getRandomStandard(
-                                new QmsQualityStandardEntity().setMatCode(task.getMatCode())
-                                        .setInspectionType(InspectionTaskTypeEnum.PROCEDURE.name())).getData();
-                        if (standard == null) {
-                            throw new CheckedException("未匹配到已发布的工序质检标准");
-                        }
-                        createParam = buildCreateParam(task, standard, sourceRequestId);
-                        procedureTaskId = qmsInspectionCoordinator.create(createParam, task.getFactoryCode());
-                    } catch (Exception exception) {
-                        genFlag = "0";
-                        msg = "生成质检任务失败：" + rootMessage(exception);
-                    }
-                    MesInspectionGenRecordEntity record = new MesInspectionGenRecordEntity();
-                    record.setTaskCode(task.getTaskCode());
-                    record.setProduceTaskCode(task.getCode());
-                    record.setInspectionId(procedureTaskId);
-                    record.setSourceRequestId(sourceRequestId);
-                    record.setRuleCode(inspectionRule.getCode());
-                    record.setRuleName(inspectionRule.getName());
-                    record.setInspectionType(ProcedureLabelTypeEnum.FIRST.name());
-                    record.setGenFlag(genFlag);
-                    record.setGenRemark(msg);
-                    record.setGateStatus("1".equals(genFlag) ? QualityGateStatusEnum.PENDING.name()
-                            : QualityGateStatusEnum.ERROR.name());
-                    record.setSyncMessage(msg);
-                    record.setBlockedCount(0);
-                    record.setGenTime(LocalDateTime.now());
-                    try {
-                        record.setGenShiftCode(remoteClassesService.getRuleBanci(LocalDateTime.now()).getData());
-                    } catch (Exception exception) {
-                        record.setSyncMessage(msg + "；班次读取失败：" + rootMessage(exception));
-                    }
-                    if (containsInspectionType(inspectionRule, ProcedureLabelTypeEnum.MIDDLE)) {
-                        if ("HOUR".equals(inspectionRule.getMethod())) {
-                            record.setGenTime(LocalDateTime.now());
-                            record.setNextTime(calculateNextTime(LocalDateTime.now(), inspectionRule.getNum()));
-                        } else {
-                            // 获取下一班次
-                            List<MdmClassesEntity> banciList = remoteClassesService.getClassesBydate(DateUtil.formatDateTime(new Date()), 2).getData();
-                            if (CollUtil.isEmpty(banciList) || banciList.size() < 2) {
-                                record.setGenFlag("0");
-                                record.setGateStatus(QualityGateStatusEnum.ERROR.name());
-                                record.setGenRemark("中检班次计划生成失败：未找到下一班次");
-                            } else {
-                                record.setNextShift(banciList.get(1).getShiftCode());
+        saveTaskList.forEach(
+                task -> {
+                    // 需要质检
+                    if ("1".equals(task.getIsInspection())) {
+                        // 设置了规则才创建
+                        if (Objects.nonNull(inspectionRule)
+                                && containsInspectionType(
+                                        inspectionRule, ProcedureLabelTypeEnum.FIRST)) {
+                            String sourceRequestId = "MES_QMS_V2:" + task.getCode() + ":FIRST";
+                            boolean prepared = false;
+                            String msg = "等待工单提交后生成首检";
+                            try {
+                                QmsQualityStandardEntity standard =
+                                        remoteQualityStandardService
+                                                .getRandomStandard(
+                                                        new QmsQualityStandardEntity()
+                                                                .setMatCode(task.getMatCode())
+                                                                .setInspectionType(
+                                                                        InspectionTaskTypeEnum
+                                                                                .PROCEDURE
+                                                                                .name()))
+                                                .getData();
+                                if (standard == null) {
+                                    throw new CheckedException("未匹配到已发布的工序质检标准");
+                                }
+                                InspectionProcedureCreateParam createParam =
+                                        buildCreateParam(task, standard, sourceRequestId);
+                                MesQualityGateSourceEvidence.scope();
+                                if (!Objects.equals(
+                                                task.getTenantId(),
+                                                TenantContextHolder.getTenantId())
+                                        || !Objects.equals(
+                                                task.getFactoryCode(),
+                                                FactoryContextHolder.getFactoryCode()))
+                                    throw new CheckedException("首检来源与实际组织不一致");
+                                // Register the exact original independently, but never send before
+                                // source commit.
+                                qmsInspectionCommands.register(createParam, task.getFactoryCode());
+                                prepared = true;
+                            } catch (Exception exception) {
+                                msg = "生成质检任务失败：" + rootMessage(exception);
                             }
+                            MesInspectionGenRecordEntity record =
+                                    new MesInspectionGenRecordEntity();
+                            record.setTaskCode(task.getTaskCode());
+                            record.setProduceTaskCode(task.getCode());
+                            record.setSourceRequestId(sourceRequestId);
+                            record.setRuleCode(inspectionRule.getCode());
+                            record.setRuleName(inspectionRule.getName());
+                            record.setInspectionType(ProcedureLabelTypeEnum.FIRST.name());
+                            record.setGenFlag("0");
+                            record.setGenRemark(msg);
+                            record.setGateStatus(
+                                    prepared
+                                            ? QualityGateStatusEnum.PENDING.name()
+                                            : QualityGateStatusEnum.ERROR.name());
+                            record.setSyncMessage(msg);
+                            record.setBlockedCount(0);
+                            record.setGenTime(LocalDateTime.now());
+                            try {
+                                record.setGenShiftCode(
+                                        remoteClassesService
+                                                .getRuleBanci(LocalDateTime.now())
+                                                .getData());
+                            } catch (Exception exception) {
+                                record.setSyncMessage(msg + "；班次读取失败：" + rootMessage(exception));
+                            }
+                            if (containsInspectionType(
+                                    inspectionRule, ProcedureLabelTypeEnum.MIDDLE)) {
+                                if ("HOUR".equals(inspectionRule.getMethod())) {
+                                    record.setGenTime(LocalDateTime.now());
+                                    record.setNextTime(
+                                            calculateNextTime(
+                                                    LocalDateTime.now(), inspectionRule.getNum()));
+                                } else {
+                                    // 获取下一班次
+                                    List<MdmClassesEntity> banciList =
+                                            remoteClassesService
+                                                    .getClassesBydate(
+                                                            DateUtil.formatDateTime(new Date()), 2)
+                                                    .getData();
+                                    if (CollUtil.isEmpty(banciList) || banciList.size() < 2) {
+                                        record.setGenFlag("0");
+                                        record.setGateStatus(QualityGateStatusEnum.ERROR.name());
+                                        record.setGenRemark("中检班次计划生成失败：未找到下一班次");
+                                    } else {
+                                        record.setNextShift(banciList.get(1).getShiftCode());
+                                    }
+                                }
+                            }
+                            record.setFactoryCode(task.getFactoryCode());
+                            record.setTenantId(task.getTenantId());
+                            record.setDelFlag("0");
+                            recordList.add(record);
+                            if (prepared) delivery.add(record);
                         }
                     }
-                    record.setFactoryCode(task.getFactoryCode());
-                    recordList.add(record);
-                }
-            }
-        });
-        genRecordService.saveBatch(recordList);
+                });
+        for (MesInspectionGenRecordEntity record : recordList) {
+            if (!genRecordService.save(record) || record.getId() == null || record.getId() <= 0)
+                throw new CheckedException("首检待生成记录未完整保存，工单下达回滚");
+        }
+        if (!delivery.isEmpty()) inspectionGeneration.afterCommit(delivery);
     }
 
     /**

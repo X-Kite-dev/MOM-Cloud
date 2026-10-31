@@ -52,6 +52,14 @@ class WmsAllocationDetailBalanceTest {
     }
 
     @Test
+    void globalReceivingPermissionCanReadTheSourceNeededForReceiving() {
+        when(permissions.hasPermission(anyString(), anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(false);
+        when(permissions.hasPermission("wms_wmsAllocationReceive_rec")).thenReturn(true);
+        assertEquals(new BigDecimal("4.0"), detail("PARTIALLY_RECEIVED", List.of(receive(6d))).getInTransitQuantity());
+    }
+
+    @Test
     void closedReceiptWithMissingTerminalEvidenceShowsUnreconciledQuantity() {
         WmsDetailDTO line = detail("RECEIVED", List.of(receive(6d)));
 

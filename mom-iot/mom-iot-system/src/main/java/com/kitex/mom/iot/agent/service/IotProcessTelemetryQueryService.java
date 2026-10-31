@@ -33,7 +33,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * 面向智能体的工单 IoT 工艺参数取证。
+ * 工单 IoT 工艺参数取证，供普通生产页面及智能体共同读取。
  *
  * <p>本服务先向 MES 获取实际设备连续生产区间，再在完全相同的租户和工厂范围内聚合
  * {@code scope_verified=true} 的设备属性历史。统计值不是由大模型计算，模型只能解释本服务
@@ -175,6 +175,9 @@ public class IotProcessTelemetryQueryService {
                 || allParameters.size() > MAX_PARAMETERS
                 || evidenceRefs.size() > MAX_EVIDENCE_REFS
                 || gaps.size() > MAX_DATA_GAPS;
+        if (truncated && "CONFORMANT".equals(complianceStatus)) {
+            complianceStatus = "PARTIAL";
+        }
         return new IotProcessTelemetryDTO.Evidence()
                 .setToolCode(TOOL_CODE)
                 .setMetricDefinition(nodeProtocol
@@ -684,6 +687,10 @@ public class IotProcessTelemetryQueryService {
         private String parameterName;
         private String dataType;
         private String unit;
+        private final Set<String> numericUnits = new LinkedHashSet<>();
+        private boolean mixedUnits;
+        private boolean unknownUnitMetadata;
+        private long missingNumericUnits;
         private long sampleCount;
         private long goodSampleCount;
         private long nonGoodSampleCount;
@@ -704,14 +711,26 @@ public class IotProcessTelemetryQueryService {
             parameterName = firstText(parameterName, row.getParameterName());
             dataType = firstText(dataType, row.getDataType());
             unit = firstText(unit, row.getUnit());
+            if (valueOf(row.getNumericGoodSampleCount()) > 0) {
+                if (row.getNumericUnitCount() == null || row.getMissingNumericUnitCount() == null
+                        || row.getNumericUnitCount() < 0 || row.getMissingNumericUnitCount() < 0) {
+                    unknownUnitMetadata = true;
+                } else {
+                    mixedUnits |= row.getNumericUnitCount() > 1;
+                    missingNumericUnits += row.getMissingNumericUnitCount();
+                    if (row.getNumericUnitCount() > 0 && StringUtils.hasText(row.getUnit())) numericUnits.add(row.getUnit().trim());
+                    else if (row.getNumericUnitCount() > 0) unknownUnitMetadata = true;
+                }
+            }
             sampleCount += valueOf(row.getSampleCount());
             goodSampleCount += valueOf(row.getGoodSampleCount());
             nonGoodSampleCount += valueOf(row.getNonGoodSampleCount());
             long numericCount = valueOf(row.getNumericGoodSampleCount());
             numericGoodSampleCount += numericCount;
             if (row.getAverageValue() != null && numericCount > 0) {
-                weightedValueSum = weightedValueSum.add(row.getAverageValue()
-                        .multiply(BigDecimal.valueOf(numericCount)));
+                weightedValueSum =
+                        weightedValueSum.add(
+                                row.getAverageValue().multiply(BigDecimal.valueOf(numericCount)));
             }
             minimumValue = minimum(minimumValue, row.getMinimumValue());
             maximumValue = maximum(maximumValue, row.getMaximumValue());
@@ -726,22 +745,36 @@ public class IotProcessTelemetryQueryService {
             BigDecimal modelMaximum = model == null ? null : model.maximum();
             Boolean within = null;
             List<String> deviations = new ArrayList<>();
-            if (numericGoodSampleCount > 0 && (modelMinimum != null || modelMaximum != null)) {
+            String unitStatus = sampleUnitStatus();
+            String sampleUnit = "KNOWN".equals(unitStatus) ? numericUnits.iterator().next() : null;
+            boolean modelUnitsMatch =
+                    sampleUnit != null
+                            && model != null
+                            && StringUtils.hasText(model.unit())
+                            && sampleUnit.equals(model.unit().trim());
+            if (numericGoodSampleCount > 0
+                    && modelUnitsMatch
+                    && (modelMinimum != null || modelMaximum != null)) {
                 within = Boolean.TRUE;
-                if (modelMinimum != null && minimumValue != null
+                if (modelMinimum != null
+                        && minimumValue != null
                         && minimumValue.compareTo(modelMinimum) < 0) {
                     within = Boolean.FALSE;
                     deviations.add("BELOW_MODEL_MIN");
                 }
-                if (modelMaximum != null && maximumValue != null
+                if (modelMaximum != null
+                        && maximumValue != null
                         && maximumValue.compareTo(modelMaximum) > 0) {
                     within = Boolean.FALSE;
                     deviations.add("ABOVE_MODEL_MAX");
                 }
             }
-            BigDecimal average = numericGoodSampleCount == 0 ? null
-                    : weightedValueSum.divide(BigDecimal.valueOf(numericGoodSampleCount),
-                    MathContext.DECIMAL64);
+            BigDecimal average =
+                    !"KNOWN".equals(unitStatus)
+                            ? null
+                            : weightedValueSum.divide(
+                                    BigDecimal.valueOf(numericGoodSampleCount),
+                                    MathContext.DECIMAL64);
             StandardAssessment assessment = assessStandard(resolution, average, deviations);
             MesProcessTelemetryScopeDTO.FrozenParameterStandard standard = resolution.standard();
             return new IotProcessTelemetryDTO.ParameterEvidence()
@@ -751,44 +784,67 @@ public class IotProcessTelemetryQueryService {
                     .setRouteNodeCode(routeNodeCode)
                     .setProcessCodes(List.copyOf(processCodes))
                     .setIdentifier(identifier)
-                    .setParameterName(model != null && StringUtils.hasText(model.name())
-                            ? model.name() : parameterName)
-                    .setDataType(model != null && StringUtils.hasText(model.dataType())
-                            ? model.dataType() : dataType)
-                    .setUnit(model != null && StringUtils.hasText(model.unit()) ? model.unit() : unit)
+                    .setParameterName(
+                            model != null && StringUtils.hasText(model.name())
+                                    ? model.name()
+                                    : parameterName)
+                    .setDataType(
+                            model != null && StringUtils.hasText(model.dataType())
+                                    ? model.dataType()
+                                    : dataType)
+                    .setUnit(
+                            model != null && StringUtils.hasText(model.unit())
+                                    ? model.unit()
+                                    : unit)
+                    .setSampleUnit(sampleUnit)
+                    .setSampleUnitStatus(unitStatus)
+                    .setStandardUnit(standard == null ? null : standard.getUnit())
                     .setFirstCollectTime(firstCollectTime)
                     .setLastCollectTime(lastCollectTime)
                     .setSampleCount(sampleCount)
                     .setGoodSampleCount(goodSampleCount)
                     .setNonGoodSampleCount(nonGoodSampleCount)
                     .setNumericGoodSampleCount(numericGoodSampleCount)
-                    .setMinimumValue(minimumValue)
-                    .setMaximumValue(maximumValue)
+                    .setMinimumValue("KNOWN".equals(unitStatus) ? minimumValue : null)
+                    .setMaximumValue("KNOWN".equals(unitStatus) ? maximumValue : null)
                     .setAverageValue(average)
                     .setModelMinimum(modelMinimum)
                     .setModelMaximum(modelMaximum)
-                    .setEnvelopeSource(modelMinimum == null && modelMaximum == null
-                            ? null : "IOT_PRODUCT_MODEL")
+                    .setEnvelopeSource(
+                            modelMinimum == null && modelMaximum == null
+                                    ? null
+                                    : "IOT_PRODUCT_MODEL")
                     .setWithinModelEnvelope(within)
                     .setStandardProcessCodes(resolution.processCodes())
                     .setStandardSourceItemIds(resolution.sourceItemIds())
                     .setStandardTargetValue(standard == null ? null : standard.getTargetValue())
                     .setStandardLowerLimit(standard == null ? null : standard.getLowerLimit())
                     .setStandardUpperLimit(standard == null ? null : standard.getUpperLimit())
-                    .setStandardWarningLowerLimit(standard == null ? null : standard.getWarningLowerLimit())
-                    .setStandardWarningUpperLimit(standard == null ? null : standard.getWarningUpperLimit())
-                    .setStandardAggregationMode(standard == null ? null : standard.getAggregationMode())
-                    .setStandardMinimumSampleCount(standard == null ? null : standard.getMinimumSampleCount())
-                    .setStandardMaximumNonGoodRatePct(standard == null
-                            ? null : standard.getMaximumNonGoodRatePct())
+                    .setStandardWarningLowerLimit(
+                            standard == null ? null : standard.getWarningLowerLimit())
+                    .setStandardWarningUpperLimit(
+                            standard == null ? null : standard.getWarningUpperLimit())
+                    .setStandardAggregationMode(
+                            standard == null ? null : standard.getAggregationMode())
+                    .setStandardMinimumSampleCount(
+                            standard == null ? null : standard.getMinimumSampleCount())
+                    .setStandardMaximumNonGoodRatePct(
+                            standard == null ? null : standard.getMaximumNonGoodRatePct())
                     .setProcessStandardSource(standard == null ? null : "MES_FROZEN_MDM")
                     .setProcessComplianceStatus(assessment.status())
                     .setDeviations(deviations);
         }
 
-        private StandardAssessment assessStandard(StandardResolution resolution,
-                                                   BigDecimal average,
-                                                   List<String> deviations) {
+        private String sampleUnitStatus() {
+            if (numericGoodSampleCount == 0) return "NO_SAMPLES";
+            if (mixedUnits || numericUnits.size() > 1) return "MIXED";
+            if (unknownUnitMetadata) return "UNKNOWN";
+            if (missingNumericUnits > 0 || numericUnits.isEmpty()) return "MISSING";
+            return "KNOWN";
+        }
+
+        private StandardAssessment assessStandard(
+                StandardResolution resolution, BigDecimal average, List<String> deviations) {
             MesProcessTelemetryScopeDTO.FrozenParameterStandard standard = resolution.standard();
             if (standard == null) {
                 return new StandardAssessment("NOT_DEFINED");
@@ -797,48 +853,70 @@ public class IotProcessTelemetryQueryService {
                 deviations.add("AMBIGUOUS_FROZEN_PROCESS_STANDARD");
                 return new StandardAssessment("AMBIGUOUS_STANDARD");
             }
-            if (StringUtils.hasText(standard.getUnit()) && StringUtils.hasText(unit)
-                    && !standard.getUnit().trim().equalsIgnoreCase(unit.trim())) {
+            if (!"KNOWN".equals(sampleUnitStatus())) {
+                deviations.add("SAMPLE_UNIT_" + sampleUnitStatus());
+                return new StandardAssessment("INSUFFICIENT_EVIDENCE");
+            }
+            if (!StringUtils.hasText(standard.getUnit())) {
+                deviations.add("STANDARD_UNIT_MISSING");
+                return new StandardAssessment("INSUFFICIENT_EVIDENCE");
+            }
+            if (!standard.getUnit().trim().equals(numericUnits.iterator().next())) {
                 deviations.add("STANDARD_UNIT_MISMATCH");
                 return new StandardAssessment("INSUFFICIENT_EVIDENCE");
             }
-            int minimumSamples = standard.getMinimumSampleCount() == null
-                    ? 1 : standard.getMinimumSampleCount();
+            int minimumSamples =
+                    standard.getMinimumSampleCount() == null ? 1 : standard.getMinimumSampleCount();
             if (numericGoodSampleCount < minimumSamples) {
                 deviations.add("GOOD_NUMERIC_SAMPLE_COUNT_BELOW_STANDARD_MINIMUM");
                 return new StandardAssessment("INSUFFICIENT_EVIDENCE");
             }
-            BigDecimal nonGoodRate = sampleCount == 0 ? BigDecimal.ZERO
-                    : BigDecimal.valueOf(nonGoodSampleCount)
-                    .multiply(BigDecimal.valueOf(100))
-                    .divide(BigDecimal.valueOf(sampleCount), 6, RoundingMode.HALF_UP);
-            BigDecimal maximumNonGood = standard.getMaximumNonGoodRatePct() == null
-                    ? BigDecimal.ZERO : standard.getMaximumNonGoodRatePct();
+            BigDecimal nonGoodRate =
+                    sampleCount == 0
+                            ? BigDecimal.ZERO
+                            : BigDecimal.valueOf(nonGoodSampleCount)
+                                    .multiply(BigDecimal.valueOf(100))
+                                    .divide(
+                                            BigDecimal.valueOf(sampleCount),
+                                            6,
+                                            RoundingMode.HALF_UP);
+            BigDecimal maximumNonGood =
+                    standard.getMaximumNonGoodRatePct() == null
+                            ? BigDecimal.ZERO
+                            : standard.getMaximumNonGoodRatePct();
             boolean nonConformant = false;
             if (nonGoodRate.compareTo(maximumNonGood) > 0) {
                 deviations.add("NON_GOOD_SAMPLE_RATE_EXCEEDS_STANDARD");
                 nonConformant = true;
             }
-            BigDecimal valueMinimum = "AVERAGE".equalsIgnoreCase(standard.getAggregationMode())
-                    ? average : minimumValue;
-            BigDecimal valueMaximum = "AVERAGE".equalsIgnoreCase(standard.getAggregationMode())
-                    ? average : maximumValue;
-            if (standard.getLowerLimit() != null && valueMinimum != null
+            BigDecimal valueMinimum =
+                    "AVERAGE".equalsIgnoreCase(standard.getAggregationMode())
+                            ? average
+                            : minimumValue;
+            BigDecimal valueMaximum =
+                    "AVERAGE".equalsIgnoreCase(standard.getAggregationMode())
+                            ? average
+                            : maximumValue;
+            if (standard.getLowerLimit() != null
+                    && valueMinimum != null
                     && valueMinimum.compareTo(standard.getLowerLimit()) < 0) {
                 deviations.add("BELOW_FROZEN_PROCESS_LOWER_LIMIT");
                 nonConformant = true;
             }
-            if (standard.getUpperLimit() != null && valueMaximum != null
+            if (standard.getUpperLimit() != null
+                    && valueMaximum != null
                     && valueMaximum.compareTo(standard.getUpperLimit()) > 0) {
                 deviations.add("ABOVE_FROZEN_PROCESS_UPPER_LIMIT");
                 nonConformant = true;
             }
-            if (standard.getWarningLowerLimit() != null && valueMinimum != null
+            if (standard.getWarningLowerLimit() != null
+                    && valueMinimum != null
                     && valueMinimum.compareTo(standard.getWarningLowerLimit()) < 0
                     && !deviations.contains("BELOW_FROZEN_PROCESS_LOWER_LIMIT")) {
                 deviations.add("BELOW_FROZEN_PROCESS_WARNING_LOWER_LIMIT");
             }
-            if (standard.getWarningUpperLimit() != null && valueMaximum != null
+            if (standard.getWarningUpperLimit() != null
+                    && valueMaximum != null
                     && valueMaximum.compareTo(standard.getWarningUpperLimit()) > 0
                     && !deviations.contains("ABOVE_FROZEN_PROCESS_UPPER_LIMIT")) {
                 deviations.add("ABOVE_FROZEN_PROCESS_WARNING_UPPER_LIMIT");
@@ -881,12 +959,13 @@ public class IotProcessTelemetryQueryService {
 
     private record StandardResolution(
             MesProcessTelemetryScopeDTO.FrozenParameterStandard standard,
-            List<String> processCodes, List<Long> sourceItemIds, boolean ambiguous) {
+            List<String> processCodes,
+            List<Long> sourceItemIds,
+            boolean ambiguous) {
         private static StandardResolution undefined() {
             return new StandardResolution(null, List.of(), List.of(), false);
         }
     }
 
-    private record StandardAssessment(String status) {
-    }
+    private record StandardAssessment(String status) {}
 }

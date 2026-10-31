@@ -3,6 +3,8 @@ package com.kitex.mom.mdm.controller;
 
 import cn.hutool.core.util.StrUtil;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.mom.mdm.agent.service.MdmAgentActualScopeAccess;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.entity.MdmUserShiftBindEntity;
@@ -19,7 +21,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
-import java.util.Objects;
 
 @RestController
 @RequiredArgsConstructor
@@ -30,20 +31,15 @@ public class MdmUserShiftBindController {
 
     private final MdmUserShiftBindService service;
     private final MdmClassesService classesService;
+    private final MdmAgentActualScopeAccess scopeAccess;
 
 
     @Operation(summary = "当前用户绑定信息", description = "当前用户绑定信息")
     @GetMapping("/currentBindings")
     public R<String> currentBindings() {
-        MomUser currentUser = SecurityUtils.getUser();
-        MdmUserShiftBindEntity bind = service.getById(currentUser.getId());
-        String shiftCode;
-        if (Objects.isNull(bind)) {
-            shiftCode = classesService.getClassesRule(LocalDateTime.now());
-            this.bind();
-        } else {
-            shiftCode = bind.getShiftCode();
-        }
+        scopeAccess.require(FactoryContextHolder.getFactoryCode(), "read");
+        // 旧绑定只有用户主键，不能表达工厂及有效班期；读取实时计算且不产生写入。
+        String shiftCode = classesService.getClassesRule(LocalDateTime.now());
         // R.ok(String)是提示消息重载，班次属于响应数据，须明确使用双参重载。
         return R.ok(shiftCode, null);
     }
@@ -51,6 +47,7 @@ public class MdmUserShiftBindController {
     @Operation(summary = "当前用户绑定信息", description = "当前用户绑定信息")
     @PostMapping("/bind")
     public R<Void> bind() {
+        scopeAccess.require(FactoryContextHolder.getFactoryCode(), "read");
         MdmUserShiftBindEntity mdmUserShiftBind = new MdmUserShiftBindEntity();
         MomUser currentUser = SecurityUtils.getUser();
         mdmUserShiftBind.setUserId(currentUser.getId());

@@ -15,19 +15,17 @@ public class ShiftCalculator {
         LocalTime time = dateTime.toLocalTime();
 
         for (MdmClassesEntity rule : rules) {
-            if (rule.getEndTime().isBefore(rule.getStartTime())) {
-                // 处理跨天的班次规则
-                if (time.isBefore(rule.getEndTime())) {
-                    // 若时间在跨天班次结束时间之前，日期需减一天
-                    date = date.minusDays(1);
-                }
-                if (time.isAfter(rule.getStartTime()) || time.isBefore(rule.getEndTime())) {
-                    return formatDate(date) + rule.getShiftCode();
-                }
-            } else {
-                if (time.isAfter(rule.getStartTime()) && time.isBefore(rule.getEndTime())) {
-                    return formatDate(date) + rule.getShiftCode();
-                }
+            if (!Boolean.TRUE.equals(rule.getStatus())) {
+                continue;
+            }
+            boolean overnight = rule.getEndTime().isBefore(rule.getStartTime());
+            // 班次统一使用 [开始, 结束)，交接时刻只属于下一班。
+            boolean matches = overnight
+                    ? !time.isBefore(rule.getStartTime()) || time.isBefore(rule.getEndTime())
+                    : !time.isBefore(rule.getStartTime()) && time.isBefore(rule.getEndTime());
+            if (matches) {
+                LocalDate shiftDate = overnight && time.isBefore(rule.getEndTime()) ? date.minusDays(1) : date;
+                return formatDate(shiftDate) + rule.getShiftCode();
             }
         }
         return null; // 如果没有匹配的班次规则

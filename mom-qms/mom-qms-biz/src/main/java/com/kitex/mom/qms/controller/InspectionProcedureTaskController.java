@@ -1,11 +1,13 @@
 package com.kitex.mom.qms.controller;
 
 import cn.hutool.core.collection.CollUtil;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
 import com.kitex.common.query.enums.CommonQuery;
 import com.kitex.common.security.annotation.Inner;
+import com.kitex.mom.qms.dto.QmsFirstInspectionDecisionDTO;
 import com.kitex.mom.qms.dto.QmsProcedureSourceWithdrawalDTO;
 import com.kitex.mom.qms.dto.ReportListRespDTO;
 import com.kitex.mom.qms.dto.inspection.InspectionAppendParam;
@@ -17,6 +19,7 @@ import com.kitex.mom.qms.dto.resp.HandleFinishDTO;
 import com.kitex.mom.qms.dto.resp.QmsInspectionProcedureResultDTO;
 import com.kitex.mom.qms.dto.resp.QmsInspectionProcedureTaskAppVO;
 import com.kitex.mom.qms.dto.resp.QmsInspectionProcedureTaskDTO;
+import com.kitex.mom.qms.entity.QmsInspectionEventEntity;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureHandleRecordEntity;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureHistoryEntity;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureTaskDetailEntity;
@@ -26,11 +29,12 @@ import com.kitex.mom.qms.service.InspectionProcedureHistoryService;
 import com.kitex.mom.qms.service.InspectionProcedureTaskService;
 import com.kitex.mom.qms.service.QmsReworkOrderService;
 import com.kitex.mom.qms.service.impl.QmsInspectionEventService;
-import com.kitex.mom.qms.entity.QmsInspectionEventEntity;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+
 import lombok.RequiredArgsConstructor;
-import com.kitex.mom.qms.dto.QmsFirstInspectionDecisionDTO;
+
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -66,16 +70,19 @@ public class InspectionProcedureTaskController {
         return R.ok(service.existTask(matCode, procedureCode, batchNo));
     }
 
-    @Operation(summary = "根据物料/供应商/批次号 查询质检任务, 创建质检时使用", description = "根据物料/供应商/批次号 查询质检任务, 创建质检时使用")
+    @Operation(
+            summary = "根据物料/供应商/批次号 查询质检任务, 创建质检时使用",
+            description = "根据物料/供应商/批次号 查询质检任务, 创建质检时使用")
     @GetMapping("/getTaskByMatCodeAndSupplierCodeAndBatchNo")
-    public R<QmsInspectionProcedureTaskEntity> getTaskByMatCodeAndSupplierCodeAndBatchNo(String matCode,
-                                                                                         String processCode, String batchNo) {
+    public R<QmsInspectionProcedureTaskEntity> getTaskByMatCodeAndSupplierCodeAndBatchNo(
+            String matCode, String processCode, String batchNo) {
         return R.ok(service.getTaskByMatCodeAndSupplierCodeAndBatchNo(matCode, processCode, batchNo));
     }
 
     @Operation(summary = "查询质检任务", description = "查询质检任务")
     @GetMapping("/getTaskByIds")
-    public R<List<QmsInspectionProcedureTaskEntity>> getTaskByIds(@RequestParam("ids") List<Long> ids) {
+    public R<List<QmsInspectionProcedureTaskEntity>> getTaskByIds(
+            @RequestParam("ids") List<Long> ids) {
         if (CollUtil.isEmpty(ids)) {
             return R.ok(new ArrayList<>());
         }
@@ -85,19 +92,37 @@ public class InspectionProcedureTaskController {
 
     @Operation(summary = "创建质检任务", description = "创建质检任务")
     @PostMapping("/create")
-//    @PreAuthorize("@pms.hasPermission('procedureTask:add')")
+    @PreAuthorize("@pms.hasPermission('procedureTask:add')")
     public R<Long> create(@RequestBody InspectionProcedureCreateParam createParam) {
-        return R.ok(service.create(createParam));
+        return R.ok(service.createManual(createParam));
     }
 
     @Operation(summary = "创建质检任务", description = "创建质检任务")
     @PostMapping("/batchCreate")
-    public R<Map<String, Long>> batchCreate(@RequestBody List<InspectionProcedureCreateParam> createParam) {
-        return R.ok(service.batchCreate(createParam));
+    @PreAuthorize("@pms.hasPermission('procedureTask:add')")
+    public R<Map<String, Long>> batchCreate(
+            @RequestBody List<InspectionProcedureCreateParam> createParam) {
+        return R.ok(service.batchCreateManual(createParam));
+    }
+
+    @Inner
+    @Operation(summary = "内部生产来源生成工序检验任务")
+    @PostMapping("/internal/create")
+    public R<Long> createFromSource(@RequestBody InspectionProcedureCreateParam createParam) {
+        return R.ok(service.create(createParam));
+    }
+
+    @Inner
+    @Operation(summary = "内部生产来源批量生成工序检验任务")
+    @PostMapping("/internal/batchCreate")
+    public R<Map<String, Long>> batchCreateFromSource(
+            @RequestBody List<InspectionProcedureCreateParam> createParams) {
+        return R.ok(service.batchCreate(createParams));
     }
 
     @Operation(summary = "修改质检任务", description = "修改质检任务")
     @PutMapping("/update")
+    @PreAuthorize("@pms.hasPermission('procedureTask:add')")
     public R<Void> update(@RequestBody InspectionProcedureCreateParam updateParam) {
         service.update(updateParam);
         return R.ok();
@@ -105,6 +130,7 @@ public class InspectionProcedureTaskController {
 
     @Operation(summary = "追加质检任务", description = "追加质检任务")
     @PostMapping("/append")
+    @PreAuthorize("@pms.hasPermission('procedureTask:add')")
     public R<Void> append(@RequestBody InspectionAppendParam appendParam) {
         service.append(appendParam);
         return R.ok();
@@ -183,6 +209,7 @@ public class InspectionProcedureTaskController {
 
     @Operation(summary = "暂存质检项结果", description = "暂存质检项结果")
     @PostMapping("/temporarilySave")
+    @PreAuthorize("@pms.hasPermission('procedureTask:submit')")
     public R<Void> temporarilySave(@RequestBody InspectionCheckResultParam param) {
         service.temporarilySave(param);
         return R.ok();
@@ -190,6 +217,7 @@ public class InspectionProcedureTaskController {
 
     @Operation(summary = "暂存质检项结果", description = "暂存质检项结果")
     @PostMapping("/batchTemporarilySave")
+    @PreAuthorize("@pms.hasPermission('procedureTask:submit')")
     public R<Void> batchTemporarilySave(@RequestBody InspectionCheckResultBatchParam param) {
         service.batchTemporarilySave(param);
         return R.ok();
@@ -222,7 +250,7 @@ public class InspectionProcedureTaskController {
     @PostMapping("/handleRework")
     @PreAuthorize("@pms.hasPermission('procedureTask:handle')")
     public R<com.kitex.mom.qms.entity.QmsReworkOrderEntity> handleRework(Long id) {
-        return R.ok(reworkOrderService.create("PROCEDURE", id));
+        return R.ok(reworkOrderService.createManual("PROCEDURE", id));
     }
 
     /**

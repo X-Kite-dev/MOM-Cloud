@@ -97,6 +97,40 @@ class MesProductionTimeServiceTest {
 		assertTrue(result.getDataGaps().stream().anyMatch(gap -> gap.contains("2") && gap.contains("派工")));
 	}
 
+	@Test
+	void exactIdentifierQueryReadsOnlyWorkpieceFactsAndEchoesOriginalIdentity() {
+		Query source = identifierQuery(query().setTaskCode(" T1 "), " SN ", " SN-1 ");
+		var result = service.statistics(source);
+		assertEquals("T1", result.getScope().getTaskCode());
+		assertEquals(" SN-1 ", result.getScope().getIdentifier());
+		assertEquals(" SN ", result.getScope().getIdentifierType());
+		verify(mapper).workpieces(eq(1L), eq("F1"), any(), eq(20001));
+		verify(mapper, never()).segments(anyLong(), anyString(), any(), anyInt());
+		verify(mapper, never()).labor(anyLong(), anyString(), any(), anyInt());
+		verify(mapper, never()).pauses(anyLong(), anyString(), any(), anyInt());
+	}
+
+	@Test
+	void partialOrUnboundedIdentifierQueryIsRejectedBeforeReads() {
+		for (Query source : List.of(identifierQuery(query(), "SN", "SN1"),
+				identifierQuery(query().setTaskCode("T1"), null, "SN1"),
+				identifierQuery(query().setTaskCode("T1"), "SN", null),
+				identifierQuery(query().setTaskCode("T1"), "SN", " "),
+				identifierQuery(query().setTaskCode("T1"), "SN", "SN\n1"),
+				identifierQuery(query().setTaskCode("T1"), "SN", "x".repeat(201)))) {
+			assertThrows(CheckedException.class, () -> service.statistics(source));
+		}
+		verifyZeroInteractions(mapper);
+	}
+
+	private Query identifierQuery(Query base, String type, String identifier) {
+		var fields = new java.util.HashMap<String, Object>();
+		fields.put("identifierType", type);
+		fields.put("identifier", identifier);
+		return assertDoesNotThrow(() -> new com.fasterxml.jackson.databind.ObjectMapper().updateValue(base, fields),
+				"query must support exact production identifiers before filtering/pagination");
+	}
+
 	private Query query() {
 		return new Query().setStartTime(LocalDateTime.parse("2026-10-22T08:00:00"))
 				.setEndTime(LocalDateTime.parse("2026-10-22T18:00:00"));

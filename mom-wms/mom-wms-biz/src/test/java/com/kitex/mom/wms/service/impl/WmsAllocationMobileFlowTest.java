@@ -110,6 +110,18 @@ class WmsAllocationMobileFlowTest {
     }
 
     @Test
+    void mobileTransferCannotConfirmAUnitDifferentFromTheActualMovedStock() {
+        var command = command();
+        command.setMatUnit("EA");
+        var original = slice(7L, null, false).sourceStock();
+        original.setMatUnit("KG");
+
+        assertThrows(CheckedException.class, () -> service.recordImmediateTransferFlows(bill(),
+                List.of(new WmsStockMoveSlice(original, 70L, 1d)), command));
+        assertTrue(inserted.isEmpty());
+    }
+
+    @Test
     void mobileRequestSnapshotDistinguishesTwoScannedSerials() {
         var first = command();
         first.setSourceStockId(7L);

@@ -23,6 +23,7 @@ import com.kitex.mom.mes.mapper.MesTaskReportMapper;
 import com.kitex.mom.mes.process.ProcessOperationFactory;
 import com.kitex.mom.mes.service.*;
 import com.kitex.mom.mes.support.MesQualityEvidenceSupport;
+import com.kitex.mom.mes.util.MesWorksiteTriggerProjection;
 import lombok.AllArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
@@ -173,7 +174,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         MesProduceTaskEntity reportParent = requireReportParents(arrange, task, routeReturn);
         executionTemplateService.validateReport(arrange, params, channel);
         reworkMaterialPlans.assertReady(task);
-        prepareReportContext(params, arrange, task, reportMode, channel);
+        prepareReportContext(params, arrange, task, reportParent, reportMode, channel);
         lockCorrectionPermit(params, arrange, reportMode);
         changePointHandleService.assertReportAllowed(arrange);
         andonProductionReleaseService.assertAllowed(arrange, automatic ? "设备自动报工" : "人工报工");
@@ -480,7 +481,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
      * 使用数据库中的工单/派工数据覆盖前端上下文字段，并执行报工通用控制。
      */
     private void prepareReportContext(MesTaskReportVO params, MesTaskArrangeEntity arrange,
-                                      MesTaskEntity task, ReportModeEnum reportMode,
+                                      MesTaskEntity task, MesProduceTaskEntity parent, ReportModeEnum reportMode,
                                       MesReportChannelEnum channel) {
         boolean automatic = channel.isAutomatic();
         if (params.getPassNum() == null || params.getPassNum().compareTo(BigDecimal.ZERO) <= 0) {
@@ -516,7 +517,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         params.setTaskType(task.getType());
         params.setFactoryCode(arrange.getFactoryCode());
         params.setWrapRuleCode(StrUtil.blankToDefault(params.getWrapRuleCode(), arrange.getWrapRuleCode()));
-        WorksiteTypeEnum configuredTrigger = WorksiteTypeEnum.fromCode(arrange.getWorksiteTypes());
+        WorksiteTypeEnum configuredTrigger = MesWorksiteTriggerProjection.forExecution(parent, arrange);
         if (automatic && configuredTrigger != WorksiteTypeEnum.AUTO) {
             throw new CheckedException("当前派工任务不是自动报工工位");
         }

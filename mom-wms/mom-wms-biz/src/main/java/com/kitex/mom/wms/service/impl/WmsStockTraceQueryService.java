@@ -10,6 +10,7 @@ import com.kitex.common.security.component.PermissionService;
 import com.kitex.mom.mdm.entity.MdmWarehouseEntity;
 import com.kitex.mom.mdm.feign.RemoteWarehouseService;
 import com.kitex.mom.wms.dto.WmsStockTraceDTO;
+import com.kitex.mom.wms.repository.WmsOrganizationTransferRepository;
 import com.kitex.mom.wms.entity.WmsInoutFlowEntity;
 import com.kitex.mom.wms.entity.WmsLiveStockEntity;
 import com.kitex.mom.wms.entity.WmsMaterialMoveSiteEntity;
@@ -52,6 +53,7 @@ public class WmsStockTraceQueryService {
     private final WmsSalesStockReservationDetailMapper salesReservationMapper;
     private final PermissionService permissions;
     private final RemoteWarehouseService warehouses;
+    private final WmsOrganizationTransferRepository organizationTransfers;
 
     public WmsStockTraceDTO.Evidence query(WmsStockTraceDTO.Query query) {
         if (query == null) {
@@ -312,6 +314,15 @@ public class WmsStockTraceQueryService {
             gaps.add("当前范围缺少入库流水，不能证明实物的入库来源");
             gapCodes.add("MISSING_INBOUND_FLOW");
         }
+        var organizationFlowIds = flows.stream().limit(limit)
+                .filter(flow -> "ORGANIZATION_TRANSFER".equals(flow.getStockProofType()))
+                .map(WmsInoutFlowEntity::getId).toList();
+        var organizationLinks = organizationFlowIds.isEmpty() ? List.<WmsStockTraceDTO.OrganizationLink>of()
+                : organizationTransfers.traceLinks(tenant, factory, warehouseScope.allowed(), organizationFlowIds);
+        if (organizationLinks.size() != organizationFlowIds.size()) {
+            gaps.add("组织调拨的实物关联记录不完整");
+            gapCodes.add("ORGANIZATION_TRANSFER_LINK_MISSING");
+        }
         String wmsStatus = noEvidence ? "NO_EVIDENCE"
                 : byStock && sourceDetailId != null && hasInbound && gapCodes.isEmpty()
                 ? "LINKED_WMS" : "PARTIAL";
@@ -319,6 +330,7 @@ public class WmsStockTraceQueryService {
                 .setSourceInBillDetailId(sourceDetailId)
                 .setCurrentStocks(stocks.stream().limit(limit).toList())
                 .setFlows(flows.stream().limit(limit).toList())
+                .setOrganizationLinks(organizationLinks)
                 .setMoves(moves.stream().limit(limit).toList())
                 .setPickingEvents(pickingEvents.stream().limit(limit).toList())
                 .setActivePickings(pickings.stream().limit(limit).map(this::pickingSnapshot).toList())

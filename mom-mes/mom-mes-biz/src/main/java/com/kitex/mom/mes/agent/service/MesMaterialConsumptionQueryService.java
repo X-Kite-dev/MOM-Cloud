@@ -16,11 +16,11 @@ import com.kitex.mom.mes.service.MesWarehouseFeedService;
 import com.kitex.mom.mes.service.MesWarehouseInoutService;
 import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Function;
@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
  * <p>人工投料只使用mes_report_material_consume分配账，倒冲只使用报工关联的
  * back_flush_out库存流水；单纯投料、领料或当前used_num不能替代本工具的实际消耗口径。</p>
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class MesMaterialConsumptionQueryService {
@@ -46,7 +47,10 @@ public class MesMaterialConsumptionQueryService {
     private final MesReportMaterialConsumeService consumeService;
     private final MesWarehouseFeedService feedService;
     private final MesWarehouseInoutService inoutService;
+    private final MesMaterialIntegrityReader integrityReader;
 
+    @org.springframework.transaction.annotation.Transactional(readOnly = true,
+            isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
     public MesMaterialConsumptionDTO.Evidence query(MesMaterialConsumptionDTO.Query query) {
         String actualFactory = factoryAccess.require("read");
         if (query == null || !actualFactory.equals(query.getFactoryCode())) {
@@ -112,8 +116,14 @@ public class MesMaterialConsumptionQueryService {
         }
         for (MesWarehouseInoutEntity row : backflushRows) {
             BigDecimal ratio = row.getSubstituteRatio();
-            BigDecimal requirement = ratio != null && ratio.compareTo(BigDecimal.ZERO) > 0
-                    ? zero(row.getOperateNum()).divide(ratio, 12, RoundingMode.HALF_UP) : null;
+            BigDecimal requirement = null;
+            if (ratio != null && ratio.signum() > 0 && row.getOperateNum() != null) {
+                try {
+                    requirement = row.getOperateNum().divide(ratio);
+                } catch (ArithmeticException nonTerminating) {
+                    // 原比例不能形成有限精确当量时保持未知，不舍入成一份看似精确的需求量。
+                }
+            }
             String unit = StringUtils.hasText(row.getMatUnit()) ? row.getMatUnit() : UNKNOWN_UNIT;
             GroupKey key = new GroupKey("BACKFLUSH", row.getRequirementMatCode(), row.getMatCode(),
                     row.getMatName(), row.getMatBatch(), unit, Boolean.TRUE.equals(row.getSubstituteFlag()));
@@ -153,12 +163,23 @@ public class MesMaterialConsumptionQueryService {
         if (referenceTruncated) {
             gaps.add("实耗证据引用超过200条，本次仅返回前200条引用；汇总仍按受控查询范围计算");
         }
-        return new MesMaterialConsumptionDTO.Evidence()
+        var result = new MesMaterialConsumptionDTO.Evidence()
                 .setToolCode(TOOL_CODE)
-                .setMetricDefinition("只汇总指定工单有效报工关联的实际消耗：人工投料取mes_report_material_consume有效分配账，倒冲取报工ID关联的back_flush_out出库流水；已冲销报工及消耗被排除。需求当量和实际消耗按来源、需求物料、实际物料、批次和单位分组，禁止跨单位合计。")
+                .setMetricDefinition("兼容统计仅汇总有效GOOD报工关联的原始耗用发生量，部分纠正恢复不在此旧汇总中相减；不能将其作为当前净耗。四域原耗料、精确恢复及逐投料净额以materialIntegrity独立证明为准。不同物料、批次及单位不可合计，库存实物以原仓库账为准。")
                 .setFactoryCode(actualFactory).setTaskCode(taskCode).setObservedAt(LocalDateTime.now())
                 .setSummary(summary).setConsumptions(details).setDataGaps(gaps)
                 .setEvidenceRefs(refs.stream().distinct().toList()).setTruncated(truncated);
+        try {
+            result.setMaterialIntegrity(integrityReader.read(actualFactory, taskCode));
+        } catch (RuntimeException failure) {
+            log.warn("物料原账完整核验未完成，factoryCode={}, taskCode={}", actualFactory, taskCode, failure);
+            result.setMaterialIntegrity(new com.kitex.mom.mes.agent.dto.MesMaterialIntegrityDTO.Evidence()
+                    .setVersion(MesMaterialIntegrityReader.VERSION).setFactoryCode(actualFactory).setTaskCode(taskCode)
+                    .setStatus("DATA_GAP").setScopeComplete(false).setChecks(List.of()).setSources(List.of()).setFeeds(List.of())
+                    .setDataGaps(List.of(failure instanceof CheckedException && failure.getMessage() != null ? failure.getMessage()
+                            : "物料原账尚未核清，请确认原实耗查询权限及来源服务")).setEvidenceRefs(List.of()));
+        }
+        return result;
     }
 
     private LambdaQueryWrapper<MesTaskReportEntity> effectiveReports(String factory, String taskCode) {
@@ -192,8 +213,8 @@ public class MesMaterialConsumptionQueryService {
                 .setSourceType(key.sourceType()).setRequirementMaterialCode(key.requirementMaterialCode())
                 .setActualMaterialCode(key.actualMaterialCode()).setActualMaterialName(key.actualMaterialName())
                 .setBatchNo(key.batchNo()).setUnit(key.unit())
-                .setRequirementQuantity(value.requirementKnown ? value.requirementQuantity : null)
-                .setConsumptionQuantity(value.consumptionQuantity)
+                .setRequirementQuantity(value.requirementKnown && !value.requirementUnknown ? value.requirementQuantity : null)
+                .setConsumptionQuantity(value.consumptionUnknown ? null : value.consumptionQuantity)
                 .setSubstituteFlag(key.substitute()).setRecordCount(value.recordCount);
     }
 
@@ -215,6 +236,9 @@ public class MesMaterialConsumptionQueryService {
                 .filter(key -> !StringUtils.hasText(key.requirementMaterialCode())).count();
         if (missingRequirement > 0) {
             gaps.add(missingRequirement + "组历史实耗缺少BOM需求物料编码，无法证明主料/替代料需求归属");
+        }
+        if (groups.values().stream().anyMatch(value -> value.requirementUnknown || value.consumptionUnknown)) {
+            gaps.add("部分旧统计缺原数量或精确需求当量，未以零或部分合计替代");
         }
         if (reportTruncated) {
             gaps.add("有效报工超过" + MAX_REPORTS + "笔，本次实耗证据仅覆盖最早的受控上限，禁止视为工单完整总耗");
@@ -252,13 +276,18 @@ public class MesMaterialConsumptionQueryService {
         private BigDecimal requirementQuantity = BigDecimal.ZERO;
         private BigDecimal consumptionQuantity = BigDecimal.ZERO;
         private boolean requirementKnown;
+        private boolean requirementUnknown;
+        private boolean consumptionUnknown;
         private long recordCount;
 
         private void add(BigDecimal requirement, BigDecimal consumption) {
             if (requirement != null) {
                 requirementQuantity = requirementQuantity.add(requirement);
                 requirementKnown = true;
+            } else {
+                requirementUnknown = true;
             }
+            consumptionUnknown |= consumption == null;
             consumptionQuantity = consumptionQuantity.add(
                     Objects.requireNonNullElse(consumption, BigDecimal.ZERO));
             recordCount++;

@@ -48,4 +48,18 @@ public class QmsCapaExperienceReferenceEntity extends BaseEntity<QmsCapaExperien
     private String exclusionReview;
     @TableField(fill = FieldFill.INSERT)
     private String factoryCode;
+    /** 业务主键按文本传输，避免Snowflake在浏览器JSON数字中丢失精度。 */
+    @Override
+    @JsonSerialize(using = ToStringSerializer.class)
+    public Long getId() {
+        return super.getId();
+    }
+
+    /** 与引用所属案件、工厂一并按精确身份校验。 */
+    @Override
+    @JsonSerialize(using = ToStringSerializer.class)
+    public Long getTenantId() {
+        return super.getTenantId();
+    }
+
 }

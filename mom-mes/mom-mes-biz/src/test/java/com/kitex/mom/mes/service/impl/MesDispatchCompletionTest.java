@@ -170,6 +170,27 @@ class MesDispatchCompletionTest {
     }
 
     @Test
+    void mobileReworkFinishAcceptsADurablyQueuedCallbackWithoutForgingAChild() {
+        db.update(
+                "UPDATE mes_task SET"
+                    + " resource_type='REWORK',rework_request_id='RW-QMS-1',source_task_code='T0',plan_no=NULL"
+                    + " WHERE id=1");
+        var tasks = spy((MesTaskServiceImpl) dependencies.get(MesTaskService.class));
+        doReturn(null).when(tasks).notifyReworkCompletion(anyLong(), anyString(), any());
+        var target = org.springframework.aop.framework.AopProxyUtils.getSingletonTarget(service);
+        ReflectionTestUtils.setField(target, "mesTaskService", tasks);
+        when(dependency(MesTerminalExecutionGuard.class).isMobileExecution()).thenReturn(true);
+        assertDoesNotThrow(() -> service.finish(11L));
+        assertEquals("FINISH", state("mes_task", 1));
+        assertEquals("FINISH", state("mes_produce_task", 21));
+        assertEquals("FINISH", state("mes_task_arrange", 11));
+        assertNull(
+                db.queryForObject(
+                        "SELECT reinspection_task_id FROM mes_task WHERE id=1", Long.class));
+        assertEquals(0, count("mes_plan_completion_outbox"));
+    }
+
+    @Test
     void lastDispatchFinishesTheOperationAndUsesItsActualTerminalQuantity() {
         dispatch(12L, "A2", "P1", "R1", "FINISH");
         service.finish(11L);

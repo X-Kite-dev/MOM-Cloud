@@ -27,8 +27,17 @@ public class QmsExperienceReferenceController {
 
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('capa:show') and @pms.hasPermission('ai:8d:view')")
-    public R<?> page(@RequestParam Long capaId, @RequestParam(defaultValue = "1") long current, @RequestParam(defaultValue = "20") long size) {
-        return R.ok(service.page(capaId, current, size));
+    public R<?> page(@RequestParam Long capaId, @RequestParam(defaultValue = "1") long current, @RequestParam(defaultValue = "20") long size,
+                     @RequestParam(required = false) Integer cycleNo) {
+        return R.ok(service.page(capaId, current, size, cycleNo));
+    }
+
+    /** 仅查看原案件进展，不登记采纳、不核账或修改质量状态。 */
+    @GetMapping("/followup/{referenceId}")
+    @PreAuthorize("@pms.hasPermission('capa:show') and @pms.hasPermission('ai:8d:view')")
+    public R<?> followup(@PathVariable Long referenceId, @RequestParam Long capaId,
+                         @RequestParam(defaultValue = "1") long current, @RequestParam(defaultValue = "20") long size) {
+        return R.ok(service.followup(referenceId, capaId, current, size));
     }
 
     @GetMapping("/request/{requestId}")

@@ -456,11 +456,15 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
         snapshot.setMatNum(quantity);
         double balance = BigDecimal.valueOf(stock.getMatNum()).subtract(requested).doubleValue();
         if (BigDecimal.valueOf(balance).compareTo(BigDecimal.ZERO) == 0) {
-            baseMapper.deleteById(stock.getId());
+            if (baseMapper.deleteById(stock.getId()) != 1) {
+                throw new CheckedException("调拨源库存扣减未确认，请核对原操作");
+            }
         } else {
-            baseMapper.update(new LambdaUpdateWrapper<WmsLiveStockEntity>()
+            if (baseMapper.update(new LambdaUpdateWrapper<WmsLiveStockEntity>()
                     .eq(WmsLiveStockEntity::getId, stock.getId())
-                    .set(WmsLiveStockEntity::getMatNum, balance));
+                    .set(WmsLiveStockEntity::getMatNum, balance)) != 1) {
+                throw new CheckedException("调拨源库存扣减未确认，请核对原操作");
+            }
         }
         return snapshot;
     }
@@ -469,6 +473,28 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
     @Transactional(rollbackFor = Exception.class)
     public void transferIn(WmsInoutFlowEntity sourceFlow, String warehouseCode, String warehouseName,
                            String siteCode, String siteName, String containerCode) {
+        insertTransferStock(sourceFlow, warehouseCode, warehouseName, siteCode, siteName, containerCode);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long transferInWithEvidence(WmsInoutFlowEntity sourceFlow, String warehouseCode, String warehouseName,
+                                       String siteCode, String siteName, String containerCode) {
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        if (tenant == null || Boolean.TRUE.equals(TenantContextHolder.getTenantSkip())
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()) || StrUtil.isBlank(factory)
+                || sourceFlow == null || !Objects.equals(tenant, sourceFlow.getTenantId())
+                || !Objects.equals(factory, sourceFlow.getFactoryCode())) {
+            throw new CheckedException("组织调拨接收必须绑定本侧实际租户和工厂");
+        }
+        Long stockId = insertTransferStock(sourceFlow, warehouseCode, warehouseName, siteCode, siteName, containerCode);
+        if (stockId == null || stockId <= 0) throw new CheckedException("组织调拨未返回实际入库标识");
+        return stockId;
+    }
+
+    private Long insertTransferStock(WmsInoutFlowEntity sourceFlow, String warehouseCode, String warehouseName,
+                                     String siteCode, String siteName, String containerCode) {
         if (sourceFlow == null || sourceFlow.getMatNum() == null
                 || !Double.isFinite(sourceFlow.getMatNum()) || sourceFlow.getMatNum() <= 0) {
             throw new CheckedException("调拨入库缺少有效发起流水");
@@ -514,6 +540,7 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
             throw new CheckedException("物料[" + sourceFlow.getMatCode() + "]调拨入库写入失败");
         }
         occupyContainer(stock);
+        return stock.getId();
     }
 
     @Override

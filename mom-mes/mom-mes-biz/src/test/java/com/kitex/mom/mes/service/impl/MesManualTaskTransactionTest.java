@@ -248,6 +248,94 @@ class MesManualTaskTransactionTest {
         return db.queryForObject("SELECT COUNT(*) FROM mom_mes.mes_task", Integer.class);
     }
 
+    void bindRouteWorkshop() throws Exception {
+        var json = new ObjectMapper();
+        var root = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(bundle.getBundleSnapshot());
+        var route = (com.fasterxml.jackson.databind.node.ObjectNode) root.path("route");
+        route.put("workshopCode", "WS-FROZEN");
+        route.put("workshopName", "发布时车间");
+        bundle.setBundleSnapshot(json.writeValueAsString(root));
+        bundle.setContentHash(java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(
+                        bundle.getBundleSnapshot().getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+    }
+
+    @Test
+    void manualCreateCarriesWorkshopFromTheExactPublishedRoute() throws Exception {
+        bindRouteWorkshop();
+        var receipt = service.create(command());
+        var task = taskMapper.selectById(Long.valueOf(receipt.task().id()));
+        assertEquals("WS-FROZEN", task.getWorkshopCode());
+        assertEquals("发布时车间", task.getWorkshopName());
+        assertEquals(bundle.getBundleSnapshot(), task.getEngineeringBundleSnapshot());
+    }
+
+    @Test
+    void publicEditDetailRetainsOriginalEngineeringBundle() throws Exception {
+        var receipt = service.create(command());
+        var ctor = MesTaskServiceImpl.class.getDeclaredConstructors()[0];
+        var target = (MesTaskServiceImpl) ctor.newInstance(
+                Arrays.stream(ctor.getParameterTypes()).map(type -> mock(type)).toArray());
+        org.springframework.test.util.ReflectionTestUtils.setField(target, "baseMapper", taskMapper);
+        var detail = target.findBydId(Long.valueOf(receipt.task().id()));
+        var json = new ObjectMapper().findAndRegisterModules().valueToTree(detail);
+        assertEquals(bundle.getBundleSnapshot(), json.path("engineeringBundleSnapshot").asText());
+    }
+
+    @Test
+    void editingUnissuedManualTaskRecoversMissingWorkshopAndKeepsOriginalRequest() throws Exception {
+        bindRouteWorkshop();
+        var c = command();
+        var receipt = service.create(c);
+        Long id = Long.valueOf(receipt.task().id());
+        db.update("UPDATE mom_mes.mes_task SET workshop_code=NULL,workshop_name=NULL WHERE id=?", id);
+        var edit = new MesTaskEntity().setBatchRuleCode("PRODUCT_DAY");
+        edit.setId(id);
+        service.editDraft(edit);
+        var task = taskMapper.selectById(id);
+        assertEquals("WS-FROZEN", task.getWorkshopCode());
+        assertEquals("发布时车间", task.getWorkshopName());
+        assertEquals("PRODUCT_DAY", task.getBatchRuleCode());
+        assertEquals(MesManualTaskService.PREFIX + c.getRequestId(), task.getSourceRequestId());
+        assertEquals(bundle.getBundleSnapshot(), task.getEngineeringBundleSnapshot());
+        assertEquals(1, count());
+    }
+
+    @Test
+    void manualEditRejectsClientWorkshopReplacement() throws Exception {
+        bindRouteWorkshop();
+        var receipt = service.create(command());
+        var edit = new MesTaskEntity().setBatchRuleCode("PRODUCT_DAY").setWorkshopCode("OTHER");
+        edit.setId(Long.valueOf(receipt.task().id()));
+        assertThrows(RuntimeException.class, () -> service.editDraft(edit));
+        assertNull(taskMapper.selectById(edit.getId()).getBatchRuleCode());
+    }
+
+    @Test
+    void manualEditRejectsPersistedWorkshopDriftWithoutOverwritingIt() throws Exception {
+        bindRouteWorkshop();
+        var receipt = service.create(command());
+        Long id = Long.valueOf(receipt.task().id());
+        db.update("UPDATE mom_mes.mes_task SET workshop_code='OTHER' WHERE id=?", id);
+        var edit = new MesTaskEntity().setBatchRuleCode("PRODUCT_DAY");
+        edit.setId(id);
+        assertThrows(RuntimeException.class, () -> service.editDraft(edit));
+        var task = taskMapper.selectById(id);
+        assertEquals("OTHER", task.getWorkshopCode());
+        assertNull(task.getBatchRuleCode());
+    }
+
+    @Test
+    void manualEditCannotRepairWorkshopFromUnavailableEngineering() throws Exception {
+        bindRouteWorkshop();
+        var receipt = service.create(command());
+        var edit = new MesTaskEntity().setBatchRuleCode("PRODUCT_DAY");
+        edit.setId(Long.valueOf(receipt.task().id()));
+        when(packages.resolveForProduction(any())).thenReturn(R.failed("工程已撤回"));
+        assertThrows(RuntimeException.class, () -> service.editDraft(edit));
+        assertNull(taskMapper.selectById(edit.getId()).getBatchRuleCode());
+    }
+
     @Test
     void actualManualCreateFreezesPublishedPackageWithoutPlanContract() {
         var c = command();
@@ -428,8 +516,24 @@ class MesManualTaskTransactionTest {
         assertEquals("MANUAL", taskMapper.selectById(edit.getId()).getResourceType());
     }
 
-    @Test
-    void createdManualTaskUsesOriginalPublicIssueAndNodeFreezePath() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"VALID", "FOREIGN_FACTORY", "OTHER_STATION", "OTHER_PROCESS", "MISSING_ACTUAL"})
+    void createdManualTaskUsesOriginalPublicIssueAndNodeFreezePath(String scenario) throws Exception {
+        var json = new ObjectMapper();
+        var root = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(bundle.getBundleSnapshot());
+        ((com.fasterxml.jackson.databind.node.ObjectNode) root.path("nodes").get(0)).set("works", json.readTree(
+                "[{\"binding\":{\"tenantId\":\"1\",\"factoryCode\":\"F1\",\"procedureCode\":\"OP1\","
+                        + "\"stationCode\":\"W1\",\"stationName\":\"冻结工位\"},"
+                        + "\"actual\":{\"factoryCode\":\"F1\",\"stationCode\":\"W1\",\"stationName\":\"冻结工位\"}}]"));
+        var work = (com.fasterxml.jackson.databind.node.ObjectNode) root.path("nodes").get(0).path("works").get(0);
+        if (scenario.equals("FOREIGN_FACTORY")) ((com.fasterxml.jackson.databind.node.ObjectNode) work.path("actual")).put("factoryCode", "OTHER");
+        if (scenario.equals("OTHER_STATION")) ((com.fasterxml.jackson.databind.node.ObjectNode) work.path("binding")).put("stationCode", "OTHER");
+        if (scenario.equals("OTHER_PROCESS")) ((com.fasterxml.jackson.databind.node.ObjectNode) work.path("binding")).put("procedureCode", "OTHER");
+        if (scenario.equals("MISSING_ACTUAL")) work.remove("actual");
+        bundle.setBundleSnapshot(json.writeValueAsString(root));
+        bundle.setContentHash(java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(
+                        bundle.getBundleSnapshot().getBytes(java.nio.charset.StandardCharsets.UTF_8))));
         var accepted = service.create(command());
         var dependencies = new HashMap<Class<?>, Object>();
         var ctor = MesTaskServiceImpl.class.getDeclaredConstructors()[0];
@@ -468,6 +572,12 @@ class MesManualTaskTransactionTest {
         when(sopPort.mergeFrozenSnapshot(anyString(), anyList())).thenAnswer(c -> c.getArgument(0));
         var seq = (RemoteSeqConfigService) dependencies.get(RemoteSeqConfigService.class);
         when(seq.create("mes_produce_task")).thenReturn(R.ok("MANUAL-OP1", "测试序号"));
+        if (!scenario.equals("VALID")) {
+            assertThrows(RuntimeException.class, () -> target.issue(Long.valueOf(accepted.task().id())));
+            assertEquals("CREATE", taskMapper.selectById(Long.valueOf(accepted.task().id())).getStatus());
+            verify(children, never()).saveBatch(anyCollection());
+            return;
+        }
         target.issue(Long.valueOf(accepted.task().id()));
         var task = taskMapper.selectById(Long.valueOf(accepted.task().id()));
         assertEquals("ISSUE", task.getStatus());
@@ -486,6 +596,8 @@ class MesManualTaskTransactionTest {
                                                         .next()
                                                         .getTaskCode()
                                                         .equals(task.getCode())
+                                                && "W1".equals(rows.iterator().next().getWorksiteCodes())
+                                                && "冻结工位".equals(rows.iterator().next().getWorksiteNames())
                                                 && rows.iterator()
                                                                 .next()
                                                                 .getNoticeNum()

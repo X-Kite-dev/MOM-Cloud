@@ -312,13 +312,33 @@ public class MesQualityGateServiceImpl implements MesQualityGateService {
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public MesQualityGateDecision retryGeneration(Long recordId) {
+        var record = generatePendingRecord(recordId, false);
+        return sync(record.getProduceTaskCode());
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
+    public Long deliverPendingGeneration(Long recordId) {
+        var record = generatePendingRecord(recordId, true);
+        return "1".equals(record.getGenFlag())
+                        && record.getInspectionId() != null
+                        && record.getInspectionId() > 0
+                ? record.getInspectionId()
+                : null;
+    }
+
+    private MesInspectionGenRecordEntity generatePendingRecord(
+            Long recordId, boolean acceptExisting) {
         MesInspectionGenRecordEntity record =
                 inspectionGenRecordService.getOne(
-                        recordScope().eq(MesInspectionGenRecordEntity::getId, recordId));
+                        recordScope()
+                                .eq(MesInspectionGenRecordEntity::getId, recordId)
+                                .last("FOR UPDATE"));
         if (record == null) {
             throw new IllegalArgumentException("质检生成记录不存在");
         }
         if ("1".equals(record.getGenFlag()) && record.getInspectionId() != null) {
+            if (acceptExisting && record.getInspectionId() > 0) return record;
             throw new IllegalArgumentException("质检任务已生成，只需同步结论，无需重试生成");
         }
         MesProduceTaskEntity produceTask = requireProduceTask(record.getProduceTaskCode());
@@ -335,7 +355,7 @@ public class MesQualityGateServiceImpl implements MesQualityGateService {
             throw new IllegalArgumentException("不支持重试的质检类型：" + record.getInspectionType());
         }
         generateInspection(record, produceTask, task, type);
-        return sync(produceTask.getCode());
+        return record;
     }
 
     @Override

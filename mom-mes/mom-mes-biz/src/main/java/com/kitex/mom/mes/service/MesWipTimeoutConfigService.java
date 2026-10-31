@@ -11,4 +11,6 @@ public interface MesWipTimeoutConfigService extends IService<MesWipTimeoutConfig
     void updateData(MesWipTimeoutConfigEntity config);
 
     void removeUnused(Collection<Long> ids);
+
+    MesWipTimeoutConfigEntity readData(Long id);
 }

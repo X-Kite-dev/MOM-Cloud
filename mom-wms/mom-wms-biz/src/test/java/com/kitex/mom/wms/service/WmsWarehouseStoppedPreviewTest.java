@@ -32,7 +32,9 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.Mockito.*;
 
-/** 实际MyBatis预览增删与Spring事务；仅替代PG事务锁及外部主数据服务。 */
+/**
+ * 实际MyBatis预览增删与Spring事务；仅替代PG事务锁及外部主数据服务。
+ */
 class WmsWarehouseStoppedPreviewTest {
 	private JdbcTemplate db;
 	private WmsWarehouseMenuServiceImpl service;
@@ -72,7 +74,7 @@ class WmsWarehouseStoppedPreviewTest {
 		when(warehouses.getList(any())).thenReturn(R.ok(List.of(active)));
 		when(warehouses.getMenuConfigurationWarehouses()).thenReturn(R.ok(List.of(active, stopped)));
 		var target = new WmsWarehouseMenuServiceImpl(biz, warehouses, mock(RemoteMenuService.class),
-				mock(RemoteUserService.class));
+				mock(RemoteUserService.class), mock(WmsWarehouseBusinessGuard.class));
 		ReflectionTestUtils.setField(target, "baseMapper", mapper);
 		var proxy = new ProxyFactory(target);
 		proxy.setProxyTargetClass(true);

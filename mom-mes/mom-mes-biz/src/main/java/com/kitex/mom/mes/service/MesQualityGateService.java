@@ -14,6 +14,9 @@ public interface MesQualityGateService {
 
     MesQualityGateDecision retryGeneration(Long recordId);
 
+    /** 原号创建回执；供提交后/后台恢复，不使用人员令牌拉取质量结论。 */
+    Long deliverPendingGeneration(Long recordId);
+
     MesQualityGateDecision createChangePointFirstInspection(
             String produceTaskCode, String sourceRequestId, String ruleCode, String ruleName);
 
@@ -21,15 +24,11 @@ public interface MesQualityGateService {
 
     MesQualityGateDecision retryChangePointInspection(Long recordId);
 
-    /**
-     * 为变化点复产后的加严监控创建一次中检任务；来源请求号永久幂等。
-     */
+    /** 为变化点复产后的加严监控创建一次中检任务；来源请求号永久幂等。 */
     MesQualityGateDecision createChangePointIntensifiedInspection(
             String produceTaskCode, String sourceRequestId, String ruleCode, String ruleName);
 
-    /**
-     * 本域数量事务内只读冻结聚合；候选只供应用事务，不提前保存游标/缓存或远端pull。
-     */
+    /** 本域数量事务内只读冻结聚合；候选只供应用事务，不提前保存游标/缓存或远端pull。 */
     MesQualityGateDecision eventSnapshot(
             String produceTaskCode,
             String phase,

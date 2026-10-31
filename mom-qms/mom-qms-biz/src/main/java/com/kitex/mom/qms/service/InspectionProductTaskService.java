@@ -30,6 +30,9 @@ public interface InspectionProductTaskService extends IService<QmsInspectionProd
      */
     void create(InspectionProductCreateParam createParam);
 
+    /** 实名人工报检，校验实际工厂写权限且禁止冒用内部来源。 */
+    void createManual(InspectionProductCreateParam createParam);
+
     /**
      * 修改质检任务
      *

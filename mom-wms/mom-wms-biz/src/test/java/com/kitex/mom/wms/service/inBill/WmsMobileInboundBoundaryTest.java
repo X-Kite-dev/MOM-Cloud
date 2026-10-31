@@ -9,6 +9,7 @@ import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.wms.dto.app.WmsInBillDetailAppDTO;
 import com.kitex.mom.wms.entity.WmsInBillDetailEntity;
 import com.kitex.mom.wms.entity.WmsInBillEntity;
+import com.kitex.mom.wms.entity.WmsIdentifierPolicyEntity;
 import com.kitex.mom.wms.entity.WmsInNoticeDetailEntity;
 import com.kitex.mom.wms.entity.WmsInNoticeEntity;
 import com.kitex.mom.wms.mapper.WmsInBillDetailMapper;
@@ -30,6 +31,9 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -107,6 +111,108 @@ class WmsMobileInboundBoundaryTest {
 		when(posting.notices().update(any())).thenReturn(1);
 
 		assertEquals("IN-1", posting.service().setInBillNum(command()));
+	}
+
+	@Test
+	void differentScannedContainerCreatesASeparateInboundDetail() {
+		PostingCase posting = continuationWith(oldDetail("C1"));
+
+		assertEquals("IN-1", posting.service().setInBillNum(command().setContainerCode("C2")));
+
+		ArgumentCaptor<WmsInBillDetailEntity> saved = ArgumentCaptor.forClass(WmsInBillDetailEntity.class);
+		verify(posting.billDetails()).insert(saved.capture());
+		assertEquals("C2", saved.getValue().getContainerCode());
+		assertEquals(2D, saved.getValue().getMatNum());
+		verify(posting.billDetails(), never()).updateById(any(WmsInBillDetailEntity.class));
+	}
+
+	@Test
+	void existingContainerRowsCanAccumulateOnlyIntoTheScannedContainer() {
+		var first = oldDetail("C1");
+		var second = oldDetail("C2");
+		second.setId(22L);
+		PostingCase posting = continuationWith(first, second);
+
+		assertEquals("IN-1", posting.service().setInBillNum(command().setContainerCode("C2")));
+
+		ArgumentCaptor<WmsInBillDetailEntity> saved = ArgumentCaptor.forClass(WmsInBillDetailEntity.class);
+		verify(posting.billDetails()).updateById(saved.capture());
+		assertEquals(22L, saved.getValue().getId());
+		assertEquals("C2", saved.getValue().getContainerCode());
+		assertEquals(1D, first.getMatNum());
+		verify(posting.billDetails(), never()).insert(any(WmsInBillDetailEntity.class));
+	}
+
+	@Test
+	void serialScanCannotBeRepeatedInAnotherContainerOfTheSameInboundBill() {
+		PostingCase posting = continuationWith(oldDetail("C1").setMatBarcode("SN1"));
+		var identifiers = (WmsIdentifierPolicyService) ReflectionTestUtils.getField(posting.service(), "identifierPolicyService");
+		when(identifiers.resolveEffective("purchase", "M1"))
+				.thenReturn(new WmsIdentifierPolicyEntity().setSerialManaged(true));
+
+		assertThrows(CheckedException.class, () -> posting.service().setInBillNum(
+				command().setContainerCode("C2").setMatBarcode("SN1").setMatNum(1D)));
+
+		verify(posting.billDetails(), never()).insert(any(WmsInBillDetailEntity.class));
+		verify(posting.billDetails(), never()).updateById(any(WmsInBillDetailEntity.class));
+	}
+
+	@Test
+	void finalMergedInboundPlacementIsRecheckedBeforeUpdatingOrOccupyingNotice() {
+		PostingCase posting = continuationWith(oldDetail("C1"));
+		failAfterEntryPlacement(posting);
+
+		assertThrows(CheckedException.class, () -> posting.service().setInBillNum(command().setContainerCode("C1")));
+
+		verify(posting.billDetails(), never()).updateById(any(WmsInBillDetailEntity.class));
+		verify(posting.details(), never()).update(any());
+		verify(posting.notices(), never()).update(any());
+	}
+
+	@Test
+	void finalNewInboundPlacementIsRecheckedBeforeIdentifiersOrInsert() {
+		PostingCase posting = continuationWith();
+		failAfterEntryPlacement(posting);
+
+		assertThrows(CheckedException.class, () -> posting.service().setInBillNum(command().setContainerCode("C2")));
+
+		var identifiers = (WmsIdentifierPolicyService) ReflectionTestUtils.getField(posting.service(), "identifierPolicyService");
+		verify(identifiers, never()).fillMissingIdentifiers(any(), any());
+		verify(posting.billDetails(), never()).insert(any(WmsInBillDetailEntity.class));
+		verify(posting.details(), never()).update(any());
+		verify(posting.notices(), never()).update(any());
+	}
+
+	private static PostingCase continuationWith(WmsInBillDetailEntity... oldRows) {
+		PostingCase posting = postingCase();
+		when(posting.bills().selectList(any())).thenReturn(List.of(existingBill()));
+		when(posting.billDetails().selectList(any())).thenReturn(List.of(oldRows));
+		when(posting.billDetails().insert(any(WmsInBillDetailEntity.class))).thenReturn(1);
+		when(posting.billDetails().updateById(any(WmsInBillDetailEntity.class))).thenReturn(1);
+		when(posting.bills().update(any())).thenReturn(1);
+		when(posting.details().update(any())).thenReturn(1);
+		when(posting.notices().update(any())).thenReturn(1);
+		return posting;
+	}
+
+	private static WmsInBillDetailEntity oldDetail(String container) {
+		var row = new WmsInBillDetailEntity().setWarehouseCode("W1").setSiteCode("S1")
+				.setContainerCode(container).setMatCode("M1").setMatUnit("EA").setMatNum(1D)
+				.setBillId(10L).setNoticeDetailId(7L);
+		row.setTenantId(1L);
+		row.setFactoryCode("F1");
+		return row;
+	}
+
+	private static void failAfterEntryPlacement(PostingCase posting) {
+		var guard = (WmsWarehouseBusinessGuard) ReflectionTestUtils.getField(posting.service(), "warehouseBusinessGuard");
+		var reads = new java.util.concurrent.atomic.AtomicInteger();
+		doAnswer(call -> {
+			if (reads.incrementAndGet() > 1) {
+				throw new CheckedException("最终放置范围已失效");
+			}
+			return null;
+		}).when(guard).checkPlacements(eq("W1"), anyList());
 	}
 
 	@Test
@@ -257,7 +363,8 @@ class WmsMobileInboundBoundaryTest {
 	}
 
 	private record PostingCase(DefaultWmsInBillService service, WmsInNoticeMapper notices,
-			WmsInNoticeDetailMapper details, WmsInBillMapper bills,
-			WmsInBillDetailMapper billDetails, WmsInNoticeDetailEntity line, WmsInNoticeEntity notice) {
+	                           WmsInNoticeDetailMapper details, WmsInBillMapper bills,
+	                           WmsInBillDetailMapper billDetails, WmsInNoticeDetailEntity line,
+	                           WmsInNoticeEntity notice) {
 	}
 }

@@ -3,13 +3,15 @@
 <mapper namespace="com.kitex.mom.mes.mapper.MesProductionTimeMapper">
     <select id="orphanedSources" resultType="long">
         SELECT COUNT(*) FROM (
-            SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,start_time,end_time
+            SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,start_time,end_time,
+                CAST(NULL AS varchar) AS identifier,CAST(NULL AS varchar) AS identifier_type
                 FROM mom_mes.mes_task_execution_segment
             UNION ALL
-            SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,labor_start,labor_end
+            SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,labor_start,labor_end,
+                CAST(NULL AS varchar) AS identifier,CAST(NULL AS varchar) AS identifier_type
                 FROM mom_mes.mes_labor_entry WHERE status IN ('APPROVED','VOID_PENDING')
             UNION ALL
-            SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,start_time,end_time
+            SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,start_time,end_time,identifier,identifier_type
                 FROM mom_mes.mes_workpiece_time_interval WHERE status IN ('OPEN','CLOSED')
         ) source
         WHERE source.tenant_id=#{tenant} AND source.factory_code=#{factory} AND source.del_flag='0'
@@ -19,6 +21,9 @@
             <if test="q.taskCode != null">AND source.task_code=#{q.taskCode}</if>
             <if test="q.produceTaskCode != null">AND source.produce_task_code=#{q.produceTaskCode}</if>
             <if test="q.arrangeCode != null">AND source.arrange_code=#{q.arrangeCode}</if>
+            <if test="q.identifier != null">
+                AND source.identifier=#{q.identifier} AND source.identifier_type=#{q.identifierType}
+            </if>
             AND NOT EXISTS (SELECT 1 FROM mom_mes.mes_task_arrange a WHERE a.id=source.arrange_id
                 AND a.code=source.arrange_code AND a.task_code=source.task_code
                 AND a.produce_task_code=source.produce_task_code AND a.tenant_id=source.tenant_id
@@ -49,6 +54,7 @@
             AND (s.start_time &lt; #{q.endTime} OR s.start_time IS NULL)
             AND (s.end_time &gt; #{q.startTime} OR s.end_time IS NULL OR s.end_time &lt; s.start_time
                 OR (s.end_time=s.start_time AND s.start_time &gt;= #{q.startTime}))
+            <if test="q.identifier != null">AND 1=0</if>
             AND <include refid="arrangeScope"/>
         ORDER BY s.id LIMIT #{limit}
     </select>
@@ -64,6 +70,7 @@
         WHERE l.tenant_id=#{tenant} AND l.factory_code=#{factory} AND l.del_flag='0'
             AND l.status IN ('APPROVED','VOID_PENDING')
             AND l.labor_start &lt; #{q.endTime} AND l.labor_end &gt; #{q.startTime}
+            <if test="q.identifier != null">AND 1=0</if>
             AND <include refid="arrangeScope"/>
         ORDER BY l.id LIMIT #{limit}
     </select>
@@ -95,6 +102,7 @@
         WHERE e.status='PAUSE' AND e.event_time &lt; #{q.endTime}
             AND (e.next_time &gt; #{q.startTime} OR e.next_time IS NULL OR e.next_time &lt; e.event_time
                 OR (e.next_time=e.event_time AND e.event_time &gt;= #{q.startTime}))
+            <if test="q.identifier != null">AND 1=0</if>
             AND <include refid="arrangeScope"/>
         ORDER BY e.id LIMIT #{limit}
     </select>
@@ -112,6 +120,9 @@
             AND w.status IN ('OPEN','CLOSED') AND w.start_time &lt; #{q.endTime}
             AND (w.end_time &gt; #{q.startTime} OR w.end_time IS NULL OR w.end_time &lt; w.start_time
                 OR (w.end_time=w.start_time AND w.start_time &gt;= #{q.startTime}))
+            <if test="q.identifier != null">
+                AND w.identifier=#{q.identifier} AND w.identifier_type=#{q.identifierType}
+            </if>
             AND <include refid="arrangeScope"/>
         ORDER BY w.id LIMIT #{limit}
     </select>

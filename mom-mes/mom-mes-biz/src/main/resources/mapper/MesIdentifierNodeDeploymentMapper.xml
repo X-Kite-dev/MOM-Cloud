@@ -731,9 +731,9 @@
                                         regexp_replace(e.predicate, '::(text|bigint|integer|character varying|bpchar)',
                                                        '', 'g'), '[()''[:space:]]', '', 'g')
                             AND ARRAY(SELECT literal.tokens[1] FROM regexp_matches(COALESCE(pg_get_expr(i.indpred,i.indrelid),''),
-                                  $node_literal$('(?:[^'] | '') * ')$node_literal$, ' g ') WITH ORDINALITY literal(tokens,ord) ORDER BY literal.ord)
-            = ARRAY(SELECT literal.tokens[1] FROM regexp_matches(e.predicate, $node_literal$('(? :[ ^ ']|'')*')
-                                  $node_literal$, 'g') WITH ORDINALITY literal(tokens, ord) ORDER BY literal.ord))
+                                  $node_literal$('(?:[^']|'')*')$node_literal$, 'g') WITH ORDINALITY literal(tokens,ord) ORDER BY literal.ord)
+            = ARRAY(SELECT literal.tokens[1] FROM regexp_matches(e.predicate,
+                                  $node_literal$('(?:[^']|'')*')$node_literal$, 'g') WITH ORDINALITY literal(tokens, ord) ORDER BY literal.ord))
         UNION ALL
         SELECT 'FK:' || e.table_name || '.' || e.name || ' missing/keys/target/enforcement mismatch'
         FROM required_fk e

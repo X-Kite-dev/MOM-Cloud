@@ -228,6 +228,7 @@ public class MesResourceExecutionConformanceQueryService {
         }
 
         return new MesResourceExecutionConformanceDTO.OperationExecution()
+                .setRouteNodeCode(operation.getSourceRouteNodeCode())
                 .setOperationId(operation.getId()).setOperationTaskCode(operation.getCode())
                 .setProcessCode(operation.getRouteCode()).setProcessName(operation.getRouteName())
                 .setOperationSeq(operation.getRouteOrder()).setOperationStatus(operation.getStatus())

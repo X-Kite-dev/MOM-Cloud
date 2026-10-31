@@ -9,6 +9,7 @@ import com.kitex.mom.mes.enums.ReportStatusEnum;
 import com.kitex.mom.mes.service.MesTaskReportService;
 import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -26,6 +27,7 @@ import java.util.Map;
  * <p>仅统计真实报工流水。有效数量排除已冲销记录；不同单位绝不直接相加，质量放行、
  * 待判和拒绝数量按报工冻结单位分别返回，防止模型生成失真的“总产量”。</p>
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class MesReportingAnalysisQueryService {
@@ -36,12 +38,19 @@ public class MesReportingAnalysisQueryService {
 
     private final MesActualFactoryAccessService factoryAccess;
     private final MesTaskReportService reportService;
+    private final MesReportQuantityEvidenceReader quantityReader;
+    // 与原来源核定相同：纠正后有效量优先，已纠正但缺有效量不能回退到原始数量。
+    private static final String EFFECTIVE_QUANTITY = "CASE WHEN status='REVERSED' THEN 0 WHEN effective_report_num IS NOT NULL THEN effective_report_num WHEN corrected_report_num IS NULL OR corrected_report_num=0 THEN report_num ELSE NULL END";
 
+    @org.springframework.transaction.annotation.Transactional(readOnly = true,
+            isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
     public MesReportingAnalysisDTO.Evidence query(MesReportingAnalysisDTO.Query query) {
         String actualFactory = factoryAccess.require("read");
         if (query == null || !actualFactory.equals(query.getFactoryCode())) {
             throw new CheckedException("报工分析查询工厂与当前实际工厂不一致");
         }
+        query.setTaskCode(StringUtils.hasText(query.getTaskCode()) ? query.getTaskCode().trim() : null);
+        query.setProduceTaskCode(StringUtils.hasText(query.getProduceTaskCode()) ? query.getProduceTaskCode().trim() : null);
         QueryRange range = normalize(query);
         LocalDateTime observedAt = LocalDateTime.now();
 
@@ -75,12 +84,13 @@ public class MesReportingAnalysisQueryService {
                 .map(item -> "MES:mes_task_report:" + (StringUtils.hasText(item.getRequestId())
                         ? item.getRequestId() : item.getId()))
                 .toList();
-        return new MesReportingAnalysisDTO.Evidence()
+        var result = new MesReportingAnalysisDTO.Evidence()
+                .setTaskCode(query.getTaskCode())
                 .setToolCode(TOOL_CODE)
                 .setQueryScope(range.allTime() ? "TASK_LIFECYCLE" : "TIME_RANGE")
                 .setMetricDefinition(range.allTime()
-                        ? "按指定工单或工序任务的完整生命周期统计；有效报工包含历史空状态和EFFECTIVE，排除REVERSED冲销记录。报工量及质量数量按报工冻结单位分组，不跨单位求和。"
-                        : "按报工时间落入查询区间统计；有效报工包含历史空状态和EFFECTIVE，排除REVERSED冲销记录。报工量、质量放行量、待判量和拒绝量均按报工时冻结单位分组，不跨单位求和。")
+                        ? "按指定工单或工序任务的完整生命周期统计；有效报工包含历史空状态和EFFECTIVE，排除REVERSED。产出使用纠正后当前有效量，ROUTE_RETURN不重复计产出。不同工序不可累加当作成品量，数量仍按冻结单位分组。"
+                        : "按报工时间落入查询区间统计；有效报工包含历史空状态和EFFECTIVE，排除REVERSED；产出使用纠正后有效量且排除ROUTE_RETURN，各工序发生量不等于成品量，按冻结单位分别展示。")
                 .setFactoryCode(actualFactory)
                 .setRangeStart(range.start())
                 .setRangeEnd(range.end())
@@ -92,6 +102,19 @@ public class MesReportingAnalysisQueryService {
                 .setDataGaps(gaps)
                 .setEvidenceRefs(refs)
                 .setTruncated(effectiveCount + reversedCount > details.size());
+        if (range.allTime() && StringUtils.hasText(query.getTaskCode()) && !StringUtils.hasText(query.getProduceTaskCode())) {
+            try {
+                result.setQuantityIntegrity(quantityReader.read(actualFactory, query.getTaskCode().trim()));
+            } catch (RuntimeException ex) {
+                log.warn("报工数量来源取证未完成，factoryCode={}, taskCode={}", actualFactory, query.getTaskCode(), ex);
+                result.setQuantityIntegrity(new com.kitex.mom.mes.agent.dto.MesReportQuantityConsistencyDTO.Evidence()
+                        .setVersion(MesReportQuantityEvidenceReader.VERSION).setFactoryCode(actualFactory).setTaskCode(query.getTaskCode().trim())
+                        .setStatus("DATA_GAP").setScopeComplete(false).setChecks(List.of()).setReports(List.of()).setAllocations(List.of())
+                        .setDataGaps(List.of(ex instanceof CheckedException && ex.getMessage() != null ? ex.getMessage()
+                                : "数量来源核验未完成，请检查原来源核定、入库账及业务权限")).setEvidenceRefs(List.of()));
+            }
+        }
+        return result;
     }
 
     private List<MesReportingAnalysisDTO.ModeSummary> queryModes(MesReportingAnalysisDTO.Query query,
@@ -112,22 +135,39 @@ public class MesReportingAnalysisQueryService {
 
     private List<MesReportingAnalysisDTO.UnitQuantitySummary> queryQuantities(
             MesReportingAnalysisDTO.Query query, QueryRange range) {
+        String released = "CASE WHEN quality_quantity_status='NOT_REQUIRED' THEN " + EFFECTIVE_QUANTITY + " ELSE quality_released_num END";
         List<Map<String, Object>> rows = reportService.getBaseMapper().selectMaps(
                 effective(base(query, range))
-                        .select("COALESCE(NULLIF(report_unit, ''), 'UNKNOWN') AS report_unit",
-                                "SUM(COALESCE(report_num, 0)) AS reported_quantity",
-                                "SUM(COALESCE(quality_released_num, 0)) AS released_quantity",
-                                "SUM(COALESCE(quality_pending_num, 0)) AS pending_quantity",
-                                "SUM(COALESCE(quality_rejected_num, 0)) AS rejected_quantity")
-                        .groupBy("COALESCE(NULLIF(report_unit, ''), 'UNKNOWN')")
-                        .orderByAsc("COALESCE(NULLIF(report_unit, ''), 'UNKNOWN')"));
-        return rows.stream().map(row -> new MesReportingAnalysisDTO.UnitQuantitySummary()
-                        .setReportUnit(text(row.get("report_unit")))
-                        .setReportedQuantity(decimal(row.get("reported_quantity")))
-                        .setQualityReleasedQuantity(decimal(row.get("released_quantity")))
-                        .setQualityPendingQuantity(decimal(row.get("pending_quantity")))
-                        .setQualityRejectedQuantity(decimal(row.get("rejected_quantity"))))
-                .toList();
+                        .and(kind -> kind.isNull("execution_kind").or().eq("execution_kind", "NORMAL").or().eq("execution_kind", ""))
+                        .select("task_code", "produce_task_code", "COALESCE(NULLIF(report_unit, ''), 'UNKNOWN') AS report_unit",
+                                "SUM(report_num) AS original_quantity", "SUM(corrected_report_num) AS corrected_quantity",
+                                "COUNT(*) FILTER (WHERE corrected_report_num IS NULL) AS missing_correction_count",
+                                "COUNT(*) FILTER (WHERE (" + EFFECTIVE_QUANTITY + ") IS NULL) AS unverified_count",
+                                "SUM(" + EFFECTIVE_QUANTITY + ") AS reported_quantity",
+                                "COUNT(*) FILTER (WHERE (" + released + ") IS NULL) AS missing_quality_count",
+                                "SUM(" + released + ") AS released_quantity",
+                                "COUNT(*) FILTER (WHERE quality_quantity_status IS DISTINCT FROM 'NOT_REQUIRED' AND quality_pending_num IS NULL) AS missing_pending_count",
+                                "COUNT(*) FILTER (WHERE quality_quantity_status IS DISTINCT FROM 'NOT_REQUIRED' AND quality_rejected_num IS NULL) AS missing_rejected_count",
+                                "SUM(CASE WHEN quality_quantity_status='NOT_REQUIRED' THEN 0 ELSE quality_pending_num END) AS pending_quantity",
+                                "SUM(CASE WHEN quality_quantity_status='NOT_REQUIRED' THEN 0 ELSE quality_rejected_num END) AS rejected_quantity")
+                        .groupBy("task_code", "produce_task_code", "COALESCE(NULLIF(report_unit, ''), 'UNKNOWN')")
+                        .orderByAsc("task_code", "produce_task_code", "COALESCE(NULLIF(report_unit, ''), 'UNKNOWN')"));
+        return rows.stream().map(row -> {
+            long unverified = number(row.get("unverified_count")).longValue();
+            return new MesReportingAnalysisDTO.UnitQuantitySummary().setTaskCode(text(row.get("task_code")))
+                    .setProduceTaskCode(text(row.get("produce_task_code"))).setReportUnit(text(row.get("report_unit")))
+                    .setOriginalQuantity(nullableDecimal(row.get("original_quantity")))
+                    .setCorrectedQuantity(number(row.get("missing_correction_count")).longValue() > 0 ? null : nullableDecimal(row.get("corrected_quantity")))
+                    .setUnverifiedReportCount(unverified)
+                    .setReportedQuantity(unverified > 0 ? null : nullableDecimal(row.get("reported_quantity")))
+                    .setQualityReleasedQuantity(number(row.get("missing_quality_count")).longValue() > 0 ? null : nullableDecimal(row.get("released_quantity")))
+                    .setQualityPendingQuantity(number(row.get("missing_pending_count")).longValue() > 0 ? null : nullableDecimal(row.get("pending_quantity")))
+                    .setQualityRejectedQuantity(number(row.get("missing_rejected_count")).longValue() > 0 ? null : nullableDecimal(row.get("rejected_quantity")));
+        }).toList();
+    }
+
+    private BigDecimal nullableDecimal(Object value) {
+        return value == null ? null : new BigDecimal(value.toString());
     }
 
     private QueryWrapper<MesTaskReportEntity> base(MesReportingAnalysisDTO.Query query, QueryRange range) {
@@ -155,15 +195,25 @@ public class MesReportingAnalysisQueryService {
                 .setMaterialName(item.getMatName())
                 .setReportMode(item.getReportMode())
                 .setSourceType(item.getType())
-                .setReportQuantity(item.getReportNum())
+                .setOriginalQuantity(item.getReportNum()).setCorrectedQuantity(item.getCorrectedReportNum()).setExecutionKind(item.getExecutionKind())
+                .setReportQuantity(currentOutput(item))
                 .setReportUnit(item.getReportUnit())
-                .setQualityReleasedQuantity(item.getQualityReleasedNum())
-                .setQualityPendingQuantity(item.getQualityPendingNum())
-                .setQualityRejectedQuantity(item.getQualityRejectedNum())
+                .setQualityReleasedQuantity("NOT_REQUIRED".equals(item.getQualityQuantityStatus()) || "REVERSED".equals(item.getStatus())
+                        ? currentOutput(item) : item.getQualityReleasedNum())
+                .setQualityPendingQuantity("NOT_REQUIRED".equals(item.getQualityQuantityStatus()) || "REVERSED".equals(item.getStatus())
+                        ? BigDecimal.ZERO : item.getQualityPendingNum())
+                .setQualityRejectedQuantity("NOT_REQUIRED".equals(item.getQualityQuantityStatus()) || "REVERSED".equals(item.getStatus())
+                        ? BigDecimal.ZERO : item.getQualityRejectedNum())
                 .setQualityQuantityStatus(item.getQualityQuantityStatus())
                 .setReportTime(item.getReportTime())
                 .setWorkerCode(item.getWorkerCode())
                 .setWorkerName(item.getWorkerName());
+    }
+
+    private BigDecimal currentOutput(MesTaskReportEntity report) {
+        if ("ROUTE_RETURN".equals(report.getExecutionKind()) || "REVERSED".equals(report.getStatus())) return BigDecimal.ZERO;
+        if (report.getEffectiveReportNum() != null) return report.getEffectiveReportNum();
+        return report.getCorrectedReportNum() == null || report.getCorrectedReportNum().signum() == 0 ? report.getReportNum() : null;
     }
 
     private QueryRange normalize(MesReportingAnalysisDTO.Query query) {
@@ -198,6 +248,9 @@ public class MesReportingAnalysisQueryService {
                 .ifPresent(item -> gaps.add(item.getReportCount() + "条有效报工缺少冻结报工模式"));
         quantities.stream().filter(item -> UNKNOWN.equals(item.getReportUnit())).findFirst()
                 .ifPresent(item -> gaps.add("存在缺少冻结单位的历史报工，其数量只在UNKNOWN组展示，不能与其他单位合并"));
+        if (quantities.stream().anyMatch(row -> row.getUnverifiedReportCount() != null && row.getUnverifiedReportCount() > 0)) {
+            gaps.add("存在已纠正但当前有效数量未知的报工，未以原始量或零替代");
+        }
         if (summary.getUnknownSourceCount() > 0) {
             gaps.add(summary.getUnknownSourceCount() + "条有效报工无法识别为自动或人工来源");
         }

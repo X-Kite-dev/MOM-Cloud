@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.util.R;
 import com.kitex.common.query.enums.CommonQuery;
+import com.kitex.mom.qms.dto.QmsFirstInspectionDecisionDTO;
 import com.kitex.mom.qms.dto.ReportListRespDTO;
 import com.kitex.mom.qms.dto.inspection.InspectionAppendParam;
 import com.kitex.mom.qms.dto.inspection.InspectionCheckResultBatchParam;
@@ -14,6 +15,7 @@ import com.kitex.mom.qms.dto.resp.HandleFinishDTO;
 import com.kitex.mom.qms.dto.resp.QmsInspectionProductResultDTO;
 import com.kitex.mom.qms.dto.resp.QmsInspectionProductTaskAppVO;
 import com.kitex.mom.qms.dto.resp.QmsInspectionProductTaskDTO;
+import com.kitex.mom.qms.entity.QmsInspectionEventEntity;
 import com.kitex.mom.qms.entity.QmsInspectionProductHandleRecordEntity;
 import com.kitex.mom.qms.entity.QmsInspectionProductHistoryEntity;
 import com.kitex.mom.qms.entity.QmsInspectionProductTaskDetailEntity;
@@ -23,11 +25,12 @@ import com.kitex.mom.qms.service.InspectionProductHistoryService;
 import com.kitex.mom.qms.service.InspectionProductTaskService;
 import com.kitex.mom.qms.service.QmsReworkOrderService;
 import com.kitex.mom.qms.service.impl.QmsInspectionEventService;
-import com.kitex.mom.qms.entity.QmsInspectionEventEntity;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+
 import lombok.RequiredArgsConstructor;
-import com.kitex.mom.qms.dto.QmsFirstInspectionDecisionDTO;
+
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -67,12 +70,13 @@ public class InspectionProductTaskController {
     @PostMapping("/create")
     @PreAuthorize("@pms.hasPermission('productTask:add')")
     public R<Void> create(@RequestBody InspectionProductCreateParam createParam) {
-        service.create(createParam);
+        service.createManual(createParam);
         return R.ok();
     }
 
     @Operation(summary = "修改质检任务", description = "修改质检任务")
     @PutMapping("/update")
+    @PreAuthorize("@pms.hasPermission('productTask:add')")
     public R<Void> update(@RequestBody InspectionProductCreateParam updateParam) {
         service.update(updateParam);
         return R.ok();
@@ -80,6 +84,7 @@ public class InspectionProductTaskController {
 
     @Operation(summary = "追加质检任务", description = "追加质检任务")
     @PostMapping("/append")
+    @PreAuthorize("@pms.hasPermission('productTask:add')")
     public R<Void> append(@RequestBody InspectionAppendParam appendParam) {
         service.append(appendParam);
         return R.ok();
@@ -134,6 +139,7 @@ public class InspectionProductTaskController {
 
     @Operation(summary = "作废质检任务", description = "作废质检任务")
     @PostMapping("/canceled")
+    @PreAuthorize("@pms.hasPermission('productTask:submit')")
     public R<Void> canceled(Long taskId, String reason) {
         service.canceled(taskId, reason);
         return R.ok();
@@ -141,6 +147,7 @@ public class InspectionProductTaskController {
 
     @Operation(summary = "处置", description = "作废质检任务")
     @PostMapping("/handleFinish")
+    @PreAuthorize("@pms.hasPermission('productTask:handle')")
     public R<Void> handleFinish(@RequestBody HandleFinishDTO dto) {
         service.handleFinish(dto);
         return R.ok();
@@ -148,12 +155,14 @@ public class InspectionProductTaskController {
 
     @Operation(summary = "返工返修", description = "返工返修")
     @PostMapping("/handleRework")
+    @PreAuthorize("@pms.hasPermission('productTask:handle')")
     public R<com.kitex.mom.qms.entity.QmsReworkOrderEntity> handleRework(Long id) {
-        return R.ok(reworkOrderService.create("PRODUCT", id));
+        return R.ok(reworkOrderService.createManual("PRODUCT", id));
     }
 
     @Operation(summary = "免检质检任务", description = "免检质检任务")
     @PostMapping("/exemption")
+    @PreAuthorize("@pms.hasPermission('productTask:submit')")
     public R<Void> exemption(Long taskId) {
         service.exemption(taskId);
         return R.ok();
@@ -161,6 +170,7 @@ public class InspectionProductTaskController {
 
     @Operation(summary = "暂存质检项结果", description = "暂存质检项结果")
     @PostMapping("/temporarilySave")
+    @PreAuthorize("@pms.hasPermission('productTask:submit')")
     public R<Void> temporarilySave(@RequestBody InspectionCheckResultParam param) {
         service.temporarilySave(param);
         return R.ok();
@@ -168,6 +178,7 @@ public class InspectionProductTaskController {
 
     @Operation(summary = "暂存质检项结果", description = "暂存质检项结果")
     @PostMapping("/batchTemporarilySave")
+    @PreAuthorize("@pms.hasPermission('productTask:submit')")
     public R<Void> batchTemporarilySave(@RequestBody InspectionCheckResultBatchParam param) {
         service.batchTemporarilySave(param);
         return R.ok();

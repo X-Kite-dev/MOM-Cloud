@@ -17,14 +17,19 @@ public final class PlanAgentObjectCandidateDTO {
     }
 
     /**
-     * 仅接受当前工厂和有界关键词、页码；租户从实名上下文取得。
+     * 仅接受当前工厂和有界页码；关键词与精确原编号互斥，租户从实名上下文取得。
      */
     @Schema(description = "智能体真实业务对象候选查询")
     public record Query(
             @NotBlank @Size(max = 100) @Schema(description = "必须严格等于当前实际授权工厂") String factoryCode,
             @Size(max = 100) @Schema(description = "可空查询词，禁止控制字符，查询时允许去除边界空白") String keyword,
             @Min(1) @Max(100000) @Schema(description = "页码，未提供时为1") Integer current,
-            @Min(1) @Max(50) @Schema(description = "页大小，未提供时为10") Integer size) {
+            @Min(1) @Max(50) @Schema(description = "页大小，未提供时为10") Integer size,
+            @Size(max = 100) @Schema(description = "可选精确原编号，与keyword互斥；不修剪、不模糊匹配") String exactBusinessNo) {
+        /** 保留旧普通候选调用。 */
+        public Query(String factoryCode, String keyword, Integer current, Integer size) {
+            this(factoryCode, keyword, current, size, null);
+        }
     }
 
     /**
@@ -39,7 +44,13 @@ public final class PlanAgentObjectCandidateDTO {
             @Schema(description = "实际页码，JSON数字") Integer current,
             @Schema(description = "实际页大小，JSON数字") Integer size,
             @Schema(description = "匹配总数的非负十进制文本") String total,
-            @Schema(description = "有界身份摘要，坏行保留并明确不可选") List<Candidate> records) {
+            @Schema(description = "有界身份摘要，坏行保留并明确不可选") List<Candidate> records,
+            @Schema(description = "精确模式回显原编号，普通模式为null；用于拒绝未实现精确合同的旧服务") String exactBusinessNo) {
+        /** 兼容旧普通分页投影。 */
+        public CandidatePage(String tenantId, String factoryCode, String businessType, Integer current,
+                             Integer size, String total, List<Candidate> records) {
+            this(tenantId, factoryCode, businessType, current, size, total, records, null);
+        }
     }
 
     /**

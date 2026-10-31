@@ -7,6 +7,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
+import com.kitex.mom.wms.service.WmsAllocationMobileReceiptService;
+import com.kitex.mom.wms.service.WmsTransferReceiptSnapshot;
 import com.kitex.common.security.component.PermissionService;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
@@ -70,12 +73,16 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
     @Override
     @Transactional(rollbackFor = Exception.class)
     public WmsTransferReceiptDTO.Result receive(WmsTransferReceiptDTO.Command command) {
+        var actualScope = WmsAllocationMobileReceiptService.requireScope();
         validateReceipt(command);
         String snapshot = receiptSnapshot(command);
         String requestId = command.getRequestId().trim();
         WmsAllocationBillEntity bill = lockBill(command.getAllocationBillId());
         requireFactory(bill.getFactoryCode());
         requireWarehousePermission("wms_wmsAllocationReceive_rec", bill.getNewWarehouseCode(), "无权接收至该仓库");
+        require(Objects.equals(bill.getTenantId(), actualScope.tenantId()), "接收单据不属于实际租户");
+        require(receiptMapper.cancelled(TenantContextHolder.getTenantId(), requestId) == null,
+                "原接收请求已取消，请查询原结果后重新办理");
         WmsTransferReceiptEntity duplicate = receiptMapper.selectOne(new LambdaQueryWrapper<WmsTransferReceiptEntity>()
                 .eq(WmsTransferReceiptEntity::getRequestId, requestId));
         if (duplicate != null) {
@@ -650,23 +657,7 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
     }
 
     private String receiptSnapshot(WmsTransferReceiptDTO.Command command) {
-        List<Map<String, Object>> lines = command.getLines() == null ? List.of() : command.getLines().stream().map(line -> {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("sourceFlowId", line.getSourceFlowId());
-            item.put("actual", line.getActualReceivedQuantity());
-            item.put("site", StrUtil.trim(line.getTargetSiteCode()));
-            item.put("container", StrUtil.trim(line.getTargetContainerCode()));
-            return item;
-        }).sorted(Comparator.comparing(item -> Objects.toString(item.get("sourceFlowId"), ""))).toList();
-        Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("billId", command.getAllocationBillId());
-        snapshot.put("final", command.getFinalReceipt());
-        snapshot.put("reason", command.getReasonCode());
-        snapshot.put("reasonDescription", StrUtil.trim(command.getReasonDescription()));
-        snapshot.put("responsibleType", command.getResponsibleType());
-        snapshot.put("evidence", StrUtil.trim(command.getEvidence()));
-        snapshot.put("lines", lines);
-        return JSONUtil.toJsonStr(snapshot);
+        return WmsTransferReceiptSnapshot.raw(command);
     }
 
     private String reviewSnapshot(WmsTransferVarianceDTO.ReviewCommand command, String stage) {

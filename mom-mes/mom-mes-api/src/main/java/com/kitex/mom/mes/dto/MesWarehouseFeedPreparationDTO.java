@@ -94,4 +94,15 @@ public final class MesWarehouseFeedPreparationDTO {
                               String receivingWorksiteCode, String materialId, String materialCode,
                               String unit, String materialUpdatedAt, List<Binding> bindings, List<Source> sources) {
     }
+    /** 来源线索，不代表当前可用量；未关联领料工单时taskCode保持null。 */
+    public record ReceiptSeed(String version, MesWarehouseFeedCommandDTO.Context context, String noticeId,
+                              boolean taskBound, String taskCode, String materialCode, String batchNo, String barcode,
+                              String supplierCode, String reservationNo) { }
+
+    public record Candidate(String arrangeId, String arrangeCode, String taskCode, String routeName,
+                            String worksiteCode, String workerName, String status) { }
+
+    public record Candidates(String version, MesWarehouseFeedCommandDTO.Context context, long current, long size,
+                             long total, List<Candidate> records) { }
+
 }

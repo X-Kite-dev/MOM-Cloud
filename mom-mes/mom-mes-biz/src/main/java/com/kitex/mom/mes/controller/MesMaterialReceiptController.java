@@ -41,7 +41,7 @@ public class MesMaterialReceiptController {
     }
 
     @GetMapping("/{id}/sites")
-    @PreAuthorize("@pms.hasPermission('mes_materialReceipt_view')")
+    @PreAuthorize("@pms.hasPermission('mes_materialReceipt_view') or @pms.hasPermission('mes_materialReceipt_receive')")
     public R<?> sites(@PathVariable Long id) {
         return R.ok(service.sites(id));
     }

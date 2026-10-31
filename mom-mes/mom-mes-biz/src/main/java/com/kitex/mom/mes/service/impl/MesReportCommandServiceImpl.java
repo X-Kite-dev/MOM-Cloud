@@ -243,12 +243,21 @@ public class MesReportCommandServiceImpl extends ServiceImpl<MesReportCommandMap
     @Override
     @Transactional(readOnly = true)
     public MesReportOperatorContextDTO operatorContext() {
+        return operatorContext(true);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public MesReportOperatorContextDTO operatorContext(boolean includeNodeReadiness) {
         String factory = factoryAccess.require("read");
         var actor = SecurityUtils.getUser();
-        var readiness = nodeReadiness.deployment();
-        return new MesReportOperatorContextDTO().setTenantId(TenantContextHolder.getTenantId().toString())
-                .setFactoryCode(factory).setActorId(actor.getId().toString()).setActorCode(actor.getUsername())
-                .setNodeExecutionReady(readiness.getDatabaseReady()).setNodeReadiness(readiness);
+        var result = new MesReportOperatorContextDTO().setTenantId(TenantContextHolder.getTenantId().toString())
+                .setFactoryCode(factory).setActorId(actor.getId().toString()).setActorCode(actor.getUsername());
+        if (includeNodeReadiness) {
+            var readiness = nodeReadiness.deployment();
+            result.setNodeExecutionReady(readiness.getDatabaseReady()).setNodeReadiness(readiness);
+        }
+        return result;
     }
 
     @Override

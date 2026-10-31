@@ -16,12 +16,14 @@ import com.kitex.mom.wms.entity.WmsAllocationBillEntity;
 import com.kitex.mom.wms.entity.WmsInoutFlowEntity;
 import com.kitex.mom.wms.entity.WmsLiveStockEntity;
 import com.kitex.mom.wms.mapper.WmsAllocationBillMapper;
+import com.kitex.mom.wms.mapper.WmsAllocationMobileCancelReceiptMapper;
 import com.kitex.mom.wms.mapper.WmsInoutFlowMapper;
 import com.kitex.mom.wms.service.WmsLiveStockService;
 import com.kitex.mom.wms.service.WmsStockMoveSlice;
 import com.kitex.mom.wms.service.WmsWarehouseBusinessGuard;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -49,8 +51,9 @@ class WmsAllocationMobileTransactionTest {
         SecurityContextHolder.clearContext();
     }
 
-    @Test
-    void failedReceiptFlowRollsBackMobileBillAndStockMove() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void failedCompletionProofRollsBackMobileBillAndStockMove(boolean unitMismatch) {
         var dataSource = new DriverManagerDataSource(
                 "jdbc:h2:mem:mobile-allocation-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", "");
         dataSource.setDriverClassName("org.h2.Driver");
@@ -84,6 +87,7 @@ class WmsAllocationMobileTransactionTest {
         ReflectionTestUtils.setField(target, "wmsLiveStockService", stocks);
         ReflectionTestUtils.setField(target, "wmsInoutFlowMapper", flows);
         ReflectionTestUtils.setField(target, "baseMapper", bills);
+        ReflectionTestUtils.setField(target, "mobileCancelReceipts", mock(WmsAllocationMobileCancelReceiptMapper.class));
         when(warehouses.getByCode("W1")).thenReturn(R.ok(warehouse("W1")));
         when(warehouses.getByCode("W2")).thenReturn(R.ok(warehouse("W2")));
         when(locations.getByCode("S1")).thenReturn(R.ok(location("S1", "W1")));
@@ -104,7 +108,7 @@ class WmsAllocationMobileTransactionTest {
             db.update("update stock set quantity = 0 where id = 7");
             var source = new WmsLiveStockEntity().setFactoryCode("F1")
                     .setWarehouseCode("W1").setSiteCode("S1")
-                    .setMatCode("M1").setMatNum(1d)
+                    .setMatCode("M1").setMatUnit(unitMismatch ? "KG" : "EA").setMatNum(1d)
                     .setMatBarcode("SERIAL-7").setSerialManaged(true);
             source.setId(7L);
             return List.of(new WmsStockMoveSlice(source, 70L, 1d));
@@ -127,6 +131,8 @@ class WmsAllocationMobileTransactionTest {
         var service = (WmsAllocationBillServiceImpl) proxy.getProxy();
 
         assertThrows(CheckedException.class, () -> service.appSaveAllocationBill(command()));
+        verify(stocks).billStockMoveWithEvidence(any());
+        verify(flows, times(unitMismatch ? 0 : 2)).insert(any(WmsInoutFlowEntity.class));
         var lockBeforeReceipt = inOrder(bills, target);
         lockBeforeReceipt.verify(bills).lockAgentTransfer("MOBILE_REQUEST:1:request-7");
         lockBeforeReceipt.verify(target).getOne(any(Wrapper.class), eq(false));
@@ -144,6 +150,7 @@ class WmsAllocationMobileTransactionTest {
         command.setNewWarehouseCode("W2");
         command.setNewSiteCode("T1");
         command.setMatCode("M1");
+        command.setMatUnit("EA");
         command.setOperateNum(1d);
         command.setSourceStockId(7L);
         command.setMatBarcode("SERIAL-7");

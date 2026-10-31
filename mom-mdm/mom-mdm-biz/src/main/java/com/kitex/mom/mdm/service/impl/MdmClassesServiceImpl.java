@@ -152,7 +152,7 @@ public class MdmClassesServiceImpl extends ServiceImpl<MdmClassesMapper, MdmClas
                 .and(wrapper -> wrapper
                         .nested(w -> w
                                 .le(MdmClassesEntity::getStartTime, currentTime)
-                                .ge(MdmClassesEntity::getEndTime, currentTime)
+                                .gt(MdmClassesEntity::getEndTime, currentTime)
                         )
                         .or()
                         .nested(w -> w
@@ -160,7 +160,7 @@ public class MdmClassesServiceImpl extends ServiceImpl<MdmClassesMapper, MdmClas
                                 .and(sw -> sw
                                         .le(MdmClassesEntity::getStartTime, currentTime)
                                         .or()
-                                        .ge(MdmClassesEntity::getEndTime, currentTime)
+                                        .gt(MdmClassesEntity::getEndTime, currentTime)
                                 )
                         )
                 );
@@ -203,7 +203,12 @@ public class MdmClassesServiceImpl extends ServiceImpl<MdmClassesMapper, MdmClas
         // 5. 添加后续班次
         int count = 1;
         int index = currentIndex;
-        LocalDateTime nextDateTime = localTime; // 用于计算下一个班次的日期时间
+        LocalDateTime nextDateTime = localTime;
+        // 凌晨仍属于前一天开始的跨日班，后续班次须从该起始日继续推进。
+        if (currentShift.getStartTime().isAfter(currentShift.getEndTime())
+                && currentTime.isBefore(currentShift.getEndTime())) {
+            nextDateTime = nextDateTime.minusDays(1);
+        }
 
         while (count < number) {
             // 获取下一个索引，如果超出列表长度则回到开头
@@ -223,11 +228,11 @@ public class MdmClassesServiceImpl extends ServiceImpl<MdmClassesMapper, MdmClas
                 nextDateTime = nextDateTime.plusDays(1);
             }
 
-            // 在计算班次时间时加上1分钟
+            // 精确按下一班开始时刻计算，短班次也不能被偏移跳过。
             LocalDateTime shiftDateTime = LocalDateTime.of(
                     nextDateTime.toLocalDate(),
                     nextShift.getStartTime()
-            ).plusMinutes(1);  // 加上1分钟
+            );
             copy.setShiftCode(ShiftCalculator.getShift(allShifts, shiftDateTime));
 
             result.add(copy);

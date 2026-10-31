@@ -46,7 +46,7 @@ class WmsWarehouseBusinessGuardTest {
 		when(configurations.list(
 				org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<WmsWarehouseBizEntity>>any()))
 				.thenReturn(List.of());
-		guard = new WmsWarehouseBusinessGuard(remote, configurations);
+		guard = new WmsWarehouseBusinessGuard(remote, configurations, mock(WmsWarehousePlacementGuard.class));
 		inbound = new DefaultWmsInBillService();
 		outbound = new DefaultWmsOutBillService();
 		ReflectionTestUtils.setField(inbound, "warehouseBusinessGuard", guard);
@@ -57,6 +57,27 @@ class WmsWarehouseBusinessGuardTest {
 	void clearFactory() {
 		FactoryContextHolder.clear();
 		TenantContextHolder.clear();
+	}
+
+	@Test
+	void returnReceiptCapabilitiesRequireExplicitSelectionOnceWarehouseConfigured() {
+		var view = com.kitex.mom.wms.enums.menu.ReturnReceiptActionEnum.VIEW;
+		var finish = com.kitex.mom.wms.enums.menu.ReturnReceiptActionEnum.FINALIZE;
+		assertEquals(java.util.EnumSet.allOf(com.kitex.mom.wms.enums.menu.ReturnReceiptActionEnum.class),
+				guard.returnReceiptActions("W1"));
+		when(configurations.list(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class)))
+				.thenReturn(List.of(new WmsWarehouseBizEntity().setBizType("/wms/inBiz/return")));
+		assertTrue(guard.returnReceiptActions("W1").isEmpty());
+		when(configurations.list(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class)))
+				.thenReturn(List.of(new WmsWarehouseBizEntity().setBizType("/wms/inBiz/return"),
+						new WmsWarehouseBizEntity().setBizType(view.configurationValue())));
+		assertEquals(java.util.Set.of(view), guard.returnReceiptActions("W1"));
+		when(configurations.list(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class)))
+				.thenReturn(List.of(new WmsWarehouseBizEntity().setBizType("/wms/inBiz/return"),
+						new WmsWarehouseBizEntity().setBizType(finish.configurationValue())));
+		assertTrue(guard.returnReceiptActions("W1").isEmpty());
+		warehouse.setStatus(false);
+		assertThrows(CheckedException.class, () -> guard.returnReceiptActions("W1"));
 	}
 
 	@Test

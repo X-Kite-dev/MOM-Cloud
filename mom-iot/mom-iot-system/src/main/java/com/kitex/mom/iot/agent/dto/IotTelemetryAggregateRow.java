@@ -12,6 +12,8 @@ public class IotTelemetryAggregateRow {
     private String parameterName;
     private String dataType;
     private String unit;
+    private Integer numericUnitCount;
+    private Long missingNumericUnitCount;
     private Long sampleCount;
     private Long goodSampleCount;
     private Long nonGoodSampleCount;

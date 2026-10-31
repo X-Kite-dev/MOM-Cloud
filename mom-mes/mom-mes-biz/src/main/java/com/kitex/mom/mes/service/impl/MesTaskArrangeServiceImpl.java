@@ -38,6 +38,8 @@ import com.kitex.mom.mes.enums.WorksiteTypeEnum;
 import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.*;
 import com.kitex.mom.mes.util.MesFrozenExecutionGraph;
+import com.kitex.mom.mes.util.MesFrozenBomProjection;
+import com.kitex.mom.mes.util.MesWorksiteTriggerProjection;
 import com.kitex.mom.mes.util.MesTaskUtils;
 import com.kitex.mom.plan.feign.RemotePlnIssueService;
 import com.kitex.mom.tpm.api.feign.RemoteDeviceCheckService;
@@ -109,33 +111,6 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
             throw new CheckedException(label + "过长");
         }
         return normalized;
-    }
-
-    private static void calculateFeedAllNum(MdmBomChildDTO node, Map<String, BigDecimal> feedMap, Map<String, BigDecimal> usedMap) {
-        BigDecimal totalFeedNum = BigDecimal.ZERO;
-        BigDecimal totalUsedNum = BigDecimal.ZERO;
-        node.setNeedNum(node.getNoticeNum().multiply(node.getQuantity()));
-
-        // 如果当前节点匹配到 feedMap，则累加其值
-        if (feedMap.containsKey(node.getMaterialCode())) {
-            totalFeedNum = totalFeedNum.add(feedMap.get(node.getMaterialCode()));
-        }
-        // 如果当前节点匹配到 usedMap，则累加其值
-        if (usedMap.containsKey(node.getMaterialCode())) {
-            totalUsedNum = totalUsedNum.add(usedMap.get(node.getMaterialCode()));
-        }
-
-        // 如果有子节点，则递归计算子节点的总和
-        if (node instanceof MdmBomChildListDTO && ((MdmBomChildListDTO) node).getChildren() != null) {
-            for (MdmBomChildDTO child : ((MdmBomChildListDTO) node).getChildren()) {
-                calculateFeedAllNum(child, feedMap, usedMap); // 递归处理子节点
-                totalFeedNum = totalFeedNum.add(Optional.ofNullable(child.getFeedNum()).orElse(BigDecimal.ZERO)); // 累加子节点的 feedNum
-                totalUsedNum = totalUsedNum.add(Optional.ofNullable(child.getUsedNum()).orElse(BigDecimal.ZERO)); // 累加子节点的 usedNum
-            }
-        }
-        // 回填当前节点的 feedNum 和 usedNum 字段
-        node.setFeedNum(totalFeedNum);
-        node.setUsedNum(totalUsedNum);
     }
 
     @Override
@@ -299,6 +274,9 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
             throw new CheckedException("当前实际组织的生产工单不存在或编码不唯一，派工失败");
         }
         MesTaskEntity mainTask = mainTasks.get(0);
+        if (terminalParent(mainTask.getStatus())) {
+            throw new CheckedException("已关闭或完工的生产工单不能重新派工");
+        }
         List<String> requestedProduceTaskCodes = taskArrangeList.stream()
                 .map(MesTaskArrangeEntity::getProduceTaskCode)
                 .filter(StrUtil::isNotBlank)
@@ -361,7 +339,7 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
             newTask.setWorksiteCodes(String.join(",", selectedWorksites));
             newTask.setWorksiteNames(resolveSelectedValues(produceTask.getWorksiteCodes(),
                     produceTask.getWorksiteNames(), selectedWorksites));
-            newTask.setWorksiteTypes(resolveSelectedValues(produceTask.getWorksiteCodes(),
+            newTask.setWorksiteTypes(MesWorksiteTriggerProjection.forDispatch(produceTask.getWorksiteCodes(),
                     produceTask.getWorksiteTypes(), selectedWorksites));
             newTask.setPlannedStartTime(produceTask.getPlannedStartTime());
             newTask.setPlannedEndTime(produceTask.getPlannedEndTime());
@@ -427,12 +405,15 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
                 .set(MesProduceTaskEntity::getStatus, MesProduceTaskStatusEnum.UN_RECEIVE.name()))) {
             throw new CheckedException("派工工序状态未保存，整笔派工回滚");
         }
-        // 更新工单状态
+        // 补派班次不能把已经开工的原工单退回已派工；终态及锁内旧状态必须仍然一致。
         if (!mesTaskService.update(new LambdaUpdateWrapper<MesTaskEntity>()
                 .eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
                 .eq(MesTaskEntity::getId, mainTask.getId())
                 .eq(MesTaskEntity::getCode, dto.getCode())
-                .set(MesTaskEntity::getStatus, MesTaskStatusEnum.DISPATCH.name()))) {
+                .eq(MesTaskEntity::getStatus, mainTask.getStatus())
+                .notIn(MesTaskEntity::getStatus, MesTaskStatusEnum.CLOSE.name(), MesTaskStatusEnum.FINISH.name())
+                .set(MesTaskEntity::getStatus, MesTaskStatusEnum.PRODUCT.name().equals(mainTask.getStatus())
+                        ? MesTaskStatusEnum.PRODUCT.name() : MesTaskStatusEnum.DISPATCH.name()))) {
             throw new CheckedException("派工工单状态未保存，整笔派工回滚");
         }
     }
@@ -520,6 +501,7 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
         }
         MesTaskArrangeEntity arrange = matches.get(0);
         BeanUtil.copyProperties(arrange, result);
+        result.setShiftNum(arrange.getNoticeNum());
         // PAD使用的对象模式和入口规则必须与报工主事务读取的同一派工快照一致。
         MesExecutionContractDTO contract = executionTemplateService.contract(arrange);
         result.setExecutionContract(contract);
@@ -530,6 +512,7 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
         if (task == null) {
             throw new CheckedException("当前派工所属工单不存在或不属于当前工厂，请核对来源");
         }
+        result.setNoticeNum(task.getNoticeNum());
         result.setProcessCode(task.getProcessRouteCode());
         // 获取当前工序
         MesProduceTaskEntity currentProduceTask = produceTaskService.getOne(new LambdaQueryWrapper<MesProduceTaskEntity>()
@@ -540,6 +523,7 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
             throw new CheckedException("当前派工所属工序任务不存在或归属不一致，请核对来源");
         }
         MesFrozenExecutionGraph.assertArrangement(currentProduceTask, arrange);
+        result.setWorksiteTypes(MesWorksiteTriggerProjection.forExecution(currentProduceTask, arrange).name());
         result.setCompleteNum(currentProduceTask.getCompleteNum());
         // DAG汇合工序的可用前序数量取全部直接前置工序完工数量的最小值。
         List<MesProduceTaskEntity> predecessorTasks = frozenGraph(currentProduceTask).predecessors(currentProduceTask);
@@ -645,54 +629,39 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<MdmBomChildListDTO> getBomList(String code) {
-        MesTaskArrangeEntity arrange = this.getOne(new LambdaQueryWrapper<MesTaskArrangeEntity>().eq(MesTaskArrangeEntity::getCode, code));
-        if (Objects.isNull(arrange)) {
-            return new ArrayList<>();
+        String factory = actualFactoryAccess.require("read");
+        MesTaskArrangeEntity arrange = this.getOne(new LambdaQueryWrapper<MesTaskArrangeEntity>()
+                .eq(MesTaskArrangeEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MesTaskArrangeEntity::getFactoryCode, factory)
+                .eq(MesTaskArrangeEntity::getCode, code));
+        if (arrange == null) {
+            return List.of();
         }
-        // bom信息
-        MesTaskEntity task = mesTaskService.getOne(new LambdaQueryWrapper<MesTaskEntity>().eq(MesTaskEntity::getCode, arrange.getTaskCode()));
-
-        List<MesWarehouseFeedEntity> feedList = feedService.list(new LambdaQueryWrapper<MesWarehouseFeedEntity>()
-                .eq(MesWarehouseFeedEntity::getTaskCode, arrange.getTaskCode()));
-
-        return getBomTree(JSONUtil.toList(task.getBomSnapshot(), MdmBomChildListDTO.class), feedList);
+        return frozenBomForTask(arrange.getTaskCode(), factory);
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<MdmBomChildListDTO> getBomListByTaskCode(String code) {
-        // bom信息
-        MesTaskEntity task = mesTaskService.getOne(new LambdaQueryWrapper<MesTaskEntity>().eq(MesTaskEntity::getCode, code));
-
-        List<MesWarehouseFeedEntity> feedList = feedService.list(new LambdaQueryWrapper<MesWarehouseFeedEntity>()
-                .eq(MesWarehouseFeedEntity::getTaskCode, code));
-
-        return getBomTree(JSONUtil.toList(task.getBomSnapshot(), MdmBomChildListDTO.class), feedList);
+        return frozenBomForTask(code, actualFactoryAccess.require("read"));
     }
 
-    private List<MdmBomChildListDTO> getBomTree(List<MdmBomChildListDTO> bomList, List<MesWarehouseFeedEntity> feedList) {
-        Map<String, BigDecimal> feedMap = feedList.stream()
-                .collect(Collectors.toMap(
-                        entity -> StrUtil.blankToDefault(entity.getRequirementMatCode(), entity.getMatCode()),
-                        entity -> toRequirementEquivalent(entity, entity.getFeedNum()),
-                        BigDecimal::add // 合并逻辑
-                ));
-        Map<String, BigDecimal> usedMap = feedList.stream()
-                .collect(Collectors.toMap(
-                        entity -> StrUtil.blankToDefault(entity.getRequirementMatCode(), entity.getMatCode()),
-                        entity -> toRequirementEquivalent(entity, Optional.ofNullable(entity.getUsedNum()).orElse(BigDecimal.ZERO)),
-                        BigDecimal::add // 合并逻辑
-                ));
-        bomList.forEach(node -> calculateFeedAllNum(node, feedMap, usedMap));
-        return bomList;
-    }
-
-    private BigDecimal toRequirementEquivalent(MesWarehouseFeedEntity feed, BigDecimal actualNum) {
-        BigDecimal ratio = Optional.ofNullable(feed.getSubstituteRatio()).orElse(BigDecimal.ONE);
-        if (ratio.compareTo(BigDecimal.ZERO) <= 0) {
-            return BigDecimal.ZERO;
+    private List<MdmBomChildListDTO> frozenBomForTask(String code, String factory) {
+        Long tenant = TenantContextHolder.getTenantId();
+        MesTaskEntity task = mesTaskService.getOne(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getTenantId, tenant)
+                .eq(MesTaskEntity::getFactoryCode, factory)
+                .eq(MesTaskEntity::getCode, code));
+        if (task == null) {
+            throw new CheckedException("当前工厂的工单不存在，无法读取冻结BOM");
         }
-        return actualNum.divide(ratio, 6, RoundingMode.HALF_UP);
+        List<MesWarehouseFeedEntity> feedList = feedService.list(new LambdaQueryWrapper<MesWarehouseFeedEntity>()
+                .eq(MesWarehouseFeedEntity::getTenantId, tenant)
+                .eq(MesWarehouseFeedEntity::getFactoryCode, factory)
+                .eq(MesWarehouseFeedEntity::getTaskCode, code));
+        return MesFrozenBomProjection.project(task.getBomSnapshot(), task.getNoticeNum(), feedList);
     }
 
     /**
@@ -1158,6 +1127,18 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
             produceTask.setStartTime(task.getStartTime());
         }
         if (!produceTaskService.updateById(produceTask)) throw new CheckedException("工序开工事实保存失败");
+        // 真实开工/复工与派工、工序同事务推进原主工单；不补写历史开始时间或数量。
+        if (!MesTaskStatusEnum.PRODUCT.name().equals(mainTask.getStatus())
+                && !mesTaskService.update(new LambdaUpdateWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getId, mainTask.getId())
+                .eq(MesTaskEntity::getTenantId, task.getTenantId())
+                .eq(MesTaskEntity::getFactoryCode, task.getFactoryCode())
+                .eq(MesTaskEntity::getCode, task.getTaskCode())
+                .eq(MesTaskEntity::getStatus, mainTask.getStatus())
+                .notIn(MesTaskEntity::getStatus, MesTaskStatusEnum.CLOSE.name(), MesTaskStatusEnum.FINISH.name())
+                .set(MesTaskEntity::getStatus, MesTaskStatusEnum.PRODUCT.name()))) {
+            throw new CheckedException("生产工单开工状态保存失败，整笔开工回滚");
+        }
         repairResumeEventService.recordActualResume(task, resumedSegment);
     }
 
@@ -1521,10 +1502,8 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
             }
             if (task != null && "REWORK".equals(task.getResourceType())) {
                 terminalExecutionGuard.beforeProductionRemoteWrite();
-                Long reinspection = mesTaskService.notifyReworkCompletion(task.getId(), produceTask.getCode(), completedQuantity);
-                if (terminalExecutionGuard.isMobileExecution() && reinspection == null) {
-                    throw new CheckedException("返工完工远端回传未取得明确回执，移动原号必须保留未知");
-                }
+                // 本事务保存发送原件，提交后投递；本地完工不代表独立复检已确认或质量放行。
+                mesTaskService.notifyReworkCompletion(task.getId(), produceTask.getCode(), completedQuantity);
             }
         }
     }

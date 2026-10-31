@@ -67,6 +67,15 @@ public class QmsBadInfoServiceImpl extends ServiceImpl<QmsBadInfoMapper, QmsBadI
     @Override
     public Page<QmsBadInfoEntity> queryPage(Page<QmsBadInfoEntity> page, QmsBadInfoEntity query) {
         QueryWrapper<QmsBadInfoEntity> wrapper = QueryGenerator.initQueryWrapper(query);
+        if (query != null && query.getResourceTaskId() != null
+                && com.kitex.mom.mes.dto.MesInventoryQualityOrigin.isMesResource(query.getResourceType())) {
+            String factory = requireMesFactory();
+            wrapper.lambda().eq(QmsBadInfoEntity::getFactoryCode, factory)
+                    .eq(QmsBadInfoEntity::getTenantId, com.kitex.common.data.tenant.TenantContextHolder.getTenantId())
+                    .eq(QmsBadInfoEntity::getResourceType, query.getResourceType())
+                    .eq(QmsBadInfoEntity::getResourceTaskId, query.getResourceTaskId());
+            page.setSize(Math.max(1, Math.min(page.getSize(), 50)));
+        }
         wrapper.lambda().orderByDesc(QmsBadInfoEntity::getCreateTime);
         return this.page(page, wrapper);
     }

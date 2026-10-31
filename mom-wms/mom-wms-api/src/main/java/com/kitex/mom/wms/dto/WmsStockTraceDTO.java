@@ -53,6 +53,8 @@ public final class WmsStockTraceDTO {
         private Long sourceInBillDetailId;
         private List<WmsLiveStockEntity> currentStocks;
         private List<WmsInoutFlowEntity> flows;
+        @Schema(description = "仅由本侧授权流水关联的组织交接，不赋予对方库存查询权")
+        private List<OrganizationLink> organizationLinks;
         private List<WmsMaterialMoveSiteEntity> moves;
         @Schema(description = "逐次拣配作业证据；不代表正式出库，也不与出库流水叠加计数")
         private List<WmsPickingEventEntity> pickingEvents;
@@ -73,6 +75,11 @@ public final class WmsStockTraceDTO {
         @Schema(description = "可机读的WMS证据质量；跨系统MES投料始终单独验证")
         private EvidenceQuality evidenceQuality;
     }
+
+    public record OrganizationLink(Long flowId, Long billId, String billNo, String sourceCompanyCode,
+                                   String sourceFactoryCode, String sourceWarehouseCode, String targetCompanyCode,
+                                   String targetFactoryCode, String targetWarehouseCode, String action,
+                                   BigDecimal quantity) { }
 
     public record EvidenceQuality(String wmsStatus, String crossSystemStatus, List<String> gapCodes) {
     }

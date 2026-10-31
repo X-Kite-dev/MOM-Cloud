@@ -19,6 +19,9 @@ public interface QmsCapaService extends IService<QmsCapaEntity> {
 
     List<QmsCapaActionEntity> actions(Long capaId);
 
+    /** 原措施分页；未指定周期、状态或原措施时不隐式扩大/替换传入范围。 */
+    Page<QmsCapaActionEntity> actionPage(Long capaId, long current, long size, Integer cycleNo, String status, Long actionId);
+
     List<QmsCapaCauseEntity> causes(Long capaId);
 
     List<QmsCapaOperationEntity> operations(Long capaId);

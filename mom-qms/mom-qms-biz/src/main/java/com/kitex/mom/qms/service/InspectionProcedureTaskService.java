@@ -13,6 +13,7 @@ import com.kitex.mom.qms.dto.req.InspectionProcedureTaskReq;
 import com.kitex.mom.qms.dto.resp.*;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureTaskDetailEntity;
 import com.kitex.mom.qms.entity.QmsInspectionProcedureTaskEntity;
+
 import org.springframework.http.ResponseEntity;
 
 import java.util.List;
@@ -30,6 +31,11 @@ public interface InspectionProcedureTaskService extends IService<QmsInspectionPr
      * 创建质检任务
      */
     Long create(InspectionProcedureCreateParam createParam);
+
+    /** 人工报检使用实名工厂写权限；内部生产来源继续走受信入口。 */
+    Long createManual(InspectionProcedureCreateParam createParam);
+
+    Map<String, Long> batchCreateManual(List<InspectionProcedureCreateParam> createParams);
 
     /**
      * 批量创建质检任务
@@ -103,6 +109,9 @@ public interface InspectionProcedureTaskService extends IService<QmsInspectionPr
      * 提交质检记录结果
      */
     void submitInspectionResult(Long taskId);
+
+    com.kitex.mom.qms.dto.QmsInspectionPieceDTO.Receipt collectPiece(
+            com.kitex.mom.qms.dto.QmsInspectionPieceDTO.Command command);
 
 
     /**

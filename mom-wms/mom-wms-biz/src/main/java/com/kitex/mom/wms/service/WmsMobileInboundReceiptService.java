@@ -8,6 +8,7 @@ import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.component.PermissionService;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.wms.dto.app.WmsInBillDetailAppDTO;
+import com.kitex.mom.wms.dto.app.WmsMobileReceiptHistoryDTO.Page;
 import com.kitex.mom.wms.dto.app.WmsMobileInboundReceiptDTO.Command;
 import com.kitex.mom.wms.dto.app.WmsMobileInboundReceiptDTO.Context;
 import com.kitex.mom.wms.dto.app.WmsMobileInboundReceiptDTO.View;
@@ -31,7 +32,9 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Objects;
 
-/** 永久原请求与业务数量登记同事务；网络重试不得重新累计数量。 */
+/**
+ * 永久原请求与业务数量登记同事务；网络重试不得重新累计数量。
+ */
 @Service
 @RequiredArgsConstructor
 public class WmsMobileInboundReceiptService {
@@ -41,6 +44,7 @@ public class WmsMobileInboundReceiptService {
 	private final WmsInNoticeDetailMapper details;
 	private final PermissionService permissions;
 	private final ObjectMapper json;
+	private final WmsWarehouseBusinessGuard warehouseGuard;
 
 	public Context context() {
 		Scope scope = scope();
@@ -56,6 +60,7 @@ public class WmsMobileInboundReceiptService {
 			return replay(existing, prepared, scope);
 		}
 		checkNotice(prepared, scope);
+		warehouseGuard.checkMobile(prepared.row().warehouseCode());
 		int reserved = receipts.reserve(prepared.row());
 		Receipt row = receipts.findForUpdate(scope.tenant(), command.requestId());
 		checkOriginal(row, prepared, scope);
@@ -68,11 +73,11 @@ public class WmsMobileInboundReceiptService {
 		checkNotice(prepared, scope);
 		var source = details.selectById(row.noticeDetailId());
 		require(source != null && Objects.equals(source.getNoticeId(), row.noticeId())
-				&& Objects.equals(source.getTenantId(), scope.tenant())
-				&& Objects.equals(source.getFactoryCode(), scope.factory())
-				&& Objects.equals(source.getWarehouseCode(), row.warehouseCode())
-				&& Objects.equals(source.getMatCode(), prepared.input().getMatCode())
-				&& Objects.equals(source.getMatUnit(), prepared.input().getOperateUnit()),
+						&& Objects.equals(source.getTenantId(), scope.tenant())
+						&& Objects.equals(source.getFactoryCode(), scope.factory())
+						&& Objects.equals(source.getWarehouseCode(), row.warehouseCode())
+						&& Objects.equals(source.getMatCode(), prepared.input().getMatCode())
+						&& Objects.equals(source.getMatUnit(), prepared.input().getOperateUnit()),
 				"收货明细或标准单位已变化，请核对原通知");
 		String billNo = WmsInBillFactory.getHandler(row.billType()).setInBillNum(prepared.input());
 		require(!text(billNo).isEmpty() && billNo.length() <= 80, "收货未返回有效入库单号");
@@ -121,6 +126,31 @@ public class WmsMobileInboundReceiptService {
 				null, BigDecimal.ZERO, null, null, null);
 	}
 
+	/**
+	 * 原回执独立留存；查询不依赖仍有余额的库存或当前通知状态。
+	 */
+	@Transactional(readOnly = true)
+	public Page<View> history(String warehouseCode, String billType, String reference, String status, int page) {
+		Scope scope = scope();
+		String warehouse = warehouse(warehouseCode);
+		String type = text(billType);
+		require(MenuInBizTypeEnum.getByCode(type) != null, "请选择当前收货业务入口");
+		require(page >= 1 && page <= 100 && text(reference).length() <= 80,
+				"查询页码或单据号超出允许范围");
+		String state = text(status);
+		require(state.isEmpty() || "CONFIRMED".equals(state) || "CANCELLED".equals(state), "请选择有效的作业结果");
+		checkPermission(type, warehouse);
+		LocalDateTime through = LocalDateTime.now();
+		var rows = receipts.history(scope.tenant(), scope.factory(), scope.operator(), warehouse, type,
+				text(reference), state, through.minusDays(30), through, (page - 1) * 20);
+		var views = rows.stream().limit(20).map(row -> {
+			checkIdentity(row, scope, row.noticeId(), warehouse);
+			checkPermission(row.billType(), warehouse);
+			return terminal(row);
+		}).toList();
+		return new Page<>(1, page, rows.size() > 20, views);
+	}
+
 	private View replay(Receipt row, Prepared prepared, Scope scope) {
 		checkOriginal(row, prepared, scope);
 		checkPermission(row.billType(), row.warehouseCode());
@@ -129,7 +159,7 @@ public class WmsMobileInboundReceiptService {
 
 	private void complete(Receipt row, Scope scope, String status, String billNo, String reason) {
 		require(receipts.complete(scope.tenant(), scope.factory(), scope.operator(), row.requestId(),
-				row.requestFingerprint(), status, billNo, LocalDateTime.now(), reason) == 1,
+						row.requestFingerprint(), status, billNo, LocalDateTime.now(), reason) == 1,
 				"收货回执确认失败，请按原请求核对结果");
 	}
 
@@ -145,15 +175,15 @@ public class WmsMobileInboundReceiptService {
 		require(row != null, "收货原请求不存在，请保留原号核对");
 		checkIdentity(row, scope, prepared.row().noticeId(), prepared.row().warehouseCode());
 		require(Objects.equals(row.requestFingerprint(), prepared.row().requestFingerprint())
-				&& Objects.equals(row.requestPayload(), prepared.row().requestPayload()),
+						&& Objects.equals(row.requestPayload(), prepared.row().requestPayload()),
 				"原收货请求内容不可变更，请先核对或安全撤销原请求");
 	}
 
 	private void checkIdentity(Receipt row, Scope scope, Long noticeId, String warehouse) {
 		require(Objects.equals(row.tenantId(), scope.tenant())
-				&& Objects.equals(row.factoryCode(), scope.factory())
-				&& Objects.equals(row.operatorCode(), scope.operator())
-				&& Objects.equals(row.noticeId(), noticeId) && Objects.equals(row.warehouseCode(), warehouse),
+						&& Objects.equals(row.factoryCode(), scope.factory())
+						&& Objects.equals(row.operatorCode(), scope.operator())
+						&& Objects.equals(row.noticeId(), noticeId) && Objects.equals(row.warehouseCode(), warehouse),
 				"原收货请求不属于当前账号、工厂、仓库或通知");
 	}
 
@@ -187,11 +217,11 @@ public class WmsMobileInboundReceiptService {
 		require(MenuInBizTypeEnum.getByCode(type) != null, "不支持当前收货业务");
 		WmsInBillDetailAppDTO source = command.receipt();
 		require(source.getNoticeId() != null && source.getNoticeId() > 0
-				&& source.getNoticeDetailId() != null && source.getNoticeDetailId() > 0,
+						&& source.getNoticeDetailId() != null && source.getNoticeDetailId() > 0,
 				"收货必须指定原通知及精确来源明细");
 		require(source.getMatNum() != null && Double.isFinite(source.getMatNum()) && source.getMatNum() > 0
-				&& source.getOperateNum() != null && Double.isFinite(source.getOperateNum())
-				&& Double.compare(source.getMatNum(), source.getOperateNum()) == 0,
+						&& source.getOperateNum() != null && Double.isFinite(source.getOperateNum())
+						&& Double.compare(source.getMatNum(), source.getOperateNum()) == 0,
 				"请按标准单位填写一致的收货数量");
 		require(!text(source.getMatCode()).isEmpty() && !text(source.getSiteCode()).isEmpty()
 				&& !text(source.getOperateUnit()).isEmpty(), "物料、库位和标准单位不能为空");

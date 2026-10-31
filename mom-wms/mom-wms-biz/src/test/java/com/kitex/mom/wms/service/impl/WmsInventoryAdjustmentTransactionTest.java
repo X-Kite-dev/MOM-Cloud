@@ -20,12 +20,14 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
+
 import java.lang.reflect.Proxy;
 import java.sql.ResultSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -35,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class WmsInventoryAdjustmentTransactionTest {
 	private JdbcTemplate db;
 	private WmsInventoryAdjustmentService service;
+	private com.kitex.mom.wms.service.WmsWarehouseBusinessGuard mobileGuard;
 	private boolean failMarker;
 	private String planWarehouse = "W1";
 	private String planStatus = "1";
@@ -153,8 +156,9 @@ class WmsInventoryAdjustmentTransactionTest {
 		var approvals = org.mockito.Mockito.mock(WmsInventoryAdjustmentApprovalService.class);
 		org.mockito.Mockito.when(approvals.requireApproved(org.mockito.ArgumentMatchers.any(),
 				org.mockito.ArgumentMatchers.any())).thenReturn(new WmsInventoryAdjustmentApprovalEntity());
+		mobileGuard = org.mockito.Mockito.mock(com.kitex.mom.wms.service.WmsWarehouseBusinessGuard.class);
 		var target = new WmsInventoryAdjustmentService(new WmsInventoryPlanAccess(plans, details), details, stocks,
-				inBills, outBills, inDetails, outDetails, inbound, outbound, approvals);
+				inBills, outBills, inDetails, outDetails, inbound, outbound, approvals, mobileGuard);
 		var factory = new ProxyFactory(target);
 		factory.setProxyTargetClass(true);
 		factory.addAdvice(new TransactionInterceptor(new DataSourceTransactionManager(ds),
@@ -210,6 +214,43 @@ class WmsInventoryAdjustmentTransactionTest {
 	private static void scope() {
 		TenantContextHolder.setTenantId(1L);
 		FactoryContextHolder.setFactoryCode("F1");
+	}
+
+	@Test
+	void newMobileAdjustmentIsBlockedWithoutChangingStockBillFlowOrMarker() {
+		org.mockito.Mockito.doThrow(new CheckedException("mobile disabled")).when(mobileGuard).checkMobile("W1");
+
+		assertThrows(CheckedException.class, () -> service.adjustMobile(command(7)));
+
+		assertEquals(10D, db.queryForObject("SELECT quantity FROM stock", Double.class));
+		assertEquals(0, db.queryForObject("SELECT COUNT(*) FROM bill", Integer.class));
+		assertEquals(0, db.queryForObject("SELECT COUNT(*) FROM flow", Integer.class));
+		assertEquals("0", db.queryForObject("SELECT processed FROM detail", String.class));
+	}
+
+	@Test
+	void postedPcAdjustmentCanBeConfirmedThroughMobileWithoutAnotherStockChange() {
+		assertTrue(service.adjust(command(7)));
+		org.mockito.Mockito.doThrow(new CheckedException("mobile disabled")).when(mobileGuard).checkMobile("W1");
+
+		assertTrue(service.adjustMobile(command(7)));
+
+		assertEquals(7D, db.queryForObject("SELECT quantity FROM stock", Double.class));
+		assertEquals(1, db.queryForObject("SELECT COUNT(*) FROM bill", Integer.class));
+		assertEquals(1, db.queryForObject("SELECT COUNT(*) FROM flow", Integer.class));
+		org.mockito.Mockito.verify(mobileGuard, org.mockito.Mockito.never()).checkMobile("W1");
+	}
+
+	@Test
+	void mobileMarkerFailureRollsBackStockBillFlowAndDetailTogether() {
+		failMarker = true;
+
+		assertThrows(CheckedException.class, () -> service.adjustMobile(command(7)));
+
+		assertEquals(10D, db.queryForObject("SELECT quantity FROM stock", Double.class));
+		assertEquals(0, db.queryForObject("SELECT COUNT(*) FROM bill", Integer.class));
+		assertEquals(0, db.queryForObject("SELECT COUNT(*) FROM flow", Integer.class));
+		assertEquals("0", db.queryForObject("SELECT processed FROM detail", String.class));
 	}
 
 	@Test
@@ -435,7 +476,7 @@ class WmsInventoryAdjustmentTransactionTest {
 
 	@SuppressWarnings("unchecked")
 	private static <T> T mapper(Class<T> type, Call call) {
-		return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] { type },
+		return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type},
 				(p, m, a) -> call.invoke(m.getName(), a));
 	}
 }

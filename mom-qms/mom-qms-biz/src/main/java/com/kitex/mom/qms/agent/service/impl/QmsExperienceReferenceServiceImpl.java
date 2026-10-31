@@ -106,13 +106,60 @@ public class QmsExperienceReferenceServiceImpl
 
     @Override
     public Page<QmsCapaExperienceReferenceEntity> page(Long capaId, long current, long size) {
+        return page(capaId, current, size, null);
+    }
+
+    @Override
+    public Page<QmsCapaExperienceReferenceEntity> page(Long capaId, long current, long size, Integer cycleNo) {
         access();
+        require(cycleNo == null || cycleNo > 0, "经验引用周期须为正数");
         require(current > 0 && size > 0 && size <= 100, "分页范围不合法");
         evidence.query(capaId);
         var page = baseMapper.selectPage(new Page<>(current, size), scope().eq(QmsCapaExperienceReferenceEntity::getCapaId, capaId)
+                .eq(cycleNo != null, QmsCapaExperienceReferenceEntity::getCycleNo, cycleNo)
                 .orderByDesc(QmsCapaExperienceReferenceEntity::getId));
         page.getRecords().forEach(this::history);
         return page;
+    }
+
+    /** 原引用与当前CAPA同快照读取；历史来源仍沿原历史证明授权。 */
+    @Override
+    @org.springframework.transaction.annotation.Transactional(readOnly = true,
+            isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
+    public com.kitex.mom.qms.agent.dto.QmsExperienceFollowup followup(Long referenceId, Long capaId, long current, long size) {
+        access();
+        require(referenceId != null && referenceId > 0 && capaId != null && capaId > 0
+                && current > 0 && current <= 100000 && size > 0 && size <= 50, "引用进展须指定原引用及案件，每页1至50条");
+        var receipt = baseMapper.selectOne(scope().eq(QmsCapaExperienceReferenceEntity::getId, referenceId)
+                .eq(QmsCapaExperienceReferenceEntity::getCapaId, capaId));
+        require(receipt != null, "当前实际组织未找到该案件的原引用");
+        history(receipt);
+        var observed = evidence.query(capaId);
+        require(receipt.getCycleNo() != null && observed.getCurrentCycle() != null, "原引用或当前案件周期未核实");
+        boolean sameCycle = Objects.equals(receipt.getCycleNo(), observed.getCurrentCycle());
+        var cycleActions = observed.getActions().stream().filter(action -> Objects.toString(receipt.getCycleNo())
+                .equals(Objects.toString(action.get("cycleNo"), ""))).toList();
+        List<String> gaps = new ArrayList<>(observed.getMissingEvidence());
+        if (observed.getActions().stream().anyMatch(action -> action.get("cycleNo") == null
+                || Objects.toString(action.get("cycleNo"), "").isBlank())) {
+            gaps.add("部分原措施未保存周期，未归入本次引用周期");
+        }
+        Map<String, Object> effectiveness = new LinkedHashMap<>();
+        if (sameCycle) {
+            for (String field : List.of("effectivenessCriteria", "effectivenessReviewTime", "effectivenessResult",
+                    "effectivenessEvidence", "verificationTime", "verifierCode", "lessonsLearned", "closedTime")) {
+                effectiveness.put(field, observed.getCapa().get(field));
+            }
+        }
+        return new com.kitex.mom.qms.agent.dto.QmsExperienceFollowup()
+                .setTenantId(TenantContextHolder.getTenantId().toString()).setFactoryCode(FactoryContextHolder.getFactoryCode())
+                .setReference(receipt).setCapaNo(observed.getCapaNo()).setCurrentStatus(observed.getStatus())
+                .setCurrentCycle(observed.getCurrentCycle()).setSameCycle(sameCycle)
+                .setCaseChanged(!Objects.equals(receipt.getCaseFingerprint(), observed.getSourceFingerprint()))
+                .setObservedAt(observed.getObservedAt()).setEffectiveness(effectiveness)
+                .setStageCompletion(sameCycle ? observed.getStageCompletion() : Map.of())
+                .setEvidenceGaps(gaps).setCurrent(current).setSize(size).setTotal(cycleActions.size())
+                .setActions(cycleActions.stream().skip((current - 1) * size).limit(size).toList());
     }
 
     @Override

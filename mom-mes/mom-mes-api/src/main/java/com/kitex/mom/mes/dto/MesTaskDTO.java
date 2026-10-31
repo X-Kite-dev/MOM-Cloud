@@ -97,6 +97,9 @@ public class MesTaskDTO {
     @Schema(description = "路线内工程显示版本号")
     private Integer engineeringVersionNo;
 
+    @Schema(description = "MDM工程联合包原始冻结正文，仅供核对本工单执行依据")
+    private String engineeringBundleSnapshot;
+
     @Schema(description = "返工来源生产工单")
     private String sourceTaskCode;
 

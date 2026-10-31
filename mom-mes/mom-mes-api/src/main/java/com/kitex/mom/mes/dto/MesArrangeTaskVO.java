@@ -81,8 +81,11 @@ public class MesArrangeTaskVO {
     @Schema(description = "工位报工类型 自动 手动")
     private String worksiteTypes;
 
-    @Schema(description = "下达数量")
+    @Schema(description = "生产工单下达总数量")
     private BigDecimal noticeNum;
+
+    @Schema(description = "本班实际派工需求数量")
+    private BigDecimal shiftNum;
 
     @Schema(description = "已排产数量")
     private BigDecimal plannedNum;

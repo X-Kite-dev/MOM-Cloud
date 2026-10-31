@@ -41,9 +41,16 @@ public interface MesReportCommandService extends IService<MesReportCommandEntity
     MesReportCommandReceiptDTO receipt(String requestId);
 
     /**
-     * 仅交付当前实名组织身份，不授予执行或离线许可。
+     * 交付当前实名组织身份及兼容旧终端的部署摘要，不授予执行或离线许可。
      */
     MesReportOperatorContextDTO operatorContext();
+
+    /**
+     * 按需附带动态目录摘要；仅登记原号身份的终端无需读取全量部署目录。
+     *
+     * @param includeNodeReadiness 是否读取实时部署诊断；false不代表动态节点就绪
+     */
+    MesReportOperatorContextDTO operatorContext(boolean includeNodeReadiness);
 
     /**
      * 与原报工同原号锁：已有成功返回原回执，否则永久封存本次未受理原命令。

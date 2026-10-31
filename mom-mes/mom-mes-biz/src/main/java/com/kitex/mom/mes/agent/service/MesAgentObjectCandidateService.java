@@ -75,13 +75,19 @@ public class MesAgentObjectCandidateService {
                 && (long) (current - 1) * size <= 1_000_000, "对象候选分页超过安全边界");
         String keyword = command.keyword();
         require(bounded(keyword, 100), "对象候选关键词超过100字或含控制字符");
+        String exact = command.exactBusinessNo();
+        require(exact == null || bounded(exact, 100) && !exact.isEmpty() && !boundaryWhitespace(exact)
+                && !StringUtils.hasText(keyword), "精确原编号须完整且不能混用关键词");
         LambdaQueryWrapper<MesTaskEntity> query = rowScope(scope)
                 .select(MesTaskEntity::getId, MesTaskEntity::getCode,
                         MesTaskEntity::getMatName, MesTaskEntity::getStatus,
                         MesTaskEntity::getMatCode, MesTaskEntity::getPlanStartDate,
                         MesTaskEntity::getPlanEndDate)
                 .orderByDesc(MesTaskEntity::getId);
-        if (StringUtils.hasText(keyword)) {
+        if (exact != null) {
+            // 等值约束在count/limit之前；主键与重号资格仍沿原同工厂只读快照核验。
+            query.eq(MesTaskEntity::getCode, exact);
+        } else if (StringUtils.hasText(keyword)) {
             // 查询词通过MyBatis绑定，原业务编号只读原文，绝不trim后输出或回填。
             String search = keyword.trim();
             query.and(part -> part.like(MesTaskEntity::getCode, search)
@@ -96,7 +102,7 @@ public class MesAgentObjectCandidateService {
         List<MesAgentObjectCandidateDTO.Candidate> records = page.getRecords().stream()
                 .map(row -> candidate(row, duplicated)).toList();
         return new MesAgentObjectCandidateDTO.CandidatePage(scope.tenant().toString(), scope.factory(),
-                "MES_PRODUCTION_TASK", current, size, Long.toString(page.getTotal()), records);
+                "MES_PRODUCTION_TASK", current, size, Long.toString(page.getTotal()), records, exact);
     }
 
     /**

@@ -11,6 +11,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
@@ -61,6 +62,7 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
     private final MesTaskMapper mesTaskMapper;
     private final MesMaterialReceiptService materialReceiptService;
     private final MesReworkMaterialPlanService reworkMaterialPlans;
+    private final MesActualFactoryAccessService actualFactoryAccess;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -78,13 +80,17 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
         MomUser user = SecurityUtils.getUser();
         entity.setPicker(user.getUsername());
         entity.setPickTime(LocalDateTime.now());
-        baseMapper.insert(entity);
+        if (baseMapper.insert(entity) != 1) {
+            throw new CheckedException("生产领料单保存失败");
+        }
 
         for (MesWarehousePickingBillDetailEntity detail : entity.getDetailList()) {
             detail.setBillId(entity.getId());
             detail.setBillNo(billNo);
             detail.setStatus(YesNoEnum.NO.getCode());
-            mesWarehousePickingBillDetailMapper.insert(detail);
+            if (mesWarehousePickingBillDetailMapper.insert(detail) != 1) {
+                throw new CheckedException("生产领料明细保存失败");
+            }
             verifySavedPickingQuantities(detail);
         }
 
@@ -98,8 +104,11 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
         MesWarehousePickingBillEntity original = lockDraft(entity.getId());
         entity.setBillNo(original.getBillNo());
         entity.setFactoryCode(original.getFactoryCode());
+        entity.setTenantId(original.getTenantId());
         entity.setTaskCode(original.getTaskCode());
         entity.setStatus(original.getStatus());
+        entity.setPicker(original.getPicker());
+        entity.setPickTime(original.getPickTime());
         if (entity.getDetailList() != null) for (MesWarehousePickingBillDetailEntity detail : entity.getDetailList()) {
             if (detail.getId() != null) {
                 MesWarehousePickingBillDetailEntity existing = mesWarehousePickingBillDetailMapper.selectById(detail.getId());
@@ -112,14 +121,25 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
             detail.setStatus(YesNoEnum.NO.getCode());
         }
         normalizePickingDetails(entity);
-        baseMapper.updateById(entity);
+        // 实体更新默认跳过null；源产品为空时也必须清除旧值，且不能重复给非空列赋值。
+        LambdaUpdateWrapper<MesWarehousePickingBillEntity> update = new LambdaUpdateWrapper<MesWarehousePickingBillEntity>()
+                .eq(MesWarehousePickingBillEntity::getId, entity.getId())
+                .set(entity.getMatCode() == null, MesWarehousePickingBillEntity::getMatCode, null)
+                .set(entity.getMatName() == null, MesWarehousePickingBillEntity::getMatName, null)
+                .set(entity.getMatSpec() == null, MesWarehousePickingBillEntity::getMatSpec, null);
+        if (baseMapper.update(entity, update) != 1) {
+            throw new CheckedException("生产领料单修改失败");
+        }
         for (MesWarehousePickingBillDetailEntity mesWarehouseLockDetail : entity.getDetailList()) {
             if (Objects.isNull(mesWarehouseLockDetail.getId())) {
                 mesWarehouseLockDetail.setBillId(entity.getId());
-                mesWarehouseLockDetail.setBillId(entity.getId());
-                mesWarehousePickingBillDetailMapper.insert(mesWarehouseLockDetail);
+                if (mesWarehousePickingBillDetailMapper.insert(mesWarehouseLockDetail) != 1) {
+                    throw new CheckedException("生产领料明细保存失败");
+                }
             } else {
-                mesWarehousePickingBillDetailMapper.updateById(mesWarehouseLockDetail);
+                if (mesWarehousePickingBillDetailMapper.updateById(mesWarehouseLockDetail) != 1) {
+                    throw new CheckedException("生产领料明细修改失败");
+                }
             }
             verifySavedPickingQuantities(mesWarehouseLockDetail);
         }
@@ -133,16 +153,22 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
         if (entity == null || CollUtil.isEmpty(entity.getDetailList())) {
             throw new CheckedException("生产领料明细不能为空");
         }
+        String factory = actualFactoryAccess.require("write");
+        Long tenant = TenantContextHolder.getTenantId();
         MesTaskEntity task = mesTaskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getCode, entity.getTaskCode()).last("FOR UPDATE"));
+                .eq(MesTaskEntity::getCode, entity.getTaskCode())
+                .eq(MesTaskEntity::getTenantId, tenant)
+                .eq(MesTaskEntity::getFactoryCode, factory).last("FOR UPDATE"));
         if (task == null) {
             throw new CheckedException("生产工单[" + entity.getTaskCode() + "]不存在");
         }
         reworkMaterialPlans.assertReady(task);
-        if (task.getReworkMaterialPlanId() != null) {
-            entity.setFactoryCode(task.getFactoryCode());
-            entity.setTenantId(task.getTenantId());
-        }
+        // 主单和每条明细都以已授权工单为归属来源，不能接受客户端的租户或工厂。
+        entity.setFactoryCode(task.getFactoryCode());
+        entity.setTenantId(task.getTenantId());
+        entity.setMatCode(task.getMatCode());
+        entity.setMatName(task.getMatName());
+        entity.setMatSpec(task.getMatSpec());
         Map<String, MdmBomChildDTO> requirements = MesMaterialSubstituteResolver.flattenBom(task.getBomSnapshot())
                 .stream().collect(Collectors.toMap(MdmBomChildDTO::getMaterialCode, item -> item, (left, right) -> left));
         boolean reservationSnapshotFrozen = StrUtil.isNotBlank(task.getMaterialReservationSnapshot());
@@ -162,10 +188,10 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
             detail.setSubstituteFlag(binding.substitute());
             detail.setSubstituteRatio(binding.ratio());
             detail.setRequirementMatNum(detail.getMatNum().divide(binding.ratio(), 8, RoundingMode.HALF_UP));
+            detail.setFactoryCode(task.getFactoryCode());
+            detail.setTenantId(task.getTenantId());
             if (task.getReworkMaterialPlanId() != null) {
                 detail.setRequirementMatNum(detail.getMatNum().divide(binding.ratio(), 8, RoundingMode.UNNECESSARY).stripTrailingZeros());
-                detail.setFactoryCode(task.getFactoryCode());
-                detail.setTenantId(task.getTenantId());
             }
             detail.setReservationNo(null);
             if (reservationSnapshotFrozen) {
@@ -237,22 +263,43 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
     public Boolean removeDeep(Long[] ids) {
         if (ids == null || ids.length == 0 || java.util.Arrays.asList(ids).contains(null))
             throw new CheckedException("请选择领料单");
-        for (Long id : java.util.Arrays.stream(ids).distinct().sorted().toList()) lockDraft(id);
-        baseMapper.deleteBatchIds(CollUtil.toList(ids));
-        mesWarehousePickingBillDetailMapper.delete(Wrappers.<MesWarehousePickingBillDetailEntity>lambdaQuery().in(MesWarehousePickingBillDetailEntity::getBillId, ids));
+        List<Long> selected = java.util.Arrays.stream(ids).distinct().sorted().toList();
+        for (Long id : selected) {
+            lockDraft(id);
+        }
+        LambdaQueryWrapper<MesWarehousePickingBillDetailEntity> selectedDetails = Wrappers
+                .<MesWarehousePickingBillDetailEntity>lambdaQuery()
+                .in(MesWarehousePickingBillDetailEntity::getBillId, selected);
+        long detailCount = mesWarehousePickingBillDetailMapper.selectCount(selectedDetails);
+        if (baseMapper.deleteBatchIds(selected) != selected.size()) {
+            throw new CheckedException("生产领料单删除失败");
+        }
+        if (mesWarehousePickingBillDetailMapper.delete(selectedDetails) != detailCount) {
+            throw new CheckedException("生产领料明细删除失败");
+        }
         return Boolean.TRUE;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean removeChild(Long[] ids) {
-        if (ids == null || ids.length == 0) throw new CheckedException("请选择领料明细");
+        if (ids == null || ids.length == 0 || java.util.Arrays.asList(ids).contains(null)) {
+            throw new CheckedException("请选择领料明细");
+        }
         List<MesWarehousePickingBillDetailEntity> details = mesWarehousePickingBillDetailMapper.selectBatchIds(java.util.Arrays.asList(ids));
         if (details.size() != java.util.Arrays.stream(ids).distinct().count())
             throw new CheckedException("领料明细不存在");
-        for (Long billId : details.stream().map(MesWarehousePickingBillDetailEntity::getBillId).distinct().sorted().toList())
-            lockDraft(billId);
-        mesWarehousePickingBillDetailMapper.deleteBatchIds(CollUtil.toList(ids));
+        for (Long billId : details.stream().map(MesWarehousePickingBillDetailEntity::getBillId).distinct().sorted().toList()) {
+            MesWarehousePickingBillEntity bill = lockDraft(billId);
+            if (details.stream().filter(detail -> Objects.equals(detail.getBillId(), billId))
+                    .anyMatch(detail -> !Objects.equals(detail.getFactoryCode(), bill.getFactoryCode())
+                            || !Objects.equals(detail.getTenantId(), bill.getTenantId()))) {
+                throw new CheckedException("领料明细与原单租户或工厂不一致");
+            }
+        }
+        if (mesWarehousePickingBillDetailMapper.deleteBatchIds(CollUtil.toList(ids)) != details.size()) {
+            throw new CheckedException("生产领料明细删除失败");
+        }
         return Boolean.TRUE;
     }
 
@@ -276,15 +323,13 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
                 throw new CheckedException("现有WMS通知接口无法无损表达该领料数量，禁止舍入发料");
             }
         }
-        MomUser user = SecurityUtils.getUser();
-        String username = user.getUsername();
         // 1、修改状态
-        update(new LambdaUpdateWrapper<MesWarehousePickingBillEntity>()
+        if (baseMapper.update(null, new LambdaUpdateWrapper<MesWarehousePickingBillEntity>()
                         .set(MesWarehousePickingBillEntity::getStatus, MesPickingBillStateEnum.COMMITTED.getCode())
-//				.set(MesWarehousePickingBillEntity::getPicker, username)
-//				.set(MesWarehousePickingBillEntity::getPickTime, LocalDateTime.now())
                         .eq(BaseEntity::getId, id)
-        );
+        ) != 1) {
+            throw new CheckedException("生产领料单提交失败");
+        }
         // 2、生成出库通知单
         List<MesWarehousePickingBillDetailEntity> detailList = pickingBill.getDetailList();
         // 明细中存在不同的出库仓库，需要生成不同的出库单
@@ -309,8 +354,9 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
             }
             outNotice.setDetailList(outNoticeDetails);
             R<Boolean> add = remoteProducePickingNoticeService.add(outNotice);
-            if (!add.isOk()) {
-                throw new CheckedException("生成WMS领料出库通知单失败！" + add.getMsg());
+            // 现有WMS新增成功返回R.ok()，没有Boolean数据；保留此合同并拒绝明确失败或缺失响应。
+            if (add == null || !add.isOk() || Boolean.FALSE.equals(add.getData())) {
+                throw new CheckedException("生成WMS领料出库通知单失败！" + (add == null ? "未收到受理结果" : add.getMsg()));
             }
         }
         return Boolean.TRUE;
@@ -324,11 +370,7 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
     @Override
     @Transactional
     public Boolean withdraw(Long id) {
-        MesWarehousePickingBillEntity pickingBill = baseMapper.selectOne(new LambdaQueryWrapper<MesWarehousePickingBillEntity>()
-                .eq(MesWarehousePickingBillEntity::getId, id).last("FOR UPDATE"));
-        if (pickingBill == null) {
-            throw new CheckedException("生产领料单不存在");
-        }
+        MesWarehousePickingBillEntity pickingBill = lockBillForWrite(id);
         if (!MesPickingBillStateEnum.COMMITTED.getCode().equals(pickingBill.getStatus())) {
             MesPickingBillStateEnum state = MesPickingBillStateEnum.getByCode(pickingBill.getStatus());
             throw new CheckedException("仅已提交且尚未出库的生产领料单允许撤回，当前状态："
@@ -339,14 +381,16 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
             throw new CheckedException("已有WMS发料通知，须通过退料处置，不允许撤回领料来源");
         // 作废出库通知单
         R voidRes = remoteProducePickingNoticeService.voidObjByDocumentId(id, DocumentEnum.MES_PICKING.getCode());
-        if (!voidRes.isOk()) {
-            throw new CheckedException("作废领料出库通知单失败！" + voidRes.getMsg());
+        if (voidRes == null || !voidRes.isOk() || !Boolean.TRUE.equals(voidRes.getData())) {
+            throw new CheckedException("作废领料出库通知单失败！" + (voidRes == null ? "未收到受理结果" : voidRes.getMsg()));
         }
         // 修改状态
-        update(new LambdaUpdateWrapper<MesWarehousePickingBillEntity>()
+        if (baseMapper.update(null, new LambdaUpdateWrapper<MesWarehousePickingBillEntity>()
                 .set(MesWarehousePickingBillEntity::getStatus, MesPickingBillStateEnum.CREATED.getCode())
                 .eq(BaseEntity::getId, id)
-        );
+        ) != 1) {
+            throw new CheckedException("生产领料单撤回失败");
+        }
         return Boolean.TRUE;
     }
 
@@ -385,12 +429,23 @@ public class MesWarehousePickingBillServiceImpl extends ServiceImpl<MesWarehouse
     }
 
     private MesWarehousePickingBillEntity lockDraft(Long id) {
-        MesWarehousePickingBillEntity bill = baseMapper.selectOne(new LambdaQueryWrapper<MesWarehousePickingBillEntity>()
-                .eq(MesWarehousePickingBillEntity::getId, id).last("FOR UPDATE"));
-        if (bill == null || !MesPickingBillStateEnum.CREATED.getCode().equals(bill.getStatus())
+        MesWarehousePickingBillEntity bill = lockBillForWrite(id);
+        if (!MesPickingBillStateEnum.CREATED.getCode().equals(bill.getStatus())
                 || mesWarehouseMaterialInBillService.count(new LambdaQueryWrapper<MesWarehouseMaterialInBillEntity>()
                 .eq(MesWarehouseMaterialInBillEntity::getBillId, id)) > 0)
             throw new CheckedException("只有未提交、无发料及签收事实的领料草案可以修改、删除或提交");
+        return bill;
+    }
+
+    private MesWarehousePickingBillEntity lockBillForWrite(Long id) {
+        String factory = actualFactoryAccess.require("write");
+        MesWarehousePickingBillEntity bill = baseMapper.selectOne(new LambdaQueryWrapper<MesWarehousePickingBillEntity>()
+                .eq(MesWarehousePickingBillEntity::getId, id)
+                .eq(MesWarehousePickingBillEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MesWarehousePickingBillEntity::getFactoryCode, factory).last("FOR UPDATE"));
+        if (bill == null) {
+            throw new CheckedException("生产领料单不存在或不属于当前租户工厂");
+        }
         return bill;
     }
 }

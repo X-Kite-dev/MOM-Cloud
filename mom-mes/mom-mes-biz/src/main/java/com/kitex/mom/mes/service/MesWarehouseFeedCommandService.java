@@ -14,6 +14,10 @@ public interface MesWarehouseFeedCommandService extends IService<MesWarehouseFee
      */
     MesWarehouseFeedCommandDTO.Context context();
 
+    MesWarehouseFeedPreparationDTO.ReceiptSeed receiptSeed(Long noticeId);
+
+    MesWarehouseFeedPreparationDTO.Candidates candidates(long current, long size, String taskCode, String keyword);
+
     /**
      * 实际派工、单位、冻结BOM绑定及来源全集的只读观察，不创建预留或执行许可。
      */

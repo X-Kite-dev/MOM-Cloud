@@ -31,6 +31,20 @@ public class MesWarehouseFeedCommandController {
         return R.ok(commands.context());
     }
 
+    @Operation(summary = "从正式签收通知读取投料线索，不代表可用量")
+    @GetMapping("/receipt-source/{noticeId}")
+    public R<MesWarehouseFeedPreparationDTO.ReceiptSeed> receiptSeed(@PathVariable Long noticeId) {
+        return R.ok(commands.receiptSeed(noticeId));
+    }
+
+    @Operation(summary = "分页选择当前工厂派工，原工单精确过滤")
+    @GetMapping("/candidates")
+    public R<MesWarehouseFeedPreparationDTO.Candidates> candidates(@RequestParam(defaultValue = "1") long current,
+            @RequestParam(defaultValue = "20") long size, @RequestParam(required = false) String taskCode,
+            @RequestParam(required = false) String keyword) {
+        return R.ok(commands.candidates(current, size, taskCode, keyword));
+    }
+
     @Operation(summary = "读取实际派工计量与投料来源候选，非预留")
     @GetMapping("/prepare")
     public R<MesWarehouseFeedPreparationDTO.Observation> prepare(@ModelAttribute MesWarehouseFeedPreparationDTO.Query query) {

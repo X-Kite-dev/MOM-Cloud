@@ -182,6 +182,69 @@ class MesProductionTimeMapperTest {
 		assertEquals("0", new MesProductionTimeCalculator().calculate(query(), rows, observed()).getTotals().getWorkpieceProcessingSeconds());
 	}
 
+	@Test
+	void exactWorkpieceScopeSeparatesTaskTypeOrganizationAndNearMatches() {
+		workpiece(101, 1, "A1", "T1", 1, "F1", "SN", "SN1");
+		workpiece(102, 1, "A1", "T1", 1, "F1", "BATCH", "SN1");
+		workpiece(103, 1, "A1", "T1", 1, "F1", "SN", "sn1");
+		workpiece(104, 1, "A1", "T1", 1, "F1", "SN", " SN1 ");
+		db.update("INSERT INTO mom_mes.mes_task_arrange VALUES(4,'A4','T2','P1',1,'F1','0','W1','S1','D1','PRODUCT')");
+		workpiece(105, 4, "A4", "T2", 1, "F1", "SN", "SN1");
+		workpiece(106, 2, "A2", "T1", 2, "F1", "SN", "SN1");
+		workpiece(107, 3, "A3", "T1", 1, "F2", "SN", "SN1");
+		workpiece(108, 1, "A1", "T1", 1, "F1", " SN ", "SN1");
+		assertEquals(java.util.List.of("108"), mapper.workpieces(1L, "F1", identifierQuery(" SN ", "SN1"), 100)
+				.stream().map(Fact::getSourceId).toList());
+		var q = identifierQuery("SN", "SN1");
+		var rows = mapper.workpieces(1L, "F1", q, 1);
+		assertEquals(java.util.List.of("101"), rows.stream().map(Fact::getSourceId).toList());
+		assertEquals(java.util.List.of("104"), mapper.workpieces(1L, "F1", identifierQuery("SN", " SN1 "), 100)
+				.stream().map(Fact::getSourceId).toList());
+	}
+
+	@Test
+	void exactIdentifierScopeExcludesUnrelatedOrphansAndOtherTimeKinds() {
+		segment(1, 99, 1, "F1", "RUN");
+		segment(2, 1, 1, "F1", "RUN");
+		workpiece(101, 99, "A99", "T1", 1, "F1", "SN", "SN1");
+		workpiece(102, 99, "A99", "T1", 1, "F1", "BATCH", "SN1");
+		workpiece(103, 99, "A99", "T1", 1, "F1", "SN", "OTHER");
+		workpiece(104, 99, "A99", "T1", 2, "F1", "SN", "SN1");
+		var q = identifierQuery("SN", "SN1");
+		assertEquals(1, mapper.orphanedSources(1L, "F1", q));
+		assertTrue(mapper.segments(1L, "F1", q, 100).isEmpty());
+		assertTrue(mapper.labor(1L, "F1", q, 100).isEmpty());
+		assertTrue(mapper.pauses(1L, "F1", q, 100).isEmpty());
+	}
+
+	@Test
+	void identifierFilteringPrecedesPaginationAndFullScopeSummarizing() {
+		for (long id = 1; id <= 55; id++) {
+			workpiece(id, 1, "A1", "T1", 1, "F1", "SN", "SN1");
+			workpiece(100 + id, 1, "A1", "T1", 1, "F1", "SN", "OTHER");
+		}
+		var q = identifierQuery("SN", "SN1").setDetailPage(2).setDetailSize(50).setGroupBy("WORKPIECE");
+		var result = new MesProductionTimeCalculator().calculate(q, mapper.workpieces(1L, "F1", q, 20001), observed());
+		assertEquals(55, result.getDetailTotal());
+		assertEquals(5, result.getDetails().size());
+		assertEquals(1, result.getGroups().size());
+		assertEquals("SN1", result.getGroups().get(0).getIdentifier());
+		// Overlapping recordings for the same resource are unioned, not multiplied by row count.
+		assertEquals("3600", result.getTotals().getWorkpieceProcessingSeconds());
+		assertNull(result.getTotals().getProcessingSeconds());
+	}
+
+	private Query identifierQuery(String type, String identifier) {
+		return assertDoesNotThrow(() -> new com.fasterxml.jackson.databind.ObjectMapper().updateValue(query().setTaskCode("T1"),
+				java.util.Map.of("identifierType", type, "identifier", identifier)));
+	}
+
+	private void workpiece(long id, long arrange, String arrangeCode, String task, long tenant, String factory, String type, String identifier) {
+		db.update("INSERT INTO mom_mes.mes_workpiece_time_interval VALUES(?,?,?,?, 'P1',?,?,'0',"
+				+ "'D1','U1',?,?,'RUN','2026-10-22 08:00:00','2026-10-22 09:00:00','CLOSED',NULL)",
+				id, arrange, arrangeCode, task, tenant, factory, identifier, type);
+	}
+
 	private void segment(long id, long arrange, long tenant, String factory, String type) {
 		db.update("INSERT INTO mom_mes.mes_task_execution_segment VALUES(?,?,'A'||?,'T1','P1',?,?,'0','D1',?,"
 				+ "'2026-10-22 08:00:00','2026-10-22 09:00:00','CLOSED',TRUE,'FINISH',NULL)", id, arrange, arrange, tenant, factory, type);

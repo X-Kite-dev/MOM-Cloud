@@ -6,6 +6,7 @@ import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.component.PermissionService;
+import com.kitex.common.security.service.MomUser;
 import com.kitex.mom.mdm.entity.MdmWarehouseEntity;
 import com.kitex.mom.mdm.feign.RemoteWarehouseService;
 import com.kitex.mom.wms.dto.WmsAllocationBillAddDTO;
@@ -13,11 +14,14 @@ import com.kitex.mom.wms.dto.WmsDetailDTO;
 import com.kitex.mom.wms.dto.app.WmsAllocationBillAppDTO;
 import com.kitex.mom.wms.entity.WmsAllocationBillEntity;
 import com.kitex.mom.wms.mapper.WmsAllocationBillMapper;
+import com.kitex.mom.wms.mapper.WmsAllocationMobileCancelReceiptMapper;
 import com.kitex.mom.wms.service.WmsWarehouseBusinessGuard;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.List;
 
@@ -39,10 +43,14 @@ class WmsAllocationWarehouseConfigurationTest {
     void setUp() {
         FactoryContextHolder.setFactoryCode("F1");
         TenantContextHolder.setTenantId(1L);
+        var actor = mock(MomUser.class);
+        when(actor.getUsername()).thenReturn("operator");
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(actor, null, List.of()));
         ReflectionTestUtils.setField(service, "remoteWarehouseService", warehouses);
         ReflectionTestUtils.setField(service, "warehouseBusinessGuard", guard);
         ReflectionTestUtils.setField(service, "permissionService", permissions);
         ReflectionTestUtils.setField(service, "baseMapper", bills);
+        ReflectionTestUtils.setField(service, "mobileCancelReceipts", mock(WmsAllocationMobileCancelReceiptMapper.class));
         when(warehouses.getByCode("W1")).thenReturn(R.ok(warehouse("W1")));
         when(warehouses.getByCode("W2")).thenReturn(R.ok(warehouse("W2")));
         when(permissions.hasPermission(anyString(), anyString())).thenReturn(true);
@@ -55,6 +63,7 @@ class WmsAllocationWarehouseConfigurationTest {
     void clearScope() {
         FactoryContextHolder.clear();
         TenantContextHolder.clear();
+        SecurityContextHolder.clearContext();
     }
 
     @Test
@@ -82,6 +91,9 @@ class WmsAllocationWarehouseConfigurationTest {
         var command = new WmsAllocationBillAppDTO();
         command.setRequestId("request-mobile");
         command.setBillNo("TR-MOBILE");
+        command.setOldSiteCode("S1");
+        command.setNewSiteCode("S2");
+        command.setMatCode("M1");
         command.setOldWarehouseCode("W1");
         command.setNewWarehouseCode("W2");
         command.setOperateNum(1d);

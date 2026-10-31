@@ -7,6 +7,8 @@
         <result column="parameter_name" property="parameterName"/>
         <result column="data_type" property="dataType"/>
         <result column="unit" property="unit"/>
+        <result column="numeric_unit_count" property="numericUnitCount"/>
+        <result column="missing_numeric_unit_count" property="missingNumericUnitCount"/>
         <result column="sample_count" property="sampleCount"/>
         <result column="good_sample_count" property="goodSampleCount"/>
         <result column="non_good_sample_count" property="nonGoodSampleCount"/>
@@ -41,7 +43,9 @@
         SELECT identifier,
                max(nullif(name, '')) AS parameter_name,
                max(nullif(data_type, '')) AS data_type,
-               max(nullif(unit, '')) AS unit,
+               max(nullif(btrim(unit), '')) FILTER (WHERE numeric_value IS NOT NULL) AS unit,
+               count(DISTINCT nullif(btrim(unit), '')) FILTER (WHERE numeric_value IS NOT NULL)::integer AS numeric_unit_count,
+               count(*) FILTER (WHERE numeric_value IS NOT NULL AND nullif(btrim(unit), '') IS NULL)::bigint AS missing_numeric_unit_count,
                count(*)::bigint AS sample_count,
                count(*) FILTER (WHERE quality_code = 'GOOD')::bigint AS good_sample_count,
                count(*) FILTER (WHERE quality_code IS DISTINCT FROM 'GOOD')::bigint AS non_good_sample_count,

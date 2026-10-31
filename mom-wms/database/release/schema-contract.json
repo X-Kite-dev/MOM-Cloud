@@ -1,0 +1,1881 @@
+{
+  "kind": "WMS_RELEASE_CLOSURE_V1",
+  "verifiedPostgres": "16.15.0",
+  "verification": "VERIFIED",
+  "sourceHashes": {
+    "356": "070b783865a7f74b0832de44cb5c068f83f8389fe4ea0a046dcdeb16cd57062e",
+    "359": "c5c7f3e6f778a18d59e93583a2840bef11a088b3a0f28c98cf3644a04e034ede",
+    "scope": "50744a1a7e8a7c8fca3b1ece0fb0beb5303bcf45082bcc2514ca1dbff1f9b551",
+    "template": "75b0bd4864ce2609f0245d1d925ae75a09abb6fa7615db0ff6547c2771e6c0e5",
+    "schedule": "cab82bdf586fc868d52747ec758641a1d13138c8bb36c10a5011e8a9affe3058",
+    "approval": "58f448946a07da75b7adda9ad59911cda638eef24b7f619684357f338d8e25f2",
+    "allocation_cancel": "07c67d8d0aa1bc5d30a14180561c2da7573defdf8c67282cfbffee1904fa336e",
+    "transfer_cancel": "b93368f10e25f03168becb18891391d31f71ad9a9a3b16a5d203eb19860e4a38",
+    "organization": "8c5b85f7c426a807767b73f0f8f3f8d9230f8461d79b1a112d879edb07a89bde"
+  },
+  "verificationInputs": {
+    "build_release.py": "7e732e21678d3f40ab14256f607cc1a25be818b10435690371d7b10efb690992",
+    "WmsReleaseProbe.java": "2926e60ba7911588ee65e87c975f914498e33bdb46fd35f16a23d106ce413963",
+    "baseline.sql": "3a04728358c9b8d16cc123472c9066e36bd83f90291a2e0d5e5af3d35ac13c74",
+    "run_isolated.py": "01b64065b1b39faf564c8dd2d00e44d21436d1da5e45ba99f2801e02772ec7b4"
+  },
+  "objects": {
+    "index:idx_wms_count_scope_359": [
+      "CREATE INDEX idx_wms_count_scope_359 ON mom_wms.wms_inside_inventory_plan_detail USING btree (plan_id, tenant_id, factory_code, warehouse_code, site_code, mat_code, mat_batch) WHERE (del_flag = '0'::bpchar)",
+      false,
+      true,
+      true,
+      "MOM359:盘点明细冻结范围定位"
+    ],
+    "index:idx_wms_count_active_359": [
+      "CREATE INDEX idx_wms_count_active_359 ON mom_wms.wms_inside_inventory_plan USING btree (tenant_id, factory_code, warehouse_code, id) WHERE (((stock_freeze_mode)::text = 'FREEZE_COUNT'::text) AND ((status)::text = '0'::text) AND ((handle_state)::text = '0'::text) AND (del_flag = '0'::bpchar))",
+      false,
+      true,
+      true,
+      "MOM359:活跃冻结计划定位"
+    ],
+    "index:idx_wms_org_transfer_stock": [
+      "CREATE INDEX idx_wms_org_transfer_stock ON mom_wms.wms_org_transfer_effect USING btree (tenant_id, factory_code, warehouse_code, stock_id)",
+      false,
+      true,
+      true,
+      null
+    ],
+    "index:ix_wms_count_approval_plan": [
+      "CREATE INDEX ix_wms_count_approval_plan ON mom_wms.wms_inventory_adjustment_approval USING btree (tenant_id, factory_code, plan_id, id DESC)",
+      false,
+      true,
+      true,
+      null
+    ],
+    "index:idx_wms_org_transfer_source": [
+      "CREATE INDEX idx_wms_org_transfer_source ON mom_wms.wms_org_transfer_bill USING btree (tenant_id, source_factory_code, source_warehouse_code, state)",
+      false,
+      true,
+      true,
+      null
+    ],
+    "index:idx_wms_org_transfer_target": [
+      "CREATE INDEX idx_wms_org_transfer_target ON mom_wms.wms_org_transfer_bill USING btree (tenant_id, target_factory_code, target_warehouse_code, state)",
+      false,
+      true,
+      true,
+      null
+    ],
+    "index:ix_wms_count_approval_detail": [
+      "CREATE INDEX ix_wms_count_approval_detail ON mom_wms.wms_inventory_adjustment_approval USING btree (tenant_id, factory_code, plan_detail_id, id DESC)",
+      false,
+      true,
+      true,
+      null
+    ],
+    "index:uk_wms_count_approval_request": [
+      "CREATE UNIQUE INDEX uk_wms_count_approval_request ON mom_wms.wms_inventory_adjustment_approval USING btree (tenant_id, factory_code, request_id)",
+      true,
+      true,
+      true,
+      null
+    ],
+    "table:mom_wms.wms_org_transfer_bill": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "bill_no",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "source_policy_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "target_policy_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "source_factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "source_warehouse_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "source_warehouse_name",
+          "character varying(200)",
+          true,
+          null
+        ],
+        [
+          "source_company_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "source_company_name",
+          "character varying(200)",
+          true,
+          null
+        ],
+        [
+          "target_factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "target_warehouse_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "target_warehouse_name",
+          "character varying(200)",
+          true,
+          null
+        ],
+        [
+          "target_company_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "target_company_name",
+          "character varying(200)",
+          true,
+          null
+        ],
+        [
+          "state",
+          "character varying(40)",
+          true,
+          null
+        ],
+        [
+          "previous_state",
+          "character varying(40)",
+          false,
+          null
+        ],
+        [
+          "version",
+          "integer",
+          true,
+          null
+        ],
+        [
+          "created_by",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "confirmed_by",
+          "character varying(100)",
+          false,
+          null
+        ],
+        [
+          "created_by_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "confirmed_by_id",
+          "bigint",
+          false,
+          null
+        ],
+        [
+          "agreement_ref",
+          "character varying(200)",
+          false,
+          null
+        ],
+        [
+          "remark",
+          "character varying(1000)",
+          false,
+          null
+        ],
+        [
+          "exception_reason",
+          "character varying(1000)",
+          false,
+          null
+        ],
+        [
+          "exception_evidence",
+          "character varying(1000)",
+          false,
+          null
+        ],
+        [
+          "created_time",
+          "timestamp without time zone",
+          true,
+          null
+        ],
+        [
+          "updated_time",
+          "timestamp without time zone",
+          true,
+          null
+        ]
+      ],
+      "comment": null,
+      "forceRls": false,
+      "constraints": [
+        [
+          "wms_org_transfer_bill_check",
+          "c",
+          true,
+          "CHECK (((tenant_id > 0) AND (version > 0) AND ((source_factory_code)::text <> (target_factory_code)::text) AND ((state)::text = ANY ((ARRAY['PENDING_CONFIRMATION'::character varying, 'READY_TO_SHIP'::character varying, 'IN_TRANSIT'::character varying, 'PARTIALLY_RECEIVED'::character varying, 'COMPLETED'::character varying, 'CANCELLED'::character varying, 'RETURN_PENDING'::character varying, 'RETURNED'::character varying, 'CLOSED_WITH_RETURN'::character varying, 'EXCEPTION_PENDING'::character varying, 'CLOSED_WITH_DIFFERENCE'::character varying])::text[]))))"
+        ],
+        [
+          "wms_org_transfer_bill_pkey",
+          "p",
+          true,
+          "PRIMARY KEY (id)"
+        ],
+        [
+          "wms_org_transfer_bill_tenant_id_bill_no_key",
+          "u",
+          true,
+          "UNIQUE (tenant_id, bill_no)"
+        ],
+        [
+          "wms_org_transfer_bill_tenant_id_id_key",
+          "u",
+          true,
+          "UNIQUE (tenant_id, id)"
+        ],
+        [
+          "wms_org_transfer_bill_tenant_id_source_policy_id_fkey",
+          "f",
+          true,
+          "FOREIGN KEY (tenant_id, source_policy_id) REFERENCES mom_wms.wms_org_transfer_policy(tenant_id, id)"
+        ],
+        [
+          "wms_org_transfer_bill_tenant_id_target_policy_id_fkey",
+          "f",
+          true,
+          "FOREIGN KEY (tenant_id, target_policy_id) REFERENCES mom_wms.wms_org_transfer_policy(tenant_id, id)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "table:mom_wms.wms_org_transfer_line": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "bill_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "source_stock_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "issue_flow_id",
+          "bigint",
+          false,
+          null
+        ],
+        [
+          "quantity",
+          "numeric",
+          true,
+          null
+        ],
+        [
+          "received_quantity",
+          "numeric",
+          true,
+          "0"
+        ],
+        [
+          "returned_quantity",
+          "numeric",
+          true,
+          "0"
+        ],
+        [
+          "exception_quantity",
+          "numeric",
+          true,
+          "0"
+        ],
+        [
+          "source_snapshot",
+          "text",
+          true,
+          null
+        ],
+        [
+          "issue_snapshot",
+          "text",
+          false,
+          null
+        ]
+      ],
+      "comment": null,
+      "forceRls": false,
+      "constraints": [
+        [
+          "wms_org_transfer_line_check",
+          "c",
+          true,
+          "CHECK (((source_stock_id > 0) AND (quantity > (0)::numeric) AND (received_quantity >= (0)::numeric) AND (returned_quantity >= (0)::numeric) AND (exception_quantity >= (0)::numeric) AND (((received_quantity + returned_quantity) + exception_quantity) <= quantity) AND (((issue_flow_id IS NULL) AND (issue_snapshot IS NULL) AND (received_quantity = (0)::numeric) AND (returned_quantity = (0)::numeric) AND (exception_quantity = (0)::numeric)) OR ((issue_flow_id > 0) AND (issue_snapshot IS NOT NULL)))))"
+        ],
+        [
+          "wms_org_transfer_line_pkey",
+          "p",
+          true,
+          "PRIMARY KEY (id)"
+        ],
+        [
+          "wms_org_transfer_line_tenant_id_bill_id_fkey",
+          "f",
+          true,
+          "FOREIGN KEY (tenant_id, bill_id) REFERENCES mom_wms.wms_org_transfer_bill(tenant_id, id)"
+        ],
+        [
+          "wms_org_transfer_line_tenant_id_bill_id_id_key",
+          "u",
+          true,
+          "UNIQUE (tenant_id, bill_id, id)"
+        ],
+        [
+          "wms_org_transfer_line_tenant_id_bill_id_source_stock_id_key",
+          "u",
+          true,
+          "UNIQUE (tenant_id, bill_id, source_stock_id)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "function:mom_wms.guard_count_plan_359": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        [
+          "search_path=pg_catalog, mom_wms"
+        ],
+        "\nDECLARE lock_key text; was_active boolean:=false; now_active boolean;\nBEGIN\n IF TG_OP='DELETE' THEN\n  IF OLD.stock_freeze_mode='FREEZE_COUNT' THEN\n   RAISE EXCEPTION '冻结盘点计划须保留历史；未录入计划请受控逻辑删除，已录入计划请作废';\n  END IF;\n  RETURN OLD;\n END IF;\n IF NEW.stock_freeze_mode IS NULL OR NEW.tenant_id IS NULL OR NEW.tenant_id<=0\n  OR nullif(btrim(NEW.factory_code),'') IS NULL\n  OR nullif(btrim(NEW.warehouse_code),'') IS NULL THEN\n  RAISE EXCEPTION '盘点计划冻结模式或组织仓库范围不完整';\n END IF;\n IF NEW.stock_freeze_mode='FREEZE_COUNT'\n  AND current_setting('transaction_isolation')<>'read committed' THEN\n  RAISE EXCEPTION '冻结盘点计划状态变更要求READ COMMITTED事务';\n END IF;\n IF TG_OP='INSERT' AND NEW.stock_freeze_mode='FREEZE_COUNT'\n  AND (NEW.status IS DISTINCT FROM '0' OR NEW.handle_state IS DISTINCT FROM '0'\n   OR NEW.del_flag IS DISTINCT FROM '0') THEN\n  RAISE EXCEPTION '冻结盘点计划必须从待实盘状态创建';\n END IF;\n IF TG_OP='UPDATE' THEN\n  IF ROW(NEW.tenant_id,NEW.factory_code,NEW.warehouse_code,NEW.stock_freeze_mode)\n   IS DISTINCT FROM ROW(OLD.tenant_id,OLD.factory_code,OLD.warehouse_code,OLD.stock_freeze_mode) THEN\n   RAISE EXCEPTION '盘点计划创建后不能修改组织、仓库或冻结模式';\n  END IF;\n  was_active:=coalesce(OLD.stock_freeze_mode='FREEZE_COUNT' AND OLD.status='0'\n   AND OLD.handle_state='0' AND OLD.del_flag='0',false);\n END IF;\n now_active:=coalesce(NEW.stock_freeze_mode='FREEZE_COUNT' AND NEW.status='0'\n  AND NEW.handle_state='0' AND NEW.del_flag='0',false);\n IF TG_OP='UPDATE' AND now_active AND NOT was_active THEN\n  RAISE EXCEPTION '已结束或删除的冻结盘点计划不能重新开启';\n END IF;\n IF was_active OR now_active THEN\n  IF TG_OP='INSERT' THEN\n   lock_key:='WMS_INVENTORY_FREEZE|'||NEW.tenant_id||'|'||NEW.factory_code||'|'||NEW.warehouse_code;\n  ELSE\n   lock_key:='WMS_INVENTORY_COUNT_STATE|'||NEW.tenant_id||'|'||NEW.id;\n  END IF;\n  PERFORM pg_advisory_xact_lock(hashtextextended(lock_key,0));\n END IF;\n IF TG_OP='UPDATE' AND was_active AND NOT now_active THEN\n  IF NEW.status='1' AND NEW.handle_state='0' AND NEW.del_flag='0' THEN\n   IF NOT EXISTS(SELECT 1 FROM mom_wms.wms_inside_inventory_plan_detail d\n    WHERE d.plan_id=NEW.id AND d.tenant_id=NEW.tenant_id\n     AND d.factory_code=NEW.factory_code AND d.warehouse_code=NEW.warehouse_code\n     AND d.del_flag='0') OR EXISTS(\n    SELECT 1 FROM mom_wms.wms_inside_inventory_plan_detail d\n     WHERE d.plan_id=NEW.id AND d.tenant_id=NEW.tenant_id\n      AND d.factory_code=NEW.factory_code AND d.warehouse_code=NEW.warehouse_code\n      AND d.del_flag='0' AND (d.status IS DISTINCT FROM '1'\n       OR d.inventory_num IS NULL OR d.pl_status IS DISTINCT FROM '0')) THEN\n    RAISE EXCEPTION '盘点明细尚未全部实盘录入，不能释放库存冻结';\n   END IF;\n  ELSIF NEW.status='2' AND NEW.handle_state='2' AND NEW.del_flag='0' THEN\n   -- 330节的作废审计约束继续核验请求号、原因、操作者和时间。\n   NULL;\n  ELSIF NEW.status='0' AND NEW.handle_state='0' AND NEW.del_flag='1' THEN\n   IF NOT EXISTS(SELECT 1 FROM mom_wms.wms_inside_inventory_plan_detail d\n    WHERE d.plan_id=NEW.id AND d.tenant_id=NEW.tenant_id\n     AND d.factory_code=NEW.factory_code AND d.warehouse_code=NEW.warehouse_code) OR EXISTS(\n    SELECT 1 FROM mom_wms.wms_inside_inventory_plan_detail d\n     WHERE d.plan_id=NEW.id AND d.tenant_id=NEW.tenant_id\n      AND d.factory_code=NEW.factory_code AND d.warehouse_code=NEW.warehouse_code\n      AND (d.status IS DISTINCT FROM '0' OR d.pl_status IS DISTINCT FROM '0'\n       OR d.inventory_num IS NOT NULL)) THEN\n    RAISE EXCEPTION '已有实盘或处理记录的冻结计划不能删除，请作废';\n   END IF;\n  ELSE\n   RAISE EXCEPTION '冻结盘点只能通过完成实盘、作废或删除未录入计划释放';\n  END IF;\n END IF;\n RETURN NEW;\nEND ",
+        "MOM359:冻结盘点模式与生命周期守卫"
+      ]
+    ],
+    "table:mom_wms.wms_org_transfer_effect": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "bill_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "line_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "request_id",
+          "character varying(64)",
+          true,
+          null
+        ],
+        [
+          "factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "warehouse_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "action",
+          "character varying(30)",
+          true,
+          null
+        ],
+        [
+          "stock_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "flow_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "quantity",
+          "numeric",
+          true,
+          null
+        ],
+        [
+          "time",
+          "timestamp without time zone",
+          true,
+          null
+        ]
+      ],
+      "comment": null,
+      "forceRls": false,
+      "constraints": [
+        [
+          "wms_org_transfer_effect_check",
+          "c",
+          true,
+          "CHECK (((quantity > (0)::numeric) AND (stock_id > 0) AND (flow_id > 0) AND ((action)::text = ANY ((ARRAY['SHIP'::character varying, 'RECEIVE'::character varying, 'RETURN'::character varying])::text[]))))"
+        ],
+        [
+          "wms_org_transfer_effect_pkey",
+          "p",
+          true,
+          "PRIMARY KEY (id)"
+        ],
+        [
+          "wms_org_transfer_effect_tenant_id_bill_id_line_id_fkey",
+          "f",
+          true,
+          "FOREIGN KEY (tenant_id, bill_id, line_id) REFERENCES mom_wms.wms_org_transfer_line(tenant_id, bill_id, id)"
+        ],
+        [
+          "wms_org_transfer_effect_tenant_id_flow_id_key",
+          "u",
+          true,
+          "UNIQUE (tenant_id, flow_id)"
+        ],
+        [
+          "wms_org_transfer_effect_tenant_id_request_id_fkey",
+          "f",
+          true,
+          "FOREIGN KEY (tenant_id, request_id) REFERENCES mom_wms.wms_org_transfer_operation(tenant_id, request_id)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "table:mom_wms.wms_org_transfer_policy": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "warehouse_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "warehouse_name",
+          "character varying(200)",
+          true,
+          null
+        ],
+        [
+          "company_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "company_name",
+          "character varying(200)",
+          true,
+          null
+        ],
+        [
+          "enabled",
+          "boolean",
+          true,
+          null
+        ],
+        [
+          "cross_company",
+          "boolean",
+          true,
+          null
+        ],
+        [
+          "version",
+          "integer",
+          true,
+          null
+        ],
+        [
+          "updated_by",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "updated_time",
+          "timestamp without time zone",
+          true,
+          null
+        ]
+      ],
+      "comment": null,
+      "forceRls": false,
+      "constraints": [
+        [
+          "wms_org_transfer_policy_check",
+          "c",
+          true,
+          "CHECK (((tenant_id > 0) AND (version > 0) AND (length(TRIM(BOTH FROM factory_code)) > 0) AND (length(TRIM(BOTH FROM warehouse_code)) > 0) AND (length(TRIM(BOTH FROM company_code)) > 0) AND (length(TRIM(BOTH FROM company_name)) > 0)))"
+        ],
+        [
+          "wms_org_transfer_policy_pkey",
+          "p",
+          true,
+          "PRIMARY KEY (id)"
+        ],
+        [
+          "wms_org_transfer_policy_tenant_id_factory_code_warehouse_co_key",
+          "u",
+          true,
+          "UNIQUE (tenant_id, factory_code, warehouse_code)"
+        ],
+        [
+          "wms_org_transfer_policy_tenant_id_id_key",
+          "u",
+          true,
+          "UNIQUE (tenant_id, id)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "function:mom_wms.guard_count_stock_359": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        [
+          "search_path=pg_catalog, mom_wms"
+        ],
+        "\nDECLARE scope_row record;\nBEGIN\n IF TG_OP='TRUNCATE' THEN\n  RAISE EXCEPTION '实时库存禁止TRUNCATE，盘点冻结范围无法逐行校验';\n END IF;\n IF TG_OP='INSERT' THEN\n  PERFORM mom_wms.assert_count_scope_open_359(NEW.tenant_id,NEW.factory_code,\n   NEW.warehouse_code,NEW.site_code,NEW.mat_code,NEW.mat_batch);\n  RETURN NEW;\n END IF;\n IF TG_OP='DELETE' THEN\n  PERFORM mom_wms.assert_count_scope_open_359(OLD.tenant_id,OLD.factory_code,\n   OLD.warehouse_code,OLD.site_code,OLD.mat_code,OLD.mat_batch);\n  RETURN OLD;\n END IF;\n -- 移库和批次变更必须同时检查来源及目标；固定顺序减少多仓事务锁互等。\n FOR scope_row IN\n  SELECT DISTINCT s.tenant_id,s.factory_code,s.warehouse_code,s.site_code,s.mat_code,s.mat_batch\n   FROM (VALUES\n    (OLD.tenant_id,OLD.factory_code,OLD.warehouse_code,OLD.site_code,OLD.mat_code,OLD.mat_batch),\n    (NEW.tenant_id,NEW.factory_code,NEW.warehouse_code,NEW.site_code,NEW.mat_code,NEW.mat_batch)\n   ) s(tenant_id,factory_code,warehouse_code,site_code,mat_code,mat_batch)\n   ORDER BY s.tenant_id,s.factory_code,s.warehouse_code,s.site_code,s.mat_code,s.mat_batch\n LOOP\n  PERFORM mom_wms.assert_count_scope_open_359(scope_row.tenant_id,scope_row.factory_code,\n   scope_row.warehouse_code,scope_row.site_code,scope_row.mat_code,scope_row.mat_batch);\n END LOOP;\n RETURN NEW;\nEND ",
+        "MOM359:实时库存写入和清空守卫"
+      ]
+    ],
+    "function:mom_wms.guard_count_detail_359": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        [
+          "search_path=pg_catalog, mom_wms"
+        ],
+        "\nDECLARE plan_scope record; lock_key text;\nBEGIN\n IF TG_OP='TRUNCATE' THEN\n  RAISE EXCEPTION '盘点明细禁止TRUNCATE，冻结范围和实盘历史必须保留';\n END IF;\n IF TG_OP='UPDATE' THEN\n  IF ROW(OLD.plan_id,OLD.tenant_id,OLD.factory_code,OLD.warehouse_code,\n   OLD.site_code,OLD.mat_code,OLD.mat_batch,OLD.del_flag)\n   IS NOT DISTINCT FROM ROW(NEW.plan_id,NEW.tenant_id,NEW.factory_code,\n    NEW.warehouse_code,NEW.site_code,NEW.mat_code,NEW.mat_batch,NEW.del_flag) THEN\n   SELECT p.tenant_id,p.factory_code,p.warehouse_code,p.stock_freeze_mode,\n          p.status,p.handle_state,p.del_flag INTO plan_scope\n    FROM mom_wms.wms_inside_inventory_plan p\n    WHERE p.id=OLD.plan_id AND p.tenant_id=OLD.tenant_id\n     AND p.factory_code=OLD.factory_code AND p.warehouse_code=OLD.warehouse_code;\n   IF FOUND AND plan_scope.stock_freeze_mode='FREEZE_COUNT' THEN\n    IF current_setting('transaction_isolation')<>'read committed' THEN\n     RAISE EXCEPTION '冻结盘点明细实盘变更要求READ COMMITTED事务';\n    END IF;\n    lock_key:='WMS_INVENTORY_COUNT_STATE|'||plan_scope.tenant_id||'|'||OLD.plan_id;\n    PERFORM pg_advisory_xact_lock(hashtextextended(lock_key,0));\n    SELECT p.status,p.handle_state,p.del_flag INTO plan_scope\n     FROM mom_wms.wms_inside_inventory_plan p\n     WHERE p.id=OLD.plan_id AND p.tenant_id=OLD.tenant_id\n      AND p.factory_code=OLD.factory_code AND p.warehouse_code=OLD.warehouse_code;\n    IF NOT FOUND OR NEW.current_number IS DISTINCT FROM OLD.current_number THEN\n     RAISE EXCEPTION '冻结盘点账面快照不可改写';\n    END IF;\n    IF plan_scope.status='1' AND (NEW.status IS DISTINCT FROM '1' OR NEW.inventory_num IS NULL) THEN\n     RAISE EXCEPTION '已完成实盘的明细不能撤销录入或清空实盘数量';\n    END IF;\n    IF plan_scope.status='0' AND NEW.pl_status IS DISTINCT FROM '0' THEN\n     RAISE EXCEPTION '实盘未完成前不能提前处理损益';\n    END IF;\n    IF (plan_scope.status='2' OR plan_scope.del_flag<>'0')\n     AND ROW(NEW.status,NEW.inventory_num,NEW.pl_status)\n      IS DISTINCT FROM ROW(OLD.status,OLD.inventory_num,OLD.pl_status) THEN\n     RAISE EXCEPTION '已作废或删除的冻结盘点明细不可改写';\n    END IF;\n   END IF;\n   RETURN NEW;\n  END IF;\n END IF;\n IF TG_OP='UPDATE' OR TG_OP='DELETE' THEN\n  SELECT p.stock_freeze_mode,p.del_flag INTO plan_scope\n   FROM mom_wms.wms_inside_inventory_plan p\n   WHERE p.id=OLD.plan_id AND p.tenant_id=OLD.tenant_id\n    AND p.factory_code=OLD.factory_code AND p.warehouse_code=OLD.warehouse_code;\n  IF TG_OP='UPDATE' AND FOUND AND plan_scope.stock_freeze_mode='FREEZE_COUNT'\n   AND plan_scope.del_flag='1' THEN\n   IF OLD.del_flag='0' AND NEW.del_flag='1'\n    AND ROW(NEW.plan_id,NEW.tenant_id,NEW.factory_code,NEW.warehouse_code,\n     NEW.site_code,NEW.mat_code,NEW.mat_batch,NEW.current_number,\n     NEW.status,NEW.inventory_num,NEW.pl_status)\n     IS NOT DISTINCT FROM ROW(OLD.plan_id,OLD.tenant_id,OLD.factory_code,OLD.warehouse_code,\n      OLD.site_code,OLD.mat_code,OLD.mat_batch,OLD.current_number,\n      OLD.status,OLD.inventory_num,OLD.pl_status)\n    AND OLD.status='0' AND OLD.pl_status='0' AND OLD.inventory_num IS NULL THEN\n    RETURN NEW;\n   END IF;\n   RAISE EXCEPTION '已逻辑删除的冻结盘点仅允许清理未录入明细';\n  END IF;\n  IF FOUND AND plan_scope.stock_freeze_mode='FREEZE_COUNT' AND plan_scope.del_flag='0' THEN\n   RAISE EXCEPTION '冻结盘点明细范围不可更改；未录入计划请先受控删除计划';\n  END IF;\n  IF TG_OP='DELETE' THEN RETURN OLD; END IF;\n END IF;\n IF TG_OP='INSERT' OR TG_OP='UPDATE' THEN\n  SELECT p.tenant_id,p.factory_code,p.warehouse_code,p.stock_freeze_mode,\n         p.status,p.handle_state,p.del_flag INTO plan_scope\n   FROM mom_wms.wms_inside_inventory_plan p\n   WHERE p.id=NEW.plan_id AND p.tenant_id=NEW.tenant_id\n    AND p.factory_code=NEW.factory_code AND p.warehouse_code=NEW.warehouse_code;\n  IF NOT FOUND THEN RAISE EXCEPTION '盘点明细缺少相同组织仓库的计划'; END IF;\n  IF plan_scope.stock_freeze_mode='FREEZE_COUNT' THEN\n   IF current_setting('transaction_isolation')<>'read committed' THEN\n    RAISE EXCEPTION '盘点冻结范围变更要求READ COMMITTED事务';\n   END IF;\n   lock_key:='WMS_INVENTORY_COUNT_STATE|'||plan_scope.tenant_id||'|'||NEW.plan_id;\n   PERFORM pg_advisory_xact_lock(hashtextextended(lock_key,0));\n   lock_key:='WMS_INVENTORY_FREEZE|'||plan_scope.tenant_id||'|'\n    ||plan_scope.factory_code||'|'||plan_scope.warehouse_code;\n   PERFORM pg_advisory_xact_lock(hashtextextended(lock_key,0));\n   SELECT p.status,p.handle_state,p.del_flag INTO plan_scope\n    FROM mom_wms.wms_inside_inventory_plan p\n    WHERE p.id=NEW.plan_id AND p.tenant_id=NEW.tenant_id\n     AND p.factory_code=NEW.factory_code AND p.warehouse_code=NEW.warehouse_code;\n   IF NOT FOUND OR plan_scope.status IS DISTINCT FROM '0'\n    OR plan_scope.handle_state IS DISTINCT FROM '0'\n    OR plan_scope.del_flag IS DISTINCT FROM '0' THEN\n    RAISE EXCEPTION '冻结盘点已经结束，不能再新增明细范围';\n   END IF;\n  END IF;\n END IF;\n RETURN NEW;\nEND ",
+        "MOM359:冻结盘点明细范围守卫"
+      ]
+    ],
+    "function:mom_wms.guard_org_transfer_bill": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        null,
+        "\nBEGIN\n IF TG_OP='DELETE' THEN RAISE EXCEPTION '组织调拨业务凭证不可物理删除'; END IF;\n IF ROW(NEW.tenant_id,NEW.id,NEW.bill_no,NEW.source_policy_id,NEW.target_policy_id,NEW.source_factory_code,\n   NEW.source_warehouse_code,NEW.source_company_code,NEW.target_factory_code,NEW.target_warehouse_code,NEW.target_company_code,NEW.created_by,NEW.created_by_id)\n IS DISTINCT FROM ROW(OLD.tenant_id,OLD.id,OLD.bill_no,OLD.source_policy_id,OLD.target_policy_id,OLD.source_factory_code,\n   OLD.source_warehouse_code,OLD.source_company_code,OLD.target_factory_code,OLD.target_warehouse_code,OLD.target_company_code,OLD.created_by,OLD.created_by_id)\n OR NEW.version<>OLD.version+1 THEN RAISE EXCEPTION '组织调拨身份不可重绑定，版本须连续推进'; END IF;\n RETURN NEW;\nEND;\n",
+        null
+      ]
+    ],
+    "function:mom_wms.guard_org_transfer_line": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        null,
+        "\nBEGIN\n IF TG_OP='DELETE' THEN RAISE EXCEPTION '组织调拨原始行不可删除'; END IF;\n IF ROW(NEW.tenant_id,NEW.id,NEW.bill_id,NEW.source_stock_id,NEW.quantity,NEW.source_snapshot)\n IS DISTINCT FROM ROW(OLD.tenant_id,OLD.id,OLD.bill_id,OLD.source_stock_id,OLD.quantity,OLD.source_snapshot)\n OR NEW.received_quantity<OLD.received_quantity OR NEW.returned_quantity<OLD.returned_quantity OR NEW.exception_quantity<OLD.exception_quantity\n OR (OLD.issue_flow_id IS NOT NULL AND ROW(NEW.issue_flow_id,NEW.issue_snapshot) IS DISTINCT FROM ROW(OLD.issue_flow_id,OLD.issue_snapshot)) THEN\n   RAISE EXCEPTION '组织调拨来源不可改写，已确认数量不能减少';\n END IF;\n RETURN NEW;\nEND;\n",
+        null
+      ]
+    ],
+    "table:mom_wms.wms_inventory_scope_policy": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "warehouse_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "rule_code",
+          "character varying(32)",
+          true,
+          null
+        ],
+        [
+          "threshold_days",
+          "integer",
+          false,
+          null
+        ],
+        [
+          "inherit_default",
+          "boolean",
+          true,
+          "false"
+        ],
+        [
+          "version",
+          "integer",
+          true,
+          "1"
+        ],
+        [
+          "updated_at",
+          "timestamp without time zone",
+          true,
+          "now()"
+        ],
+        [
+          "updated_by",
+          "character varying(100)",
+          true,
+          null
+        ]
+      ],
+      "comment": "MOM-WMS:仓库盘点范围默认规则",
+      "forceRls": false,
+      "constraints": [
+        [
+          "ck_wms_inventory_scope_policy_inherit",
+          "c",
+          true,
+          "CHECK (((NOT inherit_default) OR (((rule_code)::text = 'ALL_POSITIVE'::text) AND (threshold_days IS NULL))))"
+        ],
+        [
+          "ck_wms_inventory_scope_policy_rule",
+          "c",
+          true,
+          "CHECK (((((rule_code)::text = ANY ((ARRAY['ALL_POSITIVE'::character varying, 'EXTERNAL_OWNER'::character varying])::text[])) AND (threshold_days IS NULL)) OR (((rule_code)::text = ANY ((ARRAY['NEAR_EXPIRY'::character varying, 'LONG_STAY'::character varying])::text[])) AND ((threshold_days >= 1) AND (threshold_days <= 3650)))))"
+        ],
+        [
+          "ck_wms_inventory_scope_policy_scope",
+          "c",
+          true,
+          "CHECK (((btrim((factory_code)::text) <> ''::text) AND (btrim((warehouse_code)::text) <> ''::text) AND (btrim((updated_by)::text) <> ''::text)))"
+        ],
+        [
+          "ck_wms_inventory_scope_policy_version",
+          "c",
+          true,
+          "CHECK (((version >= 1) AND (version <= 2147483647)))"
+        ],
+        [
+          "pk_wms_inventory_scope_policy",
+          "p",
+          true,
+          "PRIMARY KEY (tenant_id, factory_code, warehouse_code)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "table:mom_wms.wms_org_transfer_operation": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "request_id",
+          "character varying(64)",
+          true,
+          null
+        ],
+        [
+          "factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "warehouse_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "operator_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "operator_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "action",
+          "character varying(40)",
+          true,
+          null
+        ],
+        [
+          "bill_id",
+          "bigint",
+          false,
+          null
+        ],
+        [
+          "command_payload",
+          "text",
+          true,
+          null
+        ],
+        [
+          "result_payload",
+          "text",
+          true,
+          null
+        ],
+        [
+          "status",
+          "character varying(20)",
+          true,
+          null
+        ],
+        [
+          "completed_time",
+          "timestamp without time zone",
+          true,
+          null
+        ]
+      ],
+      "comment": null,
+      "forceRls": false,
+      "constraints": [
+        [
+          "wms_org_transfer_operation_check",
+          "c",
+          true,
+          "CHECK (((tenant_id > 0) AND (operator_id > 0) AND ((length(TRIM(BOTH FROM request_id)) >= 16) AND (length(TRIM(BOTH FROM request_id)) <= 64)) AND ((request_id)::text = TRIM(BOTH FROM request_id)) AND ((status)::text = ANY ((ARRAY['APPLIED'::character varying, 'ABANDONED'::character varying])::text[])) AND (((status)::text <> 'APPLIED'::text) OR (bill_id IS NOT NULL)) AND ((action)::text = ANY ((ARRAY['CREATE'::character varying, 'CONFIRM'::character varying, 'SHIP'::character varying, 'RECEIVE'::character varying, 'CANCEL'::character varying, 'REQUEST_RETURN'::character varying, 'RETURN'::character varying, 'PROPOSE_EXCEPTION'::character varying, 'APPROVE_EXCEPTION'::character varying, 'REJECT_EXCEPTION'::character varying])::text[]))))"
+        ],
+        [
+          "wms_org_transfer_operation_pkey",
+          "p",
+          true,
+          "PRIMARY KEY (tenant_id, request_id)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "index:ix_wms_inventory_count_schedule_due": [
+      "CREATE INDEX ix_wms_inventory_count_schedule_due ON mom_wms.wms_inventory_count_schedule USING btree (tenant_id, factory_code, next_run_utc, template_code) WHERE enabled",
+      false,
+      true,
+      true,
+      null
+    ],
+    "prerequisite:count-void-audit-columns-330": [
+      [
+        "cancel_by",
+        "character varying(64)",
+        false
+      ],
+      [
+        "cancel_reason",
+        "character varying(500)",
+        false
+      ],
+      [
+        "cancel_request_id",
+        "character varying(64)",
+        false
+      ],
+      [
+        "cancel_time",
+        "timestamp without time zone",
+        false
+      ]
+    ],
+    "prerequisite:count-void-request-index-330": [
+      "CREATE UNIQUE INDEX uk_wms_inventory_cancel_request_330 ON mom_wms.wms_inside_inventory_plan USING btree (tenant_id, factory_code, cancel_request_id) WHERE (cancel_request_id IS NOT NULL)",
+      true,
+      true,
+      true
+    ],
+    "function:mom_wms.guard_org_transfer_policy": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        null,
+        "\nBEGIN\n IF TG_OP='DELETE' THEN RAISE EXCEPTION '库存组织绑定不可删除，只能停用'; END IF;\n PERFORM pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_ORG_TRANSFER:',NEW.tenant_id,':POLICY:',NEW.factory_code),0));\n IF NEW.enabled THEN\n  PERFORM 1 FROM mom_mdm.mdm_warehouse WHERE tenant_id=NEW.tenant_id AND factory_code=NEW.factory_code\n   AND warehouse_code=NEW.warehouse_code AND status=true AND del_flag='0' FOR SHARE;\n  IF NOT FOUND THEN RAISE EXCEPTION '合作库存组织只能发布启用的实际仓库'; END IF;\n END IF;\n IF TG_OP='UPDATE' AND ROW(NEW.tenant_id,NEW.factory_code,NEW.warehouse_code,NEW.company_code)\n   IS DISTINCT FROM ROW(OLD.tenant_id,OLD.factory_code,OLD.warehouse_code,OLD.company_code) THEN\n   RAISE EXCEPTION '库存组织公司、工厂和仓库绑定不可重定义';\n END IF;\n IF EXISTS(SELECT 1 FROM mom_wms.wms_org_transfer_policy p WHERE p.tenant_id=NEW.tenant_id\n   AND p.factory_code=NEW.factory_code AND p.company_code<>NEW.company_code) THEN\n   RAISE EXCEPTION '同一工厂的库存组织公司必须一致';\n END IF;\n RETURN NEW;\nEND;\n",
+        null
+      ]
+    ],
+    "table:mom_wms.wms_inventory_count_schedule": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "template_code",
+          "character varying(32)",
+          true,
+          null
+        ],
+        [
+          "enabled",
+          "boolean",
+          true,
+          "false"
+        ],
+        [
+          "interval_days",
+          "integer",
+          true,
+          null
+        ],
+        [
+          "time_of_day",
+          "character varying(5)",
+          true,
+          null
+        ],
+        [
+          "zone_id",
+          "character varying(64)",
+          true,
+          null
+        ],
+        [
+          "next_run_utc",
+          "timestamp without time zone",
+          false,
+          null
+        ],
+        [
+          "version",
+          "integer",
+          true,
+          "1"
+        ],
+        [
+          "updated_at",
+          "timestamp without time zone",
+          true,
+          "now()"
+        ],
+        [
+          "updated_by",
+          "character varying(100)",
+          true,
+          null
+        ]
+      ],
+      "comment": "MOM-WMS:盘点模板周期配置",
+      "forceRls": false,
+      "constraints": [
+        [
+          "ck_wms_inventory_count_schedule_state",
+          "c",
+          true,
+          "CHECK ((enabled = (next_run_utc IS NOT NULL)))"
+        ],
+        [
+          "ck_wms_inventory_count_schedule_values",
+          "c",
+          true,
+          "CHECK ((((interval_days >= 1) AND (interval_days <= 365)) AND ((time_of_day)::text ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'::text) AND (btrim((zone_id)::text) <> ''::text) AND (btrim((updated_by)::text) <> ''::text)))"
+        ],
+        [
+          "ck_wms_inventory_count_schedule_version",
+          "c",
+          true,
+          "CHECK (((version >= 1) AND (version <= 2147483647)))"
+        ],
+        [
+          "fk_wms_inventory_count_schedule_template",
+          "f",
+          true,
+          "FOREIGN KEY (tenant_id, factory_code, template_code) REFERENCES mom_wms.wms_inventory_count_template(tenant_id, factory_code, template_code) ON DELETE CASCADE"
+        ],
+        [
+          "pk_wms_inventory_count_schedule",
+          "p",
+          true,
+          "PRIMARY KEY (tenant_id, factory_code, template_code)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "table:mom_wms.wms_inventory_count_template": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "template_code",
+          "character varying(32)",
+          true,
+          null
+        ],
+        [
+          "template_name",
+          "character varying(80)",
+          true,
+          null
+        ],
+        [
+          "warehouse_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "rule_code",
+          "character varying(32)",
+          true,
+          null
+        ],
+        [
+          "threshold_days",
+          "integer",
+          false,
+          null
+        ],
+        [
+          "site_codes_json",
+          "text",
+          true,
+          null
+        ],
+        [
+          "stock_freeze_mode",
+          "character varying(20)",
+          true,
+          null
+        ],
+        [
+          "enabled",
+          "boolean",
+          true,
+          "true"
+        ],
+        [
+          "version",
+          "integer",
+          true,
+          "1"
+        ],
+        [
+          "updated_at",
+          "timestamp without time zone",
+          true,
+          "now()"
+        ],
+        [
+          "updated_by",
+          "character varying(100)",
+          true,
+          null
+        ]
+      ],
+      "comment": "MOM-WMS:仓库盘点任务模板",
+      "forceRls": false,
+      "constraints": [
+        [
+          "ck_wms_inventory_count_template_mode",
+          "c",
+          true,
+          "CHECK (((stock_freeze_mode)::text = ANY ((ARRAY['SNAPSHOT'::character varying, 'FREEZE_COUNT'::character varying])::text[])))"
+        ],
+        [
+          "ck_wms_inventory_count_template_rule",
+          "c",
+          true,
+          "CHECK (((((rule_code)::text = ANY ((ARRAY['ALL_POSITIVE'::character varying, 'EXTERNAL_OWNER'::character varying])::text[])) AND (threshold_days IS NULL)) OR (((rule_code)::text = ANY ((ARRAY['NEAR_EXPIRY'::character varying, 'LONG_STAY'::character varying])::text[])) AND ((threshold_days >= 1) AND (threshold_days <= 3650)))))"
+        ],
+        [
+          "ck_wms_inventory_count_template_scope",
+          "c",
+          true,
+          "CHECK (((btrim((factory_code)::text) <> ''::text) AND (btrim((warehouse_code)::text) <> ''::text) AND ((template_code)::text ~ '^[A-Z][A-Z0-9_]{1,31}$'::text) AND (btrim((template_name)::text) <> ''::text) AND (btrim((updated_by)::text) <> ''::text)))"
+        ],
+        [
+          "ck_wms_inventory_count_template_sites",
+          "c",
+          true,
+          "CHECK (((jsonb_typeof((site_codes_json)::jsonb) = 'array'::text) AND ((jsonb_array_length((site_codes_json)::jsonb) >= 1) AND (jsonb_array_length((site_codes_json)::jsonb) <= 10))))"
+        ],
+        [
+          "ck_wms_inventory_count_template_version",
+          "c",
+          true,
+          "CHECK (((version >= 1) AND (version <= 2147483647)))"
+        ],
+        [
+          "pk_wms_inventory_count_template",
+          "p",
+          true,
+          "PRIMARY KEY (tenant_id, factory_code, template_code)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "function:mom_wms.assert_count_scope_open_359": [
+      [
+        "p_tenant bigint, p_factory text, p_warehouse text, p_site text, p_material text, p_batch text",
+        "void",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        [
+          "search_path=pg_catalog, mom_wms"
+        ],
+        "\nDECLARE plan_id bigint; lock_key text;\nBEGIN\n IF p_tenant IS NULL OR p_tenant<=0 OR nullif(btrim(p_factory),'') IS NULL\n  OR nullif(btrim(p_warehouse),'') IS NULL OR nullif(btrim(p_site),'') IS NULL\n  OR nullif(btrim(p_material),'') IS NULL THEN\n  RAISE EXCEPTION '实时库存写入范围不完整，不能校验盘点冻结';\n END IF;\n IF current_setting('transaction_isolation')<>'read committed' THEN\n  RAISE EXCEPTION '盘点冻结守卫要求库存写入使用READ COMMITTED事务';\n END IF;\n -- 另用冻结锁；动态盘点只占用计划重叠锁，不暂停仓库作业。\n lock_key:='WMS_INVENTORY_FREEZE|'||p_tenant||'|'||p_factory||'|'||p_warehouse;\n IF NOT pg_try_advisory_xact_lock(hashtextextended(lock_key,0)) THEN\n  RAISE EXCEPTION '仓库盘点范围正在建立或释放，请稍后重试库存作业';\n END IF;\n SELECT p.id INTO plan_id FROM mom_wms.wms_inside_inventory_plan p\n  JOIN mom_wms.wms_inside_inventory_plan_detail d\n   ON d.plan_id=p.id AND d.tenant_id=p.tenant_id AND d.factory_code=p.factory_code\n    AND d.warehouse_code=p.warehouse_code AND d.del_flag='0'\n  WHERE p.tenant_id=p_tenant AND p.factory_code=p_factory\n   AND p.warehouse_code=p_warehouse AND p.stock_freeze_mode='FREEZE_COUNT'\n   AND p.status='0' AND p.handle_state='0' AND p.del_flag='0'\n   AND d.site_code=p_site AND d.mat_code=p_material\n   AND (nullif(btrim(d.mat_batch),'') IS NULL\n    OR btrim(d.mat_batch)=btrim(coalesce(p_batch,'')))\n  LIMIT 1;\n IF plan_id IS NOT NULL THEN\n  RAISE EXCEPTION '盘点计划%实盘期间冻结该物料库位批次，请先完成实盘或作废',plan_id;\n END IF;\nEND ",
+        "MOM359:库存盘点冻结范围与事务锁"
+      ]
+    ],
+    "prerequisite:count-void-audit-constraint-330": [
+      "CHECK (((((status)::text = '2'::text) AND ((handle_state)::text = '2'::text) AND (NULLIF(btrim((cancel_reason)::text), ''::text) IS NOT NULL) AND (NULLIF(btrim((cancel_request_id)::text), ''::text) IS NOT NULL) AND (NULLIF(btrim((cancel_by)::text), ''::text) IS NOT NULL) AND (cancel_time IS NOT NULL)) OR (((status)::text IS DISTINCT FROM '2'::text) AND ((handle_state)::text IS DISTINCT FROM '2'::text) AND (cancel_reason IS NULL) AND (cancel_request_id IS NULL) AND (cancel_by IS NULL) AND (cancel_time IS NULL))))",
+      "c",
+      true,
+      "MOM330:作废状态必须有完整审计"
+    ],
+    "table:mom_wms.wms_warehouse_dashboard_policy": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "warehouse_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "near_expiry_days",
+          "integer",
+          true,
+          null
+        ],
+        [
+          "slow_moving_days",
+          "integer",
+          true,
+          null
+        ],
+        [
+          "version",
+          "integer",
+          true,
+          "1"
+        ],
+        [
+          "updated_at",
+          "timestamp without time zone",
+          true,
+          "now()"
+        ],
+        [
+          "updated_by",
+          "character varying(100)",
+          true,
+          null
+        ]
+      ],
+      "comment": "MOM356:仓库看板风险阈值",
+      "forceRls": false,
+      "constraints": [
+        [
+          "ck_wms_dashboard_policy_days_356",
+          "c",
+          true,
+          "CHECK ((((near_expiry_days >= 1) AND (near_expiry_days <= 3650)) AND ((slow_moving_days >= 1) AND (slow_moving_days <= 3650)) AND ((version >= 1) AND (version <= 2147483647))))"
+        ],
+        [
+          "ck_wms_dashboard_policy_scope_356",
+          "c",
+          true,
+          "CHECK (((btrim((factory_code)::text) <> ''::text) AND (btrim((warehouse_code)::text) <> ''::text) AND (btrim((updated_by)::text) <> ''::text)))"
+        ],
+        [
+          "pk_wms_dashboard_policy_356",
+          "p",
+          true,
+          "PRIMARY KEY (tenant_id, factory_code, warehouse_code)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "function:mom_wms.guard_mobile_transfer_cancel": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        null,
+        "\nDECLARE payload jsonb;\nBEGIN\n\tIF TG_OP <> 'INSERT' THEN\n\t\tRAISE EXCEPTION '接收永久取消回执不可改写或删除';\n\tEND IF;\n\tPERFORM pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_TRANSFER_RECEIPT:',NEW.tenant_id,':',NEW.request_id),0));\n\tIF EXISTS (SELECT 1 FROM mom_wms.wms_transfer_receipt WHERE tenant_id=NEW.tenant_id AND request_id=NEW.request_id) THEN\n\t\tRAISE EXCEPTION '原接收已存在业务凭证，不可取消为未执行';\n\tEND IF;\n\tpayload := NEW.request_snapshot::jsonb;\n\tIF jsonb_typeof(payload) IS DISTINCT FROM 'object'\n\t\tOR payload->>'billId' IS DISTINCT FROM NEW.allocation_bill_id::text\n\t\tOR jsonb_typeof(payload->'final') IS DISTINCT FROM 'boolean'\n\t\tOR jsonb_typeof(payload->'lines') IS DISTINCT FROM 'array' THEN\n\t\tRAISE EXCEPTION '接收取消回执原文与单据不一致';\n\tEND IF;\n\tIF jsonb_array_length(payload->'lines') NOT BETWEEN 1 AND 500 THEN\n\t\tRAISE EXCEPTION '接收取消明细数量不合法';\n\tEND IF;\n\tRETURN NEW;\nEND;\n",
+        null
+      ]
+    ],
+    "function:mom_wms.guard_org_transfer_immutable": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        null,
+        "\nBEGIN\n RAISE EXCEPTION '组织调拨永久回执与实物效果不可改写或删除';\nEND;\n",
+        null
+      ]
+    ],
+    "index:ix_wms_inventory_count_template_run_plan": [
+      "CREATE INDEX ix_wms_inventory_count_template_run_plan ON mom_wms.wms_inventory_count_template_run USING btree (tenant_id, factory_code, plan_id) WHERE (plan_id IS NOT NULL)",
+      false,
+      true,
+      true,
+      null
+    ],
+    "table:mom_wms.wms_inventory_count_template_run": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "request_id",
+          "character varying(64)",
+          true,
+          null
+        ],
+        [
+          "template_code",
+          "character varying(32)",
+          true,
+          null
+        ],
+        [
+          "template_version",
+          "integer",
+          true,
+          null
+        ],
+        [
+          "template_snapshot_json",
+          "text",
+          true,
+          null
+        ],
+        [
+          "triggered_by",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "plan_id",
+          "bigint",
+          false,
+          null
+        ],
+        [
+          "plan_no",
+          "character varying(32)",
+          false,
+          null
+        ],
+        [
+          "created_at",
+          "timestamp without time zone",
+          true,
+          "now()"
+        ]
+      ],
+      "comment": "MOM-WMS:盘点模板触发记录",
+      "forceRls": false,
+      "constraints": [
+        [
+          "ck_wms_inventory_count_template_run_state",
+          "c",
+          true,
+          "CHECK (((template_version >= 1) AND (btrim((triggered_by)::text) <> ''::text) AND ((request_id)::text ~ '^[A-Za-z0-9_-]{1,64}$'::text) AND (jsonb_typeof((template_snapshot_json)::jsonb) = 'object'::text) AND ((plan_id IS NULL) = (plan_no IS NULL)) AND ((plan_no IS NULL) OR (btrim((plan_no)::text) <> ''::text))))"
+        ],
+        [
+          "fk_wms_inventory_count_template_run_template",
+          "f",
+          true,
+          "FOREIGN KEY (tenant_id, factory_code, template_code) REFERENCES mom_wms.wms_inventory_count_template(tenant_id, factory_code, template_code)"
+        ],
+        [
+          "pk_wms_inventory_count_template_run",
+          "p",
+          true,
+          "PRIMARY KEY (tenant_id, factory_code, request_id)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "constraint:mom_wms.ck_wms_count_freeze_mode_359": [
+      "CHECK (((stock_freeze_mode)::text = ANY ((ARRAY['SNAPSHOT'::character varying, 'FREEZE_COUNT'::character varying])::text[])))",
+      true,
+      "MOM359:仅动态盘点或实盘期间冻结"
+    ],
+    "index:uk_wms_transfer_receipt_request_permanent": [
+      "CREATE UNIQUE INDEX uk_wms_transfer_receipt_request_permanent ON mom_wms.wms_transfer_receipt USING btree (tenant_id, request_id)",
+      true,
+      true,
+      true,
+      null
+    ],
+    "table:mom_wms.wms_inventory_adjustment_approval": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "plan_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "plan_detail_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "warehouse_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "request_id",
+          "character varying(64)",
+          true,
+          null
+        ],
+        [
+          "status",
+          "character varying(16)",
+          true,
+          null
+        ],
+        [
+          "expected_current_number",
+          "double precision",
+          true,
+          null
+        ],
+        [
+          "expected_inventory_num",
+          "double precision",
+          true,
+          null
+        ],
+        [
+          "selected_detail_json",
+          "text",
+          true,
+          null
+        ],
+        [
+          "reason",
+          "character varying(500)",
+          true,
+          null
+        ],
+        [
+          "applicant_code",
+          "character varying(128)",
+          true,
+          null
+        ],
+        [
+          "submitted_time",
+          "timestamp without time zone",
+          true,
+          null
+        ],
+        [
+          "reviewer_code",
+          "character varying(128)",
+          false,
+          null
+        ],
+        [
+          "reviewed_time",
+          "timestamp without time zone",
+          false,
+          null
+        ],
+        [
+          "review_comment",
+          "character varying(500)",
+          false,
+          null
+        ],
+        [
+          "revoked_by",
+          "character varying(128)",
+          false,
+          null
+        ],
+        [
+          "revoked_time",
+          "timestamp without time zone",
+          false,
+          null
+        ],
+        [
+          "revoke_reason",
+          "character varying(500)",
+          false,
+          null
+        ],
+        [
+          "posted_time",
+          "timestamp without time zone",
+          false,
+          null
+        ],
+        [
+          "create_by",
+          "character varying(64)",
+          false,
+          null
+        ],
+        [
+          "create_time",
+          "timestamp without time zone",
+          false,
+          null
+        ],
+        [
+          "update_by",
+          "character varying(64)",
+          false,
+          null
+        ],
+        [
+          "update_time",
+          "timestamp without time zone",
+          false,
+          null
+        ],
+        [
+          "del_flag",
+          "character(1)",
+          true,
+          "'0'::bpchar"
+        ]
+      ],
+      "comment": "盘点差异申请、异人审核及调账回执；每次申请保留一行，拒绝后可重新申请",
+      "forceRls": false,
+      "constraints": [
+        [
+          "ck_wms_count_approval_state",
+          "c",
+          true,
+          "CHECK ((((status)::text = ANY ((ARRAY['PENDING'::character varying, 'APPROVED'::character varying, 'REJECTED'::character varying, 'REVOKED'::character varying, 'POSTED'::character varying])::text[])) AND (expected_current_number >= (0)::double precision) AND (expected_inventory_num >= (0)::double precision) AND (expected_current_number <> expected_inventory_num) AND (btrim((factory_code)::text) <> ''::text) AND (btrim((warehouse_code)::text) <> ''::text) AND (btrim((request_id)::text) <> ''::text) AND (btrim((reason)::text) <> ''::text) AND (btrim((applicant_code)::text) <> ''::text) AND (((status)::text = 'PENDING'::text) OR ((reviewer_code IS NOT NULL) AND (reviewed_time IS NOT NULL) AND (review_comment IS NOT NULL))) AND (((status)::text <> 'REVOKED'::text) OR ((revoked_by IS NOT NULL) AND (revoked_time IS NOT NULL) AND (revoke_reason IS NOT NULL))) AND (((status)::text <> 'POSTED'::text) OR (posted_time IS NOT NULL))))"
+        ],
+        [
+          "wms_inventory_adjustment_approval_pkey",
+          "p",
+          true,
+          "PRIMARY KEY (id)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "table:mom_wms.wms_mobile_transfer_cancel_receipt": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "request_id",
+          "character varying(64)",
+          true,
+          null
+        ],
+        [
+          "factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "operator_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "warehouse_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "allocation_bill_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "request_snapshot",
+          "text",
+          true,
+          null
+        ],
+        [
+          "cancellation_reason",
+          "character varying(500)",
+          true,
+          null
+        ],
+        [
+          "completed_time",
+          "timestamp without time zone",
+          true,
+          "CURRENT_TIMESTAMP"
+        ]
+      ],
+      "comment": null,
+      "forceRls": false,
+      "constraints": [
+        [
+          "ck_wms_mobile_transfer_cancel",
+          "c",
+          true,
+          "CHECK (((tenant_id > 0) AND (allocation_bill_id > 0) AND ((length(TRIM(BOTH FROM request_id)) >= 1) AND (length(TRIM(BOTH FROM request_id)) <= 64)) AND ((request_id)::text = TRIM(BOTH FROM request_id)) AND (length(TRIM(BOTH FROM factory_code)) > 0) AND (length(TRIM(BOTH FROM operator_code)) > 0) AND (length(TRIM(BOTH FROM warehouse_code)) > 0) AND ((warehouse_code)::text = TRIM(BOTH FROM warehouse_code)) AND (length(TRIM(BOTH FROM request_snapshot)) > 0) AND (length(TRIM(BOTH FROM cancellation_reason)) > 0)))"
+        ],
+        [
+          "wms_mobile_transfer_cancel_receipt_pkey",
+          "p",
+          true,
+          "PRIMARY KEY (tenant_id, request_id)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "function:mom_wms.org_transfer_warehouse_lifecycle": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        null,
+        "\nBEGIN\n IF TG_OP='UPDATE' AND NEW.status=false AND OLD.status IS DISTINCT FROM NEW.status THEN\n  UPDATE mom_wms.wms_org_transfer_policy SET enabled=false,version=version+1,updated_time=CURRENT_TIMESTAMP\n   WHERE tenant_id=NEW.tenant_id AND factory_code=NEW.factory_code AND warehouse_code=NEW.warehouse_code AND enabled=true;\n END IF;\n IF TG_OP='DELETE' OR (TG_OP='UPDATE' AND (NEW.del_flag='1' OR ROW(NEW.tenant_id,NEW.factory_code,NEW.warehouse_code) IS DISTINCT FROM ROW(OLD.tenant_id,OLD.factory_code,OLD.warehouse_code))) THEN\n  IF EXISTS(SELECT 1 FROM mom_wms.wms_org_transfer_bill WHERE tenant_id=OLD.tenant_id AND\n    ((source_factory_code=OLD.factory_code AND source_warehouse_code=OLD.warehouse_code)\n      OR (target_factory_code=OLD.factory_code AND target_warehouse_code=OLD.warehouse_code))) THEN\n   RAISE EXCEPTION '仓库存在组织调拨历史，不可删除或重绑定';\n  END IF;\n  IF EXISTS(SELECT 1 FROM mom_wms.wms_org_transfer_policy WHERE tenant_id=OLD.tenant_id AND factory_code=OLD.factory_code\n    AND warehouse_code=OLD.warehouse_code AND enabled=true) THEN RAISE EXCEPTION '先停用合作库存组织再删除仓库'; END IF;\n END IF;\n IF TG_OP='DELETE' THEN RETURN OLD; END IF;\n RETURN NEW;\nEND;\n",
+        null
+      ]
+    ],
+    "table:mom_wms.wms_mobile_allocation_cancel_receipt": {
+      "rls": false,
+      "kind": "r",
+      "columns": [
+        [
+          "tenant_id",
+          "bigint",
+          true,
+          null
+        ],
+        [
+          "request_id",
+          "character varying(64)",
+          true,
+          null
+        ],
+        [
+          "factory_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "operator_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "warehouse_code",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "bill_no",
+          "character varying(100)",
+          true,
+          null
+        ],
+        [
+          "request_snapshot",
+          "text",
+          true,
+          null
+        ],
+        [
+          "cancellation_reason",
+          "character varying(500)",
+          true,
+          null
+        ],
+        [
+          "completed_time",
+          "timestamp without time zone",
+          true,
+          "CURRENT_TIMESTAMP"
+        ]
+      ],
+      "comment": null,
+      "forceRls": false,
+      "constraints": [
+        [
+          "ck_wms_mobile_allocation_cancel_identity",
+          "c",
+          true,
+          "CHECK (((tenant_id > 0) AND ((length(TRIM(BOTH FROM request_id)) >= 1) AND (length(TRIM(BOTH FROM request_id)) <= 64)) AND ((request_id)::text = TRIM(BOTH FROM request_id)) AND (length(TRIM(BOTH FROM factory_code)) > 0) AND (length(TRIM(BOTH FROM operator_code)) > 0) AND (length(TRIM(BOTH FROM warehouse_code)) > 0) AND ((warehouse_code)::text = TRIM(BOTH FROM warehouse_code)) AND (length(TRIM(BOTH FROM bill_no)) > 0) AND (length(TRIM(BOTH FROM request_snapshot)) > 0) AND (length(TRIM(BOTH FROM cancellation_reason)) > 0)))"
+        ],
+        [
+          "wms_mobile_allocation_cancel_receipt_pkey",
+          "p",
+          true,
+          "PRIMARY KEY (tenant_id, request_id)"
+        ]
+      ],
+      "persistence": "p"
+    },
+    "function:mom_wms.guard_allocation_cancelled_original": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        null,
+        "\nBEGIN\n\tIF TG_OP = 'DELETE' THEN\n\t\tIF NULLIF(trim(OLD.request_id), '') IS NOT NULL THEN\n\t\t\tRAISE EXCEPTION '调拨原请求业务凭证不可物理删除';\n\t\tEND IF;\n\t\tRETURN OLD;\n\tEND IF;\n\tIF TG_OP = 'UPDATE' AND NULLIF(trim(OLD.request_id), '') IS NOT NULL\n\t\tAND ROW(NEW.tenant_id, NEW.request_id) IS DISTINCT FROM ROW(OLD.tenant_id, OLD.request_id) THEN\n\t\tRAISE EXCEPTION '调拨原请求租户与永久请求号不可重绑定';\n\tEND IF;\n\tIF NULLIF(trim(NEW.request_id), '') IS NOT NULL THEN\n\t\tPERFORM pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_AGENT_TRANSFER:MOBILE_REQUEST:', NEW.tenant_id, ':', NEW.request_id), 0));\n\t\tIF EXISTS (SELECT 1 FROM mom_wms.wms_mobile_allocation_cancel_receipt\n\t\t\tWHERE tenant_id=NEW.tenant_id AND request_id=NEW.request_id) THEN\n\t\t\tRAISE EXCEPTION '原即时调拨请求已撤销，禁止重放执行';\n\t\tEND IF;\n\tEND IF;\n\tRETURN NEW;\nEND;\n",
+        null
+      ]
+    ],
+    "function:mom_wms.guard_mobile_allocation_cancellation": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        null,
+        "\nDECLARE payload jsonb;\nBEGIN\n\tIF TG_OP <> 'INSERT' THEN\n\t\tRAISE EXCEPTION '即时调拨永久撤销回执不可改写或删除';\n\tEND IF;\n\tPERFORM pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_AGENT_TRANSFER:MOBILE_REQUEST:', NEW.tenant_id, ':', NEW.request_id), 0));\n\tIF EXISTS (SELECT 1 FROM mom_wms.wms_allocation_bill\n\t\tWHERE tenant_id=NEW.tenant_id AND request_id=NEW.request_id) THEN\n\t\tRAISE EXCEPTION '原调拨已有业务单，不得再封存为未执行撤销';\n\tEND IF;\n\tpayload := NEW.request_snapshot::jsonb;\n\tIF jsonb_typeof(payload) IS DISTINCT FROM 'object'\n\t\tOR payload->>'factory' IS DISTINCT FROM NEW.factory_code\n\t\tOR payload->>'sourceWarehouse' IS DISTINCT FROM NEW.warehouse_code\n\t\tOR payload->>'billNo' IS DISTINCT FROM NEW.bill_no\n\t\tOR jsonb_typeof(payload->'quantity') IS DISTINCT FROM 'number'\n\t\tOR COALESCE((payload->>'quantity')::numeric, 0) <= 0 THEN\n\t\tRAISE EXCEPTION '即时调拨撤销原文与身份或数量不一致';\n\tEND IF;\n\tRETURN NEW;\nEND;\n",
+        null
+      ]
+    ],
+    "column:mom_wms.wms_inside_inventory_plan.stock_freeze_mode": [
+      "character varying(16)",
+      true,
+      "'SNAPSHOT'::character varying",
+      "MOM359:盘点实盘期间库存写入模式"
+    ],
+    "function:mom_wms.guard_transfer_receipt_cancelled_original": [
+      [
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        "v",
+        "u",
+        null,
+        "\nBEGIN\n\tIF TG_OP = 'DELETE' THEN\n\t\tRAISE EXCEPTION '接收原始业务凭证不可物理删除';\n\tEND IF;\n\tIF TG_OP = 'UPDATE' AND ROW(NEW.tenant_id,NEW.request_id,NEW.allocation_bill_id,NEW.factory_code,NEW.receiver_code,NEW.request_snapshot)\n\t\tIS DISTINCT FROM ROW(OLD.tenant_id,OLD.request_id,OLD.allocation_bill_id,OLD.factory_code,OLD.receiver_code,OLD.request_snapshot) THEN\n\t\tRAISE EXCEPTION '接收原始身份、单据、原号和原文不可重绑定';\n\tEND IF;\n\tPERFORM pg_advisory_xact_lock(hashtextextended(CONCAT('WMS_TRANSFER_RECEIPT:',NEW.tenant_id,':',NEW.request_id),0));\n\tIF EXISTS (SELECT 1 FROM mom_wms.wms_mobile_transfer_cancel_receipt WHERE tenant_id=NEW.tenant_id AND request_id=NEW.request_id) THEN\n\t\tRAISE EXCEPTION '原接收请求已取消，禁止重放入库';\n\tEND IF;\n\tRETURN NEW;\nEND;\n",
+        null
+      ]
+    ],
+    "trigger:mom_wms.wms_live_stock:trg_wms_count_stock_row_359": [
+      "CREATE TRIGGER trg_wms_count_stock_row_359 BEFORE INSERT OR DELETE OR UPDATE ON mom_wms.wms_live_stock FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_count_stock_359()",
+      "A",
+      false
+    ],
+    "trigger:mom_wms.wms_live_stock:trg_wms_count_stock_truncate_359": [
+      "CREATE TRIGGER trg_wms_count_stock_truncate_359 BEFORE TRUNCATE ON mom_wms.wms_live_stock FOR EACH STATEMENT EXECUTE FUNCTION mom_wms.guard_count_stock_359()",
+      "A",
+      false
+    ],
+    "trigger:mom_wms.wms_org_transfer_policy:trg_org_transfer_policy": [
+      "CREATE TRIGGER trg_org_transfer_policy BEFORE INSERT OR DELETE OR UPDATE ON mom_wms.wms_org_transfer_policy FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_org_transfer_policy()",
+      "O",
+      false
+    ],
+    "trigger:mom_mdm.mdm_warehouse:trg_org_transfer_warehouse_lifecycle": [
+      "CREATE TRIGGER trg_org_transfer_warehouse_lifecycle BEFORE DELETE OR UPDATE ON mom_mdm.mdm_warehouse FOR EACH ROW EXECUTE FUNCTION mom_wms.org_transfer_warehouse_lifecycle()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_inside_inventory_plan:trg_wms_count_plan_row_359": [
+      "CREATE TRIGGER trg_wms_count_plan_row_359 BEFORE INSERT OR DELETE OR UPDATE ON mom_wms.wms_inside_inventory_plan FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_count_plan_359()",
+      "A",
+      false
+    ],
+    "trigger:mom_wms.wms_org_transfer_bill:trg_org_transfer_bill_identity": [
+      "CREATE TRIGGER trg_org_transfer_bill_identity BEFORE DELETE OR UPDATE ON mom_wms.wms_org_transfer_bill FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_org_transfer_bill()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_org_transfer_line:trg_org_transfer_line_identity": [
+      "CREATE TRIGGER trg_org_transfer_line_identity BEFORE DELETE OR UPDATE ON mom_wms.wms_org_transfer_line FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_org_transfer_line()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_allocation_bill:trg_allocation_cancel_fence_delete": [
+      "CREATE TRIGGER trg_allocation_cancel_fence_delete BEFORE DELETE ON mom_wms.wms_allocation_bill FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_allocation_cancelled_original()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_allocation_bill:trg_allocation_cancel_fence_insert": [
+      "CREATE TRIGGER trg_allocation_cancel_fence_insert BEFORE INSERT ON mom_wms.wms_allocation_bill FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_allocation_cancelled_original()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_allocation_bill:trg_allocation_cancel_fence_rebind": [
+      "CREATE TRIGGER trg_allocation_cancel_fence_rebind BEFORE UPDATE OF tenant_id, request_id ON mom_wms.wms_allocation_bill FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_allocation_cancelled_original()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_transfer_receipt:trg_transfer_receipt_cancel_delete": [
+      "CREATE TRIGGER trg_transfer_receipt_cancel_delete BEFORE DELETE ON mom_wms.wms_transfer_receipt FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_transfer_receipt_cancelled_original()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_transfer_receipt:trg_transfer_receipt_cancel_insert": [
+      "CREATE TRIGGER trg_transfer_receipt_cancel_insert BEFORE INSERT ON mom_wms.wms_transfer_receipt FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_transfer_receipt_cancelled_original()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_transfer_receipt:trg_transfer_receipt_cancel_rebind": [
+      "CREATE TRIGGER trg_transfer_receipt_cancel_rebind BEFORE UPDATE OF tenant_id, request_id, allocation_bill_id, factory_code, receiver_code, request_snapshot ON mom_wms.wms_transfer_receipt FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_transfer_receipt_cancelled_original()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_org_transfer_effect:trg_org_transfer_effect_immutable": [
+      "CREATE TRIGGER trg_org_transfer_effect_immutable BEFORE DELETE OR UPDATE ON mom_wms.wms_org_transfer_effect FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_org_transfer_immutable()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_inside_inventory_plan_detail:trg_wms_count_detail_row_359": [
+      "CREATE TRIGGER trg_wms_count_detail_row_359 BEFORE INSERT OR DELETE OR UPDATE ON mom_wms.wms_inside_inventory_plan_detail FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_count_detail_359()",
+      "A",
+      false
+    ],
+    "trigger:mom_wms.wms_org_transfer_operation:trg_org_transfer_operation_immutable": [
+      "CREATE TRIGGER trg_org_transfer_operation_immutable BEFORE DELETE OR UPDATE ON mom_wms.wms_org_transfer_operation FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_org_transfer_immutable()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_inside_inventory_plan_detail:trg_wms_count_detail_truncate_359": [
+      "CREATE TRIGGER trg_wms_count_detail_truncate_359 BEFORE TRUNCATE ON mom_wms.wms_inside_inventory_plan_detail FOR EACH STATEMENT EXECUTE FUNCTION mom_wms.guard_count_detail_359()",
+      "A",
+      false
+    ],
+    "trigger:mom_wms.wms_mobile_transfer_cancel_receipt:trg_mobile_transfer_cancel_immutable": [
+      "CREATE TRIGGER trg_mobile_transfer_cancel_immutable BEFORE INSERT OR DELETE OR UPDATE ON mom_wms.wms_mobile_transfer_cancel_receipt FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_mobile_transfer_cancel()",
+      "O",
+      false
+    ],
+    "trigger:mom_wms.wms_mobile_allocation_cancel_receipt:trg_mobile_allocation_cancel_immutable": [
+      "CREATE TRIGGER trg_mobile_allocation_cancel_immutable BEFORE INSERT OR DELETE OR UPDATE ON mom_wms.wms_mobile_allocation_cancel_receipt FOR EACH ROW EXECUTE FUNCTION mom_wms.guard_mobile_allocation_cancellation()",
+      "O",
+      false
+    ]
+  }
+}

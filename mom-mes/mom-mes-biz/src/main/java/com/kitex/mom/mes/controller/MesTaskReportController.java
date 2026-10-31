@@ -57,8 +57,9 @@ public class MesTaskReportController {
     @GetMapping("/command-context")
     @Operation(summary = "查询原号登记真实身份", description = "不包含令牌，不授予报工或离线许可")
     @PreAuthorize("@pms.hasPermission('mesTaskReport:show','mesTaskReport:report','mesStationPass:report','mesTaskReport:integration')")
-    public R<MesReportOperatorContextDTO> commandContext() {
-        return R.ok(reportCommands.operatorContext());
+    public R<MesReportOperatorContextDTO> commandContext(
+            @RequestParam(value = "includeNodeReadiness", defaultValue = "true") boolean includeNodeReadiness) {
+        return R.ok(reportCommands.operatorContext(includeNodeReadiness));
     }
 
     @PostMapping("/close-unaccepted")

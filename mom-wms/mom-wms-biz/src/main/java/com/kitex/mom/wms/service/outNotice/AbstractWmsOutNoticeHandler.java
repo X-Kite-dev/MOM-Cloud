@@ -32,6 +32,8 @@ import com.kitex.mom.wms.util.WmsStockOwnership;
 import com.kitex.mom.wms.vo.WmsOutNoticeDetailExcelVO;
 import com.kitex.mom.wms.vo.WmsOutNoticeExcelVO;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
+import com.kitex.mom.wms.service.noticeAcceptance.WmsProductionNoticeAcceptanceService;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -72,6 +74,9 @@ public abstract class AbstractWmsOutNoticeHandler
     @Autowired
     private WmsWarehouseBusinessGuard warehouseBusinessGuard;
 
+    @Autowired
+    private ObjectProvider<WmsProductionNoticeAcceptanceService> productionAcceptance;
+
     @Override
     public List<WmsOutNoticeEntity> getNoticeList(List<Long> ids) {
         List<WmsOutNoticeEntity> wmsOutNoticeEntities = wmsOutNoticeMapper.selectByIds(ids);
@@ -93,6 +98,18 @@ public abstract class AbstractWmsOutNoticeHandler
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveDeep(WmsOutNoticeEntity wmsOutNotice) {
+        if (wmsOutNotice != null
+                && DocumentEnum.MES_PICKING.getCode().equals(StrUtil.trim(wmsOutNotice.getDocumentTable()))) {
+            if (productionAcceptance == null) {
+                throw new CheckedException("生产领料受理服务未就绪");
+            }
+            return productionAcceptance.getObject().acceptLegacy(wmsOutNotice);
+        }
+        return persistNotice(wmsOutNotice);
+    }
+
+    /** 仅供受理服务内部写端调用；HTTP入口不得绕过永久受理。 */
+    protected Boolean persistNotice(WmsOutNoticeEntity wmsOutNotice) {
         // 1. 校验数据完整性
         checkData(wmsOutNotice);
 
@@ -332,6 +349,7 @@ public abstract class AbstractWmsOutNoticeHandler
                 liveDetail.setSupplierCode(liveStock.getSupplierCode());
                 liveDetail.setSupplierName(liveStock.getSupplierName());
                 liveDetail.setMatBatch(liveStock.getMatBatch());
+                liveDetail.setMatBarcode(liveStock.getMatBarcode());
                 liveDetail.setMatSpec(liveStock.getMatSpec());
                 liveDetail.setContainerCode(liveStock.getContainerCode());
                 liveDetail.setSiteCode(liveStock.getSiteCode());
@@ -682,6 +700,16 @@ public abstract class AbstractWmsOutNoticeHandler
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean voidObjByDocumentId(Long documentId, String documentTable) {
+        if (DocumentEnum.MES_PICKING.getCode().equals(StrUtil.trim(documentTable))) {
+            if (productionAcceptance == null) {
+                throw new CheckedException("生产领料受理服务未就绪");
+            }
+            return productionAcceptance.getObject().cancelLegacy(documentId, documentTable);
+        }
+        return voidSourceNotices(documentId, documentTable);
+    }
+
+    protected Boolean voidSourceNotices(Long documentId, String documentTable) {
         if (documentId == null || StrUtil.isBlank(documentTable)) {
             throw new CheckedException("来源单据不能为空");
         }

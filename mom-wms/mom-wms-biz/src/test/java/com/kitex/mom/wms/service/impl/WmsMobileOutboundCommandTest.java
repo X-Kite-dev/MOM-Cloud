@@ -46,6 +46,7 @@ import static org.mockito.Mockito.*;
 class WmsMobileOutboundCommandTest {
 	private JdbcTemplate db;
 	private DefaultWmsOutBillService service;
+	private WmsWarehouseBusinessGuard warehouse;
 	private boolean failStock, falsePicking, falsePickingDelete;
 	private String sequenceData = "OUT-NEW";
 	private String zeroWrite = "";
@@ -95,7 +96,7 @@ class WmsMobileOutboundCommandTest {
 
 		var notices = mock(WmsOutNoticeMapper.class);
 		when(notices.selectById(any(java.io.Serializable.class))).thenAnswer(call -> first(
-				db.query("select * from notice where id=?", noticeMapper(), new Object[] { call.getArgument(0) })));
+				db.query("select * from notice where id=?", noticeMapper(), new Object[]{call.getArgument(0)})));
 		when(notices.update(any(Wrapper.class))).thenCallRealMethod();
 		when(notices.update(isNull(), any(Wrapper.class))).thenAnswer(call -> update("notice", call.getArgument(1)));
 		var noticeDetails = mock(WmsOutNoticeDetailMapper.class);
@@ -107,7 +108,7 @@ class WmsMobileOutboundCommandTest {
 		var bills = mock(WmsOutBillMapper.class);
 		when(bills.selectList(any(Wrapper.class))).thenAnswer(call -> query("bill", call.getArgument(0), billMapper()));
 		when(bills.selectById(any(java.io.Serializable.class))).thenAnswer(call -> first(
-				db.query("select * from bill where id=?", billMapper(), new Object[] { call.getArgument(0) })));
+				db.query("select * from bill where id=?", billMapper(), new Object[]{call.getArgument(0)})));
 		when(bills.update(any(Wrapper.class))).thenCallRealMethod();
 		when(bills.update(isNull(), any(Wrapper.class))).thenAnswer(call -> update("bill", call.getArgument(1)));
 		when(bills.insert(any(WmsOutBillEntity.class))).thenAnswer(call -> {
@@ -117,9 +118,9 @@ class WmsMobileOutboundCommandTest {
 			WmsOutBillEntity b = call.getArgument(0);
 			b.setId(nextBill++);
 			return db.update("insert into bill(id,bill_no,notice_id,tenant_id,factory_code,"
-					+ "warehouse_code,warehouse_name,bill_type,state,source,"
-					+ "detail_finish_num,detail_not_finish_num) values(?,?,?,?,?,?,?,?,"
-					+ "?,?,?,?)",
+							+ "warehouse_code,warehouse_name,bill_type,state,source,"
+							+ "detail_finish_num,detail_not_finish_num) values(?,?,?,?,?,?,?,?,"
+							+ "?,?,?,?)",
 					b.getId(), b.getBillNo(), b.getNoticeId(), b.getTenantId(), b.getFactoryCode(),
 					b.getWarehouseCode(), b.getWarehouseName(), b.getBillType(), b.getState(), b.getSource(),
 					b.getDetailFinishNum(), b.getDetailNotFinishNum());
@@ -167,7 +168,7 @@ class WmsMobileOutboundCommandTest {
 		});
 		var sequence = mock(RemoteSeqConfigService.class);
 		when(sequence.create("wms_out_bill")).thenAnswer(call -> R.ok(sequenceData, null));
-		var warehouse = mock(WmsWarehouseBusinessGuard.class);
+		warehouse = mock(WmsWarehouseBusinessGuard.class);
 		when(warehouse.check(eq("W1"), anyString(), eq(false))).thenReturn(true);
 		var target = new DefaultWmsOutBillService();
 		ReflectionTestUtils.setField(target, "wmsOutNoticeMapper", notices);
@@ -259,10 +260,10 @@ class WmsMobileOutboundCommandTest {
 	private int update(String table, Wrapper<?> wrapper) {
 		var change = (LambdaUpdateWrapper<?>) wrapper;
 		String operation = switch (table) {
-		case "notice" -> change.getSqlSet().contains("all_not_out_num") ? "notice_quantity" : "notice_complete";
-		case "notice_detail" -> "notice_detail_quantity";
-		case "bill" -> change.getSqlSet().contains("detail_not_finish_num") ? "bill_detail_count" : "bill_complete";
-		default -> table;
+			case "notice" -> change.getSqlSet().contains("all_not_out_num") ? "notice_quantity" : "notice_complete";
+			case "notice_detail" -> "notice_detail_quantity";
+			case "bill" -> change.getSqlSet().contains("detail_not_finish_num") ? "bill_detail_count" : "bill_complete";
+			default -> table;
 		};
 		if (zeroWrite.equals(operation)) {
 			return 0;
@@ -348,6 +349,47 @@ class WmsMobileOutboundCommandTest {
 	}
 
 	@Test
+	void exactOrdinaryNoticeDetailCanChooseARecommendedStockWithoutFrozenNoticeStock() {
+		db.update("insert into notice_detail values(4,1,1,'F1','W1','M1','KG',null,5,5,0)");
+
+		assertEquals("OUT-1", service.setOutBillNum(command().setNoticeDetailId(2L).setSourceStockId(3L)));
+
+		assertEquals(8d, db.queryForObject("select not_out_num from notice_detail where id=2", Double.class));
+		assertEquals(5d, db.queryForObject("select not_out_num from notice_detail where id=4", Double.class));
+		assertEquals(8d, number("stock", "quantity"));
+	}
+
+	@Test
+	void exactFrozenNoticeDetailCannotReplaceItsApprovedStock() {
+		db.update("update notice_detail set source_stock_id=8 where id=2");
+
+		assertThrows(CheckedException.class,
+				() -> service.setOutBillNum(command().setNoticeDetailId(2L).setSourceStockId(3L)));
+
+		untouched();
+	}
+
+	@Test
+	void identicalLogisticsFromDifferentStocksKeepSeparateBillSources() {
+		service.setOutBillNum(command().setNoticeDetailId(2L).setSourceStockId(3L));
+		service.setOutBillNum(command().setNoticeDetailId(2L).setSourceStockId(4L));
+
+		assertEquals(List.of(3L, 4L), db.queryForList(
+				"select source_stock_id from bill_detail order by source_stock_id", Long.class));
+		assertEquals(6d, number("notice", "all_not_out_num"));
+	}
+
+	@Test
+	void separatePreciseExecutionsKeepDistinctDetailsForReservationConsumption() {
+		service.setOutBillNum(command().setNoticeDetailId(2L).setSourceStockId(3L));
+		service.setOutBillNum(command().setNoticeDetailId(2L).setSourceStockId(3L).setMatNum(3d));
+
+		assertEquals(List.of(2d, 3d), db.queryForList("select mat_num from bill_detail order by id", Double.class));
+		assertEquals(5d, number("notice", "all_not_out_num"));
+		assertEquals(2, count("picking"));
+	}
+
+	@Test
 	void validOriginalAppBillUpdatesItsNoticeAndStockInOneTransaction() {
 		assertEquals("OUT-1", service.setOutBillNum(command()));
 
@@ -364,6 +406,52 @@ class WmsMobileOutboundCommandTest {
 		assertEquals(5d, number("bill_detail", "mat_num"));
 		assertEquals(5d, number("bill_detail", "operate_num"));
 		assertEquals(2, count("picking"));
+	}
+
+	@Test
+	void legacyOptionalContainerCannotMergeIntoAnotherContainer() {
+		service.setOutBillNum(command());
+
+		assertEquals("OUT-1", service.setOutBillNum(command().setContainerCode(null).setMatNum(3D)));
+
+		assertEquals(2, count("bill_detail"));
+		assertEquals(2D, db.queryForObject("select mat_num from bill_detail where container_code='C1'", Double.class));
+		assertEquals(3D, db.queryForObject("select mat_num from bill_detail where coalesce(container_code,'')=''", Double.class));
+		assertEquals(5D, number("stock", "quantity"));
+		assertEquals(5D, number("notice", "all_not_out_num"));
+	}
+
+	@Test
+	void finalMergedOutboundPlacementFailureCannotChangeNoticeStockOrExistingDetail() {
+		service.setOutBillNum(command());
+		failAtFinalPlacement();
+
+		assertThrows(CheckedException.class, () -> service.setOutBillNum(command().setMatNum(3D)));
+
+		assertEquals(8D, number("stock", "quantity"));
+		assertEquals(8D, number("notice", "all_not_out_num"));
+		assertEquals(8D, number("notice_detail", "not_out_num"));
+		assertEquals(2D, number("bill_detail", "mat_num"));
+		assertEquals(1, count("picking"));
+	}
+
+	@Test
+	void finalNewOutboundPlacementFailureCannotInsertDetailOrConsumeStock() {
+		failAtFinalPlacement();
+
+		assertThrows(CheckedException.class, () -> service.setOutBillNum(command()));
+
+		untouched();
+	}
+
+	private void failAtFinalPlacement() {
+		var reads = new java.util.concurrent.atomic.AtomicInteger();
+		doAnswer(call -> {
+			if (reads.incrementAndGet() > 2) {
+				throw new CheckedException("最终放置范围已失效");
+			}
+			return null;
+		}).when(warehouse).checkPlacements(eq("W1"), anyList());
 	}
 
 	@Test
@@ -441,7 +529,7 @@ class WmsMobileOutboundCommandTest {
 
 	@Test
 	void standardAndOperateQuantitiesMustBePositiveAndFinite() {
-		for (double value : new double[] { 0, -1, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY }) {
+		for (double value : new double[]{0, -1, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
 			assertThrows(CheckedException.class, () -> service.setOutBillNum(command().setMatNum(value)));
 			untouched();
 			assertThrows(CheckedException.class, () -> service.setOutBillNum(command().setOperateNum(value)));
@@ -525,10 +613,10 @@ class WmsMobileOutboundCommandTest {
 
 	@Test
 	void controllerMustReturnTheOriginalBillNumberAsDataInsteadOfOnlyMessage() {
-		var writes = mock(DefaultWmsOutBillService.class);
-		when(writes.setOutBillNum(any())).thenReturn("OUT-1");
-		var controller = new AppOutBillController(mock(DefaultWmsOutNoticeService.class), writes);
-		var response = controller.setInBillNum(command());
+		var guarded = mock(com.kitex.mom.wms.service.WmsMobileOutboundReceiptService.class);
+		when(guarded.executeLegacy(any())).thenReturn("OUT-1");
+		var controller = new AppOutBillController(guarded);
+		var response = controller.setOutBillNum(command());
 
 		assertEquals(0, response.getCode());
 		assertEquals("OUT-1", response.getData());

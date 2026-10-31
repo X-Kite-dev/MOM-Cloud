@@ -173,27 +173,45 @@ class WmsBillDraftEditBoundaryTest {
 	@Test
 	void inboundCommitRequiresConfirmedStateTransition() {
 		WmsInBillMapper bills = mock(WmsInBillMapper.class);
+		WmsInBillDetailMapper details = mock(WmsInBillDetailMapper.class);
+		WmsWarehouseBusinessGuard guard = mock(WmsWarehouseBusinessGuard.class);
 		WmsInBillEntity draft = new WmsInBillEntity();
 		draft.setId(7L);
 		draft.setState("0");
+		draft.setWarehouseCode("W1");
+		draft.setBillType("other_in");
 		when(bills.selectById(7L)).thenReturn(draft);
+		when(details.selectList(any())).thenReturn(List.of(new WmsInBillDetailEntity().setSiteCode("S1")));
+		when(guard.check("W1", "other_in", true)).thenReturn(true);
 		DefaultWmsInBillService service = new DefaultWmsInBillService();
 		ReflectionTestUtils.setField(service, "wmsInBillMapper", bills);
+		ReflectionTestUtils.setField(service, "wmsInBillDetailMapper", details);
+		ReflectionTestUtils.setField(service, "warehouseBusinessGuard", guard);
 
 		assertThrows(CheckedException.class, () -> service.commitBill(7L));
+		verify(bills).update(any());
 	}
 
 	@Test
 	void outboundCommitRequiresConfirmedStateTransition() {
 		WmsOutBillMapper bills = mock(WmsOutBillMapper.class);
+		WmsOutBillDetailMapper details = mock(WmsOutBillDetailMapper.class);
+		WmsWarehouseBusinessGuard guard = mock(WmsWarehouseBusinessGuard.class);
 		WmsOutBillEntity draft = new WmsOutBillEntity();
 		draft.setId(7L);
 		draft.setState("0");
+		draft.setWarehouseCode("W1");
+		draft.setBillType("other_out");
 		when(bills.selectById(7L)).thenReturn(draft);
+		when(details.selectList(any())).thenReturn(List.of(new WmsOutBillDetailEntity().setSiteCode("S1")));
+		when(guard.check("W1", "other_out", false)).thenReturn(true);
 		DefaultWmsOutBillService service = new DefaultWmsOutBillService();
 		ReflectionTestUtils.setField(service, "wmsOutBillMapper", bills);
+		ReflectionTestUtils.setField(service, "wmsOutBillDetailMapper", details);
+		ReflectionTestUtils.setField(service, "warehouseBusinessGuard", guard);
 
 		assertThrows(CheckedException.class, () -> service.commitBill(7L));
+		verify(bills).update(any());
 	}
 
 	@Test

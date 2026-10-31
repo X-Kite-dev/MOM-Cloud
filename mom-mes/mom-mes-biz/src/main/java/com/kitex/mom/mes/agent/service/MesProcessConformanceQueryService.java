@@ -211,6 +211,8 @@ public class MesProcessConformanceQueryService {
             if (nodes) {
                 route.setPreRouteNodeCodes(predecessors.get(code).toArray(String[]::new));
                 route.setNextRouteNodeCodes(successors.get(code).toArray(String[]::new));
+                route.setPreRouteCode(predecessors.get(code).stream().map(parent -> firstText(routes.get(parent).getProcessCode(), routes.get(parent).getRouteCode())).distinct().toArray(String[]::new));
+                route.setNextRouteCode(successors.get(code).stream().map(next -> firstText(routes.get(next).getProcessCode(), routes.get(next).getRouteCode())).distinct().toArray(String[]::new));
             } else {
                 route.setPreRouteCode(predecessors.get(code).toArray(String[]::new));
                 route.setNextRouteCode(successors.get(code).toArray(String[]::new));
@@ -283,9 +285,13 @@ public class MesProcessConformanceQueryService {
                 && (nodes ? MesFrozenExecutionGraph.NODE_EXECUTION_V1.equals(actual.getRouteExecutionSchemaVersion())
                 && strictNodes(expected.getPreRouteNodeCodes()).equals(split(actual.getPredecessorNodeCodes()))
                 && strictNodes(expected.getNextRouteNodeCodes()).equals(split(actual.getSuccessorNodeCodes()))
+                && split(expected.getPreRouteCode()).equals(split(actual.getPredecessorCodes()))
+                && split(expected.getNextRouteCode()).equals(split(actual.getSuccessorCodes()))
                 && Objects.equals(expected.getNodeTimingRulesJson(), actual.getNodeTimingRulesJson())
                 && Objects.equals(expected.getNextRouteNodeCodes().length == 0, actual.getLastRoute())
                 : actual.getRouteExecutionSchemaVersion() == null
+                && actual.getPredecessorNodeCodes() == null && actual.getSuccessorNodeCodes() == null
+                && actual.getNodeTimingRulesJson() == null
                 && split(expected.getPreRouteCode()).equals(split(actual.getPredecessorCodes()))
                 && split(expected.getNextRouteCode()).equals(split(actual.getSuccessorCodes())));
         boolean transfer = Boolean.TRUE.equals(expected.getOverlapEnabled())

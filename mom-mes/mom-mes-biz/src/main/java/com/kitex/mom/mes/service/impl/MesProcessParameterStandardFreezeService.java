@@ -138,18 +138,23 @@ public class MesProcessParameterStandardFreezeService {
      */
     public FrozenBundle validateReworkSnapshot(MesTaskEntity task,
                                                List<MdmProcessRouteWorkingDTO> routes) {
+        return validateIssuedSnapshot(task, routes);
+    }
+
+    /** 复核已下达工单的原冻结目录；生产与返工共用，不重选今日MDM。 */
+    public FrozenBundle validateIssuedSnapshot(MesTaskEntity task, List<MdmProcessRouteWorkingDTO> routes) {
         if (task == null || StrUtil.isBlank(task.getProcessParameterStandardSnapshot())
                 || StrUtil.isBlank(task.getProcessParameterSnapshotFingerprint())
                 || !Objects.equals(task.getProcessParameterSnapshotFingerprint(),
                 sha256(task.getProcessParameterStandardSnapshot()))) {
-            throw new CheckedException("返工参数标准批准正文缺失或指纹不一致");
+            throw new CheckedException("工单参数标准批准正文缺失或指纹不一致");
         }
         MdmProcessParameterStandardDTO.FrozenCatalog catalog;
         try {
             catalog = JSONUtil.toBean(task.getProcessParameterStandardSnapshot(),
                     MdmProcessParameterStandardDTO.FrozenCatalog.class);
         } catch (Exception exception) {
-            throw new CheckedException("返工参数标准批准正文损坏");
+            throw new CheckedException("工单参数标准批准正文损坏");
         }
         return validateCatalog(task, nodeProcesses(task, routes), catalog, false);
     }

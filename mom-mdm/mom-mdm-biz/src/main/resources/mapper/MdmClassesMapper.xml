@@ -6,8 +6,8 @@
     <select id="getInfoByNow" resultType="com.kitex.mom.mdm.entity.MdmClassesEntity">
         SELECT *
         FROM mdm_classes
-        WHERE (`status` = 1 AND del_flag = '0')
-          AND ((#{now} BETWEEN start_time AND end_time)
+        WHERE (status IS TRUE AND del_flag = '0')
+          AND ((start_time &lt; end_time AND #{now} &gt;= start_time AND #{now} &lt; end_time)
             OR (start_time &gt; end_time AND (#{now} &gt;= start_time OR #{now} &lt; end_time)))
             LIMIT 1
     </select>

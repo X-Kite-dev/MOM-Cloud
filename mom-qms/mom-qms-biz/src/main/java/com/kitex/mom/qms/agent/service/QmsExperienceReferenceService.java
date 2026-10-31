@@ -13,6 +13,12 @@ public interface QmsExperienceReferenceService extends IService<QmsCapaExperienc
 
     Page<QmsCapaExperienceReferenceEntity> page(Long capaId, long current, long size);
 
+    /** 显式周期过滤；未指定时保持全部历史周期。 */
+    Page<QmsCapaExperienceReferenceEntity> page(Long capaId, long current, long size, Integer cycleNo);
+
+    /** 按原引用周期读取案件措施与业务验证，不改引用、CAPA或经验状态。 */
+    com.kitex.mom.qms.agent.dto.QmsExperienceFollowup followup(Long referenceId, Long capaId, long current, long size);
+
     Object request(String requestId);
 
     Object seal(String requestId);

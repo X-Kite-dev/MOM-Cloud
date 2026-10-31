@@ -52,6 +52,10 @@ public final class MesMaterialConsumptionTraceDTO {
         private String requirementUnit;
         private String quantity;
         private String requirementQuantity;
+        /** 原报告精确关联是否存在；无报告域的组合耗料不适用。 */
+        private Boolean reportLinked;
+        /** 原投料精确关联是否存在；倒冲使用库存主键，不适用投料关联。 */
+        private Boolean feedLinked;
         private String sourceStatus;
         private String restorationStatus;
         private LocalDateTime occurredAt;

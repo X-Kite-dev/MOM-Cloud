@@ -141,4 +141,9 @@ public class MesWarehouseFeedDTO {
         private List<MesMaterialReturnOperationEntity> operations;
     }
 
+    /** 本人退料申请的认证上下文，不作为客户端指定组织的入口。 */
+    public record SubmissionContext(String version, String tenantId, String factoryCode, String actorUserId, String actorCode) { }
+    /** 查询无记录仅代表当前观察，不代表旧请求已终止。 */
+    public record Submission(String version, SubmissionContext context, String requestId, MesWarehouseStockFeedJudgeEntity request) { }
+
 }

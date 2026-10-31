@@ -10,6 +10,7 @@ import com.kitex.mom.mdm.entity.MdmWarehouseEntity;
 import com.kitex.mom.mdm.feign.RemoteWarehouseService;
 import com.kitex.mom.wms.entity.WmsWarehouseBizEntity;
 import com.kitex.mom.wms.enums.menu.MenuCommonBizTypeEnum;
+import com.kitex.mom.wms.enums.menu.ReturnReceiptActionEnum;
 import com.kitex.mom.wms.enums.menu.MenuInBizTypeEnum;
 import com.kitex.mom.wms.enums.menu.MenuOutBizTypeEnum;
 import com.kitex.mom.wms.util.WmsStockOwnership;
@@ -17,9 +18,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.Objects;
 
-/** 仓库业务配置在正式写入口的准入校验。 */
+/**
+ * 仓库业务配置在正式写入口的准入校验。
+ */
 @Component
 @RequiredArgsConstructor
 public class WmsWarehouseBusinessGuard {
@@ -44,6 +49,40 @@ public class WmsWarehouseBusinessGuard {
 
 	private final RemoteWarehouseService remoteWarehouseService;
 	private final WmsWarehouseBizService warehouseBizService;
+	private final WmsWarehousePlacementGuard placements;
+
+	/**
+	 * 所有普通收发入口复用放置范围，避免只依赖移动端选择器。
+	 */
+	public void checkPlacements(String warehouseCode, List<WmsWarehousePlacementGuard.Placement> rows) {
+		placements.check(warehouseCode, rows);
+	}
+
+	/**
+	 * 手机端开关只控制新作业；原请求核对和安全取消不调用此入口。
+	 */
+	public void checkMobile(String warehouseCode) {
+		if (!mobileEnabled(warehouseCode)) {
+			throw new CheckedException("仓库[" + warehouseCode + "]未开启手机端作业，请在仓库设置中开启");
+		}
+	}
+
+	public boolean mobileEnabled(String warehouseCode) {
+		Integer enabled = loadWarehouse(warehouseCode).getIsMobile();
+		if (enabled != null && enabled != 0 && enabled != 1) {
+			throw new CheckedException("仓库手机端设置无效，请核对仓库设置");
+		}
+		return Integer.valueOf(1).equals(enabled);
+	}
+
+	/**
+	 * 组织调拨必须显式启用，未配置历史仓库也不自动放开跨组织能力。
+	 */
+	public void checkOrganizationTransfer(String warehouseCode) {
+		boolean selected = loadConfiguration(warehouseCode).stream()
+				.anyMatch(row -> MenuCommonBizTypeEnum.ORGANIZATION_TRANSFER.getValue().equals(row.getBizType()));
+		if (!selected) throw new CheckedException("当前仓库未启用组织调拨业务");
+	}
 
 	public boolean check(String warehouseCode, String billType, boolean inbound) {
 		Evaluation evaluation = evaluate(warehouseCode, billType, inbound);
@@ -53,7 +92,9 @@ public class WmsWarehouseBusinessGuard {
 		return true;
 	}
 
-	/** 只读评估与写入口使用同一判定；不把历史兼容当作已配置。 */
+	/**
+	 * 只读评估与写入口使用同一判定；不把历史兼容当作已配置。
+	 */
 	public Evaluation evaluate(String warehouseCode, String billType, boolean inbound) {
 		if (StrUtil.isBlank(warehouseCode) || StrUtil.isBlank(billType)) {
 			throw new CheckedException("仓库编码和业务类型不能为空");
@@ -61,7 +102,9 @@ public class WmsWarehouseBusinessGuard {
 		return evaluateConfigured(loadConfiguration(warehouseCode), billType, inbound);
 	}
 
-	/** 一次读取当前仓库，逐项复用正式写入口的业务准入判定。 */
+	/**
+	 * 一次读取当前仓库，逐项复用正式写入口的业务准入判定。
+	 */
 	public List<MatrixRow> previewMatrix(String warehouseCode) {
 		if (StrUtil.isBlank(warehouseCode)) {
 			throw new CheckedException("仓库编码不能为空");
@@ -76,7 +119,40 @@ public class WmsWarehouseBusinessGuard {
 		}).toList();
 	}
 
+	/**
+	 * 未配置历史仓库仅兼容原能力；已经配置的仓库必须逐项启用。
+	 */
+	public Set<ReturnReceiptActionEnum> returnReceiptActions(String warehouseCode) {
+		List<WmsWarehouseBizEntity> configurations = loadConfiguration(warehouseCode);
+		if (configurations.isEmpty()) {
+			return EnumSet.allOf(ReturnReceiptActionEnum.class);
+		}
+		Set<String> selected = configurations.stream().map(WmsWarehouseBizEntity::getBizType)
+				.collect(java.util.stream.Collectors.toSet());
+		var actions = EnumSet.noneOf(ReturnReceiptActionEnum.class);
+		if (selected.contains(MenuInBizTypeEnum.RETURN.getValue()) && ReturnReceiptActionEnum.validSelection(selected)) {
+			for (ReturnReceiptActionEnum action : ReturnReceiptActionEnum.values()) {
+				if (selected.contains(action.configurationValue())) actions.add(action);
+			}
+		}
+		return actions;
+	}
+
 	private List<WmsWarehouseBizEntity> loadConfiguration(String warehouseCode) {
+		loadWarehouse(warehouseCode);
+		// 每次读取当前配置，确保草稿审核与 PDA 后续作业使用最新范围。
+		List<WmsWarehouseBizEntity> configurations = warehouseBizService
+				.list(Wrappers.<WmsWarehouseBizEntity>lambdaQuery()
+						.eq(WmsWarehouseBizEntity::getWarehouseCode, warehouseCode)
+						.eq(WmsWarehouseBizEntity::getTenantId, TenantContextHolder.getTenantId())
+						.eq(WmsWarehouseBizEntity::getFactoryCode, FactoryContextHolder.getFactoryCode()));
+		if (configurations == null) {
+			throw new CheckedException("读取仓库业务配置失败，禁止继续出入库");
+		}
+		return configurations;
+	}
+
+	private MdmWarehouseEntity loadWarehouse(String warehouseCode) {
 		Long tenant = TenantContextHolder.getTenantId();
 		String factory = FactoryContextHolder.getFactoryCode();
 		if (tenant == null || StrUtil.isBlank(factory)
@@ -99,20 +175,11 @@ public class WmsWarehouseBusinessGuard {
 		if (!Objects.equals(factory, warehouse.getFactoryCode())) {
 			throw new CheckedException("仓库[" + warehouseCode + "]不属于当前工厂");
 		}
-		// 每次读取当前配置，确保草稿审核与 PDA 后续作业使用最新范围。
-		List<WmsWarehouseBizEntity> configurations = warehouseBizService
-				.list(Wrappers.<WmsWarehouseBizEntity>lambdaQuery()
-						.eq(WmsWarehouseBizEntity::getWarehouseCode, warehouseCode)
-						.eq(WmsWarehouseBizEntity::getTenantId, tenant)
-						.eq(WmsWarehouseBizEntity::getFactoryCode, factory));
-		if (configurations == null) {
-			throw new CheckedException("读取仓库业务配置失败，禁止继续出入库");
-		}
-		return configurations;
+		return warehouse;
 	}
 
 	private Evaluation evaluateConfigured(List<WmsWarehouseBizEntity> configurations,
-			String billType, boolean inbound) {
+	                                      String billType, boolean inbound) {
 		String menu = businessMenu(billType, inbound);
 		if (menu == null) {
 			String source = configurations.isEmpty() ? "LEGACY_UNCONFIGURED" : "WAREHOUSE_CONFIGURATION";
@@ -136,12 +203,12 @@ public class WmsWarehouseBusinessGuard {
 	}
 
 	public record Evaluation(boolean allowed, String configurationSource, String requiredOperation,
-			String reason) {
+	                         String reason) {
 	}
 
 	public record MatrixRow(String billType, String label, boolean inbound, boolean allowed,
-			String configurationSource, String requiredOperation, String reason,
-			List<String> allowedOwnerTypes, String externalIdentityRequirement) {
+	                        String configurationSource, String requiredOperation, String reason,
+	                        List<String> allowedOwnerTypes, String externalIdentityRequirement) {
 	}
 
 	private record Operation(String billType, String label, boolean inbound) {

@@ -120,7 +120,7 @@ class WmsMobileInboundReceiptTransactionTest {
 			}
 			return "IN-001";
 		});
-		var target = new WmsMobileInboundReceiptService(receipts, notices, details, permissions, new ObjectMapper());
+		var target = new WmsMobileInboundReceiptService(receipts, notices, details, permissions, new ObjectMapper(), mock(WmsWarehouseBusinessGuard.class));
 		var proxy = new ProxyFactory(target);
 		proxy.setProxyTargetClass(true);
 		proxy.addAdvice(new TransactionInterceptor(new DataSourceTransactionManager(source),
@@ -143,6 +143,36 @@ class WmsMobileInboundReceiptTransactionTest {
 		TenantContextHolder.clear();
 		FactoryContextHolder.clear();
 		SecurityContextHolder.clearContext();
+	}
+
+	@Test
+	void mobileDisabledNewRequestCannotReserveOrPost() {
+		var guard = (WmsWarehouseBusinessGuard) ReflectionTestUtils.getField(service, "warehouseGuard");
+		doThrow(new CheckedException("mobile disabled")).when(guard).checkMobile("W1");
+
+		var error = assertThrows(CheckedException.class, () -> service.receive(command()));
+
+		assertEquals("mobile disabled", error.getMessage());
+		verify(receipts, never()).reserve(any());
+	}
+
+	@Test
+	void disablingMobileDoesNotPreventOriginalReplayOrSafeCancellation() {
+		var original = service.receive(command());
+		var guard = (WmsWarehouseBusinessGuard) ReflectionTestUtils.getField(service, "warehouseGuard");
+		doThrow(new CheckedException("mobile disabled")).when(guard).checkMobile("W1");
+
+		assertEquals(original, service.receive(command()));
+		assertEquals(original, service.cancel(command(), "核对原结果"));
+	}
+
+	@Test
+	void disabledMobileStillAllowsUnknownOriginalToBeSafelyCancelled() {
+		var guard = (WmsWarehouseBusinessGuard) ReflectionTestUtils.getField(service, "warehouseGuard");
+		doThrow(new CheckedException("mobile disabled")).when(guard).checkMobile("W1");
+
+		assertEquals("CANCELLED", service.cancel(command(), "关闭后安全终止原请求").status());
+		verify(guard, never()).checkMobile(anyString());
 	}
 
 	@Test
@@ -344,7 +374,9 @@ class WmsMobileInboundReceiptTransactionTest {
 		assertEquals(0, db.queryForObject("SELECT count(*) FROM mom_wms.wms_mobile_inbound_receipt", Integer.class));
 	}
 
-	/** 第二个事务进入真实唯一键插入后才释放首个事务，避免只验证顺序重放。 */
+	/**
+	 * 第二个事务进入真实唯一键插入后才释放首个事务，避免只验证顺序重放。
+	 */
 	private CountDownLatch observeSecondReservation() {
 		var second = new CountDownLatch(1);
 		var attempts = new AtomicInteger();

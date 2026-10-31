@@ -10,6 +10,7 @@ import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesCounterBaselineCommand;
 import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.mapper.*;
+import com.kitex.mom.mes.util.MesWorksiteTriggerProjection;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -184,7 +185,7 @@ public class MesCounterBaselineService {
                 .eq(MesTaskArrangeEntity::getCode, command.getArrangeCode().trim());
         if (lock) query.last("FOR SHARE");
         var arrange = arranges.selectOne(query);
-        require(arrange != null && "PRODUCT".equals(arrange.getStatus()) && "AUTO".equalsIgnoreCase(arrange.getWorksiteTypes())
+        require(arrange != null && "PRODUCT".equals(arrange.getStatus()) && MesWorksiteTriggerProjection.forExecution(null, arrange) == com.kitex.mom.mes.enums.WorksiteTypeEnum.AUTO
                 && Objects.equals(rule.getDeviceCode(), arrange.getPlannedDeviceCode()), "新基线须绑定同厂设备的生产中自动派工");
         require(arrange.getStartTime() != null && !event.getSourceEventTime().isBefore(arrange.getStartTime()), "基线事件不得早于目标派工实际开工；开工时间缺失须先治理，不能猜测计数归属");
         require(StrUtil.isBlank(event.getRequestedArrangeCode()) || arrange.getCode().equals(event.getRequestedArrangeCode()), "事件指定的派工与校准目标不一致");

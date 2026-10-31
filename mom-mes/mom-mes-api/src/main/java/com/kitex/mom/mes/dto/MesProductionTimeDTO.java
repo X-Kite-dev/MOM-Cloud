@@ -29,6 +29,9 @@ public final class MesProductionTimeDTO {
         private String arrangeCode;
         private String workshopCode;
         private String shiftCode;
+        /** 与taskCode组合限定生产标识；成对指定，不改变现场采集类型。 */
+        private String identifier;
+        private String identifierType;
         private String groupBy = "TASK";
         private Integer detailPage = 1;
         private Integer detailSize = 50;

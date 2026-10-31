@@ -69,6 +69,8 @@ public final class MesResourceExecutionConformanceDTO {
     @Accessors(chain = true)
     @Schema(description = "工序级计划资源与实际执行资源核对")
     public static class OperationExecution {
+        @Schema(description = "实际工序出生时冻结的路线节点；历史无节点时为空")
+        private String routeNodeCode;
         private Long operationId;
         private String operationTaskCode;
         private String processCode;

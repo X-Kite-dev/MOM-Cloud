@@ -114,6 +114,11 @@ public final class IotProcessTelemetryDTO {
         private String parameterName;
         private String dataType;
         private String unit;
+        @Schema(description = "numeric GOOD采样中已证明唯一的实际单位；未知或混合为空")
+        private String sampleUnit;
+        @Schema(description = "KNOWN、MIXED、MISSING、UNKNOWN或NO_SAMPLES")
+        private String sampleUnitStatus;
+        private String standardUnit;
         private LocalDateTime firstCollectTime;
         private LocalDateTime lastCollectTime;
         private Long sampleCount;

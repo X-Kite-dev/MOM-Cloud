@@ -103,7 +103,7 @@ public class MesInspectionEventApplicationTransactionTest {
                         MesQmsInspectionCommandMapper.class,
                         MesQualityGateSourceMapper.class,
                         MesIdentifierBindingGroupMapper.class,
-                        MesSourceQuantityPlanOutboxMapper.class)) c.addMapper(type);
+                        MesSourceQuantityPlanOutboxMapper.class, MesReworkSourcePlanOutboxMapper.class)) c.addMapper(type);
         c.addInterceptor(fault);
         db.execute(
                 "CREATE ALIAS IF NOT EXISTS HASHTEXTEXTENDED FOR"
@@ -114,6 +114,8 @@ public class MesInspectionEventApplicationTransactionTest {
         db.execute(
                 "CREATE ALIAS mom_mes.mom_source_quantity_plan_outbox_ready_v1 AS 'Integer"
                         + " ready(){return 1;}'");
+        db.execute("CREATE TABLE mom_mes.mes_rework_source_plan_outbox AS SELECT * FROM mom_mes.mes_source_quantity_plan_outbox WHERE 1=0");
+        db.execute("CREATE ALIAS mom_mes.mom_rework_source_plan_ready_v1 AS 'Integer ready(){return 1;}'");
         MesInspectionRevisionAdmissionTestSupport.install(session, db);
         mutex =
                 proxy(
@@ -128,6 +130,7 @@ public class MesInspectionEventApplicationTransactionTest {
                 proxy(
                         new MesSourceQuantityPlanOutbox(
                                 session.getMapper(MesSourceQuantityPlanOutboxMapper.class),
+                                session.getMapper(MesReworkSourcePlanOutboxMapper.class),
                                 mock(com.kitex.mom.plan.feign.RemotePlnIssueService.class)));
 
         db.execute(
@@ -1200,6 +1203,7 @@ public class MesInspectionEventApplicationTransactionTest {
                 proxy(
                         new MesSourceQuantityPlanOutbox(
                                 session.getMapper(MesSourceQuantityPlanOutboxMapper.class),
+                                session.getMapper(MesReworkSourcePlanOutboxMapper.class),
                                 planRemote));
         ReflectionTestUtils.setField(
                 restarted,
@@ -1291,7 +1295,8 @@ public class MesInspectionEventApplicationTransactionTest {
         planOutbox =
                 proxy(
                         new MesSourceQuantityPlanOutbox(
-                                session.getMapper(MesSourceQuantityPlanOutboxMapper.class), plan));
+                                session.getMapper(MesSourceQuantityPlanOutboxMapper.class),
+                                session.getMapper(MesReworkSourcePlanOutboxMapper.class), plan));
         ReflectionTestUtils.setField(
                 quantities,
                 "sourceQuantityService",

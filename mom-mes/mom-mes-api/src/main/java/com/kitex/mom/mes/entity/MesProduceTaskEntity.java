@@ -113,11 +113,11 @@ public class MesProduceTaskEntity extends BaseEntity<MesProduceTaskEntity> {
     private String routeExecutionSchemaVersion;
 
     @Schema(description = "冻结前序节点CSV；空串表示起点，null表示旧执行合同")
-    @TableField(updateStrategy = FieldStrategy.NEVER)
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL, updateStrategy = FieldStrategy.NEVER)
     private String predecessorNodeCodes;
 
     @Schema(description = "冻结后序节点CSV；空串表示终点，null表示旧执行合同")
-    @TableField(updateStrategy = FieldStrategy.NEVER)
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL, updateStrategy = FieldStrategy.NEVER)
     private String successorNodeCodes;
 
     /**
@@ -151,10 +151,12 @@ public class MesProduceTaskEntity extends BaseEntity<MesProduceTaskEntity> {
     @Schema(description = "工序顺序")
     private Integer routeOrder;
 
-    @Schema(description = "前置工序编码，多个逗号分隔")
+    @Schema(description = "前置工序编码，多个逗号分隔；新执行图起点须保留空串")
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL)
     private String predecessorCodes;
 
-    @Schema(description = "后置工序编码，多个逗号分隔")
+    @Schema(description = "后置工序编码，多个逗号分隔；新执行图终点须保留空串")
+    @TableField(insertStrategy = FieldStrategy.NOT_NULL)
     private String successorCodes;
 
     @Schema(description = "允许达到转移批量后放行后序")
