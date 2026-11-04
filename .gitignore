@@ -30,3 +30,6 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# SQL resources are supplied separately from public sources
+*.[sS][qQ][lL]
