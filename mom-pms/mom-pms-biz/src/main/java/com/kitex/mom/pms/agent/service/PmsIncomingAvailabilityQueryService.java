@@ -44,6 +44,7 @@ public class PmsIncomingAvailabilityQueryService {
     private final PmsPlanMapper planMapper;
     private final ObjectMapper objectMapper;
 
+    /** 读取原收料与数量缺口；不补造空数量，也不改变原收料/检验/入库状态。 */
     public PmsIncomingAvailabilityDTO.Evidence query(PmsIncomingAvailabilityDTO.Query query) {
         if (query == null || !StringUtils.hasText(query.getReceiptId())) {
             throw new CheckedException("来料可用调查必须指定采购收料单主键");
@@ -99,6 +100,7 @@ public class PmsIncomingAvailabilityQueryService {
         batches.forEach(item -> refs.add("PMS:wms_purchase_receipt_batch_detail:" + item.getId()));
         PmsIncomingAvailabilityDTO.Evidence evidence = new PmsIncomingAvailabilityDTO.Evidence()
                 .setToolCode(TOOL_CODE)
+                .setQuantityEvidenceVersion("PMS_INCOMING_QUANTITY_V1")
                 .setMetricDefinition("按采购收料单主键读取PMS收料主单及批次明细；收料、判定和已入库数量保持原物料单位，不跨单位合计，也不把PMS状态代替QMS检验或WMS正式入库回执。")
                 .setFactoryCode(scope.factoryCode()).setReceiptId(String.valueOf(receiptId))
                 .setReceiptNo(receipt.getBillNo()).setPurchaseOrderNo(receipt.getPmsOrderNo())
@@ -174,6 +176,10 @@ public class PmsIncomingAvailabilityQueryService {
             BigDecimal received = decimal(item.getMatNum());
             BigDecimal inspected = decimal(item.getQualityNum());
             BigDecimal inbound = decimal(item.getInNum());
+            if (received == null || inspected == null || inbound == null) {
+                gaps.add("收料批次" + label + "实收、判定或入库数量缺失/非有限，不能按零核验");
+                continue;
+            }
             if (received.signum() <= 0) {
                 gaps.add("收料批次" + label + "没有正数实收数量");
             }
@@ -196,7 +202,7 @@ public class PmsIncomingAvailabilityQueryService {
         try {
             String facts = objectMapper.writeValueAsString(List.of(evidence.getFactoryCode(), evidence.getReceiptId(),
                     Objects.toString(evidence.getReceiptNo(), ""), Objects.toString(evidence.getReceiptState(), ""),
-                    evidence.getBatches(), evidence.getQualityTaskIds(), evidence.getDataGaps()));
+                    evidence.getQuantityEvidenceVersion(), evidence.getBatches(), evidence.getQualityTaskIds(), evidence.getDataGaps()));
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(facts.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception failure) {
@@ -215,8 +221,9 @@ public class PmsIncomingAvailabilityQueryService {
         }
     }
 
+    /** 原实体使用Double；保留原有效数值的十进制表示，未知不归零。 */
     private BigDecimal decimal(Double value) {
-        return value == null ? BigDecimal.ZERO : BigDecimal.valueOf(value);
+        return value == null || !Double.isFinite(value) ? null : BigDecimal.valueOf(value);
     }
 
     private String text(Long value) {

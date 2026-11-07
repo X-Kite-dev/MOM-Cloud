@@ -1,5 +1,6 @@
 package com.kitex.mom.wms.service.impl;
 
+import com.kitex.mom.wms.service.impl.externalinventory.ExternalLossContext;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.ObjUtil;
@@ -41,6 +42,7 @@ import com.kitex.mom.wms.service.WmsMaterialReservationService;
 import com.kitex.mom.wms.service.WmsSalesStockReservationService;
 import com.kitex.mom.wms.service.WmsStockMoveSlice;
 import com.kitex.mom.wms.util.WmsQuantityMath;
+import com.kitex.mom.wms.util.WmsOutboundStockIdentity;
 import com.kitex.mom.wms.util.WmsStockAvailability;
 import com.kitex.mom.wms.util.WmsStockOwnership;
 import com.kitex.mom.wms.util.WmsSerialStockGuard;
@@ -289,6 +291,7 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
     @Override
     @Transactional(rollbackFor = Exception.class)
     public List<WmsLiveStockEntity> reduceStockWhenOut(WmsOutBillDetailEntity detail) {
+        ExternalLossContext.guardReduction(detail);
         if (detail == null || detail.getMatNum() == null
                 || !Double.isFinite(detail.getMatNum()) || detail.getMatNum() <= 0) {
             throw new CheckedException("出库标准数量必须为大于0的有限数值");
@@ -364,68 +367,66 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
      * 受控退供不能在执行时被 FIFO 悄悄换成另一批、另一库位或另一供应商库存； 因此先锁定主键，再核对完整物流属性和扣除两类活动预留后的可退量。
      * </p>
      */
-    private List<WmsLiveStockEntity> reduceSpecificStock(WmsOutBillDetailEntity detail) {
-        WmsLiveStockEntity stock = Optional.ofNullable(baseMapper.selectOne(
-                        new LambdaQueryWrapper<WmsLiveStockEntity>()
-                                .eq(WmsLiveStockEntity::getId, detail.getSourceStockId()).last("FOR UPDATE"),
-                        false))
-                .orElseThrow(() -> new CheckedException("冻结库存行[" + detail.getSourceStockId() + "]已不存在"));
-        Long tenant = TenantContextHolder.getTenantId();
-        String factory = FactoryContextHolder.getFactoryCode();
-        if (tenant == null || StrUtil.isBlank(factory)
-                || !Objects.equals(tenant, stock.getTenantId())
-                || !Objects.equals(factory, stock.getFactoryCode())
-                || !Objects.equals(factory, detail.getFactoryCode())) {
-            throw new CheckedException("冻结库存行不属于当前租户和工厂");
-        }
-        if (!Objects.equals(stock.getMatCode(), detail.getMatCode())
-                || !Objects.equals(stock.getWarehouseCode(), detail.getWarehouseCode())
-                || !Objects.equals(stock.getSiteCode(), detail.getSiteCode())
-                || !Objects.equals(StrUtil.nullToEmpty(stock.getContainerCode()),
-                StrUtil.nullToEmpty(detail.getContainerCode()))
-                || !Objects.equals(StrUtil.nullToEmpty(stock.getMatBatch()),
-                StrUtil.nullToEmpty(detail.getMatBatch()))
-                || !Objects.equals(StrUtil.nullToEmpty(stock.getSupplierCode()),
-                StrUtil.nullToEmpty(detail.getSupplierCode()))) {
-            throw new CheckedException("冻结库存行的物料、供应商、批次、仓库、库位或容器已经变化");
-        }
-        WmsStockOwnership.validateOutbound(detail.getBillType(), detail, stock);
-        if (!WmsStockAvailability.isPhysicallyUsable(stock)) {
-            throw new CheckedException("冻结库存行已被锁定、过期、待检或质量隔离，禁止出库");
-        }
-        double requested = Optional.ofNullable(detail.getMatNum()).orElse(0d);
-        if (requested <= 0 || unreservedNum(stock) < requested) {
-            throw new CheckedException("冻结库存行扣除生产和销售预留后的可用数量不足");
-        }
-        WmsSerialStockGuard.requireWhole(stock, BigDecimal.valueOf(requested));
-        WmsLiveStockEntity proof = new WmsLiveStockEntity();
-        BeanUtils.copyProperties(stock, proof);
-        proof.setMatNum(requested);
-        double balance = BigDecimal.valueOf(stock.getMatNum()).subtract(BigDecimal.valueOf(requested)).doubleValue();
-        if (BigDecimal.valueOf(balance).compareTo(BigDecimal.ZERO) == 0) {
-            if (baseMapper.deleteById(stock.getId()) != 1) {
-                throw new CheckedException("冻结出库源库存删除未确认");
-            }
-            unUsedContainer(stock);
-        } else {
-            if (baseMapper.update(new LambdaUpdateWrapper<WmsLiveStockEntity>()
-                    .set(WmsLiveStockEntity::getMatNum, balance)
-                    .eq(WmsLiveStockEntity::getId, stock.getId())) != 1) {
-                throw new CheckedException("冻结出库源库存扣减未确认");
-            }
-        }
-        return List.of(proof);
-    }
+	private List<WmsLiveStockEntity> reduceSpecificStock(WmsOutBillDetailEntity detail) {
+		WmsLiveStockEntity stock = Optional.ofNullable(baseMapper.selectOne(
+						new LambdaQueryWrapper<WmsLiveStockEntity>()
+								.eq(WmsLiveStockEntity::getId, detail.getSourceStockId()).last("FOR UPDATE"),
+						false))
+				.orElseThrow(
+						() -> new CheckedException("冻结库存行[" + detail.getSourceStockId() + "]已不存在"));
+		// 草稿预检不能代替此处锁内复核；单位、条码及可空物流身份沿同一比较合同。
+		WmsOutboundStockIdentity.requireMatches(detail, stock,
+				TenantContextHolder.getTenantId(), FactoryContextHolder.getFactoryCode());
+		WmsStockOwnership.validateOutbound(detail.getBillType(), detail, stock);
+		if (!WmsStockAvailability.isPhysicallyUsable(stock)) {
+			throw new CheckedException("冻结库存行已被锁定、过期、待检或质量隔离，禁止出库");
+		}
+		double requested = Optional.ofNullable(detail.getMatNum()).orElse(0d);
+		// 锁内可用量保持十进制精度，避免大数量转Double向上舍入后消耗活动预留。
+		if (requested <= 0 || unreservedQuantity(stock).compareTo(BigDecimal.valueOf(requested)) < 0) {
+			throw new CheckedException("冻结库存行扣除生产和销售预留后的可用数量不足");
+		}
+		WmsSerialStockGuard.requireWhole(stock, BigDecimal.valueOf(requested));
+		WmsLiveStockEntity proof = new WmsLiveStockEntity();
+		BeanUtils.copyProperties(stock, proof);
+		proof.setMatNum(requested);
+		double balance = BigDecimal.valueOf(stock.getMatNum()).subtract(BigDecimal.valueOf(requested))
+				.doubleValue();
+		if (BigDecimal.valueOf(balance).compareTo(BigDecimal.ZERO) == 0) {
+			if (baseMapper.deleteById(stock.getId()) != 1) {
+				throw new CheckedException("冻结出库源库存删除未确认");
+			}
+			unUsedContainer(stock);
+		} else {
+			if (baseMapper.update(new LambdaUpdateWrapper<WmsLiveStockEntity>()
+					.set(WmsLiveStockEntity::getMatNum, balance)
+					.eq(WmsLiveStockEntity::getId, stock.getId())) != 1) {
+				throw new CheckedException("冻结出库源库存扣减未确认");
+			}
+		}
+		return List.of(proof);
+	}
 
-    private Double unreservedNum(WmsLiveStockEntity stock) {
-        BigDecimal physical = stock == null || stock.getMatNum() == null
-                ? BigDecimal.ZERO
-                : BigDecimal.valueOf(stock.getMatNum());
-        return physical.subtract(wmsMaterialReservationService.activeReservedNum(stock.getId()))
-                .subtract(wmsSalesStockReservationService.activeReservedNums(Set.of(stock.getId()))
-                        .getOrDefault(stock.getId(), BigDecimal.ZERO))
-                .max(BigDecimal.ZERO).doubleValue();
-    }
+	private Double unreservedNum(WmsLiveStockEntity stock) {
+		return unreservedQuantity(stock).doubleValue();
+	}
+
+	/**
+	 * 按当前库存单位精确扣除生产和销售活动预留，沿调用方已有锁序读取实时台账。
+	 * 指定原库存的最终出库门禁直接比较该值，不能先转浮点数再判可发量。
+	 *
+	 * @param stock 已按原流程读取或锁定的真实库存行
+	 * @return 不小于零的精确未预留数量；不新增锁或创建预留
+	 */
+	private BigDecimal unreservedQuantity(WmsLiveStockEntity stock) {
+		BigDecimal physical = stock == null || stock.getMatNum() == null
+				? BigDecimal.ZERO
+				: BigDecimal.valueOf(stock.getMatNum());
+		return physical.subtract(wmsMaterialReservationService.activeReservedNum(stock.getId()))
+				.subtract(wmsSalesStockReservationService.activeReservedNums(Set.of(stock.getId()))
+						.getOrDefault(stock.getId(), BigDecimal.ZERO))
+				.max(BigDecimal.ZERO);
+	}
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -1113,6 +1114,8 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
             // 使用历史设置结束时间
             wmsContainerUseHistoryMapper.update(new LambdaUpdateWrapper<WmsContainerUseHistoryEntity>()
                     .set(WmsContainerUseHistoryEntity::getEndTime, LocalDateTime.now())
+                        .isNull(ExternalLossContext.inPost(),
+                                WmsContainerUseHistoryEntity::getEndTime)
                     .eq(WmsContainerUseHistoryEntity::getCode, liveStock.getContainerCode()));
         } else {
             // 是否有这个物料， 如果有，使用历史不需要设置结束时间
@@ -1122,6 +1125,8 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
                 // 使用历史设置结束时间
                 wmsContainerUseHistoryMapper.update(new LambdaUpdateWrapper<WmsContainerUseHistoryEntity>()
                         .set(WmsContainerUseHistoryEntity::getEndTime, LocalDateTime.now())
+                        .isNull(ExternalLossContext.inPost(),
+                                WmsContainerUseHistoryEntity::getEndTime)
                         .eq(WmsContainerUseHistoryEntity::getCode, liveStock.getContainerCode())
                         .eq(WmsContainerUseHistoryEntity::getMatCode, liveStock.getMatCode()));
             }

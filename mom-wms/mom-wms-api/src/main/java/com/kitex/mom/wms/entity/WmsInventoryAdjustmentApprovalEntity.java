@@ -17,25 +17,29 @@ import java.time.LocalDateTime;
 @EqualsAndHashCode(callSuper = true)
 @Schema(description = "盘点差异审批及调账依据")
 public class WmsInventoryAdjustmentApprovalEntity extends BaseEntity<WmsInventoryAdjustmentApprovalEntity> {
-    private Long planId;
-    private Long planDetailId;
-    private String warehouseCode;
-    private String requestId;
-    private String status;
-    private Double expectedCurrentNumber;
-    private Double expectedInventoryNum;
-    private String selectedDetailJson;
-    private String reason;
-    private String applicantCode;
-    private LocalDateTime submittedTime;
-    private String reviewerCode;
-    private LocalDateTime reviewedTime;
-    private String reviewComment;
-    private String revokedBy;
-    private LocalDateTime revokedTime;
-    private String revokeReason;
-    private LocalDateTime postedTime;
+	private Long planId;
+	private Long planDetailId;
+	private String warehouseCode;
+	private String requestId;
+	private String status;
+	private Double expectedCurrentNumber;
+	private Double expectedInventoryNum;
+	private String selectedDetailJson;
+	/**
+	 * 新申请冻结的差异规则及复盘依据；历史申请为空时沿用原审批协议。
+	 */
+	private String variancePolicyJson;
+	private String reason;
+	private String applicantCode;
+	private LocalDateTime submittedTime;
+	private String reviewerCode;
+	private LocalDateTime reviewedTime;
+	private String reviewComment;
+	private String revokedBy;
+	private LocalDateTime revokedTime;
+	private String revokeReason;
+	private LocalDateTime postedTime;
 
-    @TableField(fill = FieldFill.INSERT)
-    private String factoryCode;
+	@TableField(fill = FieldFill.INSERT)
+	private String factoryCode;
 }

@@ -21,9 +21,9 @@ import java.util.Random;
 /**
  * 钉钉开放平台加解密方法
  * 在ORACLE官方网站下载JCE无限制权限策略文件
- * JDK6的下载地址：http://www.oracle.com/technetwork/java/javase/downloads/jce-6-download-429243.html
- * JDK7的下载地址： http://www.oracle.com/technetwork/java/javase/downloads/jce-7-download-432124.html
- * JDK8的下载地址 https://www.oracle.com/java/technologies/javase-jce8-downloads.html
+ * JDK6的下载地址：http://service.example.invalid/technetwork/java/javase/downloads/jce-6-download-429243.html
+ * JDK7的下载地址： http://service.example.invalid/technetwork/java/javase/downloads/jce-7-download-432124.html
+ * JDK8的下载地址 https://service.example.invalid/java/technologies/javase-jce8-downloads.html
  */
 public class DingCallbackCrypto {
 

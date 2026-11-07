@@ -70,7 +70,8 @@ public class WmsFinishedGoodsCorrectionSubmissionService {
 						&& Objects.equals(row.reason(), command.getReason().trim())
 						&& Objects.equals(row.fingerprint(), fingerprint)
 						&& Objects.equals(row.authorizationId(), command.getQmsDecisionReversalId())
-						&& Objects.equals(text(row.authorizationCode()), text(command.getQmsDecisionAuthorizationCode()))
+						&& Objects.equals(text(row.authorizationCode()),
+						text(command.getQmsDecisionAuthorizationCode()))
 						&& !text(row.number()).isEmpty() && row.time() != null && row.status() != null
 						&& Set.of("SUBMITTED", "REJECTED", "WITHDRAWN", "STALE", "EXECUTED").contains(row.status()),
 				"原申请内容或登记证据不完整，请保留原请求并联系管理员核对");
@@ -98,7 +99,7 @@ public class WmsFinishedGoodsCorrectionSubmissionService {
 				row.time().toString(), number(total), fingerprint, payload(command));
 	}
 
-	private Map<Long, BigDecimal> selections(WmsFinishedGoodsReceiptCorrectionCommand command) {
+	Map<Long, BigDecimal> selections(WmsFinishedGoodsReceiptCorrectionCommand command) {
 		require(command.getNoticeId() != null && command.getNoticeId() > 0
 				&& !text(command.getRequestId()).isEmpty() && command.getRequestId().length() <= 64
 				&& !text(command.getReason()).isEmpty() && command.getReason().trim().length() <= 500
@@ -116,7 +117,7 @@ public class WmsFinishedGoodsCorrectionSubmissionService {
 		return selected;
 	}
 
-	private String payload(WmsFinishedGoodsReceiptCorrectionCommand command) {
+	String payload(WmsFinishedGoodsReceiptCorrectionCommand command) {
 		var data = new LinkedHashMap<String, Object>();
 		data.put("noticeId", command.getNoticeId().toString());
 		data.put("requestId", command.getRequestId());
@@ -134,7 +135,7 @@ public class WmsFinishedGoodsCorrectionSubmissionService {
 		}
 	}
 
-	private String fingerprint(WmsFinishedGoodsReceiptCorrectionCommand command) {
+	String fingerprint(WmsFinishedGoodsReceiptCorrectionCommand command) {
 		try {
 			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
 					.digest(JSONUtil.toJsonStr(command).getBytes(StandardCharsets.UTF_8)));

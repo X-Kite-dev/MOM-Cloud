@@ -208,6 +208,15 @@ public class WmsLiveStockEntity extends BaseEntity<WmsLiveStockEntity> {
     @Schema(description = "标准质量状态：PENDING/HOLD/QUALIFIED/CONCESSION/REWORK/SCRAP_PENDING/RETURN_PENDING")
     private String qualityStatus;
 
+    /**
+     * 本行当前NCR返工的正式REWORK操作所有者；历史为空，不得继承至拆分余量。
+     * 仅新REWORK设置，原位永久终态同事务核owner后清空，避免同案同库存ID反复返工的ABA。
+     */
+    @Schema(description = "当前NCR返工正式操作ID；历史未标记为空")
+    private Long qualityReworkOperationId;
+    /** 当前完整实物处置所有者；拆分余量不继承，归档后保留原事实。 */
+    private Long qualityPhysicalOperationId;
+
     @Schema(description = "质量隔离单号")
     private String qualityHoldNo;
 

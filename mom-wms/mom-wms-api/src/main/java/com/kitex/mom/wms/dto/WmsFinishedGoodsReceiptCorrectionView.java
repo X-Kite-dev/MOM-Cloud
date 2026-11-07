@@ -74,6 +74,11 @@ public class WmsFinishedGoodsReceiptCorrectionView {
 	private List<String> blockers = new ArrayList<>();
 	@Schema(description = "该通知最近一张红冲申请")
 	private WmsFinishedGoodsReceiptCorrectionEntity correction;
+	/**
+	 * 当前红冲申请的固定批准原号是否已永久结束；为空或false不保证符合实时批准条件。
+	 */
+	@Schema(description = "固定批准原号已永久结束，须正常撤回或驳回后重新申请")
+	private Boolean approvalRequestEnded;
 	@Schema(description = "申请时冻结的库存证据；尚未申请时为空")
 	private List<WmsFinishedGoodsReceiptCorrectionDetailEntity> details = new ArrayList<>();
 
@@ -82,7 +87,8 @@ public class WmsFinishedGoodsReceiptCorrectionView {
 	 */
 	public static final class DecimalTextSerializer extends JsonSerializer<BigDecimal> {
 		@Override
-		public void serialize(BigDecimal value, JsonGenerator output, SerializerProvider provider) throws IOException {
+		public void serialize(BigDecimal value, JsonGenerator output,
+		                      SerializerProvider provider) throws IOException {
 			output.writeString(value.toPlainString());
 		}
 	}

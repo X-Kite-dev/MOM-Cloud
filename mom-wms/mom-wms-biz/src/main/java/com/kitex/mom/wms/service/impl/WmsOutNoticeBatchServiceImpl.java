@@ -151,23 +151,32 @@ public class WmsOutNoticeBatchServiceImpl extends ServiceImpl<WmsOutNoticeBatchM
         return result;
     }
 
-    public QueryWrapper<WmsOutNoticeEntity> getMainQueryWrapper(WmsInNoticeQueryDTO queryDTO) {
-        QueryWrapper<WmsOutNoticeEntity> wrapper = new QueryWrapper<>();
-        if (CollUtil.isNotEmpty(queryDTO.getCreateTime())) {
-            wrapper.lambda().ge(BaseCore::getCreateTime, queryDTO.getCreateTime().get(0));
-            if (queryDTO.getCreateTime().size() > 1) {
-                wrapper.lambda().lt(BaseCore::getCreateTime, queryDTO.getCreateTime().get(1));
-            }
-        }
-        wrapper.lambda().like(StrUtil.isNotBlank(queryDTO.getId()), WmsOutNoticeEntity::getId, queryDTO.getId())
-                .like(StrUtil.isNotBlank(queryDTO.getCreateBy()), BaseCore::getCreateBy, queryDTO.getCreateBy())
-                .eq(StrUtil.isNotBlank(queryDTO.getBillType()), WmsOutNoticeEntity::getBillType, queryDTO.getBillType())
-                .eq(StrUtil.isNotBlank(queryDTO.getWarehouseCode()), WmsOutNoticeEntity::getWarehouseCode, queryDTO.getWarehouseCode())
-                .ne(WmsOutNoticeEntity::getState, InOutNoticeStateEnum.FINISHED.getCode())
-                .ne(WmsOutNoticeEntity::getState, InOutNoticeStateEnum.CANCELED.getCode())
-                .orderByDesc(BaseCore::getCreateTime);
-        return wrapper;
-    }
+	/**
+	 * 按完整原通知身份构造通知列表和主表导出条件；不改变既有业务类型、状态和组织约束。
+	 *
+	 * @param queryDTO 查询参数，空通知号不筛选，非法通知号拒绝查询
+	 * @return 通知主表查询条件，通知号以Long等值绑定
+	 */
+	public QueryWrapper<WmsOutNoticeEntity> getMainQueryWrapper(WmsInNoticeQueryDTO queryDTO) {
+		Long noticeId = queryDTO.noticeIdValue();
+		QueryWrapper<WmsOutNoticeEntity> wrapper = new QueryWrapper<>();
+		if (CollUtil.isNotEmpty(queryDTO.getCreateTime())) {
+			wrapper.lambda().ge(BaseCore::getCreateTime, queryDTO.getCreateTime().get(0));
+			if (queryDTO.getCreateTime().size() > 1) {
+				wrapper.lambda().lt(BaseCore::getCreateTime, queryDTO.getCreateTime().get(1));
+			}
+		}
+		wrapper.lambda().eq(noticeId != null, WmsOutNoticeEntity::getId, noticeId)
+				.like(StrUtil.isNotBlank(queryDTO.getCreateBy()), BaseCore::getCreateBy, queryDTO.getCreateBy())
+				.eq(StrUtil.isNotBlank(queryDTO.getBillType()), WmsOutNoticeEntity::getBillType,
+						queryDTO.getBillType())
+				.eq(StrUtil.isNotBlank(queryDTO.getWarehouseCode()), WmsOutNoticeEntity::getWarehouseCode,
+						queryDTO.getWarehouseCode())
+				.ne(WmsOutNoticeEntity::getState, InOutNoticeStateEnum.FINISHED.getCode())
+				.ne(WmsOutNoticeEntity::getState, InOutNoticeStateEnum.CANCELED.getCode())
+				.orderByDesc(BaseCore::getCreateTime);
+		return wrapper;
+	}
 
 
 }

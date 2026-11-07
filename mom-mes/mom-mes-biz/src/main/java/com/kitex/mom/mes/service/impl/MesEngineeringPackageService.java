@@ -8,6 +8,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.mom.mdm.dto.MdmRouteEngineeringDTO;
+import com.kitex.mom.mdm.dto.MdmProcedureLaborStandardDTO;
+import com.kitex.mom.mdm.support.MdmProcedureLaborStandardCodec;
 import com.kitex.mom.mdm.feign.RemoteMdmRouteEngineeringService;
 import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
 import com.kitex.mom.mes.dto.MdmProcessRouteWorkCenterDTO;
@@ -186,6 +188,7 @@ public class MesEngineeringPackageService {
             JsonNode graph = root.path("graph");
             JsonNode procedures = graph.path("procedureList");
             JsonNode frozenNodes = root.path("nodes");
+            MdmProcedureLaborStandardCodec.captureGeneration(source.getBundleSnapshot());
             JsonNode bomChildren = root.path("bomStructure").path("children");
             require(root.isObject() && procedures.isArray() && !procedures.isEmpty() && procedures.size() <= 200
                             && frozenNodes.isArray() && frozenNodes.size() == procedures.size()
@@ -202,7 +205,7 @@ public class MesEngineeringPackageService {
             JsonNode sopManifest = root.path("sopManifest");
             require(parameterCatalog.isObject() && sopManifest.isObject(),
                     "MDM工程包缺少精确参数目录或正式SOP清单");
-            return new FrozenEngineering(source, executionRouteSnapshot(procedures, frozenNodes), bomChildren.toString(),
+            return new FrozenEngineering(source, executionRouteSnapshot(procedures, frozenNodes, source.getTenantId(), factoryCode), bomChildren.toString(),
                     parameterCatalog.toString(), sopManifest.toString());
         } catch (CheckedException ex) {
             throw ex;
@@ -215,7 +218,7 @@ public class MesEngineeringPackageService {
      * 将联合包中的节点图和同版节点来源合成MES执行快照。
      * 图清单保存稳定节点关系；nodes清单保存同版工作中心、投料和旧附件，二者必须一一对应。
      */
-    private String executionRouteSnapshot(JsonNode procedures, JsonNode frozenNodes) {
+    private String executionRouteSnapshot(JsonNode procedures, JsonNode frozenNodes, String tenant, String factory) {
         Map<String, JsonNode> byNode = new LinkedHashMap<>();
         for (JsonNode frozen : frozenNodes) {
             String nodeCode = frozen.path("routeNodeCode").asText();
@@ -236,6 +239,20 @@ public class MesEngineeringPackageService {
             require(frozen != null && Objects.equals(execution.path("processCode").asText(),
                             frozen.path("processCode").asText()),
                     "MDM工程包路线节点与节点执行来源不一致");
+            // 只接受同版nodes权威来源；历史缺失保持缺失，不从当前工序补齐。
+            execution.remove("laborStandard");
+            if (frozen.has("laborStandard")) {
+                require(frozen.path("laborStandard").isObject(), "工程节点标准工时来源格式损坏");
+                try {
+                    var labor = JSON.treeToValue(frozen.path("laborStandard"), MdmProcedureLaborStandardDTO.class);
+                    MdmProcedureLaborStandardCodec.read(labor, tenant, factory, execution.path("processCode").asText());
+                } catch (CheckedException failure) {
+                    throw failure;
+                } catch (Exception failure) {
+                    throw new CheckedException("工程节点标准工时来源无法完整解析", failure);
+                }
+                execution.set("laborStandard", frozen.path("laborStandard").deepCopy());
+            }
             execution.set("mdmProcessProcedureWorkList", frozen.path("works").deepCopy());
             execution.set("mdmProcessProcedureMatList", frozen.path("materials").deepCopy());
             execution.set("mdmProcessProcedureMoldList", frozen.path("molds").deepCopy());

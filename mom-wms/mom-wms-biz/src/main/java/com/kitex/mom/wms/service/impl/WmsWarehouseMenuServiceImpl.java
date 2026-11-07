@@ -31,6 +31,9 @@ import com.kitex.mom.wms.service.WmsOtherOutboundScope;
 import com.kitex.mom.wms.vo.WmsWarehouseBizCheckAppItemVO;
 import com.kitex.mom.wms.vo.WmsWarehouseBizCheckAppVO;
 import com.kitex.mom.wms.vo.WmsWarehouseBizCheckVO;
+import com.kitex.mom.wms.vo.WmsWarehouseConfigurationSnapshot;
+import com.kitex.mom.wms.vo.WmsWarehouseConfigurationCommand;
+import com.kitex.mom.wms.service.WmsWarehouseConfigurationRevision;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
@@ -52,11 +55,13 @@ import java.util.stream.Collectors;
 public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMapper, WmsWarehouseMenuEntity>
 		implements WmsWarehouseMenuService {
 
+	private final com.kitex.mom.wms.service.overreturn.WmsOverReturnAccess overReturnAccess;
 	private final WmsWarehouseBizService wmsWarehouseBizService;
 	private final RemoteWarehouseService remoteWarehouseService;
 	private final RemoteMenuService remoteMenuService;
 	private final RemoteUserService remoteUserService;
 	private final WmsWarehouseBusinessGuard warehouseGuard;
+	private final com.kitex.mom.wms.service.physical.WmsPhysicalAccess physicalAccess;
 
 	/**
 	 * 返回树形菜单集合
@@ -127,13 +132,22 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 	public List<WmsWarehouseBizCheckVO> listCheckBiz(String warehouseCode) {
 		requireScope();
 		List<MdmWarehouseEntity> warehouseList = warehouseMasters();
-		List<String> codeList = warehouseList.stream().map(MdmWarehouseEntity::getWarehouseCode).distinct().toList();
+		return configurationSelections(warehouseCode, warehouseList);
+	}
 
-		List<WmsWarehouseBizEntity> list = wmsWarehouseBizService.list(new LambdaQueryWrapper<WmsWarehouseBizEntity>()
-				.eq(WmsWarehouseBizEntity::getTenantId, TenantContextHolder.getTenantId())
-				.eq(WmsWarehouseBizEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
-				.like(StrUtil.isNotBlank(warehouseCode), WmsWarehouseBizEntity::getWarehouseCode, warehouseCode));
-		list = list.stream().filter(item -> codeList.contains(item.getWarehouseCode())).collect(Collectors.toList());
+	private List<WmsWarehouseBizCheckVO> configurationSelections(String warehouseCode,
+	                                                             List<MdmWarehouseEntity> warehouseList) {
+		List<String> codeList = warehouseList.stream().map(MdmWarehouseEntity::getWarehouseCode).distinct()
+				.toList();
+
+		List<WmsWarehouseBizEntity> list = wmsWarehouseBizService.list(
+				new LambdaQueryWrapper<WmsWarehouseBizEntity>()
+						.eq(WmsWarehouseBizEntity::getTenantId, TenantContextHolder.getTenantId())
+						.eq(WmsWarehouseBizEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
+						.like(StrUtil.isNotBlank(warehouseCode), WmsWarehouseBizEntity::getWarehouseCode,
+								warehouseCode));
+		list = list.stream().filter(item -> codeList.contains(item.getWarehouseCode()))
+				.collect(Collectors.toList());
 		Map<String, List<WmsWarehouseBizEntity>> collect = list.stream()
 				.collect(Collectors.groupingBy(WmsWarehouseBizEntity::getWarehouseCode));
 		List<WmsWarehouseBizCheckVO> result = new ArrayList<>();
@@ -145,7 +159,8 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 		// 查询配置项
 
 		Map<String, MdmWarehouseEntity> warehouseEntityMap = warehouseList.stream()
-				.collect(Collectors.toMap(MdmWarehouseEntity::getWarehouseCode, Function.identity(), (a, b) -> a));
+				.collect(Collectors.toMap(MdmWarehouseEntity::getWarehouseCode, Function.identity(),
+						(a, b) -> a));
 		for (WmsWarehouseBizCheckVO bizCheckVO : result) {
 			MdmWarehouseEntity mdmWarehouseEntity = warehouseEntityMap.get(bizCheckVO.getWarehouseCode());
 			if (ObjectUtil.isEmpty(mdmWarehouseEntity)) {
@@ -172,10 +187,11 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 					.setMobileEnabled(false).setMobileMessage("该仓库未开启手机端作业")
 					.setCommon(List.of()).setInout(List.of()).setOther(List.of());
 		}
-		List<WmsWarehouseBizEntity> list = wmsWarehouseBizService.list(new LambdaQueryWrapper<WmsWarehouseBizEntity>()
-				.eq(WmsWarehouseBizEntity::getWarehouseCode, warehouseCode)
-				.eq(WmsWarehouseBizEntity::getTenantId, TenantContextHolder.getTenantId())
-				.eq(WmsWarehouseBizEntity::getFactoryCode, FactoryContextHolder.getFactoryCode()));
+		List<WmsWarehouseBizEntity> list = wmsWarehouseBizService.list(
+				new LambdaQueryWrapper<WmsWarehouseBizEntity>()
+						.eq(WmsWarehouseBizEntity::getWarehouseCode, warehouseCode)
+						.eq(WmsWarehouseBizEntity::getTenantId, TenantContextHolder.getTenantId())
+						.eq(WmsWarehouseBizEntity::getFactoryCode, FactoryContextHolder.getFactoryCode()));
 		R<List<Tree<Long>>> menuTree = remoteMenuService.getMenuTree("wms");
 		if (menuTree == null || !menuTree.isOk() || menuTree.getData() == null) {
 			throw new CheckedException("用户菜单获取失败，请刷新后重试");
@@ -199,7 +215,6 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 			String path = (String) treeChild.get("path");
 			pathList.add(path);
 		}
-
 		Map<String, MenuCommonBizTypeEnum> commonBizMap = Arrays.stream(MenuCommonBizTypeEnum.values())
 				.collect(Collectors.toMap(MenuCommonBizTypeEnum::getValue, Function.identity()));
 		Map<String, MenuInBizTypeEnum> inBizMap = Arrays.stream(MenuInBizTypeEnum.values())
@@ -214,7 +229,8 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 			if (commonBizMap.containsKey(bizType)) {
 				MenuCommonBizTypeEnum anEnum = commonBizMap.get(bizType);
 				if (!pathList.contains(anEnum.getValue() + "/" + warehouseCode)) {
-					continue; // 如果pc上没有这个菜单，app也不显示这个菜单
+					continue;
+					// 如果pc上没有这个菜单，app也不显示这个菜单
 				}
 				if (StrUtil.isNotBlank(anEnum.getAppPath())) {
 					WmsWarehouseBizCheckAppItemVO vo = new WmsWarehouseBizCheckAppItemVO();
@@ -226,7 +242,8 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 			} else if (inBizMap.containsKey(bizType)) {
 				MenuInBizTypeEnum anEnum = inBizMap.get(bizType);
 				if (!pathList
-						.contains(anEnum.getValue() + InOutMenuTypeEnum.IN_NOTICE.getUrl() + "/" + warehouseCode)) {
+						.contains(anEnum.getValue() + InOutMenuTypeEnum.IN_NOTICE.getUrl() + "/" +
+								warehouseCode)) {
 					continue;
 				}
 				if (StrUtil.isNotBlank(anEnum.getAppPath())) {
@@ -243,7 +260,8 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 			} else if (outBizMap.containsKey(bizType)) {
 				MenuOutBizTypeEnum anEnum = outBizMap.get(bizType);
 				if (!pathList
-						.contains(anEnum.getValue() + InOutMenuTypeEnum.OUT_NOTICE.getUrl() + "/" + warehouseCode)) {
+						.contains(anEnum.getValue() + InOutMenuTypeEnum.OUT_NOTICE.getUrl() + "/" +
+								warehouseCode)) {
 					continue;
 				}
 				if (StrUtil.isNotBlank(anEnum.getAppPath())) {
@@ -258,6 +276,28 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 					}
 				}
 			}
+		}
+		// 附加入口只投影已配置实时库存与真实quality子页show，不新增全局菜单或授权。
+		if (list.stream().anyMatch(e -> MenuCommonBizTypeEnum.LIVE_STOCK.getValue().equals(e.getBizType()))
+				&& pathList.contains(MenuCommonBizTypeEnum.LIVE_STOCK.getValue() + "/" + warehouseCode)) {
+			physicalAccess.read();
+			if (physicalAccess.allowed(List.of(warehouseCode), "show")) {
+				WmsWarehouseBizCheckAppItemVO quality = new WmsWarehouseBizCheckAppItemVO();
+				quality.setCode("quality_execution");
+				quality.setName("质量处置");
+				quality.setPath("/pages-wms/warehouseIn/live/qualityExecution");
+				common.add(quality);
+			}
+		}
+		// 源调拨配置及真实仓级view来源才附加返还实收，不覆盖原ALLOCATION路径。
+		if (list.stream().anyMatch(e -> MenuCommonBizTypeEnum.ALLOCATION.getValue().equals(e.getBizType()))
+				&& pathList.contains(MenuCommonBizTypeEnum.ALLOCATION.getValue() + "/" + warehouseCode)
+				&& overReturnAccess.allowed(warehouseCode, "view", false)) {
+			WmsWarehouseBizCheckAppItemVO receipt = new WmsWarehouseBizCheckAppItemVO();
+			receipt.setCode("over_return_receipt");
+			receipt.setName("溢收退回收货");
+			receipt.setPath("/pages-wms/order/allocationBill/overReturn");
+			common.add(receipt);
 		}
 		WmsWarehouseBizCheckAppVO result = new WmsWarehouseBizCheckAppVO();
 		result.setWarehouseCode(warehouseCode);
@@ -283,6 +323,60 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 			throw new CheckedException("保存仓库业务配置失败");
 		}
 		return updateMenu(list, masters);
+	}
+
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public WmsWarehouseConfigurationSnapshot configurationSnapshot() {
+		requireScope();
+		lockConfiguration();
+		return configurationSnapshot(warehouseMasters());
+	}
+
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public WmsWarehouseConfigurationSnapshot commitConfiguration(WmsWarehouseConfigurationCommand command) {
+		requireScope();
+		if (command == null || command.expectedRevision() == null
+				|| !command.expectedRevision().matches("[0-9a-f]{64}")) {
+			throw new CheckedException("配置版本缺失，请刷新页面后保存");
+		}
+		lockConfiguration();
+		List<MdmWarehouseEntity> masters = warehouseMasters();
+		if (!command.expectedRevision().equals(configurationSnapshot(masters).revision())) {
+			throw new CheckedException("仓库配置已被更新，请保留本机修改并刷新后重新核对");
+		}
+		validateCommands(command.warehouses(), masters);
+		if (!wmsWarehouseBizService.updateAll(command.warehouses()) ||
+				!Boolean.TRUE.equals(updateMenu(command.warehouses(), masters))) {
+			throw new CheckedException("保存仓库业务配置失败");
+		}
+		return configurationSnapshot(masters);
+	}
+
+	private WmsWarehouseConfigurationSnapshot configurationSnapshot(List<MdmWarehouseEntity> masters) {
+		var warehouses = masters.stream().sorted(Comparator.comparing(MdmWarehouseEntity::getWarehouseCode))
+				.map(row -> new WmsWarehouseConfigurationSnapshot.Warehouse(row.getWarehouseCode(),
+						row.getWarehouseName(),
+						row.getIsBatch(), row.getIsContainer(), row.getIsMobile(), row.getSort())).toList();
+		var selections = configurationSelections(null, masters).stream()
+				.sorted(Comparator.comparing(WmsWarehouseBizCheckVO::getWarehouseCode)).toList();
+		List<Tree<Long>> tree = treeMenu(null, null, null);
+		if (tree == null) {
+			throw new CheckedException("仓库预览读取失败，请刷新后重试");
+		}
+		String tenant = TenantContextHolder.getTenantId().toString();
+		String factory = FactoryContextHolder.getFactoryCode();
+		String revision = WmsWarehouseConfigurationRevision.calculate(tenant, factory, warehouses, selections,
+				tree);
+		// 产品能力目录沿菜单生成枚举返回，防止旧系统字典漏项使新业务无法开通。
+		// 目录只表示服务支持的范围，启用、规则保存及角色授权仍分别走原合同。
+		var commonBusinesses = Arrays.stream(MenuCommonBizTypeEnum.values())
+				.sorted(Comparator.comparing(MenuCommonBizTypeEnum::getSort))
+				.map(item -> new WmsWarehouseConfigurationSnapshot.BusinessOption(item.getValue(),
+						item.getLabel(), item.getSort())).toList();
+		return new WmsWarehouseConfigurationSnapshot(1, tenant, factory, revision, warehouses, selections,
+				tree, commonBusinesses);
 	}
 
 	private void requireScope() {
@@ -312,14 +406,16 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 				throw new CheckedException("仓库主数据重复或组织范围不一致，请检查基础数据");
 			}
 		}
-		return response.getData().stream().filter(warehouse -> Boolean.TRUE.equals(warehouse.getStatus())).toList();
+		return response.getData().stream().filter(warehouse -> Boolean.TRUE.equals(warehouse.getStatus()))
+				.toList();
 	}
 
 	private void validateCommands(List<WmsWarehouseBizCheckVO> list, List<MdmWarehouseEntity> masters) {
 		if (list == null) {
 			throw new CheckedException("仓库配置快照不能为空");
 		}
-		Set<String> warehouses = masters.stream().map(MdmWarehouseEntity::getWarehouseCode).collect(Collectors.toSet());
+		Set<String> warehouses = masters.stream().map(MdmWarehouseEntity::getWarehouseCode)
+				.collect(Collectors.toSet());
 		Set<String> submitted = new HashSet<>();
 		for (WmsWarehouseBizCheckVO command : list) {
 			if (command == null || !warehouses.contains(command.getWarehouseCode())
@@ -328,11 +424,12 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 			}
 			Set<String> business = new HashSet<>();
 			for (String value : command.getBizs()) {
-				if (StrUtil.isBlank(value) || !business.add(value) || (MenuCommonBizTypeEnum.getByValue(value) == null
-						&& MenuInBizTypeEnum.getByValue(value) == null
-						&& MenuOutBizTypeEnum.getByValue(value) == null
-						&& !WmsOtherOutboundScope.isConfigurationValue(value)
-						&& !ReturnReceiptActionEnum.isConfigurationValue(value))) {
+				if (StrUtil.isBlank(value) || !business.add(value) ||
+						(MenuCommonBizTypeEnum.getByValue(value) == null
+								&& MenuInBizTypeEnum.getByValue(value) == null
+								&& MenuOutBizTypeEnum.getByValue(value) == null
+								&& !WmsOtherOutboundScope.isConfigurationValue(value)
+								&& !ReturnReceiptActionEnum.isConfigurationValue(value))) {
 					throw new CheckedException("仓库业务功能无效或重复，请重新加载");
 				}
 			}
@@ -393,7 +490,8 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 					}
 				}
 			} while (expanded);
-			if (!ids.isEmpty() && baseMapper.delete(scope.in(WmsWarehouseMenuEntity::getId, ids)) != ids.size()) {
+			if (!ids.isEmpty() &&
+					baseMapper.delete(scope.in(WmsWarehouseMenuEntity::getId, ids)) != ids.size()) {
 				throw new CheckedException("清理旧仓库预览失败，配置未保存");
 			}
 		}
@@ -412,7 +510,8 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 			// 1、添加一级菜单
 			WmsWarehouseMenuEntity warehouseMenu = new WmsWarehouseMenuEntity();
 			if (CollUtil.isNotEmpty(bizs)) {
-				warehouseMenu.setName(Optional.ofNullable(mdmWarehouse.getWarehouseName()).orElse(warehouseCode) + "管理")
+				warehouseMenu.setName(
+								Optional.ofNullable(mdmWarehouse.getWarehouseName()).orElse(warehouseCode) + "管理")
 						.setMenuType(MenuTypeEnum.LEFT_MENU.getCode())
 						.setParentId(CommonConstants.MENU_TREE_ROOT_ID)
 						.setPath(String.format("/wms/warehouseManege/%s/%s", factoryCode, warehouseCode))
@@ -434,7 +533,8 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 							.setParentId(warehouseMenu.getId())
 							.setPath(biz + "/" + warehouseCode)
 							.setSortOrder(typeEnum.getSort())
-							.setIcon("iconfont icon-shuxingtu");
+							.setIcon(MenuCommonBizTypeEnum.SPECIAL_MOVEMENT.equals(
+									typeEnum) ? "ele-Tickets" : "iconfont icon-shuxingtu");
 					bizMenu.setId(snowflake.nextId());
 					insertMenus.add(bizMenu);
 					// 实时库存还分三个页面，其他都是一个页面
@@ -448,14 +548,19 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 							if (LiveStockMenuTypeEnum.QUALITY_STATUS.equals(liveStockMenuEnum)) {
 								createButton("查看", "wmsQualityStatus:show", 1, pageMenu.getId(), insertMenus,
 										snowflake);
-								createButton("重试同步", "wmsQualityStatus:retry", 2, pageMenu.getId(), insertMenus,
+								createButton("重试同步", "wmsQualityStatus:retry", 2, pageMenu.getId(),
+										insertMenus,
 										snowflake);
-								createButton("确认实物执行", "wmsQualityStatus:execute", 3, pageMenu.getId(), insertMenus,
+								createButton("确认实物执行", "wmsQualityStatus:execute", 3, pageMenu.getId(),
+										insertMenus,
 										snowflake);
+								createButton("返工库存处理", "wmsQualityStatus:rework", 4, pageMenu.getId(),
+										insertMenus, snowflake);
 							} else {
 								for (ButtonLiveStockTypeEnum value : ButtonLiveStockTypeEnum.values()) {
 									createButton(value.getName(),
-											value.getCode() + "_" + liveStockMenuEnum.getCode() + "_" + warehouseCode,
+											value.getCode() + "_" + liveStockMenuEnum.getCode() + "_" +
+													warehouseCode,
 											value.getSort(), pageMenu.getId(), insertMenus, snowflake);
 								}
 							}
@@ -482,42 +587,55 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 						} else if (MenuCommonBizTypeEnum.OUT_NOTICE_BATCH.equals(typeEnum)) {
 							// 批量拣货 权限后边加上仓库编码
 							for (ButtonOutNoticeBatchTypeEnum value : ButtonOutNoticeBatchTypeEnum.values()) {
-								createButton(value.getName(), value.getCode() + "_" + warehouseCode, value.getSort(),
+								createButton(value.getName(), value.getCode() + "_" + warehouseCode,
+										value.getSort(),
 										bizMenu.getId(), insertMenus, snowflake);
 							}
 						} else if (MenuCommonBizTypeEnum.INOUT_FLOW.equals(typeEnum)) {
 							// 出入库流水 权限后边加上仓库编码
 							for (ButtonInoutFlowTypeEnum value : ButtonInoutFlowTypeEnum.values()) {
-								createButton(value.getName(), value.getCode() + "_" + warehouseCode, value.getSort(),
+								createButton(value.getName(), value.getCode() + "_" + warehouseCode,
+										value.getSort(),
 										bizMenu.getId(), insertMenus, snowflake);
 							}
 						} else if (MenuCommonBizTypeEnum.INVENTORY.equals(typeEnum)) {
 							// 库存盘点 权限后边加上仓库编码
 							for (ButtonInventoryTypeEnum value : ButtonInventoryTypeEnum.values()) {
-								createButton(value.getName(), value.getCode() + "_" + warehouseCode, value.getSort(),
+								createButton(value.getName(), value.getCode() + "_" + warehouseCode,
+										value.getSort(),
 										bizMenu.getId(), insertMenus, snowflake);
 							}
 						} else if (MenuCommonBizTypeEnum.ALLOCATION.equals(typeEnum)) {
 							// 调拨单 权限后边加上仓库编码
 							for (ButtonAllocationTypeEnum value : ButtonAllocationTypeEnum.values()) {
-								createButton(value.getName(), value.getCode() + "_" + warehouseCode, value.getSort(),
+								createButton(value.getName(), value.getCode() + "_" + warehouseCode,
+										value.getSort(),
 										bizMenu.getId(), insertMenus, snowflake);
 							}
 						} else if (MenuCommonBizTypeEnum.ALLOCATION_RECEIVE.equals(typeEnum)) {
 							// 调拨接收 权限后边加上仓库编码
 							for (ButtonAllocationReceiveTypeEnum value : ButtonAllocationReceiveTypeEnum.values()) {
-								createButton(value.getName(), value.getCode() + "_" + warehouseCode, value.getSort(),
+								createButton(value.getName(), value.getCode() + "_" + warehouseCode,
+										value.getSort(),
 										bizMenu.getId(), insertMenus, snowflake);
 							}
 						} else if (MenuCommonBizTypeEnum.ORGANIZATION_TRANSFER.equals(typeEnum)) {
-							for (ButtonOrganizationTransferTypeEnum value : ButtonOrganizationTransferTypeEnum.values()) {
-								createButton(value.getName(), value.getCode() + "_" + warehouseCode, value.getSort(),
+							for (var value : ButtonOrganizationTransferTypeEnum.values()) {
+								createButton(value.getName(), value.getCode() + "_" + warehouseCode,
+										value.getSort(),
+										bizMenu.getId(), insertMenus, snowflake);
+							}
+						} else if (MenuCommonBizTypeEnum.SPECIAL_MOVEMENT.equals(typeEnum)) {
+							for (ButtonSpecialMovementTypeEnum value : ButtonSpecialMovementTypeEnum.values()) {
+								createButton(value.getName(), value.getCode() + "_" + warehouseCode,
+										value.getSort(),
 										bizMenu.getId(), insertMenus, snowflake);
 							}
 						} else if (MenuCommonBizTypeEnum.MOVE_SITE.equals(typeEnum)) {
 							// 库内移动 权限后边加上仓库编码
 							for (ButtonMoveSiteTypeEnum value : ButtonMoveSiteTypeEnum.values()) {
-								createButton(value.getName(), value.getCode() + "_" + warehouseCode, value.getSort(),
+								createButton(value.getName(), value.getCode() + "_" + warehouseCode,
+										value.getSort(),
 										bizMenu.getId(), insertMenus, snowflake);
 							}
 						}
@@ -526,13 +644,16 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 					// 入库出库业务
 					MenuInBizTypeEnum inBizTypeEnum = MenuInBizTypeEnum.getByValue(biz);
 					if (inBizTypeEnum != null) {
-						WmsWarehouseMenuEntity noticeMenu = saveInOutBizMenu(inBizTypeEnum.getLabel(), inBizTypeEnum.getCode(), warehouseMenu.getId(), biz,
-								warehouseCode, inBizTypeEnum.getSort(), InOutMenuTypeEnum.IN_NOTICE, insertMenus,
+						WmsWarehouseMenuEntity noticeMenu = saveInOutBizMenu(inBizTypeEnum.getLabel(),
+								inBizTypeEnum.getCode(), warehouseMenu.getId(), biz,
+								warehouseCode, inBizTypeEnum.getSort(), InOutMenuTypeEnum.IN_NOTICE,
+								insertMenus,
 								snowflake);
 						if (inBizTypeEnum == MenuInBizTypeEnum.RETURN) {
 							for (ReturnReceiptActionEnum action : ReturnReceiptActionEnum.values()) {
 								if (bizs.contains(action.configurationValue())) {
-									createButton(action.getLabel(), action.permission(warehouseCode), action.getSort(),
+									createButton(action.getLabel(), action.permission(warehouseCode),
+											action.getSort(),
 											noticeMenu.getId(), insertMenus, snowflake);
 								}
 							}
@@ -540,8 +661,10 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 					}
 					MenuOutBizTypeEnum outBizTypeEnum = MenuOutBizTypeEnum.getByValue(biz);
 					if (outBizTypeEnum != null) {
-						saveInOutBizMenu(outBizTypeEnum.getLabel(), outBizTypeEnum.getCode(), warehouseMenu.getId(),
-								biz, warehouseCode, outBizTypeEnum.getSort(), InOutMenuTypeEnum.OUT_NOTICE, insertMenus,
+						saveInOutBizMenu(outBizTypeEnum.getLabel(), outBizTypeEnum.getCode(),
+								warehouseMenu.getId(),
+								biz, warehouseCode, outBizTypeEnum.getSort(), InOutMenuTypeEnum.OUT_NOTICE,
+								insertMenus,
 								snowflake);
 					}
 
@@ -573,8 +696,11 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 	 * @param notice        通知单枚举
 	 */
 	@Transactional
-	public WmsWarehouseMenuEntity saveInOutBizMenu(String name, String billCode, Long parentId, String biz, String warehouseCode,
-	                                               Integer sort, InOutMenuTypeEnum notice, List<WmsWarehouseMenuEntity> insertMenus, Snowflake snowflake) {
+	public WmsWarehouseMenuEntity saveInOutBizMenu(String name, String billCode, Long parentId, String biz,
+	                                               String warehouseCode,
+	                                               Integer sort, InOutMenuTypeEnum notice,
+	                                               List<WmsWarehouseMenuEntity> insertMenus,
+	                                               Snowflake snowflake) {
 		// 二级菜单
 		WmsWarehouseMenuEntity bizMenu = new WmsWarehouseMenuEntity();
 		bizMenu.setName(name)
@@ -589,7 +715,8 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 
 		// 修改 三级按钮权限
 		for (ButtonNoticeTypeEnum value : ButtonNoticeTypeEnum.values()) {
-			createButton(value.getName(), value.getCode() + "_" + billCode + "_" + warehouseCode, value.getSort(),
+			createButton(value.getName(), value.getCode() + "_" + billCode + "_" + warehouseCode,
+					value.getSort(),
 					bizMenu.getId(), insertMenus, snowflake);
 		}
 		return bizMenu;
@@ -606,8 +733,10 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 	 * @param parentId      父id
 	 * @return 菜单
 	 */
-	public WmsWarehouseMenuEntity savePageMenu(String name, String url, Integer sort, String warehouseCode, String biz,
-	                                           Long parentId, List<WmsWarehouseMenuEntity> insertMenus, Snowflake snowflake) {
+	public WmsWarehouseMenuEntity savePageMenu(String name, String url, Integer sort, String warehouseCode,
+	                                           String biz,
+	                                           Long parentId, List<WmsWarehouseMenuEntity> insertMenus,
+	                                           Snowflake snowflake) {
 		WmsWarehouseMenuEntity pageMenu = new WmsWarehouseMenuEntity();
 		pageMenu.setName(name)
 				.setMenuType(MenuTypeEnum.LEFT_MENU.getCode())
@@ -678,7 +807,8 @@ public class WmsWarehouseMenuServiceImpl extends ServiceImpl<WmsWarehouseMenuMap
 		}
 		R<Boolean> result = remoteMenuService.syncWarehouseMenu(tree);
 		if (result == null || !result.isOk() || !Boolean.TRUE.equals(result.getData())) {
-			throw new CheckedException("系统菜单同步失败：" + (result == null ? "未收到有效回执" : result.getMsg()));
+			throw new CheckedException(
+					"系统菜单同步失败：" + (result == null ? "未收到有效回执" : result.getMsg()));
 		}
 		return true;
 	}

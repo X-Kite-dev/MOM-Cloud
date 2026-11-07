@@ -78,9 +78,12 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
     private final MesReworkIdentifierUsageService reworkIdentifiers;
     private final MesTerminalExecutionGuard terminalExecutionGuard;
     private final MesProductionMaterialOperationService productionMaterials;
+    private final MesNgMaterialPolicyService ngMaterialPolicy;
+    private final MesNgMaterialAccounting ngMaterialAccounting;
     private final MesStartMaterialBindingReader materialBindings;
     private final MesProcessTimingGuard processTimingGuard;
     private final MesErpPostingOutboxService erpPostingOutbox;
+	private final MesPackagingExecutionService packagingExecution;
 
 
     /**
@@ -163,6 +166,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
                 || !Integer.valueOf(1).equals(params.getIdentifierRouteVersion()))) {
             throw new CheckedException("动态区段不能沿旧退回路线重建占用，必须使用原正常工艺节点");
         }
+		new MesPieceMaterialSelectionCodec().scope(params, arrange, task, binding != null || reworkIdentifier != null);
         boolean routeReturn = MesIdentifierRouteReturnCoordinator.ROUTE_RETURN.equals(params.getExecutionKind());
         if ((!routeReturn && !MesProduceTaskStatusEnum.PRODUCT.name().equals(arrange.getStatus()))
                 || (routeReturn && !java.util.Set.of(MesProduceTaskStatusEnum.PRODUCT.name(),
@@ -516,7 +520,18 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         params.setCompleteNum(completed);
         params.setTaskType(task.getType());
         params.setFactoryCode(arrange.getFactoryCode());
-        params.setWrapRuleCode(StrUtil.blankToDefault(params.getWrapRuleCode(), arrange.getWrapRuleCode()));
+		if (reportMode.isPackaging()) {
+			// 原号成功回放在进入本方法前返回；新动作只消费原采用，不信任客户端覆盖容量或今日包规。
+			MesPackagingAdoptionEntity adoption = packagingExecution.requireAdoption(arrange);
+			if ((StrUtil.isNotBlank(params.getWrapRuleCode())
+					&& !Objects.equals(params.getWrapRuleCode(), adoption.getRuleCode()))
+					|| (params.getCapacity() != null
+					&& !Objects.equals(params.getCapacity(), adoption.getCapacity()))) {
+				throw new CheckedException("提交的包装规则或容量与派工冻结依据不一致，请重新读取任务");
+			}
+			params.setWrapRuleCode(adoption.getRuleCode());
+			params.setCapacity(adoption.getCapacity());
+		}
         WorksiteTypeEnum configuredTrigger = MesWorksiteTriggerProjection.forExecution(parent, arrange);
         if (automatic && configuredTrigger != WorksiteTypeEnum.AUTO) {
             throw new CheckedException("当前派工任务不是自动报工工位");
@@ -539,13 +554,6 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
         if (reportMode == ReportModeEnum.PACKAGE_ONE_CODE) {
             if (params.getPassNum().compareTo(BigDecimal.ONE) != 0) {
                 throw new CheckedException("包装一物一码报工每次只能报工1件");
-            }
-            if (params.getCapacity() == null && StrUtil.isNotBlank(arrange.getWrapCapacity())) {
-                try {
-                    params.setCapacity(Integer.parseInt(arrange.getWrapCapacity()));
-                } catch (NumberFormatException exception) {
-                    throw new CheckedException("包装容量配置不是有效整数");
-                }
             }
             if (params.getCapacity() == null || params.getCapacity() <= 0) {
                 throw new CheckedException("包装一物一码报工必须配置大于0的包装容量");
@@ -678,7 +686,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
             throw new CheckedException("请选择不良品项");
         }
         String factory = factoryAccess.require("write");
-        params.setMaterialAccountingMode(productionMaterials.mode(params.getMaterialAccountingMode()));
+        params.setMaterialAccountingMode(ngMaterialAccounting.mode(params.getMaterialAccountingMode()));
         params.setRequestId(normalizeRequestId(params.getRequestId()));
         // 原成功恢复先于当前生产状态/模板门；不能因已经完工或MDM变更而重新记产。
         if (replayUnqualifiedReport(params, factory)) return;
@@ -699,7 +707,9 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
             throw new CheckedException("生产任务未在进行中，请先对任务开工");
         }
 
-        materialBindings.assertNgAccounting(arrange, params.getMaterialAccountingMode());
+        if (!"POLICY".equals(params.getMaterialAccountingMode())) {
+            materialBindings.assertNgAccounting(arrange, params.getMaterialAccountingMode());
+        }
 
         ReportModeEnum reportMode = ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType());
         if (reportMode.isIdentifierRequired() && StrUtil.isBlank(params.getTransferCode())) {
@@ -767,8 +777,11 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
                 com.kitex.mom.mdm.support.MdmProcessTimingPolicy.encodeEvidence(params));
 
         // 真实NG和耗用仍在同一原生产事务，没有历史补建或假GOOD报告。
-        if ("FEED".equals(params.getMaterialAccountingMode()))
+        if ("FEED".equals(params.getMaterialAccountingMode())) {
             productionMaterials.recordFeed(unqualified, arrange, task);
+        } else if ("POLICY".equals(params.getMaterialAccountingMode())) {
+            ngMaterialPolicy.consume(unqualified, arrange, task);
+        }
 
         // 保存操作记录
         MesTaskReportRecordEntity record = new MesTaskReportRecordEntity();
@@ -842,8 +855,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
                 && (existing.getCapturedActorId() == null
                 || Objects.equals(existing.getCapturedActorId(), SecurityUtils.getUser().getId()))) {
             unqualifiedService.verifySource(existing);
-            var originalOperation = productionMaterials.original(existing);
-            String originalMode = originalOperation == null ? "NONE" : originalOperation.getAccountingMode();
+            String originalMode = ngMaterialAccounting.originalMode(existing);
             if (!Objects.equals(originalMode, params.getMaterialAccountingMode())) {
                 throw new CheckedException("原不良请求的耗料选择不同；禁止给旧声明补耗料或另号重投");
             }

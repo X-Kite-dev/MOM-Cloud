@@ -67,7 +67,8 @@ public class WmsInsideInventoryPlanServiceImpl
 	}
 
 	private Boolean saveDeep(WmsInsideInventoryPlanEntity plan, boolean mobile) {
-		require(plan != null && CollUtil.isNotEmpty(plan.getWmsInsideInventoryPlanDetailList()), "请选择盘点物料和库位");
+		require(plan != null && CollUtil.isNotEmpty(plan.getWmsInsideInventoryPlanDetailList()),
+				"请选择盘点物料和库位");
 		String planNo = StrUtil.trim(plan.getPlanNo());
 		require(StrUtil.isNotBlank(planNo) && planNo.length() <= 32, "盘点编号不能为空且不能超过32个字符");
 		plan.setPlanNo(planNo);
@@ -118,6 +119,9 @@ public class WmsInsideInventoryPlanServiceImpl
 				require(Objects.equals(row.getMatUnit(), stock.getMatUnit()), "盘点范围库存单位不一致，请先核对");
 				quantity = quantity.add(number(stock.getMatNum(), "库存数量"));
 			}
+			require(Double.isFinite(quantity.doubleValue()) &&
+							quantity.compareTo(BigDecimal.valueOf(quantity.doubleValue())) == 0,
+					"账面合计超出当前数量精度，请按批次细分盘点范围");
 			row.setId(null);
 			row.setPlanId(plan.getId());
 			row.setCurrentNumber(quantity.doubleValue());
@@ -420,6 +424,7 @@ public class WmsInsideInventoryPlanServiceImpl
 		}
 		require(balance.compareTo(number(row.getCurrentNumber(), "原账面数量")) == 0,
 				"盘点后库存已发生变化，请先核对库存及原实盘依据，禁止直接完成零差异盘点");
+		adjustments.requireOwnerBalancedForCompletion(row, stocks);
 	}
 
 	@Override
@@ -461,15 +466,18 @@ public class WmsInsideInventoryPlanServiceImpl
 		for (Long id : Arrays.stream(ids).sorted().toList()) {
 			var plan = access.plan(id, true);
 			var rows = access.details(id, true);
+			require(baseMapper.countReplanLinks(plan.getTenantId(), plan.getFactoryCode(), id) == 0,
+					"有关联重新盘点记录，请作废计划并保留原件");
 			require("0".equals(plan.getStatus()) && "0".equals(plan.getHandleState())
 					&& rows.stream().allMatch(row -> !"1".equals(row.getStatus())
 					&& !"1".equals(row.getPlStatus())), "已录入或已处理的盘点必须保留原记录，禁止删除");
 			// 先在同一事务停用计划冻结，再逻辑删除明细；任何失败都会回滚两步。
 			require(baseMapper.deleteById(id) == 1, "删除盘点计划失败");
-			int deleted = wmsInsideInventoryPlanDetailMapper.delete(Wrappers.<WmsInsideInventoryPlanDetailEntity>lambdaQuery()
-					.eq(WmsInsideInventoryPlanDetailEntity::getPlanId, id)
-					.eq(WmsInsideInventoryPlanDetailEntity::getTenantId, TenantContextHolder.getTenantId())
-					.eq(WmsInsideInventoryPlanDetailEntity::getFactoryCode, factory()));
+			int deleted = wmsInsideInventoryPlanDetailMapper.delete(
+					Wrappers.<WmsInsideInventoryPlanDetailEntity>lambdaQuery()
+							.eq(WmsInsideInventoryPlanDetailEntity::getPlanId, id)
+							.eq(WmsInsideInventoryPlanDetailEntity::getTenantId, TenantContextHolder.getTenantId())
+							.eq(WmsInsideInventoryPlanDetailEntity::getFactoryCode, factory()));
 			require(deleted == rows.size(), "盘点明细删除数量不一致，已取消删除");
 		}
 		return true;

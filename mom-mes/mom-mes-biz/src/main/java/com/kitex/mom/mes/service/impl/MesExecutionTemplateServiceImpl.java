@@ -420,57 +420,70 @@ public class MesExecutionTemplateServiceImpl
                 && (row.getEffectiveTo() == null || row.getEffectiveTo().isAfter(now));
     }
 
-    @Override
-    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
-    public void freezeForDispatch(MesTaskEntity task, MesTaskArrangeEntity arrange) {
-        String factory = factoryAccess.require("write");
-        if (task == null || arrange == null) {
-            throw new CheckedException("冻结生产执行模板缺少工单或派工信息");
-        }
-        if (!Objects.equals(task.getTenantId(), TenantContextHolder.getTenantId())
-                || !Objects.equals(arrange.getTenantId(), TenantContextHolder.getTenantId())
-                || !Objects.equals(task.getFactoryCode(), factory)
-                || !Objects.equals(arrange.getFactoryCode(), factory)) {
-            throw new CheckedException("冻结模板前必须确认工单和派工属于当前实际租户工厂");
-        }
-        LocalDateTime now = LocalDateTime.now();
-        MesExecutionTemplateEntity matched = list(new LambdaQueryWrapper<MesExecutionTemplateEntity>()
-                .eq(MesExecutionTemplateEntity::getTenantId, TenantContextHolder.getTenantId())
-                .eq(MesExecutionTemplateEntity::getFactoryCode, factory)
-                .eq(MesExecutionTemplateEntity::getStatus, PUBLISHED)
-                .and(item -> item.isNull(MesExecutionTemplateEntity::getEffectiveFrom)
-                        .or().le(MesExecutionTemplateEntity::getEffectiveFrom, now))
-                .and(item -> item.isNull(MesExecutionTemplateEntity::getEffectiveTo)
-                        .or().gt(MesExecutionTemplateEntity::getEffectiveTo, now)))
-                .stream().filter(item -> MesExecutionTemplateMatcher.reasons(item, task, arrange, now).isEmpty())
-                .max(MesExecutionTemplateMatcher.order())
-                .orElse(null);
+	/**
+	 * 为新派工选择并冻结执行策略，按本行真实配额核对数量可执行性。
+	 * 已发布模板和无匹配模板的历史兼容策略均须校验；失败由原派工事务整体回滚。
+	 * 此门不接入旧契约读取或历史报工，不因今日配置重写已冻结依据。
+	 *
+	 * @param task 当前实际组织的原生产工单
+	 * @param arrange 本次待出生派工，noticeNum为本行实际配额
+	 * @throws CheckedException 实际组织不符、数量规则不可执行或原工程及动态冻结门不通过时拒绝
+	 */
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
+	public void freezeForDispatch(MesTaskEntity task, MesTaskArrangeEntity arrange) {
+		String factory = factoryAccess.require("write");
+		if (task == null || arrange == null) {
+			throw new CheckedException("冻结生产执行模板缺少工单或派工信息");
+		}
+		if (!Objects.equals(task.getTenantId(), TenantContextHolder.getTenantId())
+				|| !Objects.equals(arrange.getTenantId(), TenantContextHolder.getTenantId())
+				|| !Objects.equals(task.getFactoryCode(), factory)
+				|| !Objects.equals(arrange.getFactoryCode(), factory)) {
+			throw new CheckedException("冻结模板前必须确认工单和派工属于当前实际租户工厂");
+		}
+		LocalDateTime now = LocalDateTime.now();
+		MesExecutionTemplateEntity matched = list(new LambdaQueryWrapper<MesExecutionTemplateEntity>()
+				.eq(MesExecutionTemplateEntity::getTenantId, TenantContextHolder.getTenantId())
+				.eq(MesExecutionTemplateEntity::getFactoryCode, factory)
+				.eq(MesExecutionTemplateEntity::getStatus, PUBLISHED)
+				.and(item -> item.isNull(MesExecutionTemplateEntity::getEffectiveFrom)
+						.or().le(MesExecutionTemplateEntity::getEffectiveFrom, now))
+				.and(item -> item.isNull(MesExecutionTemplateEntity::getEffectiveTo)
+						.or().gt(MesExecutionTemplateEntity::getEffectiveTo, now)))
+				.stream().filter(item -> MesExecutionTemplateMatcher.reasons(item, task, arrange, now).isEmpty())
+				.max(MesExecutionTemplateMatcher.order())
+				.orElse(null);
 
-        MesExecutionContractDTO contract = matched == null
-                ? legacyContract(arrange)
-                : templateContract(matched, arrange);
-        physicalTransformPolicyValidator
-                .assertPublicationAvailable(contract.getPhysicalTransformPolicy().getConfigurationJson());
-        contract.setPhysicalTransformStandard(physicalTransformEngineering.freeze(task, arrange,
-                matched == null ? null : matched.getPhysicalTransformStandardId(),
-                contract.getPhysicalTransformPolicy().getConfigurationJson()));
-        if ("REWORK".equals(task.getResourceType())) {
-            /*
-             * 返工不出生第二套BIND/USE/RELEASE生命周期。原实例范围已由双岗返工方案冻结， 派工只保留普通节点动作，现场识别由MesReworkIdentifierUsageService独立核定并记账。
-             */
-            contract.setIdentifierNodePolicy(new MesIdentifierNodePolicyDTO());
-        }
-        if (!"NONE".equals(contract.getIdentifierNodePolicy().getAction())) {
-            nodeReadiness.requireDispatch(contract);
-        }
-        contract.setIdentifierNodePolicy(identifierBindingGroupService.freezeForDispatch(
-                task, arrange, contract.getIdentifierNodePolicy()));
-        arrange.setReportMode(contract.getReportMode())
-                .setExecutionTemplateId(contract.getTemplateId())
-                .setExecutionTemplateCode(contract.getTemplateCode())
-                .setExecutionTemplateVersion(contract.getTemplateVersion())
-                .setExecutionPolicySnapshot(physicalTransformEngineering.writableSnapshot(contract));
-    }
+		MesExecutionContractDTO contract = matched == null
+				? legacyContract(arrange)
+				: templateContract(matched, arrange);
+		// 在任何新冻结事实落入事务前核本行配额；旧发布版本也不能继续出生无法报工的新派工。
+		MesExecutionQuantityCompatibility.validateDispatch(ReportModeEnum.fromCode(contract.getReportMode()),
+				contract.getPartialReportAllowed(), contract.getOverReportAllowed(), contract.getOverReportRate(),
+				contract.getMaxSingleQuantity(), arrange.getNoticeNum());
+		physicalTransformPolicyValidator
+				.assertPublicationAvailable(contract.getPhysicalTransformPolicy().getConfigurationJson());
+		contract.setPhysicalTransformStandard(physicalTransformEngineering.freeze(task, arrange,
+				matched == null ? null : matched.getPhysicalTransformStandardId(),
+				contract.getPhysicalTransformPolicy().getConfigurationJson()));
+		if ("REWORK".equals(task.getResourceType())) {
+			/*
+			 * 返工不出生第二套BIND/USE/RELEASE生命周期。原实例范围已由双岗返工方案冻结， 派工只保留普通节点动作，现场识别由MesReworkIdentifierUsageService独立核定并记账。
+			 */
+			contract.setIdentifierNodePolicy(new MesIdentifierNodePolicyDTO());
+		}
+		if (!"NONE".equals(contract.getIdentifierNodePolicy().getAction())) {
+			nodeReadiness.requireDispatch(contract);
+		}
+		contract.setIdentifierNodePolicy(identifierBindingGroupService.freezeForDispatch(
+				task, arrange, contract.getIdentifierNodePolicy()));
+		arrange.setReportMode(contract.getReportMode())
+				.setExecutionTemplateId(contract.getTemplateId())
+				.setExecutionTemplateCode(contract.getTemplateCode())
+				.setExecutionTemplateVersion(contract.getTemplateVersion())
+				.setExecutionPolicySnapshot(physicalTransformEngineering.writableSnapshot(contract));
+	}
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
@@ -689,72 +702,74 @@ public class MesExecutionTemplateServiceImpl
         return template.getRevisionNo() + 1;
     }
 
-    private void normalizeAndValidate(MesExecutionTemplateEntity template) {
-        if (template == null || StrUtil.isBlank(template.getTemplateCode())
-                || StrUtil.isBlank(template.getTemplateName())) {
-            throw new CheckedException("模板编码和名称不能为空");
-        }
-        template.setTemplateCode(template.getTemplateCode().trim())
-                .setTemplateName(template.getTemplateName().trim())
-                .setMaterialCode(trimToNull(template.getMaterialCode()))
-                .setRouteCode(trimToNull(template.getRouteCode()))
-                .setProcessRouteCode(trimToNull(template.getProcessRouteCode()))
-                .setRouteNodeCode(trimToNull(template.getRouteNodeCode()))
-                .setWorkshopCode(trimToNull(template.getWorkshopCode()))
-                .setWorksiteCode(trimToNull(template.getWorksiteCode()))
-                .setPriority(Objects.requireNonNullElse(template.getPriority(), 0))
-                .setReportMode(ReportModeEnum.fromCode(template.getReportMode()).getCode())
-                .setAllowedTriggers(normalizeTriggers(template.getAllowedTriggers()))
-                .setIdentifierResolveMode(normalizeIdentifierResolveMode(template.getIdentifierResolveMode()))
-                .setAllowedIdentifierTypes(normalizeIdentifierTypes(template.getAllowedIdentifierTypes()))
-                .setPartialReportAllowed(!Boolean.FALSE.equals(template.getPartialReportAllowed()))
-                .setOverReportAllowed(Boolean.TRUE.equals(template.getOverReportAllowed()))
-                .setOverReportRate(Objects.requireNonNullElse(template.getOverReportRate(), BigDecimal.ZERO))
-                // 四项是标准产品安全门，模板只能冻结并展示，当前版本不允许配置旁路。
-                .setPredecessorRequired(true)
-                .setMaterialReadyRequired(true)
-                .setQualityGateRequired(true)
-                .setWorksiteRequired(true)
-                .setDeviceRequired(Boolean.TRUE.equals(template.getDeviceRequired()))
-                .setToolingRequired(Boolean.TRUE.equals(template.getToolingRequired()))
-                .setMobileAllowed(!Boolean.FALSE.equals(template.getMobileAllowed()))
-                .setStationAllowed(!Boolean.FALSE.equals(template.getStationAllowed()))
-                .setRemark(trimToNull(template.getRemark()));
-        if (template.getTemplateCode().length() > 100 || template.getTemplateName().length() > 200) {
-            throw new CheckedException("模板编码或名称超过允许长度");
-        }
-        if ((template.getProcessRouteCode() == null) != (template.getRouteNodeCode() == null)
-                || (template.getRouteNodeCode() != null && (template.getRouteCode() == null
-                || template.getProcessRouteCode().length() > 100 || template.getRouteNodeCode().length() > 64
-                || !template.getRouteNodeCode().matches("RN-[1-9][0-9]*")))) {
-            throw new CheckedException("精确节点模板须同时指定真实工艺路线、稳定节点和主工序");
-        }
-        if (template.getOverReportRate().signum() < 0
-                || template.getOverReportRate().compareTo(new BigDecimal("1")) > 0) {
-            throw new CheckedException("允许超报比例必须在0至1之间");
-        }
-        if (!Boolean.TRUE.equals(template.getOverReportAllowed())) {
-            template.setOverReportRate(BigDecimal.ZERO);
-        }
-        if (template.getMaxSingleQuantity() != null && template.getMaxSingleQuantity().signum() <= 0) {
-            throw new CheckedException("单次报工上限必须大于0");
-        }
-        if (template.getEffectiveFrom() != null && template.getEffectiveTo() != null
-                && !template.getEffectiveTo().isAfter(template.getEffectiveFrom())) {
-            throw new CheckedException("模板失效时间必须晚于生效时间");
-        }
-        template.setIdentifierNodePolicy(identifierNodePolicyValidator.configurationJson(
-                identifierNodePolicyValidator.normalize(template.getIdentifierNodePolicy(), template)));
-        template.setPhysicalTransformPolicy(
-                physicalTransformPolicyValidator.normalize(template.getPhysicalTransformPolicy(), template));
-        if (MesPhysicalTransformPolicyValidator.NONE.equals(template.getPhysicalTransformPolicy())
-                && template.getPhysicalTransformStandardId() != null) {
-            throw new CheckedException("NONE转换模板不能引用工程标准，请先明确实际转换政策");
-        }
-        if (template.getPhysicalTransformStandardId() != null && template.getPhysicalTransformStandardId() <= 0) {
-            throw new CheckedException("转换工程标准须为精确正Long ID");
-        }
-    }
+	/**
+	 * 规范化原草稿字段，并在保存、发布及替换发布前拒绝无法精确落库或无法单件报工的配置。
+	 * 数量校验仅使用当前拟保存模板，不回写任何历史派工快照。
+	 *
+	 * @param template 本次拟保存或发布的模板版本
+	 * @throws CheckedException 数量存储精度、单件上限或既有模板规则不通过时拒绝原操作
+	 */
+	private void normalizeAndValidate(MesExecutionTemplateEntity template) {
+		if (template == null || StrUtil.isBlank(template.getTemplateCode())
+				|| StrUtil.isBlank(template.getTemplateName())) {
+			throw new CheckedException("模板编码和名称不能为空");
+		}
+		template.setTemplateCode(template.getTemplateCode().trim())
+				.setTemplateName(template.getTemplateName().trim())
+				.setMaterialCode(trimToNull(template.getMaterialCode()))
+				.setRouteCode(trimToNull(template.getRouteCode()))
+				.setProcessRouteCode(trimToNull(template.getProcessRouteCode()))
+				.setRouteNodeCode(trimToNull(template.getRouteNodeCode()))
+				.setWorkshopCode(trimToNull(template.getWorkshopCode()))
+				.setWorksiteCode(trimToNull(template.getWorksiteCode()))
+				.setPriority(Objects.requireNonNullElse(template.getPriority(), 0))
+				.setReportMode(ReportModeEnum.fromCode(template.getReportMode()).getCode())
+				.setAllowedTriggers(normalizeTriggers(template.getAllowedTriggers()))
+				.setIdentifierResolveMode(normalizeIdentifierResolveMode(template.getIdentifierResolveMode()))
+				.setAllowedIdentifierTypes(normalizeIdentifierTypes(template.getAllowedIdentifierTypes()))
+				.setPartialReportAllowed(!Boolean.FALSE.equals(template.getPartialReportAllowed()))
+				.setOverReportAllowed(Boolean.TRUE.equals(template.getOverReportAllowed()))
+				.setOverReportRate(Objects.requireNonNullElse(template.getOverReportRate(), BigDecimal.ZERO))
+				// 四项是标准产品安全门，模板只能冻结并展示，当前版本不允许配置旁路。
+				.setPredecessorRequired(true)
+				.setMaterialReadyRequired(true)
+				.setQualityGateRequired(true)
+				.setWorksiteRequired(true)
+				.setDeviceRequired(Boolean.TRUE.equals(template.getDeviceRequired()))
+				.setToolingRequired(Boolean.TRUE.equals(template.getToolingRequired()))
+				.setMobileAllowed(!Boolean.FALSE.equals(template.getMobileAllowed()))
+				.setStationAllowed(!Boolean.FALSE.equals(template.getStationAllowed()))
+				.setRemark(trimToNull(template.getRemark()));
+		if (template.getTemplateCode().length() > 100 || template.getTemplateName().length() > 200) {
+			throw new CheckedException("模板编码或名称超过允许长度");
+		}
+		if ((template.getProcessRouteCode() == null) != (template.getRouteNodeCode() == null)
+				|| (template.getRouteNodeCode() != null && (template.getRouteCode() == null
+				|| template.getProcessRouteCode().length() > 100 || template.getRouteNodeCode().length() > 64
+				|| !template.getRouteNodeCode().matches("RN-[1-9][0-9]*")))) {
+			throw new CheckedException("精确节点模板须同时指定真实工艺路线、稳定节点和主工序");
+		}
+		MesExecutionQuantityCompatibility.validateTemplate(ReportModeEnum.fromCode(template.getReportMode()),
+				template.getOverReportRate(), template.getMaxSingleQuantity());
+		if (!Boolean.TRUE.equals(template.getOverReportAllowed())) {
+			template.setOverReportRate(BigDecimal.ZERO);
+		}
+		if (template.getEffectiveFrom() != null && template.getEffectiveTo() != null
+				&& !template.getEffectiveTo().isAfter(template.getEffectiveFrom())) {
+			throw new CheckedException("模板失效时间必须晚于生效时间");
+		}
+		template.setIdentifierNodePolicy(identifierNodePolicyValidator.configurationJson(
+				identifierNodePolicyValidator.normalize(template.getIdentifierNodePolicy(), template)));
+		template.setPhysicalTransformPolicy(
+				physicalTransformPolicyValidator.normalize(template.getPhysicalTransformPolicy(), template));
+		if (MesPhysicalTransformPolicyValidator.NONE.equals(template.getPhysicalTransformPolicy())
+				&& template.getPhysicalTransformStandardId() != null) {
+			throw new CheckedException("NONE转换模板不能引用工程标准，请先明确实际转换政策");
+		}
+		if (template.getPhysicalTransformStandardId() != null && template.getPhysicalTransformStandardId() <= 0) {
+			throw new CheckedException("转换工程标准须为精确正Long ID");
+		}
+	}
 
     private String normalizeTriggers(String value) {
         List<String> triggers = Arrays.stream(StrUtil.blankToDefault(value, "MANUAL").split(","))

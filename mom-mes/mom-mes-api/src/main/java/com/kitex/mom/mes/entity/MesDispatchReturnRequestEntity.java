@@ -13,10 +13,11 @@ import lombok.experimental.Accessors;
 import java.time.LocalDateTime;
 
 /**
- * 已接收未开工派工的受控退派申请。
+ * 未接收或已接收且尚未开工派工的受控退派申请。
  *
- * <p>申请冻结派工、工单、工序、工位、工装和现场执行事实。批准后关闭原派工，
- * 释放尚未投入生产的工装，并将工序恢复为待派工；旧派工及审批证据永久保留。</p>
+ * <p>证据版本决定整根未执行或普通配额目标范围。批准后关闭原目标、释放未用工装；
+ * 配额目标只释放自身额度并保持父在制状态，只有原未执行父满足条件才恢复待派工。
+ * 原申请、派工及审批证据永久保留，不覆盖已执行事实。</p>
  */
 @Data
 @Accessors(chain = true)
@@ -47,7 +48,8 @@ public class MesDispatchReturnRequestEntity extends BaseEntity<MesDispatchReturn
     @Schema(description = "工序任务单号")
     private String produceTaskCode;
 
-    @Schema(description = "申请时派工状态，固定为RECEIVE")
+    /** 原申请时目标状态；只允许UN_RECEIVE或RECEIVE，不以后来的关闭状态覆盖。 */
+    @Schema(description = "申请时目标派工状态：UN_RECEIVE/RECEIVE")
     private String originalStatus;
 
     @Schema(description = "SUBMITTED/APPROVED/REJECTED/WITHDRAWN/STALE/SUPERSEDED")

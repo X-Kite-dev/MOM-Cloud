@@ -80,8 +80,19 @@ public class WmsWarehouseBusinessGuard {
 	 */
 	public void checkOrganizationTransfer(String warehouseCode) {
 		boolean selected = loadConfiguration(warehouseCode).stream()
-				.anyMatch(row -> MenuCommonBizTypeEnum.ORGANIZATION_TRANSFER.getValue().equals(row.getBizType()));
-		if (!selected) throw new CheckedException("当前仓库未启用组织调拨业务");
+				.anyMatch(
+						row -> MenuCommonBizTypeEnum.ORGANIZATION_TRANSFER.getValue().equals(row.getBizType()));
+		if (!selected) {
+			throw new CheckedException("当前仓库未启用组织调拨业务");
+		}
+	}
+
+	public void checkSpecialMovement(String warehouseCode) {
+		boolean selected = loadConfiguration(warehouseCode).stream()
+				.anyMatch(row -> MenuCommonBizTypeEnum.SPECIAL_MOVEMENT.getValue().equals(row.getBizType()));
+		if (!selected) {
+			throw new CheckedException("当前仓库未启用特殊收发业务");
+		}
 	}
 
 	public boolean check(String warehouseCode, String billType, boolean inbound) {
@@ -130,9 +141,12 @@ public class WmsWarehouseBusinessGuard {
 		Set<String> selected = configurations.stream().map(WmsWarehouseBizEntity::getBizType)
 				.collect(java.util.stream.Collectors.toSet());
 		var actions = EnumSet.noneOf(ReturnReceiptActionEnum.class);
-		if (selected.contains(MenuInBizTypeEnum.RETURN.getValue()) && ReturnReceiptActionEnum.validSelection(selected)) {
+		if (selected.contains(MenuInBizTypeEnum.RETURN.getValue()) &&
+				ReturnReceiptActionEnum.validSelection(selected)) {
 			for (ReturnReceiptActionEnum action : ReturnReceiptActionEnum.values()) {
-				if (selected.contains(action.configurationValue())) actions.add(action);
+				if (selected.contains(action.configurationValue())) {
+					actions.add(action);
+				}
 			}
 		}
 		return actions;
@@ -150,6 +164,14 @@ public class WmsWarehouseBusinessGuard {
 			throw new CheckedException("读取仓库业务配置失败，禁止继续出入库");
 		}
 		return configurations;
+	}
+
+	/**
+	 * 核验当前租户和实际工厂下的仓主档存在且已启用，供签发仓级业务授权时使用。
+	 * 仓配置、移动开关及具体作业权限由调用方按各自动作检查。
+	 */
+	public void requireEnabledWarehouse(String warehouseCode) {
+		loadWarehouse(warehouseCode);
 	}
 
 	private MdmWarehouseEntity loadWarehouse(String warehouseCode) {
@@ -189,7 +211,8 @@ public class WmsWarehouseBusinessGuard {
 		if (configurations.isEmpty()) {
 			return new Evaluation(true, "LEGACY_UNCONFIGURED", menu, "历史仓库未配置作业范围，沿用旧行为");
 		}
-		boolean allowed = menu != null && configurations.stream().anyMatch(item -> menu.equals(item.getBizType()));
+		boolean allowed =
+				menu != null && configurations.stream().anyMatch(item -> menu.equals(item.getBizType()));
 		String subtype = WmsOtherOutboundScope.selectionFor(billType);
 		boolean subtypeRestricted = false;
 		if (allowed && subtype != null && configurations.stream()
@@ -228,7 +251,8 @@ public class WmsWarehouseBusinessGuard {
 			MenuInBizTypeEnum business = MenuInBizTypeEnum.getByCode(billType);
 			return business == null ? null : business.getValue();
 		}
-		if ("other_retail".equals(billType) || "other_outsource".equals(billType) || "other_pms".equals(billType)) {
+		if ("other_retail".equals(billType) || "other_outsource".equals(billType) ||
+				"other_pms".equals(billType)) {
 			return MenuOutBizTypeEnum.OTHER_OUT.getValue();
 		}
 		MenuOutBizTypeEnum business = MenuOutBizTypeEnum.getByCode(billType);

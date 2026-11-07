@@ -40,6 +40,23 @@ public class MesProductionFeedAllocationPlanner {
                      List<ProcessProcedureDTO.ProcessProcedureMatDTO> requirements, String bomSnapshot,
                      List<MesWarehouseFeedEntity> lockedFeeds,
                      Function<String, MdmMaterialMeasureDTO> materialReader) {
+		return planInternal(scope, requestedOutputs, requirements, bomSnapshot, lockedFeeds, materialReader, null);
+	}
+
+	/** 显式份额是本次精确耗量，不是自动分配优先顺序或可忽略的余额上限。 */
+	public Plan planSelected(Scope scope, List<OutputDemand> requestedOutputs,
+							 List<ProcessProcedureDTO.ProcessProcedureMatDTO> requirements, String bomSnapshot,
+							 List<MesWarehouseFeedEntity> lockedFeeds,
+							 Function<String, MdmMaterialMeasureDTO> materialReader, Map<Long, BigDecimal> selected) {
+		require(selected != null && !selected.isEmpty() && selected.size() <= 100,
+				"本件用料须明确1至100份实际投料来源");
+		return planInternal(scope, requestedOutputs, requirements, bomSnapshot, lockedFeeds, materialReader, selected);
+	}
+
+	private Plan planInternal(Scope scope, List<OutputDemand> requestedOutputs,
+							  List<ProcessProcedureDTO.ProcessProcedureMatDTO> requirements, String bomSnapshot,
+							  List<MesWarehouseFeedEntity> lockedFeeds,
+							  Function<String, MdmMaterialMeasureDTO> materialReader, Map<Long, BigDecimal> selected) {
         validateScope(scope);
         require(requestedOutputs != null && !requestedOutputs.isEmpty()
                 && requestedOutputs.size() <= MAX_OUTPUTS, "实际正量产出须为1至1000条，不能截断分配");
@@ -52,6 +69,17 @@ public class MesProductionFeedAllocationPlanner {
         BigDecimal processed = amount(outputs.stream().map(OutputDemand::quantity)
                 .reduce(BigDecimal.ZERO, BigDecimal::add), false, "本次全部产出加工总量");
         List<Cursor> feeds = feeds(scope, lockedFeeds);
+		if (selected != null) {
+			var ids = new HashSet<Long>();
+			feeds.forEach(cursor -> ids.add(cursor.feed.getId()));
+			require(ids.containsAll(selected.keySet()), "所选投料来源不在实际派工许可集合内");
+			feeds.removeIf(cursor -> !selected.containsKey(cursor.feed.getId()));
+			for (var cursor : feeds) {
+				BigDecimal quantity = amount(selected.get(cursor.feed.getId()), false, "本件指定实际耗量");
+				require(quantity.compareTo(cursor.remaining()) <= 0, "所选投料当前余额不足");
+				cursor.limit = cursor.used.add(quantity);
+			}
+		}
         var consumptions = new ArrayList<FeedConsumption>();
         var attributions = new ArrayList<OutputAttribution>();
         var measurements = new HashMap<String, MdmMaterialMeasureDTO>();
@@ -119,6 +147,10 @@ public class MesProductionFeedAllocationPlanner {
             require(remaining.signum() == 0, "本次全部产出实际投料不足：" + requiredCode);
             require(outputRemaining.values().stream().allMatch(value -> value.signum() == 0),
                     "逐产出需求分配未完整覆盖，不能只证明总耗量");
+		}
+		if (selected != null) {
+			require(feeds.stream().allMatch(cursor -> cursor.remaining().signum() == 0),
+					"指定份额须全部用于本件且精确覆盖原需求，不能忽略多选或超量来源");
         }
         return new Plan(scope, processed, List.copyOf(outputs), List.copyOf(consumptions), List.copyOf(attributions));
     }
@@ -300,15 +332,17 @@ public class MesProductionFeedAllocationPlanner {
         private final MesWarehouseFeedEntity feed;
         private final BigDecimal total;
         private BigDecimal used;
+		private BigDecimal limit;
 
         private Cursor(MesWarehouseFeedEntity feed, BigDecimal total, BigDecimal used) {
             this.feed = feed;
             this.total = total;
             this.used = used;
+			this.limit = total;
         }
 
         private BigDecimal remaining() {
-            return total.subtract(used);
+			return limit.subtract(used);
         }
     }
 }

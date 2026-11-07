@@ -1,7 +1,7 @@
 spring:
   data:
     redis:
-      host: kitex-redis
+      host: service.example.invalid
       port: 6379
       password: ${MOM_REDIS_PASSWORD}
       database: 14
@@ -13,9 +13,9 @@ spring:
       datasource:
         master:
           driver-class-name: org.postgresql.Driver
-          username: ${MYSQL_USER:postgres}
+          username: ${MYSQL_USER}
           password: ${MYSQL_PASSWORD}
-          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=kitex
+          url: jdbc:postgresql://service.example.invalid/${MOM_PG_DATABASE:kitex_mom}?currentSchema=kitex
           druid:
             initial-size: 5
             min-idle: 5
@@ -28,9 +28,9 @@ spring:
             min-evictable-idle-time-millis: 300000
         mdm:
           driver-class-name: org.postgresql.Driver
-          username: ${MYSQL_USER:postgres}
+          username: ${MYSQL_USER}
           password: ${MYSQL_PASSWORD}
-          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_mdm
+          url: jdbc:postgresql://service.example.invalid/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_mdm
           druid:
             initial-size: 3
             min-idle: 3
@@ -43,9 +43,9 @@ spring:
             min-evictable-idle-time-millis: 300000
         mes:
           driver-class-name: org.postgresql.Driver
-          username: ${MYSQL_USER:postgres}
+          username: ${MYSQL_USER}
           password: ${MYSQL_PASSWORD}
-          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_mes
+          url: jdbc:postgresql://service.example.invalid/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_mes
           druid:
             initial-size: 3
             min-idle: 3
@@ -58,9 +58,9 @@ spring:
             min-evictable-idle-time-millis: 300000
         common:
           driver-class-name: org.postgresql.Driver
-          username: ${MYSQL_USER:postgres}
+          username: ${MYSQL_USER}
           password: ${MYSQL_PASSWORD}
-          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_common
+          url: jdbc:postgresql://service.example.invalid/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_common
           druid:
             initial-size: 3
             min-idle: 3
@@ -73,9 +73,9 @@ spring:
             min-evictable-idle-time-millis: 300000
         wms:
           driver-class-name: org.postgresql.Driver
-          username: ${MYSQL_USER:postgres}
+          username: ${MYSQL_USER}
           password: ${MYSQL_PASSWORD}
-          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_wms
+          url: jdbc:postgresql://service.example.invalid/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_wms
           druid:
             initial-size: 3
             min-idle: 3
@@ -88,9 +88,9 @@ spring:
             min-evictable-idle-time-millis: 300000
         qms:
           driver-class-name: org.postgresql.Driver
-          username: ${MYSQL_USER:postgres}
+          username: ${MYSQL_USER}
           password: ${MYSQL_PASSWORD}
-          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_qms
+          url: jdbc:postgresql://service.example.invalid/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_qms
           druid:
             initial-size: 3
             min-idle: 3
@@ -103,9 +103,9 @@ spring:
             min-evictable-idle-time-millis: 300000
         tpm:
           driver-class-name: org.postgresql.Driver
-          username: ${MYSQL_USER:postgres}
+          username: ${MYSQL_USER}
           password: ${MYSQL_PASSWORD}
-          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_tpm
+          url: jdbc:postgresql://service.example.invalid/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_tpm
           druid:
             initial-size: 3
             min-idle: 3
@@ -118,9 +118,9 @@ spring:
             min-evictable-idle-time-millis: 300000
         plan:
           driver-class-name: org.postgresql.Driver
-          username: ${MYSQL_USER:postgres}
+          username: ${MYSQL_USER}
           password: ${MYSQL_PASSWORD}
-          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_plan
+          url: jdbc:postgresql://service.example.invalid/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_plan
           druid:
             initial-size: 3
             min-idle: 3
@@ -133,9 +133,9 @@ spring:
             min-evictable-idle-time-millis: 300000
         pms:
           driver-class-name: org.postgresql.Driver
-          username: ${MYSQL_USER:postgres}
+          username: ${MYSQL_USER}
           password: ${MYSQL_PASSWORD}
-          url: jdbc:postgresql://${MOM_PG_HOST:mom-pg}:${MOM_PG_PORT:5432}/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_pms
+          url: jdbc:postgresql://service.example.invalid/${MOM_PG_DATABASE:kitex_mom}?currentSchema=mom_pms
           druid:
             initial-size: 3
             min-idle: 3
@@ -147,8 +147,8 @@ spring:
             time-between-eviction-runs-millis: 60000
             min-evictable-idle-time-millis: 300000
         iot:
-          url: jdbc:mysql://mom-mysql:3306/mom-iot?characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&useJDBCCompliantTimezoneShift=true&useLegacyDatetimeCode=false&serverTimezone=GMT%2B8&allowMultiQueries=true&nullCatalogMeansCurrent=true&allowPublicKeyRetrieval=true
-          username: root
+          url: jdbc:mysql://service.example.invalid/mom-iot?characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&useJDBCCompliantTimezoneShift=true&useLegacyDatetimeCode=false&serverTimezone=GMT%2B8&allowMultiQueries=true&nullCatalogMeansCurrent=true&allowPublicKeyRetrieval=true
+          username: REDACTED_ACCOUNT
           password: ${MOM_IOT_DB_PASSWORD}
           driver-class-name: com.mysql.cj.jdbc.Driver
           druid:
@@ -165,7 +165,7 @@ spring:
         stat-view-servlet:
           enabled: true
           url-pattern: /druid/*
-          login-username: admin
+          login-username: REDACTED_ACCOUNT
           login-password: ${MOM_DRUID_PASSWORD}
         web-stat-filter:
           enabled: true
@@ -199,7 +199,7 @@ jasypt:
 
 # swagger token url 配置
 swagger:
-  token-url: ${swagger.gateway}/admin/oauth2/token
+  token-url: service.example.invalid
 
 # Logger Config
 logging:

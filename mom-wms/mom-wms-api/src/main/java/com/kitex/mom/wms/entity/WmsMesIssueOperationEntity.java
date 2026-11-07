@@ -15,13 +15,15 @@ import java.time.LocalDateTime;
 @EqualsAndHashCode(callSuper = true)
 @TableName("wms_mes_issue_operation")
 public class WmsMesIssueOperationEntity extends BaseEntity<WmsMesIssueOperationEntity> {
-    private Long outboxId;
-    private String requestId;
-    private String operationType;
-    private String beforeStatus;
-    private String afterStatus;
-    private String detail;
-    private String operatorCode;
-    private LocalDateTime operationTime;
-    private String factoryCode;
+	private Long outboxId;
+	private String requestId;
+	private String operationType;
+	private String beforeStatus;
+	private String afterStatus;
+	private String detail;
+	private String operatorCode;
+	private LocalDateTime operationTime;
+	private String factoryCode;
+	private Long originalTargetId;
+	private String cancellationReason;
 }

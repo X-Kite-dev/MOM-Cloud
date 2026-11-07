@@ -12,6 +12,7 @@ import com.kitex.mom.tpm.dto.DeviceCheckTaskStartDto;
 import com.kitex.mom.tpm.dto.TpmDevicePauseReceipt;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * 生产派工
@@ -40,6 +41,16 @@ public interface MesTaskArrangeService extends IService<MesTaskArrangeEntity> {
     void arrangeBatch(List<MesTaskArrangeDTO> batches);
 
     /**
+     * 创建真实分配派工：先按输入顺序生成ID/编码和冻结配置，回调写完整永久账后保存真实行。
+     * @param taskCode 当前实际组织的原工单编码
+     * @param lines 有序分配行，每行产生一条真实派工，回传列表顺序一致
+     * @param beforeSave 必须在同一事务写完整命令和配额；失败使实际派工一起回滚
+     * @return 本次实际保存的派工，严格与输入顺序一致
+     */
+    List<MesTaskArrangeEntity> arrangeAllocated(String taskCode, List<MesDispatchAllocationDTO.Line> lines,
+            Consumer<List<MesTaskArrangeEntity>> beforeSave);
+
+    /**
      * 修正审批事务的窄补派入口；不能绕过精确来源、员工和候选资源约束。
      */
     void arrangeCorrection(MesTaskArrangeDTO dto, Long correctionId);
@@ -56,6 +67,13 @@ public interface MesTaskArrangeService extends IService<MesTaskArrangeEntity> {
      * @return
      */
     MesArrangeTaskVO getCurrentTask(String shiftCode, String workshopCode, String worksiteCode);
+
+    /** 按精确ID读取当前实名工站任务；不传ID仍保持原唯一候选语义。 */
+    MesArrangeTaskVO getCurrentTask(String shiftCode, String workshopCode, String worksiteCode, Long arrangeId);
+
+    /** 当前实名工站的在制候选真分页，不以返回首条替用户选择。 */
+    IPage<MesRunningDispatchVO> runningCandidates(Page<MesTaskArrangeEntity> page,
+            String shiftCode, String workshopCode, String worksiteCode, String keyword);
 
     /**
      * 获取正在加工任务的设备

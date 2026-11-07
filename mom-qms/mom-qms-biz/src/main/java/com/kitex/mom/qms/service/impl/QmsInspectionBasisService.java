@@ -271,6 +271,12 @@ public class QmsInspectionBasisService {
                 ("PRODUCT".equals(type) ? "productTask" : "procedureTask") + ":show"))
             throw new AccessDeniedException("没有查看该类检验任务的权限");
         access.requireRead();
+        return authorizedView(type, taskId);
+    }
+
+    /** 已完成本域读或实际采集写授权的内部调用；保留全部实际归属和版本链校验。 */
+    View authorizedView(String type, Long taskId) {
+        type(type);
         scope(type, taskId);
         Long parent =
                 "PRODUCT".equals(type)

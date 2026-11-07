@@ -90,11 +90,13 @@ public class WmsWarehouseLifecycleService {
 		Long configurationCount = mapper.countBusinessConfiguration(tenant, factory, warehouseCode);
 		if (configurationCount == null
 				|| mapper.deleteBusinessConfiguration(tenant, factory, warehouseCode) != configurationCount
-						.longValue()) {
+				.longValue()) {
 			throw new CheckedException("清理仓库业务配置失败");
 		}
 		int organizationPolicies = mapper.disableOrganizationPolicy(tenant, factory, warehouseCode);
-		if (organizationPolicies < 0 || organizationPolicies > 1) throw new CheckedException("库存组织停用结果不确定，禁止删除仓库");
+		if (organizationPolicies < 0 || organizationPolicies > 1) {
+			throw new CheckedException("库存组织停用结果不确定，禁止删除仓库");
+		}
 		Long policyCount = mapper.countDashboardPolicy(tenant, factory, warehouseCode);
 		if (policyCount == null || mapper.deleteDashboardPolicy(tenant, factory, warehouseCode) != policyCount) {
 			throw new CheckedException("清理仓库看板配置失败");
@@ -107,6 +109,11 @@ public class WmsWarehouseLifecycleService {
 		if (countPolicyCount == null
 				|| mapper.deleteInventoryScopePolicy(tenant, factory, warehouseCode) != countPolicyCount) {
 			throw new CheckedException("清理仓库盘点规则失败");
+		}
+		Long variancePolicyCount = mapper.countInventoryVariancePolicy(tenant, factory, warehouseCode);
+		if (variancePolicyCount == null
+				|| mapper.deleteInventoryVariancePolicy(tenant, factory, warehouseCode) != variancePolicyCount) {
+			throw new CheckedException("清理仓库盘点差异规则失败");
 		}
 		Long templateCount = mapper.countInventoryCountTemplate(tenant, factory, warehouseCode);
 		if (templateCount == null

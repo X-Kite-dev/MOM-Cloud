@@ -6,6 +6,8 @@ import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.security.component.PermissionService;
 import com.kitex.mom.wms.dto.app.WmsMobileTransferReceiptDTO.Command;
 import com.kitex.mom.wms.dto.app.WmsMobileTransferReceiptDTO.Context;
+import com.kitex.mom.wms.dto.app.WmsMobileTransferReceiptDTO.PendingBill;
+import com.kitex.mom.wms.dto.app.WmsMobileTransferReceiptDTO.PendingPage;
 import com.kitex.mom.wms.dto.app.WmsMobileTransferReceiptDTO.Source;
 import com.kitex.mom.wms.dto.app.WmsMobileTransferReceiptDTO.View;
 import com.kitex.mom.wms.entity.WmsAllocationBillEntity;
@@ -15,6 +17,7 @@ import com.kitex.mom.wms.service.WmsAllocationMobileReceiptService.Scope;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
@@ -32,28 +35,92 @@ public class WmsMobileTransferReceiptService {
 	private final WmsTransferVarianceService receiving;
 	private final PermissionService permissions;
 	private final WmsWarehouseBusinessGuard warehouseGuard;
+	private final WmsMobileWarehouseAccess mobileAccess;
 
 	public Context context() {
-		var scope = WmsAllocationMobileReceiptService.requireScope();
+		var scope = scope();
 		return new Context(1, scope.tenantId(), scope.factoryCode(), scope.operatorCode());
 	}
 
+	/**
+	 * 同一只读快照核实际目标仓与正式来源，查看不占用库存，也不代表仍可办理。
+	 *
+	 * @param billNo        原实际调拨单号
+	 * @param warehouseCode 当前授权目标仓库
+	 * @return 当前工厂原调拨及完整明细，单号/来源仓身份不一致时拒绝
+	 */
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 	public Source sources(String billNo, String warehouseCode) {
-		var scope = WmsAllocationMobileReceiptService.requireScope();
+		var scope = scope();
 		String warehouse = warehouse(warehouseCode, false);
 		require(billNo != null && !billNo.isBlank() && billNo.length() <= 100, "请输入调拨单号");
-		var bill = bills.selectOne(query(scope, warehouse).eq(WmsAllocationBillEntity::getBillNo, billNo.trim()));
+		var bill = bills.selectOne(
+				query(scope, warehouse).eq(WmsAllocationBillEntity::getBillNo, billNo.trim()));
 		checkBill(bill, scope, warehouse);
 		var detail = allocations.getDetails(bill.getId());
 		require(detail != null && Objects.equals(detail.getId(), bill.getId())
+				&& Objects.equals(detail.getBillNo(), bill.getBillNo())
+				&& Objects.equals(detail.getOldWarehouseCode(), bill.getOldWarehouseCode())
+				&& Boolean.TRUE.equals(detail.getSourceDeducted())
 				&& Objects.equals(detail.getNewWarehouseCode(), warehouse)
 				&& Objects.equals(detail.getFactoryCode(), scope.factoryCode()), "调拨明细归属无法确认");
-		return new Source(context(), warehouse, detail);
+		return new Source(new Context(1, scope.tenantId(), scope.factoryCode(), scope.operatorCode()),
+				warehouse, detail);
 	}
 
-	@Transactional(rollbackFor = Exception.class)
+	/**
+	 * 只列本目标仓真实待接收标准调拨，不查询历史未扣源仓或已进入差异/退回的单据。
+	 *
+	 * @param warehouseCode 当前实际目标仓，须有接收查看或操作权限及移动/业务配置
+	 * @param reference     原单号、来源仓库或备注文本，最多80字
+	 * @param page          1至100；按ID稳定倒序，每页20条并预读1条判断续页
+	 * @return 当前组织和目标仓的候选摘要；选择后必须重读正式单据
+	 */
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+	public PendingPage pending(String warehouseCode, String reference, int page) {
+		var scope = scope();
+		String warehouse = warehouse(warehouseCode, false);
+		String keyword = text(reference);
+		require(page >= 1 && page <= 100 && keyword.length() <= 80, "请缩小查询条件后重试");
+		warehouseGuard.checkMobile(warehouse);
+		warehouseGuard.check(warehouse, "allocation", true);
+		var query = query(scope, warehouse)
+				.select(WmsAllocationBillEntity::getId, WmsAllocationBillEntity::getBillNo,
+						WmsAllocationBillEntity::getAllocationState, WmsAllocationBillEntity::getSourceDeducted,
+						WmsAllocationBillEntity::getOldWarehouseCode,
+						WmsAllocationBillEntity::getOldWarehouseName,
+						WmsAllocationBillEntity::getNewWarehouseCode,
+						WmsAllocationBillEntity::getNewWarehouseName,
+						WmsAllocationBillEntity::getIssueTime, WmsAllocationBillEntity::getEstimatedArrivalTime,
+						WmsAllocationBillEntity::getRemark, WmsAllocationBillEntity::getTenantId,
+						WmsAllocationBillEntity::getFactoryCode)
+				.eq(WmsAllocationBillEntity::getDelFlag, "0")
+				.eq(WmsAllocationBillEntity::getSourceDeducted, true)
+				.in(WmsAllocationBillEntity::getAllocationState, "IN_TRANSIT", "PARTIALLY_RECEIVED");
+		if (!keyword.isEmpty()) {
+			query.and(part -> part.apply("POSITION({0} IN COALESCE(bill_no,'')) > 0", keyword)
+					.or().apply("POSITION({0} IN COALESCE(old_warehouse_code,'')) > 0", keyword)
+					.or().apply("POSITION({0} IN COALESCE(old_warehouse_name,'')) > 0", keyword)
+					.or().apply("POSITION({0} IN COALESCE(remark,'')) > 0", keyword));
+		}
+		// 偏移量只来自限定整数，用户查询文本全部绑定，不生成跨物料/单位的数量合计。
+		query.orderByDesc(WmsAllocationBillEntity::getId).last("LIMIT 21 OFFSET " + ((page - 1) * 20));
+		var rows = bills.selectList(query);
+		require(rows != null && rows.size() <= 21, "待接收调拨读取失败");
+		var records = rows.stream().limit(20).map(row -> {
+			checkBill(row, scope, warehouse);
+			require(!text(row.getOldWarehouseCode()).isEmpty(), "原调拨来源仓库不完整，请核对原单");
+			return new PendingBill(row.getId().toString(), row.getBillNo(), row.getAllocationState(),
+					row.getOldWarehouseCode(), row.getOldWarehouseName(), warehouse, row.getNewWarehouseName(),
+					row.getIssueTime(), row.getEstimatedArrivalTime(), row.getRemark());
+		}).toList();
+		return new PendingPage(1, scope.tenantId().toString(), scope.factoryCode(), warehouse, page,
+				rows.size() > 20, records);
+	}
+
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
 	public View receive(Command command) {
-		var scope = WmsAllocationMobileReceiptService.requireScope();
+		var scope = scope();
 		String warehouse = warehouse(command == null ? null : command.warehouseCode(), true);
 		String snapshot = prepare(command);
 		var bill = bill(scope, command.receipt().getAllocationBillId(), warehouse, true);
@@ -64,6 +131,8 @@ public class WmsMobileTransferReceiptService {
 			require("CONFIRMED".equals(original.status()), "原接收请求已取消，请查询原结果后重新办理");
 			return original;
 		}
+		// 已登记终态沿原事实回读；首次接收才核实名工厂write和当前手机开关。
+		mobileAccess.requireFactory(true);
 		warehouseGuard.checkMobile(warehouse);
 		receiving.receive(command.receipt());
 		var confirmed = original(scope, bill, warehouse, command.receipt().getRequestId());
@@ -74,28 +143,34 @@ public class WmsMobileTransferReceiptService {
 	}
 
 	public View lookup(String requestId, Long billId, String warehouseCode) {
-		var scope = WmsAllocationMobileReceiptService.requireScope();
+		var scope = scope();
 		String warehouse = warehouse(warehouseCode, true);
 		requestId(requestId);
 		return original(scope, bill(scope, billId, warehouse, false), warehouse, requestId);
 	}
 
-	@Transactional(rollbackFor = Exception.class)
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
 	public View cancel(Command command, String reason) {
-		var scope = WmsAllocationMobileReceiptService.requireScope();
+		var scope = scope();
 		String warehouse = warehouse(command == null ? null : command.warehouseCode(), true);
 		String snapshot = prepare(command);
-		require(reason != null && !reason.isBlank() && reason.trim().length() <= 500, "请填写500字以内的取消原因");
+		require(reason != null && !reason.isBlank() && reason.trim().length() <= 500,
+				"请填写500字以内的取消原因");
 		var bill = bill(scope, command.receipt().getAllocationBillId(), warehouse, true);
 		String request = command.receipt().getRequestId();
 		var original = original(scope, bill, warehouse, request);
 		if ("NOT_CONFIRMED".equals(original.status())) {
-			require(receipts.insertCancellation(new WmsTransferReceiptMapper.Cancellation(scope.tenantId(), request,
-							scope.factoryCode(), scope.operatorCode(), warehouse, bill.getId(), snapshot, reason.trim(), LocalDateTime.now())) == 1,
+			// 只结束尚未登记的原号，不重新要求手机开关；已有事实不依赖今日write。
+			mobileAccess.requireFactory(true);
+			require(receipts.insertCancellation(
+							new WmsTransferReceiptMapper.Cancellation(scope.tenantId(), request,
+									scope.factoryCode(), scope.operatorCode(), warehouse, bill.getId(), snapshot,
+									reason.trim(), LocalDateTime.now())) == 1,
 					"原接收请求取消保存失败");
 			original = original(scope, bill, warehouse, request);
 		}
-		require(Objects.equals(original.requestPayload(), WmsTransferReceiptSnapshot.payload(snapshot)), "接收原号已被不同内容使用");
+		require(Objects.equals(original.requestPayload(), WmsTransferReceiptSnapshot.payload(snapshot)),
+				"接收原号已被不同内容使用");
 		return original;
 	}
 
@@ -123,14 +198,16 @@ public class WmsMobileTransferReceiptService {
 	}
 
 	private LambdaQueryWrapper<WmsAllocationBillEntity> query(Scope scope, String warehouse) {
-		return new LambdaQueryWrapper<WmsAllocationBillEntity>().eq(WmsAllocationBillEntity::getTenantId, scope.tenantId())
+		return new LambdaQueryWrapper<WmsAllocationBillEntity>().eq(WmsAllocationBillEntity::getTenantId,
+						scope.tenantId())
 				.eq(WmsAllocationBillEntity::getFactoryCode, scope.factoryCode())
 				.eq(WmsAllocationBillEntity::getNewWarehouseCode, warehouse);
 	}
 
 	private void checkBill(WmsAllocationBillEntity bill, Scope scope, String warehouse) {
 		require(bill != null && bill.getId() != null && bill.getId() > 0 && !text(bill.getBillNo()).isEmpty()
-				&& Objects.equals(bill.getTenantId(), scope.tenantId()) && Objects.equals(bill.getFactoryCode(), scope.factoryCode())
+				&& Objects.equals(bill.getTenantId(), scope.tenantId()) &&
+				Objects.equals(bill.getFactoryCode(), scope.factoryCode())
 				&& Objects.equals(bill.getNewWarehouseCode(), warehouse), "未找到当前仓库可办理的调拨单");
 		require(Boolean.TRUE.equals(bill.getSourceDeducted()), "该历史调拨单请从电脑端办理完整接收");
 	}
@@ -140,39 +217,49 @@ public class WmsMobileTransferReceiptService {
 		var cancelled = receipts.cancelled(scope.tenantId(), request);
 		require(receipt == null || cancelled == null, "原接收同时存在完成和取消记录，请核对历史");
 		if (receipt != null) {
-			require(Objects.equals(receipt.getTenantId(), scope.tenantId()) && Objects.equals(receipt.getFactoryCode(), scope.factoryCode())
+			require(Objects.equals(receipt.getTenantId(), scope.tenantId()) &&
+							Objects.equals(receipt.getFactoryCode(), scope.factoryCode())
 							&& Objects.equals(receipt.getReceiverCode(), scope.operatorCode())
 							&& Objects.equals(receipt.getAllocationBillId(), bill.getId())
-							&& Objects.equals(receipt.getRequestId(), request) && Objects.equals(receipt.getAllocationBillNo(), bill.getBillNo()),
+							&& Objects.equals(receipt.getRequestId(), request) &&
+							Objects.equals(receipt.getAllocationBillNo(), bill.getBillNo()),
 					"原接收回执不属于当前单据、工厂或操作人");
 			require(receipt.getId() != null && receipt.getId() > 0 && !text(receipt.getReceiptNo()).isEmpty()
 							&& receipt.getReceiptTime() != null
 							&& Set.of("PARTIAL", "COMPLETE", "VARIANCE_PENDING").contains(receipt.getReceiptStatus())
-							&& ("PARTIAL".equals(receipt.getReceiptStatus()) != Boolean.TRUE.equals(receipt.getFinalReceipt())),
+							&& ("PARTIAL".equals(receipt.getReceiptStatus()) !=
+							Boolean.TRUE.equals(receipt.getFinalReceipt())),
 					"原接收回执尚未完整保存");
 			String payload = WmsTransferReceiptSnapshot.payload(receipt.getRequestSnapshot());
 			var parsed = JSONUtil.parseObj(payload);
 			require(Objects.equals(parsed.getStr("billId"), bill.getId().toString())
 							&& Objects.equals(parsed.getBool("final"), receipt.getFinalReceipt())
 							&& Objects.equals(parsed.getJSONArray("lines").size(), receipt.getLineCount())
-							&& ("VARIANCE_PENDING".equals(receipt.getReceiptStatus()) == (receipt.getVarianceCaseId() != null)),
+							&& ("VARIANCE_PENDING".equals(receipt.getReceiptStatus()) ==
+							(receipt.getVarianceCaseId() != null)),
 					"原接收批次与请求证据不一致");
 			return new View(1, scope.tenantId(), scope.factoryCode(), scope.operatorCode(), request, warehouse,
 					bill.getId(), bill.getBillNo(),
-					"CONFIRMED", receipt.getId(), receipt.getReceiptNo(), receipt.getReceiptStatus(), receipt.getVarianceCaseId(),
+					"CONFIRMED", receipt.getId(), receipt.getReceiptNo(), receipt.getReceiptStatus(),
+					receipt.getVarianceCaseId(),
 					payload, receipt.getReceiptTime(), null);
 		}
 		if (cancelled != null) {
-			require(Objects.equals(cancelled.tenantId(), scope.tenantId()) && Objects.equals(cancelled.factoryCode(), scope.factoryCode())
-					&& Objects.equals(cancelled.operatorCode(), scope.operatorCode())
-					&& Objects.equals(cancelled.warehouseCode(), warehouse)
-					&& Objects.equals(cancelled.allocationBillId(), bill.getId()) && Objects.equals(cancelled.requestId(), request)
-					&& cancelled.completedTime() != null && !text(cancelled.reason()).isEmpty(), "原取消记录不属于当前作业");
+			require(Objects.equals(cancelled.tenantId(), scope.tenantId()) &&
+							Objects.equals(cancelled.factoryCode(), scope.factoryCode())
+							&& Objects.equals(cancelled.operatorCode(), scope.operatorCode())
+							&& Objects.equals(cancelled.warehouseCode(), warehouse)
+							&& Objects.equals(cancelled.allocationBillId(), bill.getId()) &&
+							Objects.equals(cancelled.requestId(), request)
+							&& cancelled.completedTime() != null && !text(cancelled.reason()).isEmpty(),
+					"原取消记录不属于当前作业");
 			String payload = WmsTransferReceiptSnapshot.payload(cancelled.requestSnapshot());
-			require(Objects.equals(JSONUtil.parseObj(payload).getStr("billId"), bill.getId().toString()), "原取消单据证据不一致");
+			require(Objects.equals(JSONUtil.parseObj(payload).getStr("billId"), bill.getId().toString()),
+					"原取消单据证据不一致");
 			return new View(1, scope.tenantId(), scope.factoryCode(), scope.operatorCode(), request, warehouse,
 					bill.getId(), bill.getBillNo(),
-					"CANCELLED", null, null, null, null, payload, cancelled.completedTime(), cancelled.reason());
+					"CANCELLED", null, null, null, null, payload, cancelled.completedTime(),
+					cancelled.reason());
 		}
 		return new View(1, scope.tenantId(), scope.factoryCode(), scope.operatorCode(), request, warehouse,
 				bill.getId(), bill.getBillNo(),
@@ -180,18 +267,30 @@ public class WmsMobileTransferReceiptService {
 	}
 
 	private String warehouse(String code, boolean write) {
-		require(code != null && !code.isBlank() && code.length() <= 100 && code.equals(code.trim()) && !code.matches(".*[?*].*"),
+		require(code != null && !code.isBlank() && code.length() <= 100 && code.equals(code.trim()) &&
+						!code.matches(".*[?*].*"),
 				"请从目标仓库的调拨接收入口办理");
 		boolean allowed = write
-				? permissions.hasPermission("wms_wmsAllocationReceive_rec", "wms_wmsAllocationReceive_rec_" + code)
-				: permissions.hasPermission("wms_wmsAllocationReceive_rec", "wms_wmsAllocationReceive_rec_" + code,
+				? permissions.hasPermission("wms_wmsAllocationReceive_rec",
+				"wms_wmsAllocationReceive_rec_" + code)
+				: permissions.hasPermission("wms_wmsAllocationReceive_rec",
+				"wms_wmsAllocationReceive_rec_" + code,
 				"wms_wmsAllocationReceive_view", "wms_wmsAllocationReceive_view_" + code);
 		require(allowed, "当前账号无权办理该仓库的调拨接收");
 		return code;
 	}
 
+	/**
+	 * 实际工厂read用于上下文、来源和原回执；首次登记另在写入前核write。
+	 */
+	private Scope scope() {
+		mobileAccess.requireFactory(false);
+		return WmsAllocationMobileReceiptService.requireScope();
+	}
+
 	private void requestId(String value) {
-		require(value != null && !value.isBlank() && value.length() <= 64 && value.equals(value.trim()), "原接收请求号无效");
+		require(value != null && !value.isBlank() && value.length() <= 64 && value.equals(value.trim()),
+				"原接收请求号无效");
 	}
 
 	private String text(String value) {

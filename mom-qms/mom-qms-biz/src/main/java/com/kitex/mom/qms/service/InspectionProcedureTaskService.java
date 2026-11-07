@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.common.query.enums.CommonQuery;
 import com.kitex.mom.qms.dto.QmsProcedureSourceWithdrawalDTO;
+import com.kitex.mom.qms.dto.QmsInspectionPieceDTO;
 import com.kitex.mom.qms.dto.ReportListRespDTO;
 import com.kitex.mom.qms.dto.inspection.InspectionAppendParam;
 import com.kitex.mom.qms.dto.inspection.InspectionCheckResultBatchParam;
@@ -110,8 +111,8 @@ public interface InspectionProcedureTaskService extends IService<QmsInspectionPr
      */
     void submitInspectionResult(Long taskId);
 
-    com.kitex.mom.qms.dto.QmsInspectionPieceDTO.Receipt collectPiece(
-            com.kitex.mom.qms.dto.QmsInspectionPieceDTO.Command command);
+    QmsInspectionPieceDTO.Receipt collectPiece(
+            QmsInspectionPieceDTO.Command command);
 
 
     /**

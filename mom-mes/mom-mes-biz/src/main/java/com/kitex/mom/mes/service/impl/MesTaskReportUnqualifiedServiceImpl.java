@@ -46,6 +46,7 @@ public class MesTaskReportUnqualifiedServiceImpl
     private final MesActualFactoryAccessService factoryAccess;
     private final MesProductionNgSourceCodec sourceCodec;
     private final MesProductionMaterialOperationService materialOperations;
+    private final MesNgMaterialPolicyService ngMaterialPolicy;
     private final MesProductionMaterialReversalService materialReversals;
     // 仅原不可变采集链接查询，不能依赖采集业务服务，否则生产调用链形成环。
     private final MesProductionNgCaptureMapper inventoryCaptures;
@@ -155,7 +156,16 @@ public class MesTaskReportUnqualifiedServiceImpl
             }
         }
         var operation = materialOperations.original(row);
-        result.setMaterialAccountingMode(operation == null ? "NONE" : operation.getAccountingMode());
+        var policy = ngMaterialPolicy.view(row);
+        require(operation == null || policy == null, "原NG存在新旧双耗用账，禁止回落为NONE");
+        result.setMaterialAccountingMode(policy != null ? "POLICY" : operation == null ? "NONE" : operation.getAccountingMode());
+        if (policy != null) {
+            result.setMaterialPolicy(policy);
+            result.setMaterialOperationId(policy.operationId());
+            result.setMaterialAccountingVersion(policy.evidenceVersion());
+            result.setMaterialAccountingFingerprint(policy.evidenceFingerprint());
+            result.setMaterialAccountingSnapshot(policy.evidenceSnapshot());
+        }
         if (operation != null) {
             result.setMaterialOperationId(operation.getId().toString());
             result.setMaterialAccountingVersion(operation.getCommandVersion());

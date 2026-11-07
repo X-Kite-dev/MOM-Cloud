@@ -24,64 +24,71 @@ import java.math.BigDecimal;
 @Schema(description = "工艺路线-工序-物料 表")
 public class MdmProcessProcedureMatEntity extends BaseEntity<MdmProcessProcedureMatEntity> {
 
-    /**
-     * 工艺路线编码
-     */
-    @Schema(description = "工艺路线编码")
-    private String routeCode;
+	/**
+	 * 工艺路线编码
+	 */
+	@Schema(description = "工艺路线编码")
+	private String routeCode;
 
-    /**
-     * 路线内稳定节点身份；主工序重复出现时各次配置相互独立。
-     */
-    @Schema(description = "工艺路线节点编号，由服务端解析真实节点")
-    private String routeNodeCode;
+	/**
+	 * 路线内稳定节点身份；主工序重复出现时各次配置相互独立。
+	 */
+	@Schema(description = "工艺路线节点编号，由服务端解析真实节点")
+	private String routeNodeCode;
 
-    /**
-     * 工序编码
-     */
-    @Schema(description = "工序编码")
-    private String processCode;
+	/**
+	 * 工序编码
+	 */
+	@Schema(description = "工序编码")
+	private String processCode;
 
-    /**
-     * 物料编码
-     */
-    @Schema(description = "物料编码")
-    private String materialCode;
+	/**
+	 * 物料编码
+	 */
+	@Schema(description = "物料编码")
+	private String materialCode;
 
-    /**
-     * 物料名称
-     */
-    @Schema(description = "物料名称")
-    private String materialName;
+	/**
+	 * 物料名称
+	 */
+	@Schema(description = "物料名称")
+	private String materialName;
 
-    /**
-     * 规格型号
-     */
-    @Schema(description = "规格型号")
-    private String materialSpec;
+	/**
+	 * 规格型号
+	 */
+	@Schema(description = "规格型号")
+	private String materialSpec;
 
-    /**
-     * 单位
-     */
-    @Schema(description = "单位")
-    private String unit;
+	/**
+	 * 单位
+	 */
+	@Schema(description = "单位")
+	private String unit;
 
-    /**
-     * 数量
-     */
-    @Schema(description = "数量")
-    private BigDecimal quantity;
+	/**
+	 * 数量
+	 */
+	@Schema(description = "数量")
+	private BigDecimal quantity;
 
-    /**
-     * 投料顺序
-     */
-    @Schema(description = "投料顺序")
-    private Integer step;
+	/**
+	 * 投料顺序
+	 */
+	@Schema(description = "投料顺序")
+	private Integer step;
 
-    /**
-     * 工厂编码
-     */
-    @Schema(description = "工厂编码")
-    @TableField(fill = FieldFill.INSERT)
-    private String factoryCode;
+	/**
+	 * 工厂编码
+	 */
+	@Schema(description = "工厂编码")
+	@TableField(fill = FieldFill.INSERT)
+	private String factoryCode;
+	/**
+	 * 仅MATERIAL_CONSUMPTION_V2生效；旧统一策略保持NULL。
+	 */
+	@Schema(description = "逐物料实际耗料方式：FEED或BACKFLUSH")
+	@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+	private String consumptionMode;
+
 }

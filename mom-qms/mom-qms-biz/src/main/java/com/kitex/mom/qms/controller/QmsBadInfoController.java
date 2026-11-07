@@ -30,6 +30,7 @@ import java.util.Map;
 public class QmsBadInfoController {
 
     private final QmsBadInfoService service;
+    private final com.kitex.mom.qms.service.QmsSpecialReturnRegistrationService specialReturns;
     private final com.kitex.mom.mes.api.feign.RemoteMesInventoryQualityCaseService mesQualityCases;
 
     @com.kitex.common.security.annotation.Inner
@@ -71,6 +72,56 @@ public class QmsBadInfoController {
         return R.ok();
     }
 
+	/**
+	 * 按真实仓库查询已登记RETURN隔离实物，保留当前人员授权。
+	 *
+	 * @param query 实际仓库、原申请及业务参照分页条件
+	 * @return 经WMS证明的候选页，候选不构成写入许可
+	 */
+	@GetMapping("/special-return/candidates")
+	@PreAuthorize("@pms.hasPermission('bad:add')")
+	public R<com.kitex.mom.wms.dto.WmsSpecialReturnQualityDTO.CandidatePage> specialReturnCandidates(
+			com.kitex.mom.wms.dto.WmsSpecialReturnQualityDTO.CandidateQuery query) {
+		return R.ok(specialReturns.candidates(query));
+	}
+
+	/**
+	 * 重新证明选件原隔离及数量，返回服务端规范来源。
+	 *
+	 * @param selection 已观察的真实选件及拟接管基本单位数量
+	 * @return WMS重新核验的规范原件，尚未登记或隔离
+	 */
+	@PostMapping("/special-return/preflight")
+	@PreAuthorize("@pms.hasPermission('bad:add')")
+	public R<com.kitex.mom.wms.dto.WmsSpecialReturnQualityDTO.Target> preflightSpecialReturn(
+			@RequestBody com.kitex.mom.wms.dto.WmsSpecialReturnQualityDTO.Selection selection) {
+		return R.ok(specialReturns.preflight(selection));
+	}
+
+	/**
+	 * 专用登记代理返回时本地事务已提交，再通过独立NCR服务代理同步HOLD。
+	 * 两步之间中断只留下同一个待隔离NCR，可由原案bad:sync恢复。
+	 *
+	 * @param selection 原件选择；同源异量、异指纹或异来源拒绝
+	 * @return 已登记原NCR及实际QMS隔离同步状态，不将登记等同于HOLD成功
+	 */
+	@PostMapping("/special-return/register")
+	@PreAuthorize("@pms.hasPermission('bad:add')")
+	public R<QmsBadInfoEntity> registerSpecialReturn(
+			@RequestBody com.kitex.mom.wms.dto.WmsSpecialReturnQualityDTO.Selection selection) {
+		var info = specialReturns.register(selection);
+		if (!"SUCCESS".equals(info.getHoldSyncStatus())) {
+			try {
+				service.retryHold(info.getId());
+			} catch (RuntimeException ex) {
+				// 注册已永久提交；远端可能成功而本地回写失败，不能把原案隐去或要求另建。
+				// 回读实际QMS进度，仍待确认的原案由bad:sync沿原号恢复；回读也失败则保留未知。
+				return R.ok(specialReturns.view(info.getId()));
+			}
+		}
+		return R.ok(specialReturns.view(info.getId()));
+	}
+
     @Operation(summary = "不合格品管理分页", description = "不合格品管理分页")
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('bad:show')")
@@ -102,9 +153,11 @@ public class QmsBadInfoController {
     @Operation(summary = "获取NCR主记录")
     @GetMapping("/getObj")
     @PreAuthorize("@pms.hasPermission('bad:show')")
-    public R<QmsBadInfoEntity> queryById(Long id) {
-        return R.ok(service.getById(id));
-    }
+	public R<QmsBadInfoEntity> queryById(Long id) {
+		var info = service.getById(id);
+		return R.ok(
+				info != null && "WMS_SPECIAL_RETURN".equals(info.getResourceType()) ? specialReturns.view(id) : info);
+	}
 
     @Operation(summary = "不合格品填报", description = "不合格品填报")
     @PostMapping("/add")

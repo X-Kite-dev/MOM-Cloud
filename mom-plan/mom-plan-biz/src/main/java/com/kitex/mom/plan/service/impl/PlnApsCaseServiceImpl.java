@@ -684,6 +684,11 @@ public class PlnApsCaseServiceImpl extends ServiceImpl<PlnApsCaseMapper, PlnApsC
                 require(row != null && Objects.equals(row.getTenantId(), scope.tenantId())
                                 && Objects.equals(row.getFactoryCode(), scope.factoryCode()),
                         "资源重排案件不存在或不属于当前租户工厂");
+                if ("EXECUTION_DEVIATION_CASE".equals(sourceType)) {
+                    require("EXECUTION".equals(row.getResourceType())
+                                    && "PLAN_MES_EFFECT".equals(row.getEvidenceSourceType()),
+                            "指定资源候选不是执行偏差来源，不能改标案件类型");
+                }
                 yield verified(sourceType, sourceId, row.getCaseNo(),
                         businessVersion(row.getUpdateTime(), row.getCreateTime(), row.getStatus()), scope);
             }

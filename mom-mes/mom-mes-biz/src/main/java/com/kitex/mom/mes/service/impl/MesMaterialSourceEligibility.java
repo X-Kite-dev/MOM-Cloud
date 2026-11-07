@@ -41,6 +41,11 @@ public class MesMaterialSourceEligibility {
 
     private final MesTaskArrangeMapper arrangements;
 
+    /** 原生产来源资格分支；新NG只扩展相同原预留/BOM核验，不降级GOOD。 */
+    public static boolean requiresProductionContext(String bizType) {
+        return java.util.Set.of("back_flush_out", "feeding", "production_ng_material_out").contains(bizType == null ? "" : bizType);
+    }
+
     private static boolean text(String value) {
         return value != null && !value.isBlank();
     }

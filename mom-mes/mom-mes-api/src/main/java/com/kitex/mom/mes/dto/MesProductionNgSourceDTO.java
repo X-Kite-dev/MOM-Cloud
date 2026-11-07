@@ -33,6 +33,9 @@ public class MesProductionNgSourceDTO {
      * 独立耗料恢复事实；原FEED模式/原文保留，不覆盖为NONE。
      */
     private MesProductionMaterialReversalDTO.Receipt materialReversal;
+    /** 独立POLICY原份额/恢复，不改变旧FEED协议。 */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private MesNgMaterialPolicyDTO.Operation materialPolicy;
     /**
      * 原不良报告主键，与合格报告ID域明确分开。
      */
@@ -116,7 +119,7 @@ public class MesProductionNgSourceDTO {
     /**
      * 原真实耗用选择；声明不能当成零耗料证明。
      */
-    @Schema(description = "原耗料方式：NONE声明或FEED真实投料耗用")
+    @Schema(description = "原耗料方式：NONE声明、FEED原投料协议或POLICY原逐料耗用")
     private String materialAccountingMode;
     /**
      * FEED原永久主账ID及全文/SHA；NONE为空，不补造历史。

@@ -14,6 +14,6 @@ public interface GroupConstants {
     /**
      * 群secret
      */
-    String GROUP_SECRET = "groupSecret";
+    String GROUP_SECRET = "REDACTED_TOKEN";
 
 }

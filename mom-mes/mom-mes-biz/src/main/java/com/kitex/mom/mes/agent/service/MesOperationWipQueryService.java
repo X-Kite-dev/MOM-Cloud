@@ -90,6 +90,9 @@ public class MesOperationWipQueryService {
                 .setToolCode(TOOL_CODE)
                 .setMetricDefinition("监控范围为WAIT、UN_RECEIVE、RECEIVE、PRODUCT、PAUSE状态的未关闭工序，其中PRODUCT是实际生产中工序。关注工序为暂停、计划结束已过但未关闭，或已到计划开工时间仍未实际开工；风险排序不是约束瓶颈结论。")
                 .setFactoryCode(actualFactory)
+                // 与open(query)的hasText条件一致；空白参数不冒充已限定的统计范围。
+                .setTaskCode(StringUtils.hasText(query.getTaskCode()) ? query.getTaskCode() : null)
+                .setWorkshopCode(StringUtils.hasText(query.getWorkshopCode()) ? query.getWorkshopCode() : null)
                 .setObservedAt(observedAt)
                 .setSummary(new MesOperationWipDTO.Summary()
                         .setOpenOperationCount(openCount)

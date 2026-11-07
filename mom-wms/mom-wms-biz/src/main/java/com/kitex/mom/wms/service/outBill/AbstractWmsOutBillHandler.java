@@ -1,6 +1,8 @@
 package com.kitex.mom.wms.service.outBill;
 
+import com.kitex.mom.wms.service.impl.externalinventory.ExternalLossContext;
 import cn.hutool.core.bean.BeanUtil;
+import com.kitex.mom.wms.service.special.WmsSpecialExecutionContext;
 import cn.hutool.core.bean.copier.CopyOptions;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.lang.Assert;
@@ -25,6 +27,7 @@ import com.kitex.mom.wms.enums.*;
 import com.kitex.mom.wms.mapper.*;
 import com.kitex.mom.wms.service.*;
 import com.kitex.mom.wms.util.WmsQuantityMath;
+import com.kitex.mom.wms.util.WmsOutboundStockIdentity;
 import com.kitex.mom.wms.util.WmsStockAvailability;
 import com.kitex.mom.wms.util.WmsStockOwnership;
 import com.kitex.mom.wms.vo.WmsOutBillDetailExcelVO;
@@ -106,9 +109,14 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 	 * @param entity 出库单
 	 */
 	public void beforeSaveDeep(WmsOutBillEntity entity) {
+		ExternalLossContext.guardHead(entity);
+		if (entity != null) {
+			WmsSpecialExecutionContext.check(entity.getBillType(), entity.getDocumentId(),
+					entity.getDocumentTable());
+		}
 		// 1. 校验数据完整性
 		checkData(entity);
-		bindExternalStockSources(entity);
+		validateAndBindStockSources(entity);
 
 		// 预留批次可能在页面打开后发生质量漂移或受控重配，落单前必须在同一事务内重新锁定复核。
 		materialReservationService.validateOutboundReservation(entity.getDetails());
@@ -238,7 +246,7 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 		existingNotice.setOutTime(entity.getOutTime());
 		existingNotice.setDetails(entity.getDetails());
 		checkData(existingNotice);
-		bindExternalStockSources(existingNotice);
+		validateAndBindStockSources(existingNotice);
 		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(
 						existingNotice.getWarehouseCode(), existingNotice.getBillType())),
 				"仓库不支持当前业务");
@@ -277,6 +285,8 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 
 	@Override
 	public Page<WmsOutBillDetailEntity> pageDetails(Page page, WmsInBillDetailQueryDTO params) {
+		// 先在Java边界核完整通知号，避免格式错误被MyBatis表达式包装成系统异常。
+		params.noticeIdValue();
 		return wmsOutBillDetailMapper.fetchDetails(page, params, null);
 	}
 
@@ -306,8 +316,9 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 						+ it.getSiteCode(),
 				WmsLiveStockEntity::getMatNum));
 		details.forEach(item -> {
-			Double num = Optional.ofNullable(map.get(item.getMatCode() + item.getSupplierCode() + item.getMatBatch()
-					+ item.getContainerCode() + item.getSiteCode())).orElse(0d);
+			Double num = Optional.ofNullable(
+					map.get(item.getMatCode() + item.getSupplierCode() + item.getMatBatch()
+							+ item.getContainerCode() + item.getSiteCode())).orElse(0d);
 			item.setMaxOutNum(num);
 		});
 
@@ -347,16 +358,19 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 		if (entity == null || CollUtil.isEmpty(entity.getDetails())) {
 			throw new CheckedException("明细数据不能为空");
 		}
-		Optional.ofNullable(entity.getWarehouseCode()).orElseThrow(() -> new CheckedException("仓库编码不能为空"));
+		Optional.ofNullable(entity.getWarehouseCode())
+				.orElseThrow(() -> new CheckedException("仓库编码不能为空"));
 		Optional.ofNullable(entity.getBillType()).orElseThrow(() -> new CheckedException("单据类型不能为空"));
 
 		// 2. 校验单据类型是否有效
 		Assert.isTrue(
-				OutBillTypeEnum.isValid(entity.getBillType()) || OtherOutBillTypeEnum.isValid(entity.getBillType()),
+				OutBillTypeEnum.isValid(entity.getBillType()) ||
+						OtherOutBillTypeEnum.isValid(entity.getBillType()),
 				"无效的单据类型：" + entity.getBillType());
 
 		for (WmsOutBillDetailEntity detail : entity.getDetails()) {
-			if (detail == null || StrUtil.isBlank(detail.getMatCode()) || StrUtil.isBlank(detail.getMatUnit())) {
+			if (detail == null || StrUtil.isBlank(detail.getMatCode()) ||
+					StrUtil.isBlank(detail.getMatUnit())) {
 				throw new CheckedException("出库明细物料和标准单位不能为空");
 			}
 			if (detail.getMatNum() == null || !Double.isFinite(detail.getMatNum())
@@ -375,9 +389,10 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 	}
 
 	/**
-	 * 外部货权的出库来源由当前库存行确定，落单前冻结到明细。
+	 * 落单或提交前核对指定原库存；自有未指定原行仍沿既有FIFO，外部货权保留原来源绑定规则。
+	 * 这里只做当前身份预检，不锁库存或占用实物，实际审核仍须锁内重核。
 	 */
-	private void bindExternalStockSources(WmsOutBillEntity bill) {
+	private void validateAndBindStockSources(WmsOutBillEntity bill) {
 		if (CollUtil.isEmpty(bill.getDetails())) {
 			return;
 		}
@@ -385,8 +400,12 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 			if (detail == null) {
 				throw new CheckedException("出库明细不能为空");
 			}
-			String ownerType = StrUtil.blankToDefault(detail.getStockOwnerType(), WmsStockOwnership.OWNED).trim();
+			String ownerType = StrUtil.blankToDefault(detail.getStockOwnerType(), WmsStockOwnership.OWNED)
+					.trim();
 			if (WmsStockOwnership.OWNED.equals(ownerType)) {
+				if (detail.getSourceStockId() != null) {
+					validateSpecifiedOwnedStockSource(bill, detail);
+				}
 				continue;
 			}
 			Long stockId = detail.getSourceStockId();
@@ -415,6 +434,31 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 		}
 	}
 
+	/**
+	 * 自有库存只要指定原行就须在占用通知数量前核对完整身份，缺值不能借原库存悄悄补齐。
+	 * 不提前锁库存，以免倒置生产预留的预留账→库存锁序；当前可用量及最终扣减仍沿审核合同。
+	 */
+	private void validateSpecifiedOwnedStockSource(WmsOutBillEntity bill, WmsOutBillDetailEntity detail) {
+		Long stockId = detail.getSourceStockId();
+		requireOutbound(stockId != null && stockId > 0, "请选择有效的来源库存");
+		Long tenantId = TenantContextHolder.getTenantId();
+		String factoryCode = FactoryContextHolder.getFactoryCode();
+		requireOutbound(tenantId != null && tenantId > 0 && StrUtil.isNotBlank(factoryCode)
+				&& (bill.getTenantId() == null || Objects.equals(tenantId, bill.getTenantId()))
+				&& (StrUtil.isBlank(bill.getFactoryCode())
+				|| Objects.equals(factoryCode, bill.getFactoryCode())), "出库单不属于当前租户和工厂");
+		WmsLiveStockEntity stock = wmsLiveStockService.getById(stockId);
+		// 组织及仓库沿实际主单设置；供应商、批次、单位、条码和容器保持原提交值。
+		bill.setFactoryCode(factoryCode);
+		detail.setFactoryCode(factoryCode);
+		detail.setWarehouseCode(bill.getWarehouseCode());
+		detail.setBillType(bill.getBillType());
+		WmsOutboundStockIdentity.requireMatches(detail, stock, tenantId, factoryCode);
+		WmsStockOwnership.validateOutbound(bill.getBillType(), detail, stock);
+		requireOutbound(WmsStockAvailability.isPhysicallyUsable(stock),
+				"所选来源库存已被锁定、过期、待检或质量隔离，请重新选择库存");
+	}
+
 	@Override
 	public Boolean updateState(Long id, String state) {
 		throw new CheckedException("出库单状态须通过提交或审核等业务操作变更");
@@ -436,7 +480,7 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 		Assert.isTrue(currentState.isEditable(), "当前状态不允许修改明细");
 		notice.setDetails(details);
 		checkData(notice);
-		bindExternalStockSources(notice);
+		validateAndBindStockSources(notice);
 		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(notice.getWarehouseCode(), notice.getBillType())),
 				"仓库不支持当前业务");
 
@@ -524,11 +568,15 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 		Assert.notNull(bill, "出库单不存在");
 		InOutBillStateEnum state = InOutBillStateEnum.getByCode(bill.getState());
 		Assert.notNull(state, "出库单状态无效");
-		Assert.isTrue(state.isEditable(), String.format("出库单[%s]当前状态[%s]不允许提交", bill.getBillNo(), state.getDesc()));
-		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(bill.getWarehouseCode(), bill.getBillType())), "仓库不支持当前业务");
+		Assert.isTrue(state.isEditable(),
+				String.format("出库单[%s]当前状态[%s]不允许提交", bill.getBillNo(), state.getDesc()));
+		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(bill.getWarehouseCode(), bill.getBillType())),
+				"仓库不支持当前业务");
 		bill.setDetails(wmsOutBillDetailMapper.selectList(Wrappers.<WmsOutBillDetailEntity>lambdaQuery()
 				.eq(WmsOutBillDetailEntity::getBillId, id)));
 		checkOutboundPlacements(bill);
+		// 历史草稿同样在进入审核前核对原件；不改写已保存的物流身份或预留数量。
+		validateAndBindStockSources(bill);
 
 		// 2. 更新状态为待审核
 		if (wmsOutBillMapper.update(new LambdaUpdateWrapper<WmsOutBillEntity>()
@@ -555,9 +603,11 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 		Assert.notNull(bill, "出库单不存在");
 		InOutBillStateEnum state = InOutBillStateEnum.getByCode(bill.getState());
 		Assert.notNull(state, "出库单状态无效");
-		Assert.isTrue(state.isReviewable(), String.format("出库单[%s]当前状态[%s]不允许审核", bill.getBillNo(), state.getDesc()));
+		Assert.isTrue(state.isReviewable(),
+				String.format("出库单[%s]当前状态[%s]不允许审核", bill.getBillNo(), state.getDesc()));
 
-		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(bill.getWarehouseCode(), bill.getBillType())), "仓库不支持当前业务");
+		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(bill.getWarehouseCode(), bill.getBillType())),
+				"仓库不支持当前业务");
 
 		// 3. 更新状态为已通过
 		List<WmsOutBillDetailEntity> billDetails = wmsOutBillDetailMapper.selectList(
@@ -639,8 +689,9 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 		double totalNum = 0d;
 		for (WmsOutBillDetailEntity billDetail : billDetails) {
 			WmsOutNoticeDetailEntity noticeDetail = Optional.ofNullable(map.get(billDetail.getNoticeDetailId()))
-					.orElseThrow(() -> new CheckedException("出库通知单明细[" + billDetail.getNoticeDetailId() + "]查找失败！物料编码：["
-							+ billDetail.getMatCode() + "]"));
+					.orElseThrow(() -> new CheckedException(
+							"出库通知单明细[" + billDetail.getNoticeDetailId() + "]查找失败！物料编码：["
+									+ billDetail.getMatCode() + "]"));
 			if (!matchesNoticeDetail(noticeDetail, billDetail)) {
 				throw new CheckedException("出库单明细与来源通知明细的物料、批次或单位不一致");
 			}
@@ -656,7 +707,8 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 							&& nonnegativeOutboundQuantity(noticeDetail.getOutNum()),
 					"出库单或通知单明细数量无效");
 			if (billNum > noticeNum) {
-				throw new CheckedException(String.format("物料编码为[%s]的物料超出通知出库量！", billDetail.getMatCode()));
+				throw new CheckedException(
+						String.format("物料编码为[%s]的物料超出通知出库量！", billDetail.getMatCode()));
 			}
 			// 修改通知单明细的出库数
 			noticeDetail.setNotOutNum(WmsQuantityMath.subtract(noticeNum, billNum));
@@ -819,6 +871,9 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 	 */
 	@Transactional
 	public void afterOutStock(WmsOutBillEntity outBill) {
+		ExternalLossContext.guardHead(outBill);
+		WmsSpecialExecutionContext.check(outBill.getBillType(), outBill.getDocumentId(),
+				outBill.getDocumentTable());
 		checkOutboundPlacements(outBill);
 		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(outBill.getWarehouseCode(), outBill.getBillType())),
 				"仓库不支持当前业务");
@@ -832,7 +887,8 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 			}
 			BigDecimal proofTotal = stockOuted.stream().map(item -> BigDecimal.valueOf(item.getMatNum()))
 					.reduce(BigDecimal.ZERO, BigDecimal::add);
-			if (detail.getMatNum() == null || proofTotal.compareTo(BigDecimal.valueOf(detail.getMatNum())) != 0) {
+			if (detail.getMatNum() == null ||
+					proofTotal.compareTo(BigDecimal.valueOf(detail.getMatNum())) != 0) {
 				throw new CheckedException("实际库存扣减证据与出库明细数量不守恒");
 			}
 			// 一条实际被消耗库存行形成一条不可拆分证据，保留批次、库位、容器、质量与首次入库时间。
@@ -849,6 +905,7 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 				inoutFlow.setBillNo(outBill.getBillNo());
 				inoutFlow.setBillType(outBill.getBillType());
 				inoutFlow.setOperateType(InOutEnum.OUT.getCode());
+				WmsSpecialExecutionContext.markOutboundFlow(detail, inoutFlow);
 				inoutFlow.setStockInTime(stock.getInTime());
 				inoutFlow.setExpirationStatus(stock.getExpirationStatus());
 				inoutFlow.setSlowMaterialStatus(stock.getSlowMaterialStatus());
@@ -877,7 +934,8 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 		Assert.notNull(bill, "出库单不存在");
 		InOutBillStateEnum state = InOutBillStateEnum.getByCode(bill.getState());
 		Assert.notNull(state, "出库单状态无效");
-		Assert.isTrue(state.isReviewable(), String.format("出库单[%s]当前状态[%s]不允许审核", bill.getBillNo(), state.getDesc()));
+		Assert.isTrue(state.isReviewable(),
+				String.format("出库单[%s]当前状态[%s]不允许审核", bill.getBillNo(), state.getDesc()));
 		// 2. 更新状态为待提交
 		if (wmsOutBillMapper.update(new LambdaUpdateWrapper<WmsOutBillEntity>()
 				.set(WmsOutBillEntity::getState, InOutBillStateEnum.PENDING_COMMIT.getCode())
@@ -908,7 +966,8 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 				"出库必须指定原通知单ID");
 		requireOutbound(params.getNoticeDetailId() == null || params.getNoticeDetailId() > 0,
 				"来源出库通知明细无效");
-		requireOutbound(params.getMatNum() != null && Double.isFinite(params.getMatNum()) && params.getMatNum() > 0
+		requireOutbound(
+				params.getMatNum() != null && Double.isFinite(params.getMatNum()) && params.getMatNum() > 0
 						&& (params.getOperateNum() == null
 						|| (Double.isFinite(params.getOperateNum()) && params.getOperateNum() > 0)),
 				"出库数量和已提供的操作数量必须为大于0的有限数值");
@@ -924,16 +983,19 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 		WmsOutNoticeEntity notice = Optional.ofNullable(wmsOutNoticeMapper.selectById(params.getNoticeId()))
 				.orElseThrow(() -> new CheckedException("通知单查找失败！"));
 		requireOutbound(
-				Objects.equals(params.getNoticeId(), notice.getId()) && Objects.equals(tenant, notice.getTenantId())
+				Objects.equals(params.getNoticeId(), notice.getId()) &&
+						Objects.equals(tenant, notice.getTenantId())
 						&& Objects.equals(factory, notice.getFactoryCode())
 						&& StrUtil.isNotBlank(notice.getWarehouseCode()),
 				"原出库通知单不属于当前实际组织或仓库无效");
 		requireOutbound(InOutNoticeStateEnum.READY.getCode().equals(notice.getState())
-				|| InOutNoticeStateEnum.RUNNING.getCode().equals(notice.getState()), "原通知单状态不允许继续出库");
+						|| InOutNoticeStateEnum.RUNNING.getCode().equals(notice.getState()),
+				"原通知单状态不允许继续出库");
 		requireOutbound(nonnegativeOutboundQuantity(notice.getAllNotOutNum())
-				&& nonnegativeOutboundQuantity(notice.getAllOutNum())
-				&& params.getMatNum() <= notice.getAllNotOutNum()
-				&& Double.isFinite(notice.getAllOutNum() + params.getMatNum()), "原通知单数量无效或本次数量超过未出库总量");
+						&& nonnegativeOutboundQuantity(notice.getAllOutNum())
+						&& params.getMatNum() <= notice.getAllNotOutNum()
+						&& Double.isFinite(notice.getAllOutNum() + params.getMatNum()),
+				"原通知单数量无效或本次数量超过未出库总量");
 		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(notice.getWarehouseCode(), notice.getBillType())),
 				"仓库不支持当前业务");
 		warehouseBusinessGuard.checkMobile(notice.getWarehouseCode());
@@ -944,7 +1006,8 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 				.selectList(new LambdaQueryWrapper<WmsOutNoticeDetailEntity>()
 						.eq(WmsOutNoticeDetailEntity::getNoticeId, params.getNoticeId())
 						.eq(WmsOutNoticeDetailEntity::getMatCode, params.getMatCode())
-						.eq(params.getNoticeDetailId() != null, WmsOutNoticeDetailEntity::getId, params.getNoticeDetailId())
+						.eq(params.getNoticeDetailId() != null, WmsOutNoticeDetailEntity::getId,
+								params.getNoticeDetailId())
 						.eq(params.getNoticeDetailId() == null && params.getSourceStockId() != null,
 								WmsOutNoticeDetailEntity::getSourceStockId,
 								params.getSourceStockId()));
@@ -955,7 +1018,9 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 			throw new CheckedException("同物料存在多条待出库存，请扫描或选择精确库存行后再出库！");
 		}
 		WmsOutNoticeDetailEntity noticeDetail = noticeDetails.get(0);
-		requireOutbound((params.getNoticeDetailId() == null || Objects.equals(params.getNoticeDetailId(), noticeDetail.getId()))
+		requireOutbound(
+				(params.getNoticeDetailId() == null ||
+						Objects.equals(params.getNoticeDetailId(), noticeDetail.getId()))
 						&& (noticeDetail.getSourceStockId() == null
 						|| Objects.equals(noticeDetail.getSourceStockId(), params.getSourceStockId())),
 				"来源通知明细或冻结库存不一致，不能替换批准的出库来源");
@@ -966,9 +1031,10 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 						&& Objects.equals(notice.getWarehouseCode(), noticeDetail.getWarehouseCode()),
 				"原通知明细的组织或仓库不符");
 		requireOutbound(nonnegativeOutboundQuantity(noticeDetail.getNotOutNum())
-				&& nonnegativeOutboundQuantity(noticeDetail.getOutNum())
-				&& params.getMatNum() <= noticeDetail.getNotOutNum()
-				&& Double.isFinite(noticeDetail.getOutNum() + params.getMatNum()), "原通知明细数量无效或本次数量超过未出库量");
+						&& nonnegativeOutboundQuantity(noticeDetail.getOutNum())
+						&& params.getMatNum() <= noticeDetail.getNotOutNum()
+						&& Double.isFinite(noticeDetail.getOutNum() + params.getMatNum()),
+				"原通知明细数量无效或本次数量超过未出库量");
 
 		WmsOutBillEntity newBill = new WmsOutBillEntity();
 		BeanUtil.copyProperties(notice, newBill, "id");
@@ -977,8 +1043,10 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 		BeanUtil.copyProperties(noticeDetail, newDetail, "id");
 		BeanUtil.copyProperties(params, newDetail, CopyOptions.create().ignoreNullValue());
 		newDetail.setNoticeDetailId(noticeDetail.getId());
-		newDetail.setOperateUnit(params.getOperateUnit() == null ? newDetail.getMatUnit() : params.getOperateUnit());
-		newDetail.setOperateNum(params.getOperateNum() == null ? newDetail.getMatNum() : params.getOperateNum());
+		newDetail.setOperateUnit(
+				params.getOperateUnit() == null ? newDetail.getMatUnit() : params.getOperateUnit());
+		newDetail.setOperateNum(
+				params.getOperateNum() == null ? newDetail.getMatNum() : params.getOperateNum());
 		newBill.setDetails(Collections.singletonList(newDetail));
 		// 续单也经过既有业务校验，不能绕过盘点损益等统一上下文门。
 		checkData(newBill);
@@ -993,8 +1061,10 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 				.eq(WmsOutBillEntity::getState, InOutBillStateEnum.APP_RUNNING.getCode())
 				.eq(WmsOutBillEntity::getSource, InOutBillSourceEnum.APP.getCode())
 				.orderByDesc(BaseCore::getCreateTime));
-		requireOutbound(outBills != null && outBills.size() <= 1, "存在多张处理中的APP出库单，请核对后指定原单号");
-		requireOutbound(StrUtil.isBlank(originalBillNo) || !outBills.isEmpty(), "原出库单不存在、已结束或不属于本通知及当前组织");
+		requireOutbound(outBills != null && outBills.size() <= 1,
+				"存在多张处理中的APP出库单，请核对后指定原单号");
+		requireOutbound(StrUtil.isBlank(originalBillNo) || !outBills.isEmpty(),
+				"原出库单不存在、已结束或不属于本通知及当前组织");
 		WmsOutBillEntity outBill;
 		Double noticeNotOutNum;
 		if (CollUtil.isEmpty(outBills)) {
@@ -1025,12 +1095,16 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 								.eq(WmsOutBillDetailEntity::getMatCode, params.getMatCode())
 								.eq(WmsOutBillDetailEntity::getMatBatch, params.getMatBatch())
 								.eq(WmsOutBillDetailEntity::getSiteCode, params.getSiteCode())
-								.eq(StrUtil.isNotBlank(newDetail.getContainerCode()), WmsOutBillDetailEntity::getContainerCode,
+								.eq(StrUtil.isNotBlank(newDetail.getContainerCode()),
+										WmsOutBillDetailEntity::getContainerCode,
 										newDetail.getContainerCode())
-								.apply(StrUtil.isBlank(newDetail.getContainerCode()), "coalesce(container_code, '') = ''")
-								.eq(StrUtil.isNotBlank(params.getSupplierCode()), WmsOutBillDetailEntity::getSupplierCode,
+								.apply(StrUtil.isBlank(newDetail.getContainerCode()),
+										"coalesce(container_code, '') = ''")
+								.eq(StrUtil.isNotBlank(params.getSupplierCode()),
+										WmsOutBillDetailEntity::getSupplierCode,
 										params.getSupplierCode()));
-				requireOutbound(billDetails != null && billDetails.size() <= 1, "出库单存在重复匹配明细，请先核对，不能取首条继续追加");
+				requireOutbound(billDetails != null && billDetails.size() <= 1,
+						"出库单存在重复匹配明细，请先核对，不能取首条继续追加");
 			}
 			if (CollUtil.isEmpty(billDetails)) {
 				// 新增明细
@@ -1044,10 +1118,12 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 				detailAdd.setOperateUnit(
 						params.getOperateUnit() == null ? detailAdd.getMatUnit() : params.getOperateUnit());
 				detailAdd
-						.setOperateNum(params.getOperateNum() == null ? detailAdd.getMatNum() : params.getOperateNum());
+						.setOperateNum(params.getOperateNum() ==
+								null ? detailAdd.getMatNum() : params.getOperateNum());
 				outBill.setDetails(Collections.singletonList(detailAdd));
 				checkOutboundPlacements(outBill);
-				requireOutbound(wmsOutBillDetailMapper.insert(detailAdd) == 1, "出库明细新增未确认，出库整体回滚");
+				requireOutbound(wmsOutBillDetailMapper.insert(detailAdd) == 1,
+						"出库明细新增未确认，出库整体回滚");
 				// 出库单未完成条数+1
 				requireOutbound(wmsOutBillMapper.update(new LambdaUpdateWrapper<WmsOutBillEntity>()
 						.set(WmsOutBillEntity::getDetailNotFinishNum, outBill.getDetailNotFinishNum() + 1)
@@ -1072,14 +1148,16 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 				detailExist.setOperateNum(WmsQuantityMath.add(
 						Optional.ofNullable(detailExist.getOperateNum()).orElse(0d),
 						Optional.ofNullable(params.getOperateNum()).orElse(params.getMatNum())));
-				requireOutbound(wmsOutBillDetailMapper.updateById(detailExist) == 1, "出库明细累计数量更新未确认，出库整体回滚");
+				requireOutbound(wmsOutBillDetailMapper.updateById(detailExist) == 1,
+						"出库明细累计数量更新未确认，出库整体回滚");
 				// 修改通知单数量 当作新增了一个出库单
 				detailExist.setMatNum(params.getMatNum());
 				noticeNotOutNum = createBillHandleNoticeOutNum(outBill);
 			}
 		}
 		// 将物料从库存中削减
-		List<WmsLiveStockEntity> stockOuted = wmsLiveStockService.reduceStockWhenOut(outBill.getDetails().get(0));
+		List<WmsLiveStockEntity> stockOuted = wmsLiveStockService.reduceStockWhenOut(
+				outBill.getDetails().get(0));
 		// 将削减的物料放到拣货区
 		requireOutbound(Boolean.TRUE.equals(wmsPickingAreaService.insertByStockList(
 						stockOuted, outBill, outBill.getDetails().get(0).getId())),
@@ -1092,7 +1170,8 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 							.eq(WmsOutBillEntity::getState, InOutBillStateEnum.APP_RUNNING.getCode())) == 1,
 					"出库单完成状态更新未确认，出库整体回滚");
 			// 删除拣货区物料 记录出库流水
-			requireOutbound(Boolean.TRUE.equals(wmsPickingAreaService.deleteByOutBill(outBill)), "拣货出库及流水未确认，出库整体回滚");
+			requireOutbound(Boolean.TRUE.equals(wmsPickingAreaService.deleteByOutBill(outBill)),
+					"拣货出库及流水未确认，出库整体回滚");
 			// 如果出库单都完成了，出库通知单也该完成了
 			passBillHandleNoticeState(outBill);
 
@@ -1140,8 +1219,10 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 				.selectList(new LambdaQueryWrapper<WmsOutBillEntity>()
 						.eq(WmsOutBillEntity::getDocumentId, id)
 						.eq(WmsOutBillEntity::getDocumentTable, DocumentEnum.DELIVER.getCode())
-						.and(wq -> wq.eq(WmsOutBillEntity::getState, InOutBillStateEnum.PENDING_COMMIT.getCode())
-								.or().eq(WmsOutBillEntity::getState, InOutBillStateEnum.PENDING_REVIEW.getCode())));
+						.and(wq -> wq.eq(WmsOutBillEntity::getState,
+										InOutBillStateEnum.PENDING_COMMIT.getCode())
+								.or()
+								.eq(WmsOutBillEntity::getState, InOutBillStateEnum.PENDING_REVIEW.getCode())));
 		List<Long> idList = wmsOutBillEntities.stream().map(BaseEntity::getId).toList();
 		// 删除子表
 		if (CollUtil.isNotEmpty(idList)) {
@@ -1180,6 +1261,8 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 	 */
 	@Override
 	public List<WmsOutBillDetailExcelVO> listDetails(WmsInBillDetailQueryDTO params, Long[] ids) {
+		// 先在Java边界核完整通知号，避免格式错误被MyBatis表达式包装成系统异常。
+		params.noticeIdValue();
 		List<WmsOutBillDetailEntity> list = wmsOutBillDetailMapper.fetchDetails(params, ids);
 		List<WmsOutBillDetailExcelVO> result = new ArrayList<>();
 		for (int i = 0; i < list.size(); i++) {

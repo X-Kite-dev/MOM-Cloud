@@ -26,6 +26,13 @@
     <script src="${templateUrl}/js/jquery.js"></script>
     <script src="${templateUrl}/js/JsBarcode.all.min.js"></script>
     <script src="${templateUrl}/js/bwip-js.js"></script>
+    <script>
+        // The shipped renderer exports bwipjs; HiPrint's external module expects bwip-js.
+        // Keep an instance already registered by a compatible plugin.
+        if (!window['bwip-js'] && window.bwipjs) {
+            window['bwip-js'] = window.bwipjs;
+        }
+    </script>
     <script src="${templateUrl}/js/nzh.min.js"></script>
     <script src="${templateUrl}/js/jquery.minicolors.min.js"></script>
     <script src="${templateUrl}/js/socket.io.min.js"></script>

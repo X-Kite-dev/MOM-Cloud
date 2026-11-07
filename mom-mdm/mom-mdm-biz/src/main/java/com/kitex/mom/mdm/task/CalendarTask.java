@@ -41,7 +41,7 @@ public class CalendarTask {
                 .collect(Collectors.toMap(MdmCalendarEntity::getTime, MdmCalendarEntity::getTime,
                         (a, b) -> a));
 
-        String getAccessTokenUrl = String.format("https://unpkg.com/holiday-calendar@1.1.3/data/CN/%s.json", currentYear);
+        String getAccessTokenUrl = String.format("https://service.example.invalid/holiday-calendar@1.1.3/data/CN/%s.json", currentYear);
         HttpResponse response = HttpRequest.get(getAccessTokenUrl).execute();
         List<MdmCalendarDTO> dates = JSONUtil.parseObj(response.body()).getBeanList("dates", MdmCalendarDTO.class);
         List<MdmCalendarEntity> saveList = new ArrayList<>();

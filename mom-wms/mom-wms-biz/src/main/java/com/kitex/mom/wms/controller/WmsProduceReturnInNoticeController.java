@@ -190,37 +190,56 @@ public class WmsProduceReturnInNoticeController {
         return handler.listDetails(params, ids);
     }
 
-    public QueryWrapper<WmsInNoticeEntity> getMainQueryWrapper(WmsInNoticeQueryDTO wmsInNotice) {
-        QueryWrapper<WmsInNoticeEntity> wrapper = new QueryWrapper<>();
-        if (CollUtil.isNotEmpty(wmsInNotice.getCreateTime())) {
-            wrapper.lambda().ge(BaseCore::getCreateTime, wmsInNotice.getCreateTime().get(0));
-            if (wmsInNotice.getCreateTime().size() > 1) {
-                wrapper.lambda().lt(BaseCore::getCreateTime, wmsInNotice.getCreateTime().get(1));
-            }
-        }
-        wrapper.lambda().like(StrUtil.isNotBlank(wmsInNotice.getId()), WmsInNoticeEntity::getId, wmsInNotice.getId())
-                .eq(StrUtil.isNotBlank(wmsInNotice.getState()), WmsInNoticeEntity::getState, wmsInNotice.getState())
-                .eq(StrUtil.isNotBlank(wmsInNotice.getWarehouseCode()), WmsInNoticeEntity::getWarehouseCode, wmsInNotice.getWarehouseCode())
-                .like(StrUtil.isNotBlank(wmsInNotice.getCreateBy()), BaseCore::getCreateBy, wmsInNotice.getCreateBy())
-                .eq(WmsInNoticeEntity::getBillType, billType)
-                .orderByAsc(WmsInNoticeEntity::getState)
-                .orderByDesc(BaseCore::getCreateTime);
-        return wrapper;
-    }
+	/**
+	 * 按完整原通知身份构造通知列表和主表导出条件；不改变既有业务类型、状态和组织约束。
+	 *
+	 * @param wmsInNotice 查询参数，空通知号不筛选，非法通知号拒绝查询
+	 * @return 通知主表查询条件，通知号以Long等值绑定
+	 */
+	public QueryWrapper<WmsInNoticeEntity> getMainQueryWrapper(WmsInNoticeQueryDTO wmsInNotice) {
+		Long noticeId = wmsInNotice.noticeIdValue();
+		QueryWrapper<WmsInNoticeEntity> wrapper = new QueryWrapper<>();
+		if (CollUtil.isNotEmpty(wmsInNotice.getCreateTime())) {
+			wrapper.lambda().ge(BaseCore::getCreateTime, wmsInNotice.getCreateTime().get(0));
+			if (wmsInNotice.getCreateTime().size() > 1) {
+				wrapper.lambda().lt(BaseCore::getCreateTime, wmsInNotice.getCreateTime().get(1));
+			}
+		}
+		wrapper.lambda().eq(noticeId != null, WmsInNoticeEntity::getId, noticeId)
+				.eq(StrUtil.isNotBlank(wmsInNotice.getState()), WmsInNoticeEntity::getState,
+						wmsInNotice.getState())
+				.eq(StrUtil.isNotBlank(wmsInNotice.getWarehouseCode()), WmsInNoticeEntity::getWarehouseCode,
+						wmsInNotice.getWarehouseCode())
+				.like(StrUtil.isNotBlank(wmsInNotice.getCreateBy()), BaseCore::getCreateBy,
+						wmsInNotice.getCreateBy())
+				.eq(WmsInNoticeEntity::getBillType, billType)
+				.orderByAsc(WmsInNoticeEntity::getState)
+				.orderByDesc(BaseCore::getCreateTime);
+		return wrapper;
+	}
 
 
-    public QueryWrapper<WmsInNoticeEntity> getCountQueryWrapper(WmsInNoticeQueryDTO wmsInNotice) {
-        QueryWrapper<WmsInNoticeEntity> wrapper = new QueryWrapper<>();
-        if (CollUtil.isNotEmpty(wmsInNotice.getCreateTime())) {
-            wrapper.lambda().ge(BaseCore::getCreateTime, wmsInNotice.getCreateTime().get(0));
-            if (wmsInNotice.getCreateTime().size() > 1) {
-                wrapper.lambda().lt(BaseCore::getCreateTime, wmsInNotice.getCreateTime().get(1));
-            }
-        }
-        wrapper.lambda().like(StrUtil.isNotBlank(wmsInNotice.getId()), WmsInNoticeEntity::getId, wmsInNotice.getId())
-                .eq(StrUtil.isNotBlank(wmsInNotice.getWarehouseCode()), WmsInNoticeEntity::getWarehouseCode, wmsInNotice.getWarehouseCode())
-                .like(StrUtil.isNotBlank(wmsInNotice.getCreateBy()), BaseCore::getCreateBy, wmsInNotice.getCreateBy())
-                .eq(WmsInNoticeEntity::getBillType, billType);
-        return wrapper;
-    }
+	/**
+	 * 按完整原通知身份构造统计条件；不改变既有业务类型、状态和组织约束。
+	 *
+	 * @param wmsInNotice 查询参数，空通知号不筛选，非法通知号拒绝查询
+	 * @return 通知主表查询条件，通知号以Long等值绑定
+	 */
+	public QueryWrapper<WmsInNoticeEntity> getCountQueryWrapper(WmsInNoticeQueryDTO wmsInNotice) {
+		Long noticeId = wmsInNotice.noticeIdValue();
+		QueryWrapper<WmsInNoticeEntity> wrapper = new QueryWrapper<>();
+		if (CollUtil.isNotEmpty(wmsInNotice.getCreateTime())) {
+			wrapper.lambda().ge(BaseCore::getCreateTime, wmsInNotice.getCreateTime().get(0));
+			if (wmsInNotice.getCreateTime().size() > 1) {
+				wrapper.lambda().lt(BaseCore::getCreateTime, wmsInNotice.getCreateTime().get(1));
+			}
+		}
+		wrapper.lambda().eq(noticeId != null, WmsInNoticeEntity::getId, noticeId)
+				.eq(StrUtil.isNotBlank(wmsInNotice.getWarehouseCode()), WmsInNoticeEntity::getWarehouseCode,
+						wmsInNotice.getWarehouseCode())
+				.like(StrUtil.isNotBlank(wmsInNotice.getCreateBy()), BaseCore::getCreateBy,
+						wmsInNotice.getCreateBy())
+				.eq(WmsInNoticeEntity::getBillType, billType);
+		return wrapper;
+	}
 }

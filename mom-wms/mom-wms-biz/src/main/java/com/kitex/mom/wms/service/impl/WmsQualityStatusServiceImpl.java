@@ -20,6 +20,8 @@ import com.kitex.mom.wms.mapper.WmsQualityStatusOperationMapper;
 import com.kitex.mom.wms.service.WmsMaterialReservationService;
 import com.kitex.mom.wms.service.WmsQualityStatusService;
 import com.kitex.mom.wms.util.WmsSerialStockGuard;
+import com.kitex.mom.wms.service.special.WmsSpecialReturnQualityProofService;
+import org.springframework.transaction.annotation.Isolation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,208 +48,389 @@ public class WmsQualityStatusServiceImpl
 
     private final WmsLiveStockMapper liveStockMapper;
     private final WmsMaterialReservationService reservationService;
+	private final WmsSpecialReturnQualityProofService specialReturnProof;
+	private final com.kitex.mom.wms.service.rework.WmsNcrReworkProof reworkProof;
+	private final com.kitex.mom.wms.service.rework.WmsNcrReworkRepository reworkRepository;
+	private final com.kitex.mom.wms.service.physical.WmsPhysicalRepository physicalRepository;
+	private final com.kitex.mom.wms.service.physical.WmsPhysicalProof physicalProof;
+	private final com.kitex.mom.wms.service.physical.WmsPhysicalAccess physicalAccess;
+	private final com.kitex.mom.wms.service.physical.WmsPhysicalService physicalService;
 
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public WmsQualityStatusResult apply(WmsQualityStatusCommand command) {
-        normalizeAndValidate(command);
-        WmsQualityStatusOperationEntity operation = getOne(
-                new LambdaQueryWrapper<WmsQualityStatusOperationEntity>()
-                        .eq(WmsQualityStatusOperationEntity::getRequestId, command.getRequestId())
-                        .last("FOR UPDATE"), false);
-        if (operation != null) {
-            if (StrUtil.isBlank(command.getHoldNo())) command.setHoldNo(operation.getHoldNo());
-            assertSameCommand(operation, command);
-            return "PENDING".equals(operation.getStatus()) ? process(operation) : result(operation);
-        }
-        command.setHoldNo(StrUtil.blankToDefault(command.getHoldNo(),
-                "QH-" + IdUtil.getSnowflakeNextIdStr()));
-        require("HOLD".equals(command.getAction()) || StrUtil.isNotBlank(command.getHoldNo()),
-                "处置必须关联质量隔离单号");
-        operation = new WmsQualityStatusOperationEntity()
-                .setRequestId(command.getRequestId()).setHoldNo(command.getHoldNo())
-                .setSourceType(command.getSourceType()).setSourceId(command.getSourceId())
-                .setAction(command.getAction()).setMatCode(command.getMatCode())
-                .setMatBatch(command.getMatBatch()).setMatUnit(command.getMatUnit())
-                .setSupplierCode(command.getSupplierCode())
-                .setWarehouseCode(command.getWarehouseCode()).setSiteCode(command.getSiteCode())
-                .setContainerCode(command.getContainerCode()).setRequestedQuantity(command.getQuantity())
-                .setAffectedQuantity(BigDecimal.ZERO).setStatus("PENDING").setReason(command.getReason())
-                .setFactoryCode(command.getFactoryCode());
-        require(save(operation), "质量库存操作保存失败");
-        var persisted = getById(operation.getId());
-        require(persisted != null && persisted.getRequestedQuantity() != null
-                && persisted.getRequestedQuantity().compareTo(command.getQuantity()) == 0, "质量库存请求数量发生数据库精度舍入，已回滚");
-        return process(operation);
-    }
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+	public WmsQualityStatusResult apply(WmsQualityStatusCommand command) {
+		normalizeAndValidate(command);
+		require(command.getReholdOfPhysicalOperationId() == null &&
+				command.getReholdOfPhysicalRequestId() == null, "定向重隔离必须使用专用接口");
+		if (command.getSpecialReturnBinding() == null && command.getRequestId().startsWith("WMS-REHOLD:")) {
+			Long pending = baseMapper.selectCount(new LambdaQueryWrapper<WmsQualityStatusOperationEntity>().eq(
+							WmsQualityStatusOperationEntity::getFactoryCode, command.getFactoryCode())
+					.eq(WmsQualityStatusOperationEntity::getSourceType, command.getSourceType())
+					.eq(WmsQualityStatusOperationEntity::getSourceId, command.getSourceId())
+					.in(WmsQualityStatusOperationEntity::getAction, "SCRAP", "RETURN")
+					.eq(WmsQualityStatusOperationEntity::getStatus, "ACTION_PENDING"));
+			require(pending == 0, "普通实物待办存在，必须升级并明确原处置父ID，禁止同批邻件补量");
+		}
+		// 专用分支先核实名、实际工厂/仓授权并锁同号及原仓；成功重放只返回永久结果。
+		specialReturnProof.authorizeCommand(command);
+		if (TERMINAL_PHYSICAL_ACTIONS.contains(command.getAction()) &&
+				command.getSpecialReturnBinding() == null) {
+			physicalAccess.write();
+			physicalRepository.ready();
+			var template = new WmsQualityStatusOperationEntity().setFactoryCode(command.getFactoryCode())
+					.setMatCode(command.getMatCode()).setMatBatch(command.getMatBatch())
+					.setMatUnit(command.getMatUnit()).setSupplierCode(command.getSupplierCode())
+					.setWarehouseCode(command.getWarehouseCode()).setSiteCode(command.getSiteCode())
+					.setContainerCode(command.getContainerCode()).setHoldNo(command.getHoldNo())
+					.setSourceType(command.getSourceType()).setSourceId(command.getSourceId());
+			var candidateWarehouses = findHeldStocks(template, false).stream()
+					.map(WmsLiveStockEntity::getWarehouseCode).distinct().sorted().toList();
+			physicalRepository.warehouses(com.kitex.common.data.tenant.TenantContextHolder.getTenantId(),
+					command.getFactoryCode(), candidateWarehouses);
+		}
+		WmsQualityStatusOperationEntity operation = getOne(
+				new LambdaQueryWrapper<WmsQualityStatusOperationEntity>()
+						.eq(WmsQualityStatusOperationEntity::getRequestId, command.getRequestId())
+						.last("FOR UPDATE"), false);
+		if (operation != null) {
+			if (StrUtil.isBlank(command.getHoldNo())) {
+				command.setHoldNo(operation.getHoldNo());
+			}
+			assertSameCommand(operation, command);
+			specialReturnProof.authorizeOperation(operation);
+			return "PENDING".equals(operation.getStatus()) ? process(operation) : result(operation);
+		}
+		command.setHoldNo(StrUtil.blankToDefault(command.getHoldNo(),
+				"QH-" + IdUtil.getSnowflakeNextIdStr()));
+		require("HOLD".equals(command.getAction()) || StrUtil.isNotBlank(command.getHoldNo()),
+				"处置必须关联质量隔离单号");
+		operation = new WmsQualityStatusOperationEntity()
+				.setRequestId(command.getRequestId()).setHoldNo(command.getHoldNo())
+				.setSourceType(command.getSourceType()).setSourceId(command.getSourceId())
+				.setAction(command.getAction()).setMatCode(command.getMatCode())
+				.setMatBatch(command.getMatBatch()).setMatUnit(command.getMatUnit())
+				.setSupplierCode(command.getSupplierCode())
+				.setWarehouseCode(command.getWarehouseCode()).setSiteCode(command.getSiteCode())
+				.setContainerCode(command.getContainerCode()).setRequestedQuantity(command.getQuantity())
+				.setAffectedQuantity(BigDecimal.ZERO).setStatus("PENDING").setReason(command.getReason())
+				.setFactoryCode(command.getFactoryCode())
+				.setSpecialReturnBindingJson(specialReturnProof.encode(command.getSpecialReturnBinding()));
+		if (command.getSpecialReturnBinding() != null) {
+			operation.setTenantId(Long.valueOf(command.getSpecialReturnBinding().target().tenantId()));
+		}
+		require(save(operation), "质量库存操作保存失败");
+		var persisted = getById(operation.getId());
+		require(persisted != null && persisted.getRequestedQuantity() != null
+						&& persisted.getRequestedQuantity().compareTo(command.getQuantity()) == 0,
+				"质量库存请求数量发生数据库精度舍入，已回滚");
+		require(Objects.equals(persisted.getSpecialReturnBindingJson(),
+						operation.getSpecialReturnBindingJson()),
+				"特殊退回质量原件绑定未完整保存，已回滚");
+		if (command.getSpecialReturnBinding() != null) {
+			require(persisted.getSpecialReturnSequence() != null && persisted.getSpecialReturnSequence() > 0,
+					"特殊接管永久办理序号未由数据库分配，已回滚");
+			return process(persisted);
+		}
+		return process(persisted);
+	}
 
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public WmsQualityStatusResult retry(Long operationId) {
-        require(operationId != null, "质量库存事务不能为空");
-        WmsQualityStatusOperationEntity operation = getOne(
-                new LambdaQueryWrapper<WmsQualityStatusOperationEntity>()
-                        .eq(WmsQualityStatusOperationEntity::getId, operationId).last("FOR UPDATE"), false);
-        require(operation != null, "质量库存事务不存在");
-        requireFactory(operation.getFactoryCode());
-        return "PENDING".equals(operation.getStatus()) ? process(operation) : result(operation);
-    }
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+	public WmsQualityStatusResult retry(Long operationId) {
+		require(operationId != null, "质量库存事务不能为空");
+		physicalAccess.read();
+		physicalAccess.write();
+		var observed = physicalService.load(operationId, false);
+		var warehouses = physicalService.warehouses(observed);
+		physicalAccess.requireWarehouses(warehouses, "show");
+		physicalAccess.requireWarehouses(warehouses, "retry");
+		specialReturnProof.authorizeOperation(observed);
+		physicalRepository.warehouses(observed.getTenantId(), observed.getFactoryCode(), warehouses);
+		var operation = physicalService.load(operationId, true);
+		return "PENDING".equals(operation.getStatus()) ? process(operation, true) : result(operation);
+	}
 
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public WmsQualityStatusResult execute(WmsQualityActionExecuteCommand command) {
-        require(command != null && command.getOperationId() != null, "待执行质量库存事务不能为空");
-        require(StrUtil.isNotBlank(command.getRequestId()), "执行请求号不能为空");
-        require(StrUtil.isNotBlank(command.getExecutionRef()), "报废单/退货单等执行单号不能为空");
-        require(StrUtil.isNotBlank(command.getRemark()), "实物执行说明不能为空");
-        WmsQualityStatusOperationEntity operation = getOne(
-                new LambdaQueryWrapper<WmsQualityStatusOperationEntity>()
-                        .eq(WmsQualityStatusOperationEntity::getId, command.getOperationId()).last("FOR UPDATE"), false);
-        require(operation != null, "质量库存事务不存在");
-        requireFactory(operation.getFactoryCode());
-        require(TERMINAL_PHYSICAL_ACTIONS.contains(operation.getAction()), "仅报废或退货需要仓库实物执行");
-        if ("EXECUTED".equals(operation.getStatus())) {
-            require(Objects.equals(operation.getExecutionRequestId(), command.getRequestId()),
-                    "该质量库存事务已经由其他请求执行");
-            return result(operation);
-        }
-        require("ACTION_PENDING".equals(operation.getStatus()), "当前质量库存事务不在待实物执行状态");
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+	public WmsQualityStatusResult execute(WmsQualityActionExecuteCommand command) {
+		require(command != null && command.getOperationId() != null, "待执行质量库存事务不能为空");
+		physicalAccess.read();
+		var operation = physicalService.load(command.getOperationId(), false);
+		physicalAccess.requireWarehouses(physicalService.warehouses(operation), "show");
+		require("EXECUTED".equals(operation.getStatus()),
+				"请升级客户端并重读原操作，首次实物执行仅支持/execution/apply");
+		require(Objects.equals(operation.getExecutionRequestId(), command.getRequestId()) &&
+						Objects.equals(operation.getExecutionRef(), StrUtil.trim(command.getExecutionRef())) &&
+						Objects.equals(operation.getExecutionRemark(), StrUtil.trim(command.getRemark())),
+				"原执行请求号、执行单或说明不一致");
+		return result(operation);
+	}
 
-        List<Long> stockIds = parseIds(operation.getAffectedStockIds());
-        require(!stockIds.isEmpty(), "质量库存事务没有可执行库存行");
-        List<WmsLiveStockEntity> stocks = liveStockMapper.selectList(
-                new LambdaQueryWrapper<WmsLiveStockEntity>().in(WmsLiveStockEntity::getId, stockIds)
-                        .orderByAsc(WmsLiveStockEntity::getId).last("FOR UPDATE"));
-        require(stocks.size() == stockIds.size(), "隔离库存已发生变化，请先人工核对");
-        BigDecimal actual = BigDecimal.ZERO;
-        for (WmsLiveStockEntity stock : stocks) {
-            require(Objects.equals(stock.getQualityHoldNo(), operation.getHoldNo()), "库存行不再属于当前隔离单");
-            require(Objects.equals(stock.getQualitySourceType(), operation.getSourceType())
-                            && Objects.equals(stock.getQualitySourceId(), operation.getSourceId()),
-                    "库存行已转由其他质量案件处理，不能凭原隔离单执行实物出库");
-            require((operation.getAction() + "_PENDING").equals(stock.getQualityStatus()),
-                    "库存行质量状态与待执行动作不一致");
-            require(reservationService.activeReservedNum(stock.getId()).signum() == 0,
-                    "隔离库存仍被生产预留占用，必须先完成预留调整再执行实物出库");
-            actual = actual.add(quantity(stock));
-        }
-        require(actual.compareTo(operation.getAffectedQuantity()) == 0, "隔离库存数量已变化，请先人工核对");
-        require(liveStockMapper.deleteByIds(stockIds) == stockIds.size(), "质量实物执行库存归档行数不一致，已回滚");
+	/**
+	 * 普通定向HOLD先锁父再锁稳定子号，精确原件升序锁；不扫描同批邻件。
+	 */
+	@Override
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+	public WmsQualityStatusResult applyPhysicalRehold(WmsQualityStatusCommand command) {
+		normalizeAndValidate(command);
+		physicalAccess.write();
+		physicalRepository.ready();
+		require(command.getSpecialReturnBinding() == null && "HOLD".equals(command.getAction()) &&
+				"QMS_NCR".equals(command.getSourceType()), "仅普通NCR定向HOLD允许父引用");
+		long parentId = com.kitex.mom.wms.service.physical.WmsPhysicalRules.id(
+				command.getReholdOfPhysicalOperationId());
+		require(Objects.equals(command.getRequestId(), "WMS-PH-REHOLD:" + parentId) &&
+				StrUtil.isNotBlank(command.getReholdOfPhysicalRequestId()), "定向HOLD必须使用稳定父原号");
+		var observed = physicalService.load(parentId, false);
+		physicalRepository.warehouses(observed.getTenantId(), observed.getFactoryCode(),
+				physicalService.warehouses(observed));
+		var parent = physicalService.load(parentId, true);
+		require(parent.getSpecialReturnBindingJson() == null &&
+						TERMINAL_PHYSICAL_ACTIONS.contains(parent.getAction()) &&
+						Objects.equals(parent.getRequestId(), command.getReholdOfPhysicalRequestId()) &&
+						Objects.equals(parent.getHoldNo(), command.getHoldNo()) &&
+						Objects.equals(parent.getSourceType(), command.getSourceType()) &&
+						Objects.equals(parent.getSourceId(), command.getSourceId()) &&
+						parent.getRequestedQuantity().compareTo(command.getQuantity()) == 0 &&
+						parent.getAffectedQuantity().compareTo(command.getQuantity()) == 0,
+				"定向HOLD父身份、来源、原号或整量不一致");
+		var existing = getOne(new LambdaQueryWrapper<WmsQualityStatusOperationEntity>().eq(
+						WmsQualityStatusOperationEntity::getRequestId, command.getRequestId()).last("FOR UPDATE"),
+				false);
+		if (existing != null) {
+			assertSameCommand(existing, command);
+			require(Objects.equals(existing.getReason(), command.getReason()), "定向原号原因原文不一致");
+			require(Objects.equals(existing.getReholdOfPhysicalOperationId(), parentId) &&
+							"SUCCESS".equals(existing.getStatus()) &&
+							Objects.equals(existing.getAffectedStockIds(), parent.getAffectedStockIds()),
+					"已有定向HOLD回执不完整");
+			return result(existing);
+		}
+		require(physicalRepository.superseded(parent) == null && "ACTION_PENDING".equals(parent.getStatus()),
+				"原处置已经执行或永久重隔离");
+		var source = physicalProof.inspect(parent, true, false);
+		// 其他原文条件逐项核对，不允许父ID相同但替换原物料或位置。
+		require(Objects.equals(parent.getMatUnit(), command.getMatUnit()) &&
+				Objects.equals(parent.getWarehouseCode(), command.getWarehouseCode()) &&
+				Objects.equals(parent.getMatCode(), command.getMatCode()) &&
+				Objects.equals(parent.getMatBatch(), command.getMatBatch()) &&
+				Objects.equals(parent.getSupplierCode(), command.getSupplierCode()) &&
+				Objects.equals(parent.getSiteCode(), command.getSiteCode()) &&
+				Objects.equals(parent.getContainerCode(), command.getContainerCode()), "定向HOLD原条件不一致");
+		var child = new WmsQualityStatusOperationEntity().setRequestId(command.getRequestId())
+				.setHoldNo(parent.getHoldNo()).setSourceType(parent.getSourceType())
+				.setSourceId(parent.getSourceId()).setAction("HOLD").setMatCode(parent.getMatCode())
+				.setMatBatch(parent.getMatBatch()).setMatUnit(parent.getMatUnit())
+				.setSupplierCode(parent.getSupplierCode()).setWarehouseCode(parent.getWarehouseCode())
+				.setSiteCode(parent.getSiteCode()).setContainerCode(parent.getContainerCode())
+				.setRequestedQuantity(parent.getRequestedQuantity())
+				.setAffectedQuantity(parent.getAffectedQuantity())
+				.setAffectedStockIds(parent.getAffectedStockIds()).setSplitRecorded(true)
+				.setSplitRemainderStockIds(null).setSplitLineageJson("[]")
+				.setSplitRecordedAt(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS)).setStatus("SUCCESS")
+				.setReason(command.getReason()).setResultMessage("原处置已定向整件恢复隔离")
+				.setFactoryCode(parent.getFactoryCode()).setReholdOfPhysicalOperationId(parentId);
+		require(save(child), "定向HOLD保存失败");
+		for (var piece : source.pieces()) {
+			var stock = liveStockMapper.selectById(Long.valueOf(piece.stockId()));
+			physicalRepository.clearOwner(parent, stock.getId());
+			stock.setQualityPhysicalOperationId(null);
+			applyState(stock, child);
+			require(liveStockMapper.updateById(stock) == 1, "定向HOLD库存更新失败");
+		}
+		return result(getById(child.getId()));
+	}
 
-        MomUser user = SecurityUtils.getUser();
-        operation.setStatus("EXECUTED").setExecutionRequestId(command.getRequestId())
-                .setExecutionRef(StrUtil.trim(command.getExecutionRef()))
-                .setExecutionRemark(StrUtil.trim(command.getRemark()))
-                .setExecutedBy(user == null ? "SYSTEM" : user.getUsername())
-                .setExecutedByName(user == null ? "系统" : user.getName())
-                .setExecutedTime(LocalDateTime.now())
-                .setResultMessage(("SCRAP".equals(operation.getAction()) ? "报废" : "退货")
-                        + "实物出库已确认，执行单号=" + command.getExecutionRef());
-        require(updateById(operation), "质量实物执行回执保存失败，已回滚");
-        return result(operation);
-    }
+	private WmsQualityStatusResult process(WmsQualityStatusOperationEntity operation) {
+		return process(operation, false);
+	}
 
-    private WmsQualityStatusResult process(WmsQualityStatusOperationEntity operation) {
-        List<WmsLiveStockEntity> stocks = "HOLD".equals(operation.getAction())
-                ? findAvailableStocks(operation) : findHeldStocks(operation);
-        if (!stocks.isEmpty()) {
-            Set<String> units = stocks.stream().map(WmsLiveStockEntity::getMatUnit).collect(Collectors.toSet());
-            require(units.size() == 1 && StrUtil.isNotBlank(units.iterator().next()), "质量库存候选缺少单位或混用不同单位，禁止直接合并数量");
-        }
-        BigDecimal available = stocks.stream().map(this::quantity).reduce(BigDecimal.ZERO, BigDecimal::add);
-        if (available.compareTo(operation.getRequestedQuantity()) < 0) {
-            operation.setStatus("PENDING").setAffectedQuantity(BigDecimal.ZERO).setAffectedStockIds(null)
-                    .setResultMessage("匹配库存不足：需要" + operation.getRequestedQuantity().stripTrailingZeros().toPlainString()
-                            + "，当前" + available.stripTrailingZeros().toPlainString() + "；等待入库或库存核对后重试");
-            updateById(operation);
-            return result(operation);
-        }
+	/**
+	 * retry候选锁定后、任意拆分或状态写入前再核全部候选仓，FIFO不受路由缩窄。
+	 */
+	private WmsQualityStatusResult process(WmsQualityStatusOperationEntity operation, boolean browserRetry) {
+		// 特殊原件永不进入普通批次OR/FIFO，包括已登记PENDING事务的重试。
+		boolean special = operation.getSpecialReturnBindingJson() != null;
+		List<WmsLiveStockEntity> stocks = special ? specialReturnProof.resolve(operation)
+				: "HOLD".equals(operation.getAction()) ? findAvailableStocks(operation) : findHeldStocks(
+				operation);
+		if (browserRetry) {
+			var ws = stocks.stream().map(WmsLiveStockEntity::getWarehouseCode).distinct().sorted().toList();
+			physicalAccess.requireWarehouses(ws, "show");
+			physicalAccess.requireWarehouses(ws, "retry");
+		}
+		boolean physical = TERMINAL_PHYSICAL_ACTIONS.contains(operation.getAction());
+		if (physical) {
+			physicalAccess.write();
+			physicalRepository.ready();
+		}
+		if (!stocks.isEmpty()) {
+			Set<String> units = stocks.stream().map(WmsLiveStockEntity::getMatUnit).collect(Collectors.toSet());
+			require(units.size() == 1 && StrUtil.isNotBlank(units.iterator().next()),
+					"质量库存候选缺少单位或混用不同单位，禁止直接合并数量");
+		}
+		boolean ncrRework =
+				"QMS_NCR".equals(operation.getSourceType()) && "REWORK".equals(operation.getAction());
+		if (ncrRework) {
+			// parent已INSERT为PENDING；同事务写owner，DB延迟约束核最终SUCCESS和完整影响ID。
+			reworkRepository.ready();
+			if (!special) {
+				reworkProof.requireNewOrdinaryOrigin(operation, stocks);
+			}
+		}
+		BigDecimal available = stocks.stream().map(this::quantity).reduce(BigDecimal.ZERO, BigDecimal::add);
+		if (available.compareTo(operation.getRequestedQuantity()) < 0) {
+			require(!special, "原特殊接管片段数量不足，禁止重新匹配同批其他库存");
+			operation.setStatus("PENDING").setAffectedQuantity(BigDecimal.ZERO).setAffectedStockIds(null)
+					.setResultMessage(
+							"匹配库存不足：需要" +
+									operation.getRequestedQuantity().stripTrailingZeros().toPlainString()
+									+ "，当前" + available.stripTrailingZeros().toPlainString() +
+									"；等待入库或库存核对后重试");
+			updateById(operation);
+			return result(operation);
+		}
+		BigDecimal remaining = operation.getRequestedQuantity();
+		List<Long> affectedIds = new ArrayList<>();
+		List<Long> remainderIds = new ArrayList<>();
+		List<Map<String, String>> splitLinks = new ArrayList<>();
+		for (WmsLiveStockEntity stock : stocks) {
+			if (remaining.signum() <= 0) {
+				break;
+			}
+			BigDecimal before = quantity(stock);
+			if (before.signum() == 0) {
+				continue;
+			}
+			BigDecimal take = before.min(remaining);
+			if (special) {
+				require(reservationService.activeReservedNum(stock.getId()).signum() == 0,
+						"特殊退回原件存在有效预留，不能质量接管或处置");
+			}
+			WmsSerialStockGuard.requireWhole(stock, take);
+			if (before.compareTo(take) > 0) {
+				WmsLiveStockEntity remainder = new WmsLiveStockEntity();
+				BeanUtil.copyProperties(stock, remainder);
+				remainder.setId(null);
+				// 所有余量均保持原状态，绝不继承另一个parent的返工所有权。
+				remainder.setQualityReworkOperationId(null);
+				remainder.setQualityPhysicalOperationId(null);
+				BigDecimal remainderQuantity = before.subtract(take);
+				remainder.setMatNum(exactDouble(remainderQuantity));
+				require(liveStockMapper.insert(remainder) == 1, "质量库存拆分余量保存失败");
+				assertStoredQuantity(remainder.getId(), remainderQuantity);
+				remainderIds.add(remainder.getId());
+				Map<String, String> splitLink = new LinkedHashMap<>();
+				splitLink.put("parentStockId", String.valueOf(stock.getId()));
+				splitLink.put("remainderStockId", String.valueOf(remainder.getId()));
+				splitLink.put("remainderQuantity", remainderQuantity.stripTrailingZeros().toPlainString());
+				splitLinks.add(splitLink);
+			}
+			stock.setMatNum(exactDouble(take));
+			if (special && "HOLD".equals(operation.getAction())) {
+				var binding = specialReturnProof.decode(operation.getSpecialReturnBindingJson());
+				if (binding.reholdOperationId() != null && stock.getQualityPhysicalOperationId() != null) {
+					// 395已证明同target/root的成功定向REHOLD，显式JDBC清owner，不影响其他MP更新。
+					physicalRepository.clearOwner(
+							physicalService.load(Long.valueOf(binding.reholdOperationId()), false),
+							stock.getId());
+					stock.setQualityPhysicalOperationId(null);
+				}
+			}
+			applyState(stock, operation);
+			if (physical) {
+				require(stock.getQualityPhysicalOperationId() == null, "库存已属于其他实物处置parent");
+				stock.setQualityPhysicalOperationId(operation.getId());
+			}
+			if (ncrRework) {
+				stock.setQualityReworkOperationId(operation.getId());
+			}
+			require(liveStockMapper.updateById(stock) == 1, "质量库存状态保存失败");
+			assertStoredQuantity(stock.getId(), take);
+			affectedIds.add(stock.getId());
+			remaining = remaining.subtract(take);
+		}
+		require(remaining.signum() == 0, "质量库存处置数量不守恒，已回滚");
+		operation.setAffectedQuantity(operation.getRequestedQuantity())
+				.setAffectedStockIds(affectedIds.stream().map(String::valueOf).collect(Collectors.joining(",")))
+				.setSplitRecorded(true)
+				.setSplitRemainderStockIds(remainderIds.isEmpty() ? null
+						: remainderIds.stream().map(String::valueOf).collect(Collectors.joining(",")))
+				.setSplitLineageJson(JSONUtil.toJsonStr(splitLinks))
+				.setSplitRecordedAt(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS))
+				.setStatus(TERMINAL_PHYSICAL_ACTIONS.contains(
+						operation.getAction()) ? "ACTION_PENDING" : "SUCCESS")
+				.setResultMessage(message(operation));
+		if (physical) {
+			physicalRepository.completeClassification(operation, physicalProof.inspect(operation, false, true));
+		} else {
+			require(updateById(operation), "质量库存操作结果保存失败");
+		}
+		var persisted = getById(operation.getId());
+		require(persisted != null && persisted.getAffectedQuantity() != null
+						&& persisted.getAffectedQuantity().compareTo(operation.getAffectedQuantity()) == 0,
+				"质量库存影响量发生精度舍入，已回滚");
+		require(Boolean.TRUE.equals(persisted.getSplitRecorded())
+						&& Objects.equals(StrUtil.nullToEmpty(persisted.getSplitRemainderStockIds()),
+						StrUtil.nullToEmpty(operation.getSplitRemainderStockIds()))
+						&& Objects.equals(persisted.getSplitLineageJson(), operation.getSplitLineageJson())
+						&& Objects.equals(persisted.getSplitRecordedAt(), operation.getSplitRecordedAt()),
+				"质量库存拆分去向未完整保存，已回滚");
+		return result(persisted);
+	}
 
-        BigDecimal remaining = operation.getRequestedQuantity();
-        List<Long> affectedIds = new ArrayList<>();
-        List<Long> remainderIds = new ArrayList<>();
-        List<Map<String, String>> splitLinks = new ArrayList<>();
-        for (WmsLiveStockEntity stock : stocks) {
-            if (remaining.signum() <= 0) break;
-            BigDecimal before = quantity(stock);
-            if (before.signum() == 0) continue;
-            BigDecimal take = before.min(remaining);
-            WmsSerialStockGuard.requireWhole(stock, take);
-            if (before.compareTo(take) > 0) {
-                WmsLiveStockEntity remainder = new WmsLiveStockEntity();
-                BeanUtil.copyProperties(stock, remainder);
-                remainder.setId(null);
-                BigDecimal remainderQuantity = before.subtract(take);
-                remainder.setMatNum(exactDouble(remainderQuantity));
-                require(liveStockMapper.insert(remainder) == 1, "质量库存拆分余量保存失败");
-                assertStoredQuantity(remainder.getId(), remainderQuantity);
-                remainderIds.add(remainder.getId());
-                Map<String, String> splitLink = new LinkedHashMap<>();
-                splitLink.put("parentStockId", String.valueOf(stock.getId()));
-                splitLink.put("remainderStockId", String.valueOf(remainder.getId()));
-                splitLink.put("remainderQuantity", remainderQuantity.stripTrailingZeros().toPlainString());
-                splitLinks.add(splitLink);
-            }
-            stock.setMatNum(exactDouble(take));
-            applyState(stock, operation);
-            require(liveStockMapper.updateById(stock) == 1, "质量库存状态保存失败");
-            assertStoredQuantity(stock.getId(), take);
-            affectedIds.add(stock.getId());
-            remaining = remaining.subtract(take);
-        }
-        require(remaining.signum() == 0, "质量库存处置数量不守恒，已回滚");
-        operation.setAffectedQuantity(operation.getRequestedQuantity())
-                .setAffectedStockIds(affectedIds.stream().map(String::valueOf).collect(Collectors.joining(",")))
-                .setSplitRecorded(true)
-                .setSplitRemainderStockIds(remainderIds.isEmpty() ? null
-                        : remainderIds.stream().map(String::valueOf).collect(Collectors.joining(",")))
-                .setSplitLineageJson(JSONUtil.toJsonStr(splitLinks))
-                .setSplitRecordedAt(LocalDateTime.now().truncatedTo(ChronoUnit.MICROS))
-                .setStatus(TERMINAL_PHYSICAL_ACTIONS.contains(operation.getAction()) ? "ACTION_PENDING" : "SUCCESS")
-                .setResultMessage(message(operation));
-        require(updateById(operation), "质量库存操作结果保存失败");
-        var persisted = getById(operation.getId());
-        require(persisted != null && persisted.getAffectedQuantity() != null
-                        && persisted.getAffectedQuantity().compareTo(operation.getAffectedQuantity()) == 0,
-                "质量库存影响量发生精度舍入，已回滚");
-        require(Boolean.TRUE.equals(persisted.getSplitRecorded())
-                        && Objects.equals(StrUtil.nullToEmpty(persisted.getSplitRemainderStockIds()),
-                        StrUtil.nullToEmpty(operation.getSplitRemainderStockIds()))
-                        && Objects.equals(persisted.getSplitLineageJson(), operation.getSplitLineageJson())
-                        && Objects.equals(persisted.getSplitRecordedAt(), operation.getSplitRecordedAt()),
-                "质量库存拆分去向未完整保存，已回滚");
-        return result(operation);
-    }
+	private List<WmsLiveStockEntity> findAvailableStocks(WmsQualityStatusOperationEntity operation) {
+		LambdaQueryWrapper<WmsLiveStockEntity> query = scope(operation)
+				.isNull(WmsLiveStockEntity::getQualityReworkOperationId)
+				.and(wrapper -> wrapper
+						.and(available -> available.isNull(WmsLiveStockEntity::getQualityHoldNo)
+								.and(state -> state.eq(WmsLiveStockEntity::getStatus, 0)
+										.or(pending -> pending.eq(WmsLiveStockEntity::getStatus, 1)
+												.and(quality -> quality.eq(WmsLiveStockEntity::getQualityStatus,
+																"PENDING")
+														.or().eq(WmsLiveStockEntity::getIsQualityTest, "1")))))
+						.or(rehold -> rehold.eq(WmsLiveStockEntity::getQualityHoldNo, operation.getHoldNo())
+								.eq(WmsLiveStockEntity::getQualitySourceType, operation.getSourceType())
+								.eq(WmsLiveStockEntity::getQualitySourceId, operation.getSourceId())
+								.in(WmsLiveStockEntity::getQualityStatus, "HOLD", "QUALIFIED",
+										"CONCESSION", "SCRAP_PENDING", "RETURN_PENDING")))
+				.orderByAsc(WmsLiveStockEntity::getInTime).orderByAsc(WmsLiveStockEntity::getId)
+				.last("FOR UPDATE");
+		return liveStockMapper.selectList(query);
+	}
 
-    private List<WmsLiveStockEntity> findAvailableStocks(WmsQualityStatusOperationEntity operation) {
-        LambdaQueryWrapper<WmsLiveStockEntity> query = scope(operation)
-                .and(wrapper -> wrapper
-                        .and(available -> available.isNull(WmsLiveStockEntity::getQualityHoldNo)
-                                .and(state -> state.eq(WmsLiveStockEntity::getStatus, 0)
-                                        .or(pending -> pending.eq(WmsLiveStockEntity::getStatus, 1)
-                                                .and(quality -> quality.eq(WmsLiveStockEntity::getQualityStatus, "PENDING")
-                                                        .or().eq(WmsLiveStockEntity::getIsQualityTest, "1")))))
-                        .or(rehold -> rehold.eq(WmsLiveStockEntity::getQualityHoldNo, operation.getHoldNo())
-                                .eq(WmsLiveStockEntity::getQualitySourceType, operation.getSourceType())
-                                .eq(WmsLiveStockEntity::getQualitySourceId, operation.getSourceId())
-                                .in(WmsLiveStockEntity::getQualityStatus, "HOLD", "REWORK", "QUALIFIED",
-                                        "CONCESSION", "SCRAP_PENDING", "RETURN_PENDING")))
-                .orderByAsc(WmsLiveStockEntity::getInTime).orderByAsc(WmsLiveStockEntity::getId)
-                .last("FOR UPDATE");
-        return liveStockMapper.selectList(query);
-    }
+	private List<WmsLiveStockEntity> findHeldStocks(WmsQualityStatusOperationEntity operation) {
+		return findHeldStocks(operation, true);
+	}
 
-    private List<WmsLiveStockEntity> findHeldStocks(WmsQualityStatusOperationEntity operation) {
-        require(StrUtil.isNotBlank(operation.getHoldNo()), "处置必须关联质量隔离单号");
-        return liveStockMapper.selectList(scope(operation)
-                .eq(WmsLiveStockEntity::getStatus, 1)
-                .eq(WmsLiveStockEntity::getQualityHoldNo, operation.getHoldNo())
-                .eq(WmsLiveStockEntity::getQualitySourceType, operation.getSourceType())
-                .eq(WmsLiveStockEntity::getQualitySourceId, operation.getSourceId())
-                .in(WmsLiveStockEntity::getQualityStatus, ACTIVE_HOLD_STATUS)
-                .orderByAsc(WmsLiveStockEntity::getInTime).orderByAsc(WmsLiveStockEntity::getId)
-                .last("FOR UPDATE"));
-    }
+	/**
+	 * 先读取全候选仓取得统一仓锁，正式选库再保持原FIFO锁序。
+	 */
+	private List<WmsLiveStockEntity> findHeldStocks(WmsQualityStatusOperationEntity operation, boolean lock) {
+		require(StrUtil.isNotBlank(operation.getHoldNo()), "处置必须关联质量隔离单号");
+		var query = scope(operation)
+				.eq(WmsLiveStockEntity::getStatus, 1)
+				.eq(WmsLiveStockEntity::getQualityHoldNo, operation.getHoldNo())
+				.eq(WmsLiveStockEntity::getQualitySourceType, operation.getSourceType())
+				.eq(WmsLiveStockEntity::getQualitySourceId, operation.getSourceId())
+				.isNull(WmsLiveStockEntity::getQualityReworkOperationId)
+				.in(WmsLiveStockEntity::getQualityStatus, "QMS_NCR".equals(operation.getSourceType())
+						? Set.of("HOLD") : ACTIVE_HOLD_STATUS)
+				.orderByAsc(WmsLiveStockEntity::getInTime).orderByAsc(WmsLiveStockEntity::getId);
+		if (lock) {
+			query.last("FOR UPDATE");
+		}
+		return liveStockMapper.selectList(query);
+	}
 
     private LambdaQueryWrapper<WmsLiveStockEntity> scope(WmsQualityStatusOperationEntity operation) {
         return new LambdaQueryWrapper<WmsLiveStockEntity>()
@@ -300,22 +483,26 @@ public class WmsQualityStatusServiceImpl
                 "质量库存数量必须大于0");
     }
 
-    private void assertSameCommand(WmsQualityStatusOperationEntity operation, WmsQualityStatusCommand command) {
-        require(Objects.equals(operation.getHoldNo(), command.getHoldNo())
-                        && Objects.equals(operation.getAction(), command.getAction())
-                        && Objects.equals(operation.getSourceType(), command.getSourceType())
-                        && Objects.equals(operation.getSourceId(), command.getSourceId())
-                        && Objects.equals(operation.getMatCode(), command.getMatCode())
-                        && Objects.equals(operation.getMatBatch(), command.getMatBatch())
-                        && Objects.equals(operation.getMatUnit(), command.getMatUnit())
-                        && Objects.equals(operation.getSupplierCode(), command.getSupplierCode())
-                        && Objects.equals(operation.getWarehouseCode(), command.getWarehouseCode())
-                        && Objects.equals(operation.getSiteCode(), command.getSiteCode())
-                        && Objects.equals(operation.getContainerCode(), command.getContainerCode())
-                        && Objects.equals(operation.getFactoryCode(), command.getFactoryCode())
-                        && operation.getRequestedQuantity().compareTo(command.getQuantity()) == 0,
-                "质量库存请求号已被其他业务占用");
-    }
+	private void assertSameCommand(WmsQualityStatusOperationEntity operation, WmsQualityStatusCommand command) {
+		require(Objects.equals(specialReturnProof.decode(operation.getSpecialReturnBindingJson()),
+						command.getSpecialReturnBinding()) &&
+						(command.getSpecialReturnBinding() == null ||
+								Objects.equals(operation.getReason(), command.getReason())) &&
+						Objects.equals(operation.getHoldNo(), command.getHoldNo())
+						&& Objects.equals(operation.getAction(), command.getAction())
+						&& Objects.equals(operation.getSourceType(), command.getSourceType())
+						&& Objects.equals(operation.getSourceId(), command.getSourceId())
+						&& Objects.equals(operation.getMatCode(), command.getMatCode())
+						&& Objects.equals(operation.getMatBatch(), command.getMatBatch())
+						&& Objects.equals(operation.getMatUnit(), command.getMatUnit())
+						&& Objects.equals(operation.getSupplierCode(), command.getSupplierCode())
+						&& Objects.equals(operation.getWarehouseCode(), command.getWarehouseCode())
+						&& Objects.equals(operation.getSiteCode(), command.getSiteCode())
+						&& Objects.equals(operation.getContainerCode(), command.getContainerCode())
+						&& Objects.equals(operation.getFactoryCode(), command.getFactoryCode())
+						&& operation.getRequestedQuantity().compareTo(command.getQuantity()) == 0,
+				"质量库存请求号已被其他业务占用");
+	}
 
     private String message(WmsQualityStatusOperationEntity operation) {
         return switch (operation.getAction()) {
@@ -329,12 +516,28 @@ public class WmsQualityStatusServiceImpl
         };
     }
 
-    private WmsQualityStatusResult result(WmsQualityStatusOperationEntity operation) {
-        return new WmsQualityStatusResult().setOperationId(operation.getId()).setHoldNo(operation.getHoldNo())
-                .setAction(operation.getAction()).setStatus(operation.getStatus())
-                .setRequestedQuantity(operation.getRequestedQuantity())
-                .setAffectedQuantity(operation.getAffectedQuantity()).setMessage(operation.getResultMessage());
-    }
+	private WmsQualityStatusResult result(WmsQualityStatusOperationEntity operation) {
+		var physicalReceipt = "EXECUTED".equals(operation.getStatus()) ? physicalService.appliedExecution(
+				operation) : null;
+		return new WmsQualityStatusResult().setOperationId(operation.getId()).setHoldNo(operation.getHoldNo())
+				.setAction(operation.getAction()).setStatus(operation.getStatus())
+				.setRequestedQuantity(operation.getRequestedQuantity())
+				.setAffectedQuantity(operation.getAffectedQuantity()).setMessage(operation.getResultMessage())
+				.setSpecialReturnBinding(specialReturnProof.resultBinding(operation))
+				.setSupersededByOperationId(physicalService.superseded(operation))
+				.setReholdOfPhysicalOperationId(operation.getReholdOfPhysicalOperationId() ==
+						null ? null : operation.getReholdOfPhysicalOperationId().toString())
+				.setExecution("EXECUTED".equals(
+						operation.getStatus()) ? new com.kitex.mom.wms.dto.WmsQualityPhysicalDTO.Execution(
+						operation.getExecutionRequestId(), operation.getExecutionRef(),
+						operation.getExecutionRemark(),
+						physicalReceipt == null ? null : physicalReceipt.endedById(), operation.getExecutedBy(),
+						operation.getExecutedByName(),
+						com.kitex.mom.wms.service.physical.WmsPhysicalRules.time(
+								operation.getExecutedTime())) : null)
+				.setAffectedStockIds(
+						parseIds(operation.getAffectedStockIds()).stream().map(String::valueOf).toList());
+	}
 
     private BigDecimal quantity(WmsLiveStockEntity stock) {
         require(stock != null && stock.getMatNum() != null && Double.isFinite(stock.getMatNum()) && stock.getMatNum() >= 0,

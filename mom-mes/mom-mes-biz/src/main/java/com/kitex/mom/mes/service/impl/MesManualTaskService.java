@@ -57,6 +57,7 @@ public class MesManualTaskService {
     private final RemoteMdmFactoryPlanningPolicyService policies;
     private final RemoteSeqConfigService numbers;
     private final RemoteMdmRouteEngineeringService packages;
+	private final MesTaskCommandGuard taskCommands;
 
     private static void require(boolean value, String message) {
         if (!value) throw new CheckedException(message);
@@ -338,124 +339,131 @@ public class MesManualTaskService {
         return response(row, c, factory);
     }
 
-    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
-    public void editDraft(MesTaskEntity incoming) {
-        String factory = access.require("write");
-        require(incoming != null && incoming.getId() != null, "手工工单不存在");
-        var current = facts.lockTask(incoming.getId(), tenant(), factory);
-        require(owns(current) && "CREATE".equals(current.getStatus()), "手工工单已下达或不存在，不能修改");
-        var workshop = frozenWorkshop(engineering.verifyBeforeIssue(current));
-        require(sameOrAbsent(incoming.getWorkshopCode(), workshop.code())
-                        && sameOrAbsent(incoming.getWorkshopName(), workshop.name()),
-                "手工工单车间取自已发布工程版本，不能直接替换");
-        require(sameOrAbsent(current.getWorkshopCode(), workshop.code())
-                        && sameOrAbsent(current.getWorkshopName(), workshop.name()),
-                "手工工单车间与原工程版本不一致，请核查来源");
-        var before = new org.springframework.beans.BeanWrapperImpl(current);
-        var proposed = new org.springframework.beans.BeanWrapperImpl(incoming);
-        for (String field :
-                List.of(
-                        "code",
-                        "tenantId",
-                        "factoryCode",
-                        "type",
-                        "matCode",
-                        "matName",
-                        "matSpec",
-                        "noticeNum",
-                        "planStartDate",
-                        "planEndDate",
-                        "resourceType",
-                        "resourceId",
-                        "sourceRequestId",
-                        "sourceRequestFingerprint",
-                        "sourceSystem",
-                        "sourcePlanNo",
-                        "sourcePlanVersion",
-                        "planningPolicyId",
-                        "planningPolicyVersion",
-                        "planningPolicyFingerprint",
-                        "mrpAuthority",
-                        "productionOrderSyncMode",
-                        "erpProductionOrderNo",
-                        "productionOrder",
-                        "planNo",
-                        "formalPlanContractId",
-                        "formalPlanContractNo",
-                        "formalPlanContractVersion",
-                        "formalPlanContractFingerprint",
-                        "formalPlanAllocationSnapshot",
-                        "formalPlanAllocationVersion",
-                        "materialReservationSnapshot",
-                        "apsOperationSnapshot",
-                        "apsTaskId",
-                        "apsBatchId",
-                        "apsBatchNo",
-                        "apsBatchType",
-                        "apsBatchFingerprint",
-                        "reworkRequestId",
-                        "sourceTaskCode",
-                        "sourceProduceTaskCode",
-                        "sourceInspectionType",
-                        "sourceInspectionTaskId",
-                        "sourceHandleRecordId",
-                        "reworkProcessCode",
-                        "reworkRouteNodeCode",
-                        "engineeringReleaseId",
-                        "engineeringContentHash",
-                        "engineeringVersionNo",
-                        "engineeringBundleSnapshot",
-                        "processRouteId",
-                        "processRouteCode",
-                        "processRouteSnapshot",
-                        "bomId",
-                        "bomVersion",
-                        "bomSnapshot",
-                        "createBy",
-                        "createTime",
-                        "completeNum",
-                        "plannedNum",
-                        "inStockNum",
-                        "unInStockNum",
-                        "unPassNum",
-                        "alreadyNoticeNum")) {
-            Object v = proposed.getPropertyValue(field), original = before.getPropertyValue(field);
-            if (v == null || original == null && v instanceof String text && text.isEmpty())
-                continue;
-            require(
-                    v instanceof BigDecimal a && original instanceof BigDecimal b
-                            ? a.compareTo(b) == 0
-                            : Objects.equals(v, original),
-                    "手工工单创建依据已冻结，不能修改：" + field);
-        }
-        var update =
-                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<
-                        MesTaskEntity>()
-                        .eq(MesTaskEntity::getId, current.getId())
-                        .eq(MesTaskEntity::getTenantId, tenant())
-                        .eq(MesTaskEntity::getFactoryCode, factory)
-                        .eq(MesTaskEntity::getStatus, "CREATE")
-                        .eq(MesTaskEntity::getSourceRequestId, current.getSourceRequestId())
-                        .set(MesTaskEntity::getWorkshopCode, workshop.code())
-                        .set(MesTaskEntity::getWorkshopName, workshop.name())
-                        .set(
-                                incoming.getBatchRuleCode() != null,
-                                MesTaskEntity::getBatchRuleCode,
-                                incoming.getBatchRuleCode())
-                        .set(
-                                incoming.getWrapCode() != null,
-                                MesTaskEntity::getWrapCode,
-                                incoming.getWrapCode())
-                        .set(
-                                incoming.getWrapCapacity() != null,
-                                MesTaskEntity::getWrapCapacity,
-                                incoming.getWrapCapacity())
-                        .set(
-                                MesTaskEntity::getUpdateBy,
-                                SecurityUtils.getAuthentication().getName())
-                        .set(MesTaskEntity::getUpdateTime, LocalDateTime.now());
-        require(tasks.update(null, update) == 1, "手工工单保存失败，已回滚");
-    }
+	/**
+	 * 手工草稿编辑先参加同一真实根锁与修订准入，再按原冻结来源校验包装/批次配置。
+	 * 普通入口已持同根时重入仍取同一事务锁，不能先锁父行后反向取业务根锁。
+	 */
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+	public void editDraft(MesTaskEntity incoming) {
+		require(incoming != null && incoming.getId() != null, "手工工单不存在");
+		var current = taskCommands.lock(incoming.getId());
+		String factory = current.getFactoryCode();
+		require(owns(current) && "CREATE".equals(current.getStatus()), "手工工单已下达或不存在，不能修改");
+		taskCommands.requireNoChildren(current);
+		var workshop = frozenWorkshop(engineering.verifyBeforeIssue(current));
+		require(sameOrAbsent(incoming.getWorkshopCode(), workshop.code())
+						&& sameOrAbsent(incoming.getWorkshopName(), workshop.name()),
+				"手工工单车间取自已发布工程版本，不能直接替换");
+		require(sameOrAbsent(current.getWorkshopCode(), workshop.code())
+						&& sameOrAbsent(current.getWorkshopName(), workshop.name()),
+				"手工工单车间与原工程版本不一致，请核查来源");
+		var before = new org.springframework.beans.BeanWrapperImpl(current);
+		var proposed = new org.springframework.beans.BeanWrapperImpl(incoming);
+		for (String field :
+				List.of(
+						"code",
+						"tenantId",
+						"factoryCode",
+						"type",
+						"matCode",
+						"matName",
+						"matSpec",
+						"noticeNum",
+						"planStartDate",
+						"planEndDate",
+						"resourceType",
+						"resourceId",
+						"sourceRequestId",
+						"sourceRequestFingerprint",
+						"sourceSystem",
+						"sourcePlanNo",
+						"sourcePlanVersion",
+						"planningPolicyId",
+						"planningPolicyVersion",
+						"planningPolicyFingerprint",
+						"mrpAuthority",
+						"productionOrderSyncMode",
+						"erpProductionOrderNo",
+						"productionOrder",
+						"planNo",
+						"formalPlanContractId",
+						"formalPlanContractNo",
+						"formalPlanContractVersion",
+						"formalPlanContractFingerprint",
+						"formalPlanAllocationSnapshot",
+						"formalPlanAllocationVersion",
+						"materialReservationSnapshot",
+						"apsOperationSnapshot",
+						"apsTaskId",
+						"apsBatchId",
+						"apsBatchNo",
+						"apsBatchType",
+						"apsBatchFingerprint",
+						"reworkRequestId",
+						"sourceTaskCode",
+						"sourceProduceTaskCode",
+						"sourceInspectionType",
+						"sourceInspectionTaskId",
+						"sourceHandleRecordId",
+						"reworkProcessCode",
+						"reworkRouteNodeCode",
+						"engineeringReleaseId",
+						"engineeringContentHash",
+						"engineeringVersionNo",
+						"engineeringBundleSnapshot",
+						"processRouteId",
+						"processRouteCode",
+						"processRouteSnapshot",
+						"bomId",
+						"bomVersion",
+						"bomSnapshot",
+						"createBy",
+						"createTime",
+						"completeNum",
+						"plannedNum",
+						"inStockNum",
+						"unInStockNum",
+						"unPassNum",
+						"alreadyNoticeNum")) {
+			Object v = proposed.getPropertyValue(field), original = before.getPropertyValue(field);
+			if (v == null || original == null && v instanceof String text && text.isEmpty()) {
+				continue;
+			}
+			require(
+					v instanceof BigDecimal a && original instanceof BigDecimal b
+							? a.compareTo(b) == 0
+							: Objects.equals(v, original),
+					"手工工单创建依据已冻结，不能修改：" + field);
+		}
+		var update =
+				new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<
+						MesTaskEntity>()
+						.eq(MesTaskEntity::getId, current.getId())
+						.eq(MesTaskEntity::getTenantId, tenant())
+						.eq(MesTaskEntity::getFactoryCode, factory)
+						.eq(MesTaskEntity::getCode, current.getCode())
+						.eq(MesTaskEntity::getStatus, "CREATE")
+						.eq(MesTaskEntity::getSourceRequestId, current.getSourceRequestId())
+						.set(MesTaskEntity::getWorkshopCode, workshop.code())
+						.set(MesTaskEntity::getWorkshopName, workshop.name())
+						.set(
+								incoming.getBatchRuleCode() != null,
+								MesTaskEntity::getBatchRuleCode,
+								incoming.getBatchRuleCode())
+						.set(
+								incoming.getWrapCode() != null,
+								MesTaskEntity::getWrapCode,
+								incoming.getWrapCode())
+						.set(
+								incoming.getWrapCapacity() != null,
+								MesTaskEntity::getWrapCapacity,
+								incoming.getWrapCapacity())
+						.set(
+								MesTaskEntity::getUpdateBy,
+								SecurityUtils.getAuthentication().getName())
+						.set(MesTaskEntity::getUpdateTime, LocalDateTime.now());
+		require(tasks.update(null, update) == 1, "手工工单保存失败，已回滚");
+	}
 
     private FrozenWorkshop frozenWorkshop(MesEngineeringPackageService.FrozenEngineering frozen) {
         try {

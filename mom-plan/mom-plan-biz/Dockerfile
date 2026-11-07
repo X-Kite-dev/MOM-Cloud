@@ -1,6 +1,6 @@
-FROM 172.25.2.27:5001/devops/java:21-anolis
+FROM 192.0.2.1:5001/devops/java:21-anolis
 
-MAINTAINER kitelcdp@163.com
+MAINTAINER contact@example.invalid
 
 ENV TZ=Asia/Shanghai
 ENV LANG C.UTF-8

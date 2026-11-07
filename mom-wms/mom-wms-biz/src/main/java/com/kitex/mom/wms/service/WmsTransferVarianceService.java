@@ -23,4 +23,6 @@ public interface WmsTransferVarianceService {
     void resubmit(WmsTransferVarianceDTO.ResubmitCommand command);
 
     void dispose(WmsTransferVarianceDTO.DispositionCommand command);
+    /** 按原多岗审核与短收规则确认溢收实物发出；源仓只在后续实际签收时入库。 */
+    void dispatchReturn(com.kitex.mom.wms.dto.WmsOverReturnDTO.DispatchCommand command);
 }

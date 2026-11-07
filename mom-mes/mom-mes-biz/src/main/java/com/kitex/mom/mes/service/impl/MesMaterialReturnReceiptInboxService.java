@@ -3,6 +3,8 @@ package com.kitex.mom.mes.service.impl;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.mes.dto.MesMaterialReturnReceiptEvent;
 import com.kitex.mom.mes.entity.MesMaterialReturnOperationEntity;
 import com.kitex.mom.mes.entity.MesMaterialReturnReceiptInboxEntity;
@@ -35,7 +37,9 @@ public class MesMaterialReturnReceiptInboxService {
     private final MesMaterialReturnReceiptInboxMapper inboxMapper;
     private final MesWarehouseStockFeedJudgeMapper requestMapper;
     private final MesMaterialReturnOperationMapper operationMapper;
+    private final MesMaterialExecutionGuard materialExecution;
 
+    /** 原号串行且先回读永久终态；新反馈按可证明的原领料/工单归属核准入后才锁申请。 */
     @Transactional(rollbackFor = Exception.class)
     public MesMaterialReturnReceiptEvent.Receipt receive(MesMaterialReturnReceiptEvent event) {
         require(event != null && Objects.equals(event.getFingerprint(), event.calculateFingerprint()),
@@ -47,15 +51,15 @@ public class MesMaterialReturnReceiptInboxService {
                         || event.getCumulativeReceivedQuantity().compareTo(event.getExpectedQuantity()) == 0,
                 "WMS未足量实收不能标记收货完成");
 
-        MesWarehouseStockFeedJudgeEntity request = requestMapper.selectOne(
-                new LambdaQueryWrapper<MesWarehouseStockFeedJudgeEntity>()
-                        .eq(MesWarehouseStockFeedJudgeEntity::getId, event.getReturnRequestId())
-                        .last("FOR UPDATE"));
-        // 先锁申请再首次查询回执，避免MyBatis事务内缓存锁前“未接收”的结果而误拒合法重投。
+        materialExecution.request("WMS_RETURN_RECEIPT", event.getEventId());
+        require(Objects.equals(event.getFactoryCode(), FactoryContextHolder.getFactoryCode()),
+                "退料实收事件与当前实际工厂不一致");
+        // 专用原号互斥先于这次唯一accepted查询，避免锁前null的MyBatis缓存，也保留冻结期间原回执。
         MesMaterialReturnReceiptEvent.Receipt existing = accepted(event);
         if (existing != null) {
             return existing;
         }
+        MesWarehouseStockFeedJudgeEntity request = materialExecution.returnRequest(event.getReturnRequestId());
         require(request != null && "V2".equals(request.getWorkflowVersion()) && "APPROVED".equals(request.getStatus()),
                 "WMS实收事件没有对应的已批准生产退料申请");
         require(Objects.equals(request.getFactoryCode(), event.getFactoryCode()), "WMS实收事件与MES退料申请工厂不一致");
@@ -121,6 +125,8 @@ public class MesMaterialReturnReceiptInboxService {
     private MesMaterialReturnReceiptEvent.Receipt accepted(MesMaterialReturnReceiptEvent event) {
         MesMaterialReturnReceiptInboxEntity row = inboxMapper.selectOne(
                 new LambdaQueryWrapper<MesMaterialReturnReceiptInboxEntity>()
+                        .eq(MesMaterialReturnReceiptInboxEntity::getTenantId, TenantContextHolder.getTenantId())
+                        .eq(MesMaterialReturnReceiptInboxEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
                         .eq(MesMaterialReturnReceiptInboxEntity::getEventId, event.getEventId()));
         if (row == null) {
             return null;
@@ -131,9 +137,12 @@ public class MesMaterialReturnReceiptInboxService {
 
     @Transactional(readOnly = true)
     public MesMaterialReturnReceiptEvent.Receipt receipt(String eventId) {
+        MesQualityGateSourceEvidence.scope();
         require(eventId != null && !eventId.isBlank() && eventId.length() <= 100, "WMS实收事件号为空或过长");
         MesMaterialReturnReceiptInboxEntity row = inboxMapper.selectOne(
                 new LambdaQueryWrapper<MesMaterialReturnReceiptInboxEntity>()
+                        .eq(MesMaterialReturnReceiptInboxEntity::getTenantId, TenantContextHolder.getTenantId())
+                        .eq(MesMaterialReturnReceiptInboxEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
                         .eq(MesMaterialReturnReceiptInboxEntity::getEventId, eventId));
         if (row == null) {
             return null;

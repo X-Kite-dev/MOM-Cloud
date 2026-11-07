@@ -15,6 +15,9 @@ import lombok.experimental.Accessors;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * NCR主记录及数量进度；特殊退回来源以永久Target冻结，库存状态仍由WMS维护。
+ */
 @EqualsAndHashCode(callSuper = true)
 @Data
 @TenantTable
@@ -35,6 +38,13 @@ public class QmsBadInfoEntity extends BaseEntity<QmsBadInfoEntity> {
 
     @Schema(description = "来源类型")
     private String resourceType;
+
+	/**
+	 * 特殊退回规范Target永久JSON；仅WMS_SPECIAL_RETURN专用登记写入，普通及历史来源为空。
+	 * 包含实际组织、RETURN凭据、精确原件、身份、位置及基本单位数量，创建后不可改写。
+	 */
+	@Schema(description = "特殊退回原件永久冻结来源JSON")
+	private String wmsSpecialReturnTargetJson;
 
     @Schema(description = "物料编码")
     private String matCode;

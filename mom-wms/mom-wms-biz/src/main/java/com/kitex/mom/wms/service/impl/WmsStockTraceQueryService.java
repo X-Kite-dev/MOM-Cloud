@@ -306,7 +306,7 @@ public class WmsStockTraceQueryService {
                         && Objects.equals(event.getBillDetailId(), flow.getBillDetailId())
                         && Objects.equals(event.getSourceStockId(), flow.getSourceStockId())));
         if (missingPickingHistory) {
-            gaps.add("现有出库流水没有逐次拣配事件；历史作业步骤无法补证");
+            gaps.add("部分出库记录没有独立拣配明细。");
             gapCodes.add("MISSING_PICKING_EVENT_HISTORY");
         }
         boolean hasInbound = flows.stream().anyMatch(flow -> "in".equalsIgnoreCase(flow.getOperateType()));

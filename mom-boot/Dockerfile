@@ -1,4 +1,4 @@
-FROM 172.25.2.27:5001/devops/java:21-anolis
+FROM 192.0.2.1:5001/devops/java:21-anolis
 
 WORKDIR /mom-boot
 

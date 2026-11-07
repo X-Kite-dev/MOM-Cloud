@@ -1,5 +1,8 @@
 package com.kitex.mom.wms.controller.app;
 
+import com.kitex.mom.wms.dto.WmsInventoryReplanEndCommand;
+import com.kitex.mom.wms.dto.WmsInventoryReplanCommand;
+import com.kitex.mom.wms.service.impl.WmsInventoryReplanService;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -11,14 +14,20 @@ import com.kitex.mom.wms.dto.WmsInsideInventoryPlanQueryDTO;
 import com.kitex.mom.wms.dto.WmsInventoryAdjustmentApprovalReview;
 import com.kitex.mom.wms.dto.WmsInventoryAdjustmentApprovalSubmit;
 import com.kitex.mom.wms.dto.WmsInventoryAdjustmentCommand;
+import com.kitex.mom.wms.dto.WmsInventoryRecountCommand;
+import com.kitex.mom.wms.dto.WmsInventoryRecountTerminationCommand;
 import com.kitex.mom.wms.dto.app.WmsMobileInventoryContext;
 import com.kitex.mom.wms.entity.WmsInsideInventoryPlanDetailEntity;
 import com.kitex.mom.wms.entity.WmsInsideInventoryPlanEntity;
 import com.kitex.mom.wms.entity.WmsInventoryAdjustmentApprovalEntity;
+import com.kitex.mom.wms.entity.WmsInventoryRecountRecordEntity;
 import com.kitex.mom.wms.service.WmsInsideInventoryPlanService;
 import com.kitex.mom.wms.service.impl.WmsInventoryAdjustmentApprovalService;
 import com.kitex.mom.wms.service.impl.WmsInventoryAdjustmentService;
 import com.kitex.mom.wms.service.impl.WmsInventoryMobileAccess;
+import com.kitex.mom.wms.service.impl.WmsInventoryOwnerCountService;
+import com.kitex.mom.wms.service.impl.WmsInventoryRecountRequestService;
+import com.kitex.mom.wms.service.impl.WmsInventoryRecountService;
 import com.kitex.mom.wms.service.impl.WmsInventoryWarehousePermission;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
@@ -48,6 +57,89 @@ public class AppInventoryPlanController {
 	private final WmsInventoryAdjustmentApprovalService approvals;
 	private final WmsInventoryMobileAccess mobile;
 	private final WmsInventoryWarehousePermission permissions;
+	private final WmsInventoryOwnerCountService ownerCounts;
+	private final WmsInventoryRecountService recounts;
+	private final WmsInventoryRecountRequestService requests;
+	private final WmsInventoryReplanService replans;
+
+	@GetMapping("/replan/context")
+	@PreAuthorize(VIEW)
+	public R<WmsInventoryReplanService.Context> replanContext(@RequestParam Long sourcePlanId) {
+		return R.ok(replans.context(sourcePlanId));
+	}
+
+	@GetMapping("/replan/prepare")
+	@PreAuthorize(VIEW)
+	public R<WmsInventoryReplanService.Prepare> replanPrepare(@RequestParam Long sourcePlanId) {
+		return R.ok(replans.prepare(sourcePlanId, true));
+	}
+
+	@GetMapping("/replan/resolve")
+	@PreAuthorize(VIEW)
+	public R<WmsInventoryReplanService.Resolution> replanResolve(@RequestParam Long sourcePlanId,
+	                                                             @RequestParam String requestId) {
+		return R.ok(replans.resolve(sourcePlanId, requestId));
+	}
+
+	@PostMapping("/replan")
+	@PreAuthorize(ADD)
+	@SysLog("手机端重新盘点")
+	public R<WmsInventoryReplanService.Resolution> replan(@RequestBody WmsInventoryReplanCommand command) {
+		return R.ok(replans.create(command, true));
+	}
+
+	@PostMapping("/replan/end")
+	@PreAuthorize(ADD)
+	@SysLog("手机端结束重新盘点原请求")
+	public R<WmsInventoryReplanService.Resolution> replanEnd(@RequestBody WmsInventoryReplanEndCommand command) {
+		return R.ok(replans.end(command));
+	}
+
+	@GetMapping("/owner-recount/resolve")
+	@PreAuthorize(VIEW)
+	public R<WmsInventoryRecountRequestService.Resolution> ownerResolve(@RequestParam Long planDetailId,
+	                                                                    @RequestParam String requestId) {
+		return R.ok(requests.resolve(planDetailId, requestId));
+	}
+
+	@PostMapping("/owner-recount/terminate")
+	@PreAuthorize(HAND)
+	@SysLog("手机端结束原复盘请求")
+	public R<WmsInventoryRecountRequestService.Resolution> ownerTerminate(
+			@RequestBody WmsInventoryRecountTerminationCommand command) {
+		return R.ok(requests.terminate(command));
+	}
+
+	@GetMapping("/owner-recount/context")
+	@PreAuthorize(VIEW)
+	public R<WmsInventoryOwnerCountService.Context> ownerContext(
+			@RequestParam Long planDetailId) {
+		return R.ok(ownerCounts.context(planDetailId));
+	}
+
+	@GetMapping("/owner-recount/prepare")
+	@PreAuthorize(VIEW)
+	public R<WmsInventoryOwnerCountService.Prepare> ownerPrepare(
+			@RequestParam Long planDetailId) {
+		return R.ok(ownerCounts.prepare(planDetailId, true));
+	}
+
+	@GetMapping("/owner-recount/lookup")
+	@PreAuthorize(VIEW)
+	public R<WmsInventoryRecountRecordEntity> ownerLookup(@RequestParam Long planDetailId,
+	                                                      @RequestParam String requestId) {
+		return R.ok(ownerCounts.lookup(planDetailId, requestId));
+	}
+
+	@PostMapping("/recount")
+	@PreAuthorize(HAND)
+	@SysLog("手机端分货权复盘")
+	public R<WmsInventoryRecountRecordEntity> recount(
+			@RequestBody WmsInventoryRecountCommand command) {
+		require(command != null, "请选择原盘点明细");
+		mobile.detail(command.getPlanDetailId(), "hand");
+		return R.ok(recounts.recountMobile(command));
+	}
 
 	@GetMapping("/context")
 	@PreAuthorize(ADD)
@@ -129,7 +221,8 @@ public class AppInventoryPlanController {
 	@PostMapping("/adjustment-approvals")
 	@PreAuthorize(HAND)
 	@SysLog("手机端提交盘点差异审批")
-	public R<WmsInventoryAdjustmentApprovalEntity> submitApproval(@RequestBody WmsInventoryAdjustmentApprovalSubmit command) {
+	public R<WmsInventoryAdjustmentApprovalEntity> submitApproval(
+			@RequestBody WmsInventoryAdjustmentApprovalSubmit command) {
 		require(command != null, "请选择盘点差异明细");
 		mobile.detail(command.getPlanDetailId(), "hand");
 		return R.ok(approvals.submitMobile(command));
@@ -138,7 +231,8 @@ public class AppInventoryPlanController {
 	@PostMapping("/adjustment-approvals/review")
 	@PreAuthorize(HAND)
 	@SysLog("手机端审核盘点差异")
-	public R<WmsInventoryAdjustmentApprovalEntity> reviewApproval(@RequestBody WmsInventoryAdjustmentApprovalReview command) {
+	public R<WmsInventoryAdjustmentApprovalEntity> reviewApproval(
+			@RequestBody WmsInventoryAdjustmentApprovalReview command) {
 		require(command != null && command.getApprovalId() != null, "请选择审批申请");
 		var approval = approvals.get(command.getApprovalId());
 		mobile.detail(approval.getPlanDetailId(), "hand");

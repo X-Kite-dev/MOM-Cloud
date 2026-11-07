@@ -64,6 +64,9 @@ public class MesWorkpieceTimeService {
             return readReceipt(original);
         }
         cancellations.assertActive(COMMAND_KIND, command.getRequestId(), hash);
+        if ("START".equals(command.getAction())) {
+            MesWorkpieceEntrySources.available(rows);
+        }
 
         var arrange = lockedArrangement(id(command.getArrangeId()));
         assertWorker(arrange);
@@ -139,7 +142,8 @@ public class MesWorkpieceTimeService {
         sessions.forEach(session -> assertSession(arrange, session));
         return new MesWorkpieceTimeDTO.View(arrange.getTenantId().toString(), factory, arrangeId.toString(), BASIS,
                 "标识由操作者现场读取；仅校验形态和已知归属冲突，不代表已核实物绑定，不产生生产数量。", sessions, intervals,
-                sessionPage, 100, sessionTotal, intervalPage, 200, intervalTotal);
+                sessionPage, 100, sessionTotal, intervalPage, 200, intervalTotal,
+                MesWorkpieceEntrySources.read(rows, json, arrange, sessions));
     }
 
     @Transactional(rollbackFor = Exception.class)

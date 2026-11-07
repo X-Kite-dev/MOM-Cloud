@@ -28,110 +28,121 @@ import static com.kitex.mom.mes.service.impl.MesPhysicalTransformCodec.require;
 @Component
 @RequiredArgsConstructor
 public class MesWarehouseFeedPreparationReader {
-    private final MesTaskArrangeMapper arrangements;
-    private final MesTaskMapper tasks;
-    private final MesWarehouseLiveStockService stocks;
-    private final RemoteMaterialService materials;
-    private final MesMaterialConsumptionModeResolver consumptionModes;
-    private final MesPhysicalTransformCodec codec;
-    private final MesTerminalExecutionGuard terminals;
-    private final MesReworkMaterialPlanService reworkPlans;
-    private final MesMaterialSourceEligibility sourceEligibility;
+	private final MesTaskArrangeMapper arrangements;
+	private final MesTaskMapper tasks;
+	private final MesWarehouseLiveStockService stocks;
+	private final RemoteMaterialService materials;
+	private final MesMaterialConsumptionModeResolver consumptionModes;
+	private final MesPhysicalTransformCodec codec;
+	private final MesTerminalExecutionGuard terminals;
+	private final MesReworkMaterialPlanService reworkPlans;
+	private final MesMaterialSourceEligibility sourceEligibility;
 
-    /**
-     * 在命令服务已核身份/261部署且新建只读一致事务内读取；跨服务计量并非分布式原子快照。
-     */
-    public MesWarehouseFeedPreparationDTO.Observation read(MesWarehouseFeedPreparationDTO.Query query,
-                                                           MesWarehouseFeedCommandDTO.Context context) {
-        require(query != null, "须明确投料准备条件");
-        codec.code(query.getArrangeCode(), "实际派工", 100);
-        codec.code(query.getMaterialCode(), "投料物料", 100);
-        optional(query.getRequirementMaterialCode(), "BOM需求", 100);
-        optional(query.getBatchNo(), "来源批次", 100);
-        optional(query.getBarcode(), "来源条码", 200);
-        optional(query.getSourceWarehouseCode(), "来源仓库", 100);
-        optional(query.getSourceSiteCode(), "来源库位", 100);
-        optional(query.getSupplierCode(), "来源供应商", 100);
-        optional(query.getReservationNo(), "来源预留号", 100);
-        var arranges = arrangements.selectList(new LambdaQueryWrapper<MesTaskArrangeEntity>()
-                .eq(MesTaskArrangeEntity::getTenantId, TenantContextHolder.getTenantId())
-                .eq(MesTaskArrangeEntity::getFactoryCode, context.factoryCode())
-                .eq(MesTaskArrangeEntity::getCode, query.getArrangeCode()).last("LIMIT 2"));
-        require(arranges.size() == 1, "派工未唯一归属当前实际租户工厂");
-        var arrange = arranges.get(0);
-        var parents = tasks.selectList(new LambdaQueryWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getTenantId, TenantContextHolder.getTenantId())
-                .eq(MesTaskEntity::getFactoryCode, context.factoryCode())
-                .eq(MesTaskEntity::getCode, arrange.getTaskCode()).last("LIMIT 2"));
-        require(parents.size() == 1, "派工的实际父工单缺失或不唯一");
-        var task = parents.get(0);
-        var route = com.kitex.mom.mes.util.MesTaskUtils.getCurrentProcess(task.getProcessRouteSnapshot(),
-                arrange.getRouteCode(), arrange.getSourceRouteNodeCode());
-        require(route.getMdmProcessProcedureMatList() != null, "原冻结工序未声明物料需求，不能准备投料");
-        var demandCodes = route.getMdmProcessProcedureMatList().stream().filter(Objects::nonNull)
-                .map(com.kitex.mom.mes.dto.ProcessProcedureDTO.ProcessProcedureMatDTO::getMaterialCode).collect(java.util.stream.Collectors.toSet());
-        require(Set.of("DISPATCH", "PRODUCT").contains(Objects.toString(task.getStatus(), ""))
-                        && Set.of("UN_RECEIVE", "RECEIVE", "PRODUCT", "PAUSE").contains(Objects.toString(arrange.getStatus(), "")),
-                "当前工单或派工状态不允许新增投料");
-        terminals.assertUnoccupied(arrange);
-        reworkPlans.assertReady(task);
-        require(consumptionModes.resolve(arrange) == MesMaterialConsumptionModeResolver.Mode.FEED,
-                "原派工固定为倒冲模式，不能准备手工投料重复扣库");
-        var response = materials.productionMeasure(query.getMaterialCode());
-        var measure = response == null ? null : response.getData();
-        require(response != null && response.isOk() && measure != null && Boolean.TRUE.equals(measure.getEnabled())
-                && Objects.equals(measure.getTenantId(), context.tenantId())
-                && Objects.equals(measure.getFactoryCode(), context.factoryCode())
-                && Objects.equals(measure.getMaterialCode(), query.getMaterialCode()), "实际物料计量未启用或组织身份不可核验");
-        codec.code(measure.getBasicUnit(), "实际基本单位", 100);
-        codec.code(arrange.getProduceTaskCode(), "实际工序任务", 100);
-        var bindings = MesMaterialSubstituteResolver.feedBindings(task.getBomSnapshot(), query.getMaterialCode(),
-                        query.getRequirementMaterialCode()).stream()
-                .filter(b -> demandCodes.contains(b.requirementMatCode()))
-                .map(b -> new MesWarehouseFeedPreparationDTO.Binding(b.requirementMatCode(), b.actualMatCode(),
-                        codec.amount(b.ratio()), b.substitute(), b.allowMixed(), b.strategy())).toList();
-        require(bindings.size() <= 1000, "BOM绑定超过1000项，须明确需求而非截断候选");
-        require(!bindings.isEmpty(), "投料物料未绑定本派工冻结工序需求");
-        // 即使当前没有库存也先校验完整冻结来源，不能把坏正文呈现为零个候选。
-        for (var binding : bindings)
-            sourceEligibility.constrain(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>(),
-                    task, binding.requirementMaterialCode(), binding.actualMaterialCode(), new java.math.BigDecimal(binding.ratio()));
-        var filter = new MesWarehouseLiveStockInoutDTO();
-        filter.setMatCode(query.getMaterialCode());
-        filter.setFactoryCode(context.factoryCode());
-        filter.setMatBatch(query.getBatchNo());
-        filter.setMatBarcode(query.getBarcode());
-        filter.setWarehouseCode(query.getSourceWarehouseCode());
-        filter.setSiteCode(query.getSourceSiteCode());
-        filter.setSupplierCode(query.getSupplierCode());
-        filter.setReservationNo(query.getReservationNo());
-        var candidates = stocks.previewFeedSources(filter).stream().filter(stock -> bindings.stream()
-                        .anyMatch(binding -> sourceEligibility.eligible(task, stock, binding.requirementMaterialCode(),
-                                new java.math.BigDecimal(binding.ratio()))))
-                .filter(stock -> stock.getProduceTaskCode() == null || stock.getProduceTaskCode().isEmpty()
-                        || arrange.getProduceTaskCode().equals(stock.getProduceTaskCode())).toList();
-        require(candidates.stream().allMatch(s -> Objects.equals(s.getMatUnit(), measure.getBasicUnit())),
-                "实际计量和来源库存单位观察发生变化，请重新读取，不进行隐式换算");
-        var sources = candidates.stream().map(s -> new MesWarehouseFeedPreparationDTO.Source(s.getId().toString(),
-                codec.amount(s.getNum()), s.getMatUnit(), s.getMatBatch(), s.getMatBarcode(), s.getWarehouseCode(),
-                s.getSiteCode(), s.getSupplierCode(), s.getReservationNo(), s.getRequirementMatCode(),
-                id(s.getMaterialReceiptId()), id(s.getSourceReportId()), s.getProduceTaskCode(),
-                s.getInTime() == null ? null : s.getInTime().toString())).toList();
-        return new MesWarehouseFeedPreparationDTO.Observation("MES_FEED_PREPARATION_V1", context,
-                LocalDateTime.now().toString(), task.getId().toString(), task.getCode(), task.getStatus(),
-                arrange.getId().toString(), arrange.getCode(), arrange.getStatus(), arrange.getProduceTaskCode(),
-                arrange.getActualWorksiteCode() == null ? "" : arrange.getActualWorksiteCode(),
-                measure.getMaterialId(), measure.getMaterialCode(), measure.getBasicUnit(), measure.getUpdatedAt(), bindings, sources);
-    }
+	/**
+	 * 在命令服务已核身份/261部署且新建只读一致事务内读取；跨服务计量并非分布式原子快照。
+	 */
+	public MesWarehouseFeedPreparationDTO.Observation read(MesWarehouseFeedPreparationDTO.Query query,
+	                                                       MesWarehouseFeedCommandDTO.Context context) {
+		require(query != null, "须明确投料准备条件");
+		codec.code(query.getArrangeCode(), "实际派工", 100);
+		codec.code(query.getMaterialCode(), "投料物料", 100);
+		optional(query.getRequirementMaterialCode(), "BOM需求", 100);
+		optional(query.getBatchNo(), "来源批次", 100);
+		optional(query.getBarcode(), "来源条码", 200);
+		optional(query.getSourceWarehouseCode(), "来源仓库", 100);
+		optional(query.getSourceSiteCode(), "来源库位", 100);
+		optional(query.getSupplierCode(), "来源供应商", 100);
+		optional(query.getReservationNo(), "来源预留号", 100);
+		var arranges = arrangements.selectList(new LambdaQueryWrapper<MesTaskArrangeEntity>()
+				.eq(MesTaskArrangeEntity::getTenantId, TenantContextHolder.getTenantId())
+				.eq(MesTaskArrangeEntity::getFactoryCode, context.factoryCode())
+				.eq(MesTaskArrangeEntity::getCode, query.getArrangeCode()).last("LIMIT 2"));
+		require(arranges.size() == 1, "派工未唯一归属当前实际租户工厂");
+		var arrange = arranges.get(0);
+		var parents = tasks.selectList(new LambdaQueryWrapper<MesTaskEntity>()
+				.eq(MesTaskEntity::getTenantId, TenantContextHolder.getTenantId())
+				.eq(MesTaskEntity::getFactoryCode, context.factoryCode())
+				.eq(MesTaskEntity::getCode, arrange.getTaskCode()).last("LIMIT 2"));
+		require(parents.size() == 1, "派工的实际父工单缺失或不唯一");
+		var task = parents.get(0);
+		var route = com.kitex.mom.mes.util.MesTaskUtils.getCurrentProcess(task.getProcessRouteSnapshot(),
+				arrange.getRouteCode(), arrange.getSourceRouteNodeCode());
+		require(route.getMdmProcessProcedureMatList() != null, "原冻结工序未声明物料需求，不能准备投料");
+		var consumptionMode = consumptionModes.resolve(arrange);
+		var demandCodes = MesMaterialConsumptionModeResolver.partition(consumptionMode,
+						route.getMdmProcessProcedureMatList(),
+						MesMaterialConsumptionModeResolver.Mode.FEED).stream().filter(Objects::nonNull)
+				.map(com.kitex.mom.mes.dto.ProcessProcedureDTO.ProcessProcedureMatDTO::getMaterialCode)
+				.collect(java.util.stream.Collectors.toSet());
+		require(Set.of("DISPATCH", "PRODUCT").contains(Objects.toString(task.getStatus(), ""))
+						&&
+						Set.of("UN_RECEIVE", "RECEIVE", "PRODUCT", "PAUSE").contains(Objects.toString(arrange.getStatus(), "")),
+				"当前工单或派工状态不允许新增投料");
+		terminals.assertUnoccupied(arrange);
+		reworkPlans.assertReady(task);
+		require(consumptionMode != MesMaterialConsumptionModeResolver.Mode.BACKFLUSH,
+				"原派工固定为倒冲模式，不能准备手工投料重复扣库");
+		var response = materials.productionMeasure(query.getMaterialCode());
+		var measure = response == null ? null : response.getData();
+		require(response != null && response.isOk() && measure != null && Boolean.TRUE.equals(measure.getEnabled())
+						&& Objects.equals(measure.getTenantId(), context.tenantId())
+						&& Objects.equals(measure.getFactoryCode(), context.factoryCode())
+						&& Objects.equals(measure.getMaterialCode(), query.getMaterialCode()),
+				"实际物料计量未启用或组织身份不可核验");
+		codec.code(measure.getBasicUnit(), "实际基本单位", 100);
+		codec.code(arrange.getProduceTaskCode(), "实际工序任务", 100);
+		var bindings = MesMaterialSubstituteResolver.feedBindings(task.getBomSnapshot(), query.getMaterialCode(),
+						query.getRequirementMaterialCode()).stream()
+				.filter(b -> demandCodes.contains(b.requirementMatCode()))
+				.map(b -> new MesWarehouseFeedPreparationDTO.Binding(b.requirementMatCode(), b.actualMatCode(),
+						codec.amount(b.ratio()), b.substitute(), b.allowMixed(), b.strategy())).toList();
+		require(bindings.size() <= 1000, "BOM绑定超过1000项，须明确需求而非截断候选");
+		require(!bindings.isEmpty(), "投料物料未绑定本派工冻结工序需求");
+		// 即使当前没有库存也先校验完整冻结来源，不能把坏正文呈现为零个候选。
+		for (var binding : bindings) {
+			sourceEligibility.constrain(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>(),
+					task, binding.requirementMaterialCode(), binding.actualMaterialCode(),
+					new java.math.BigDecimal(binding.ratio()));
+		}
+		var filter = new MesWarehouseLiveStockInoutDTO();
+		filter.setMatCode(query.getMaterialCode());
+		filter.setFactoryCode(context.factoryCode());
+		filter.setMatBatch(query.getBatchNo());
+		filter.setMatBarcode(query.getBarcode());
+		filter.setWarehouseCode(query.getSourceWarehouseCode());
+		filter.setSiteCode(query.getSourceSiteCode());
+		filter.setSupplierCode(query.getSupplierCode());
+		filter.setReservationNo(query.getReservationNo());
+		var candidates = stocks.previewFeedSources(filter).stream().filter(stock -> bindings.stream()
+						.anyMatch(binding -> sourceEligibility.eligible(task, stock, binding.requirementMaterialCode(),
+								new java.math.BigDecimal(binding.ratio()))))
+				.filter(stock -> stock.getProduceTaskCode() == null || stock.getProduceTaskCode().isEmpty()
+						|| arrange.getProduceTaskCode().equals(stock.getProduceTaskCode())).toList();
+		require(candidates.stream().allMatch(s -> Objects.equals(s.getMatUnit(), measure.getBasicUnit())),
+				"实际计量和来源库存单位观察发生变化，请重新读取，不进行隐式换算");
+		var sources = candidates.stream().map(s -> new MesWarehouseFeedPreparationDTO.Source(s.getId().toString(),
+				codec.amount(s.getNum()), s.getMatUnit(), s.getMatBatch(), s.getMatBarcode(), s.getWarehouseCode(),
+				s.getSiteCode(), s.getSupplierCode(), s.getReservationNo(), s.getRequirementMatCode(),
+				id(s.getMaterialReceiptId()), id(s.getSourceReportId()), s.getProduceTaskCode(),
+				s.getInTime() == null ? null : s.getInTime().toString())).toList();
+		return new MesWarehouseFeedPreparationDTO.Observation("MES_FEED_PREPARATION_V1", context,
+				LocalDateTime.now().toString(), task.getId().toString(), task.getCode(), task.getStatus(),
+				arrange.getId().toString(), arrange.getCode(), arrange.getStatus(), arrange.getProduceTaskCode(),
+				arrange.getActualWorksiteCode() == null ? "" : arrange.getActualWorksiteCode(),
+				measure.getMaterialId(), measure.getMaterialCode(), measure.getBasicUnit(), measure.getUpdatedAt(),
+				bindings, sources);
+	}
 
-    /**
-     * 空值代表不筛选；非空编码不修剪、不把NULL谱系转换成空文本。
-     */
-    private void optional(String value, String name, int limit) {
-        if (value != null && !value.isEmpty()) codec.code(value, name, limit);
-    }
+	/**
+	 * 空值代表不筛选；非空编码不修剪、不把NULL谱系转换成空文本。
+	 */
+	private void optional(String value, String name, int limit) {
+		if (value != null && !value.isEmpty()) {
+			codec.code(value, name, limit);
+		}
+	}
 
-    private String id(Long value) {
-        return value == null ? null : value.toString();
-    }
+	private String id(Long value) {
+		return value == null ? null : value.toString();
+	}
 }

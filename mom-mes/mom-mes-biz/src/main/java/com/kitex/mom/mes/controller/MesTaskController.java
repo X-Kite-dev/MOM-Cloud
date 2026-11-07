@@ -142,7 +142,13 @@ public class MesTaskController {
         return R.ok(service.getByTaskCode(taskCode));
     }
 
-    @Operation(summary = "下达任务", description = "下达任务")
+    /**
+     * 在实际工厂和原草稿状态下冻结执行依据并生成工序任务，不能重复下达。
+     *
+     * @param id 当前租户实际工厂内的准确工单ID
+     * @return 本次下达受理结果；调用方仍须回读原单，不能作为永久命令回执
+     */
+    @Operation(summary = "下达生产工单", description = "按原冻结工程依据下达未下达工单，保留来源、修订冻结与资源门禁")
     @PostMapping("/issue")
     @PreAuthorize("@pms.hasPermission('mesTask:issue')")
     public R<Void> issue(Long id) {
@@ -150,7 +156,13 @@ public class MesTaskController {
         return R.ok();
     }
 
-    @Operation(summary = "关闭任务", description = "关闭任务")
+    /**
+     * 仅作废无关联事实的独立手工草稿，不代办计划撤回、现场停止或整单完工。
+     *
+     * @param id 当前租户实际工厂内的准确工单ID
+     * @return 本次作废受理结果或既有关闭状态观察，不代表永久关闭命令回执
+     */
+    @Operation(summary = "作废未下达手工草稿", description = "仅允许正式独立手工CREATE草稿；已下达、有来源或执行事实及已完成工单拒绝")
     @PostMapping("/close")
     @PreAuthorize("@pms.hasPermission('mesTask:close')")
     public R<Void> close(Long id) {

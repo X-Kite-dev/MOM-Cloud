@@ -28,6 +28,7 @@ import com.kitex.mom.wms.util.WmsStockAvailability;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -68,6 +69,7 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	private final WmsQmsFinishedGoodsDecisionReversalOutboxService qmsExecutionOutboxService;
 	private final RemoteQmsFinishedGoodsDecisionReversalService qualityDecisionReversalService;
 	private final WmsFinishedGoodsCorrectionMobileAccess mobileAccess;
+	private final com.kitex.mom.wms.repository.WmsCorrectionTerminationRepository requestStates;
 
 	@Override
 	@Transactional(readOnly = true)
@@ -112,18 +114,21 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 
 	@Override
 	@Transactional(rollbackFor = Exception.class)
-	public WmsFinishedGoodsReceiptCorrectionEntity applyMobile(WmsFinishedGoodsReceiptCorrectionCommand command) {
+	public WmsFinishedGoodsReceiptCorrectionEntity applyMobile(
+			WmsFinishedGoodsReceiptCorrectionCommand command) {
 		return apply(command, true);
 	}
 
-	private WmsFinishedGoodsReceiptCorrectionEntity apply(WmsFinishedGoodsReceiptCorrectionCommand command, boolean mobile) {
+	private WmsFinishedGoodsReceiptCorrectionEntity apply(WmsFinishedGoodsReceiptCorrectionCommand command,
+	                                                      boolean mobile) {
 		validateApply(command);
 		if (mobile) {
 			mobileAccess.requireScope();
 		}
 		Long tenant = TenantContextHolder.getTenantId();
 		require(tenant != null && tenant > 0 && !Boolean.TRUE.equals(TenantContextHolder.getTenantSkip())
-				&& !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()), "成品纠错需要实际租户和工厂范围");
+						&& !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()),
+				"成品纠错需要实际租户和工厂范围");
 		String factory = requireFactory();
 		MomUser applicant = user();
 		String requestId = command.getRequestId().trim();
@@ -135,11 +140,13 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 			return originalApplication(replay, command, requestFingerprint, tenant, factory, applicant, mobile);
 		}
 		noticeMapper.lockSourceRequest("FG_RECEIPT_CORRECTION:" + command.getNoticeId());
+		requestStates.lock(tenant, factory, requestId);
 		replay = getOne(new LambdaQueryWrapper<WmsFinishedGoodsReceiptCorrectionEntity>()
 				.eq(WmsFinishedGoodsReceiptCorrectionEntity::getRequestId, requestId), false);
 		if (replay != null) {
 			return originalApplication(replay, command, requestFingerprint, tenant, factory, applicant, mobile);
 		}
+		require(requestStates.find(tenant, factory, requestId) == null, "原申请已永久结束，请查询原结束结果");
 		if (mobile) {
 			mobileAccess.requireSource(command.getNoticeId());
 		}
@@ -193,7 +200,8 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 					.setCorrectionId(row.getId()).setStockId(stock.getId())
 					.setSourceInBillId(stock.getSourceInBillId())
 					.setSourceInBillDetailId(stock.getSourceInBillDetailId())
-					.setMatCode(stock.getMatCode()).setMatName(stock.getMatName()).setMatSpec(stock.getMatSpec())
+					.setMatCode(stock.getMatCode()).setMatName(stock.getMatName())
+					.setMatSpec(stock.getMatSpec())
 					.setMatBatch(stock.getMatBatch()).setMatBarcode(stock.getMatBarcode())
 					.setMatUnit(stock.getMatUnit()).setSourceStockQuantity(quantity(stock.getMatNum()))
 					.setQuantity(selection.quantity()).setWarehouseCode(stock.getWarehouseCode())
@@ -215,14 +223,17 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	}
 
 	@Override
-	@Transactional(rollbackFor = Exception.class)
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
 	public WmsFinishedGoodsReceiptCorrectionEntity withdraw(Long correctionId,
 	                                                        WmsFinishedGoodsReceiptCorrectionCommand command) {
 		WmsFinishedGoodsReceiptCorrectionEntity row = requireCorrection(correctionId, true);
 		requireDecisionWarehouse(row, "wms_bill_add_in_product");
 		String commandId = decisionCommandId(command);
 		String commandFingerprint = commandFingerprint(command);
-		if (replayedOperation(row.getId(), commandId, commandFingerprint, "WITHDRAW") != null) return row;
+		if (replayedOperation(row.getId(), commandId, commandFingerprint, "WITHDRAW") != null) {
+			return row;
+		}
+		requestStates.requireDecisionOpen(row.getTenantId(), row.getFactoryCode(), row.getId(), commandId);
 		require("SUBMITTED".equals(row.getStatus()), "只有待复核红冲申请可以撤回");
 		MomUser user = user();
 		require(Objects.equals(row.getApplicantCode(), user.getUsername()), "只有原申请人可以撤回红冲申请");
@@ -236,14 +247,17 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	}
 
 	@Override
-	@Transactional(rollbackFor = Exception.class)
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
 	public WmsFinishedGoodsReceiptCorrectionEntity reject(Long correctionId,
 	                                                      WmsFinishedGoodsReceiptCorrectionCommand command) {
 		WmsFinishedGoodsReceiptCorrectionEntity row = requireCorrection(correctionId, true);
 		requireDecisionWarehouse(row, "wms_bill_review_in_product");
 		String commandId = decisionCommandId(command);
 		String commandFingerprint = commandFingerprint(command);
-		if (replayedOperation(row.getId(), commandId, commandFingerprint, "REJECT") != null) return row;
+		if (replayedOperation(row.getId(), commandId, commandFingerprint, "REJECT") != null) {
+			return row;
+		}
+		requestStates.requireDecisionOpen(row.getTenantId(), row.getFactoryCode(), row.getId(), commandId);
 		require("SUBMITTED".equals(row.getStatus()), "只有待复核红冲申请可以驳回");
 		MomUser reviewer = user();
 		require(!Objects.equals(row.getApplicantCode(), reviewer.getUsername()), "申请人与复核人必须分离");
@@ -258,7 +272,7 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	}
 
 	@Override
-	@Transactional(rollbackFor = Exception.class)
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
 	public WmsFinishedGoodsReceiptCorrectionEntity approve(Long correctionId) {
 		WmsFinishedGoodsReceiptCorrectionEntity snapshot = requireCorrection(correctionId, false);
 		noticeMapper.lockSourceRequest("FG_RECEIPT_CORRECTION:" + snapshot.getNoticeId());
@@ -277,6 +291,8 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 			requireOriginalDecisionActor(replay);
 			return row;
 		}
+		// 固定批准原号一旦永久结束，本申请不能换号批准，须撤回/驳回后按新申请处理。
+		requestStates.requireDecisionOpen(row.getTenantId(), row.getFactoryCode(), row.getId(), commandId);
 		require("SUBMITTED".equals(row.getStatus()), "只有待复核红冲申请可以批准执行");
 		MomUser reviewer = user();
 		require(!Objects.equals(row.getApplicantCode(), reviewer.getUsername()), "申请人与复核人必须分离");
@@ -349,7 +365,9 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 		}
 		for (WmsInNoticeDetailEntity detail : current.noticeDetails()) {
 			BigDecimal increment = reversedByNoticeDetail.getOrDefault(detail.getId(), BigDecimal.ZERO);
-			if (increment.signum() == 0) continue;
+			if (increment.signum() == 0) {
+				continue;
+			}
 			BigDecimal reversed = zero(detail.getFinishedGoodsReversedNum()).add(increment);
 			require(reversed.compareTo(quantity(detail.getInNum())) <= 0,
 					"通知明细累计红冲超过原实收数量");
@@ -377,7 +395,8 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 				.setEvidenceFingerprint(row.getEvidenceFingerprint()).setReversalMode(row.getReversalMode())
 				.setReverseQuantity(row.getTotalQuantity())
 				.setReason(row.getReason()).setApplicantCode(row.getApplicantCode())
-				.setReviewerCode(reviewer.getUsername()).setFactoryCode(row.getFactoryCode()).setExecutedTime(now);
+				.setReviewerCode(reviewer.getUsername()).setFactoryCode(row.getFactoryCode())
+				.setExecutedTime(now);
 		event.setFingerprint(event.calculateFingerprint());
 		outboxService.enqueue(row, event);
 		if (row.getQmsDecisionReversalId() != null) {
@@ -394,9 +413,10 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	@Transactional(readOnly = true)
 	public List<WmsFinishedGoodsReceiptCorrectionOperationEntity> operations(Long correctionId) {
 		requireCorrection(correctionId, false);
-		return operationMapper.selectList(new LambdaQueryWrapper<WmsFinishedGoodsReceiptCorrectionOperationEntity>()
-				.eq(WmsFinishedGoodsReceiptCorrectionOperationEntity::getCorrectionId, correctionId)
-				.orderByAsc(WmsFinishedGoodsReceiptCorrectionOperationEntity::getId));
+		return operationMapper.selectList(
+				new LambdaQueryWrapper<WmsFinishedGoodsReceiptCorrectionOperationEntity>()
+						.eq(WmsFinishedGoodsReceiptCorrectionOperationEntity::getCorrectionId, correctionId)
+						.orderByAsc(WmsFinishedGoodsReceiptCorrectionOperationEntity::getId));
 	}
 
 	@Override
@@ -440,28 +460,42 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 				.last(lock ? "FOR UPDATE" : ""), false);
 		require(notice != null, "当前工厂下不存在该成品入库通知");
 		List<String> blockers = new ArrayList<>();
-		if (!InBillTypeEnum.PRODUCT.getCode().equals(notice.getBillType())) blockers.add("仅MES成品入库通知可红冲");
+		if (!InBillTypeEnum.PRODUCT.getCode().equals(notice.getBillType())) {
+			blockers.add("仅MES成品入库通知可红冲");
+		}
 		String mesPrefix = StrUtil.startWith(notice.getSourceRequestId(), "MES_TASK_IN_WMS_V2:")
 				? "MES_TASK_IN_WMS_V2:" : MES_PREFIX;
 		String sourceRequest = StrUtil.startWith(notice.getSourceRequestId(), mesPrefix)
 				? StrUtil.removePrefix(notice.getSourceRequestId(), mesPrefix) : null;
-		if (StrUtil.isBlank(sourceRequest)) blockers.add("通知缺少MES成品入库永久请求号，历史数据禁止猜测来源");
+		if (StrUtil.isBlank(sourceRequest)) {
+			blockers.add("通知缺少MES成品入库永久请求号，历史数据禁止猜测来源");
+		}
 		if (StrUtil.isBlank(notice.getSourceRequestFingerprint())
-				|| notice.getSourceRequestFingerprint().length() != 64) blockers.add("通知缺少MES原入库命令指纹");
+				|| notice.getSourceRequestFingerprint().length() != 64) {
+			blockers.add("通知缺少MES原入库命令指纹");
+		}
 		BigDecimal expected = quantity(notice.getNoticeInNum());
 		BigDecimal received = quantity(notice.getAllInNum());
-		if (expected.signum() <= 0) blockers.add("成品入库通知数量必须大于0");
+		if (expected.signum() <= 0) {
+			blockers.add("成品入库通知数量必须大于0");
+		}
 		if (!"2".equals(notice.getState()) || received.compareTo(expected) != 0
-				|| quantity(notice.getAllNotInNum()).signum() != 0)
+				|| quantity(notice.getAllNotInNum()).signum() != 0) {
 			blockers.add("通知必须已经全量实收并处于已完成状态");
+		}
 
 		List<WmsInNoticeDetailEntity> noticeDetails = noticeDetailMapper.selectList(
-				new LambdaQueryWrapper<WmsInNoticeDetailEntity>().eq(WmsInNoticeDetailEntity::getNoticeId, noticeId)
+				new LambdaQueryWrapper<WmsInNoticeDetailEntity>().eq(WmsInNoticeDetailEntity::getNoticeId,
+								noticeId)
 						.orderByAsc(WmsInNoticeDetailEntity::getId).last(lock ? "FOR UPDATE" : ""));
-		if (noticeDetails.isEmpty()) blockers.add("成品入库通知没有明细");
+		if (noticeDetails.isEmpty()) {
+			blockers.add("成品入库通知没有明细");
+		}
 		BigDecimal noticeDetailTotal = noticeDetails.stream().map(item -> quantity(item.getNoticeInNum()))
 				.reduce(BigDecimal.ZERO, BigDecimal::add);
-		if (noticeDetailTotal.compareTo(expected) != 0) blockers.add("通知表头与明细数量不守恒");
+		if (noticeDetailTotal.compareTo(expected) != 0) {
+			blockers.add("通知表头与明细数量不守恒");
+		}
 
 		List<WmsInBillEntity> bills = inBillMapper.selectList(new LambdaQueryWrapper<WmsInBillEntity>()
 				.eq(WmsInBillEntity::getNoticeId, noticeId).orderByAsc(WmsInBillEntity::getId)
@@ -476,16 +510,23 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 				.last(lock ? "FOR UPDATE" : ""));
 		BigDecimal billed = billDetails.stream().map(item -> quantity(item.getMatNum()))
 				.reduce(BigDecimal.ZERO, BigDecimal::add);
-		if (billed.compareTo(expected) != 0) blockers.add("已完成入库单明细与通知数量不守恒");
+		if (billed.compareTo(expected) != 0) {
+			blockers.add("已完成入库单明细与通知数量不守恒");
+		}
 
 		List<WmsLiveStockEntity> stocks = StrUtil.isBlank(sourceRequest) ? List.of()
 				: stockMapper.selectList(new LambdaQueryWrapper<WmsLiveStockEntity>()
 				.eq(WmsLiveStockEntity::getSourceMesInboundRequestId, sourceRequest)
 				.eq(WmsLiveStockEntity::getFactoryCode, factory).orderByAsc(WmsLiveStockEntity::getId)
 				.last(lock ? "LIMIT 10001 FOR UPDATE" : "LIMIT 10001"));
-		if (stocks.size() > 10000) blockers.add("来源库存超过10000行安全上限，禁止截断红冲");
-		if (stocks.isEmpty()) blockers.add("当前库存没有MES成品入库精确来源，历史库存禁止自动红冲");
-		Set<Long> billDetailIds = billDetails.stream().map(WmsInBillDetailEntity::getId).collect(Collectors.toSet());
+		if (stocks.size() > 10000) {
+			blockers.add("来源库存超过10000行安全上限，禁止截断红冲");
+		}
+		if (stocks.isEmpty()) {
+			blockers.add("当前库存没有MES成品入库精确来源，历史库存禁止自动红冲");
+		}
+		Set<Long> billDetailIds = billDetails.stream().map(WmsInBillDetailEntity::getId)
+				.collect(Collectors.toSet());
 		Map<Long, WmsInBillDetailEntity> detailById = billDetails.stream()
 				.collect(Collectors.toMap(WmsInBillDetailEntity::getId, Function.identity()));
 		if (stocks.stream().anyMatch(stock -> stock.getSourceInBillId() == null
@@ -505,20 +546,27 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 		Set<String> qualityFingerprints = stocks.stream()
 				.map(WmsLiveStockEntity::getSourceQualityEvidenceFingerprint)
 				.filter(StrUtil::isNotBlank).collect(Collectors.toSet());
-		if (qualityFingerprints.size() > 1) blockers.add("同一成品入库通知存在多个QMS质量证据版本，禁止混用授权");
+		if (qualityFingerprints.size() > 1) {
+			blockers.add("同一成品入库通知存在多个QMS质量证据版本，禁止混用授权");
+		}
 		if (stocks.stream().anyMatch(stock -> {
 			WmsInBillDetailEntity source = detailById.get(stock.getSourceInBillDetailId());
 			return source != null && (!Objects.equals(source.getMatCode(), stock.getMatCode())
 					||
-					!Objects.equals(StrUtil.nullToEmpty(source.getMatBatch()), StrUtil.nullToEmpty(stock.getMatBatch()))
+					!Objects.equals(StrUtil.nullToEmpty(source.getMatBatch()),
+							StrUtil.nullToEmpty(stock.getMatBatch()))
 					|| !Objects.equals(source.getMatUnit(), stock.getMatUnit())
 					|| !Objects.equals(source.getSourceQualityTaskIds(), stock.getSourceQualityTaskIds())
 					|| !Objects.equals(source.getSourceQualityEvidenceFingerprint(),
 					stock.getSourceQualityEvidenceFingerprint()));
-		})) blockers.add("来源库存与原入库明细的物料、批次、单位或质量证据不一致");
+		})) {
+			blockers.add("来源库存与原入库明细的物料、批次、单位或质量证据不一致");
+		}
 		BigDecimal stockTotal = stocks.stream().map(item -> quantity(item.getMatNum()))
 				.reduce(BigDecimal.ZERO, BigDecimal::add);
-		if (stockTotal.signum() <= 0) blockers.add("当前没有仍在库的精确来源成品可供红冲");
+		if (stockTotal.signum() <= 0) {
+			blockers.add("当前没有仍在库的精确来源成品可供红冲");
+		}
 		Set<Long> stockIds = stocks.stream().map(WmsLiveStockEntity::getId).collect(Collectors.toSet());
 		Map<Long, BigDecimal> productionReservedByStock = stocks.stream().collect(Collectors.toMap(
 				WmsLiveStockEntity::getId,
@@ -535,17 +583,19 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 		if (!stocks.isEmpty() && !anySelectable) {
 			blockers.add("来源库存均处于不可用、全量预留或条码单件被预留状态，当前无可红冲实物");
 		}
-		List<WmsInoutFlowEntity> inboundFlows = billDetailIds.isEmpty() || StrUtil.isBlank(sourceRequest) ? List.of()
-				: flowMapper.selectList(new LambdaQueryWrapper<WmsInoutFlowEntity>()
-				.in(WmsInoutFlowEntity::getSourceInBillDetailId, billDetailIds)
-				.eq(WmsInoutFlowEntity::getSourceMesInboundRequestId, sourceRequest)
-				.eq(WmsInoutFlowEntity::getStockProofType, "MES_FINISHED_GOODS_RECEIPT")
-				.eq(WmsInoutFlowEntity::getOperateType, InOutEnum.IN.getCode())
-				.orderByAsc(WmsInoutFlowEntity::getId).last(lock ? "FOR UPDATE" : ""));
+		List<WmsInoutFlowEntity> inboundFlows =
+				billDetailIds.isEmpty() || StrUtil.isBlank(sourceRequest) ? List.of()
+						: flowMapper.selectList(new LambdaQueryWrapper<WmsInoutFlowEntity>()
+						.in(WmsInoutFlowEntity::getSourceInBillDetailId, billDetailIds)
+						.eq(WmsInoutFlowEntity::getSourceMesInboundRequestId, sourceRequest)
+						.eq(WmsInoutFlowEntity::getStockProofType, "MES_FINISHED_GOODS_RECEIPT")
+						.eq(WmsInoutFlowEntity::getOperateType, InOutEnum.IN.getCode())
+						.orderByAsc(WmsInoutFlowEntity::getId).last(lock ? "FOR UPDATE" : ""));
 		Set<Long> evidenced = inboundFlows.stream().map(WmsInoutFlowEntity::getSourceInBillDetailId)
 				.filter(Objects::nonNull).collect(Collectors.toSet());
-		if (!evidenced.containsAll(billDetailIds))
+		if (!evidenced.containsAll(billDetailIds)) {
 			blockers.add("原实收入库缺少新版精确流水证据，禁止按历史普通流水推断");
+		}
 		Map<Long, BigDecimal> flowQuantityByDetail = inboundFlows.stream().collect(Collectors.groupingBy(
 				WmsInoutFlowEntity::getSourceInBillDetailId, Collectors.reducing(BigDecimal.ZERO,
 						item -> quantity(item.getMatNum()), BigDecimal::add)));
@@ -574,7 +624,9 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 		if (!qualityTaskIds.isEmpty() && blockers.stream().noneMatch(item -> item.contains("QMS质量证据"))) {
 			try {
 				authorization = queryQualityAuthorization(proof, qualityTaskIds);
-				if (!Boolean.TRUE.equals(authorization.getEligible())) blockers.add(authorization.getMessage());
+				if (!Boolean.TRUE.equals(authorization.getEligible())) {
+					blockers.add(authorization.getMessage());
+				}
 			} catch (Exception exception) {
 				blockers.add("QMS质量逆向授权服务不可用，故障关闭：" + rootMessage(exception));
 			}
@@ -600,14 +652,20 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 						.filter(StrUtil::isNotBlank).distinct().findFirst().orElse(null))
 				.setQualityAuthorizationRequired(!qualityTaskIds.isEmpty())
 				.setEligible(blockers.isEmpty()).setEvidenceFingerprint(proof.fingerprint())
-				.setBlockers(blockers).setCorrection(correction).setDetails(frozen);
-		if (authorization != null) view.setQualityAuthorizationId(authorization.getReversalId())
-				.setQualityAuthorizationNo(authorization.getReversalNo())
-				.setQualityAuthorizationStatus(authorization.getStatus())
-				.setQualityAuthorizationCode(authorization.getAuthorizationCode())
-				.setQualityAuthorizationMessage(authorization.getMessage())
-				.setQualityAuthorizationEvidenceFingerprint(authorization.getQmsEvidenceFingerprint())
-				.setQualityAuthorizationExpiresAt(authorization.getAuthorizationExpiresAt());
+				.setBlockers(blockers).setCorrection(correction).setDetails(frozen)
+				.setApprovalRequestEnded(
+						correction != null && requestStates.decisionEnded(correction.getTenantId(),
+								correction.getFactoryCode(), correction.getId(),
+								"APPROVE:" + correction.getId()));
+		if (authorization != null) {
+			view.setQualityAuthorizationId(authorization.getReversalId())
+					.setQualityAuthorizationNo(authorization.getReversalNo())
+					.setQualityAuthorizationStatus(authorization.getStatus())
+					.setQualityAuthorizationCode(authorization.getAuthorizationCode())
+					.setQualityAuthorizationMessage(authorization.getMessage())
+					.setQualityAuthorizationEvidenceFingerprint(authorization.getQmsEvidenceFingerprint())
+					.setQualityAuthorizationExpiresAt(authorization.getAuthorizationExpiresAt());
+		}
 		return view;
 	}
 
@@ -656,7 +714,9 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	private QmsFinishedGoodsDecisionReversalDTO.Authorization consumeQualityAuthorization(
 			Proof proof, Long authorizationId, String authorizationCode, String correctionRequestId) {
 		List<Long> taskIds = qualityTaskIds(proof.stocks());
-		if (taskIds.isEmpty()) return null;
+		if (taskIds.isEmpty()) {
+			return null;
+		}
 		require(authorizationId != null && StrUtil.isNotBlank(authorizationCode),
 				"来源成品使用了QMS质量判定，必须先完成异岗逆向审批并携带有效授权");
 		QmsFinishedGoodsDecisionReversalDTO.ConsumeCommand command =
@@ -685,7 +745,9 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 
 	private String rootMessage(Throwable throwable) {
 		Throwable current = throwable;
-		while (current.getCause() != null && current.getCause() != current) current = current.getCause();
+		while (current.getCause() != null && current.getCause() != current) {
+			current = current.getCause();
+		}
 		return StrUtil.blankToDefault(current.getMessage(), current.getClass().getSimpleName());
 	}
 
@@ -702,7 +764,8 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 		noticeDetails.forEach(item -> facts.add(Arrays.asList("NOTICE_LINE", item.getId(), item.getMatCode(),
 				number(quantity(item.getNoticeInNum())), number(quantity(item.getInNum())),
 				number(quantity(item.getNotInNum())), number(zero(item.getFinishedGoodsReversedNum())))));
-		bills.forEach(item -> facts.add(Arrays.asList("BILL", item.getId(), item.getBillNo(), item.getState())));
+		bills.forEach(
+				item -> facts.add(Arrays.asList("BILL", item.getId(), item.getBillNo(), item.getState())));
 		billDetails.forEach(item -> facts.add(Arrays.asList("BILL_LINE", item.getId(), item.getBillId(),
 				item.getNoticeDetailId(), item.getMatCode(), String.valueOf(item.getMatBatch()),
 				item.getMatBarcode(), number(quantity(item.getMatNum())), item.getSourceQualityTaskIds(),
@@ -721,15 +784,19 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	private String stockFingerprint(WmsLiveStockEntity stock) {
 		return hash(JSONUtil.toJsonStr(Arrays.asList(stock.getId(), stock.getSourceInBillId(),
 				stock.getSourceInBillDetailId(), stock.getSourceMesInboundRequestId(), stock.getMatCode(),
-				stock.getMatBatch(), stock.getMatBarcode(), stock.getMatUnit(), number(quantity(stock.getMatNum())),
+				stock.getMatBatch(), stock.getMatBarcode(), stock.getMatUnit(),
+				number(quantity(stock.getMatNum())),
 				stock.getWarehouseCode(), stock.getSiteCode(), stock.getContainerCode(), stock.getInTime(),
 				stock.getQualityStatus(), stock.getQualityResult(), stock.getQualityHoldNo(), stock.getStatus(),
 				stock.getSourceQualityTaskIds(), stock.getSourceQualityEvidenceFingerprint(),
-				stock.getSourceQualityEvidenceSnapshot(), stock.getExpirationStatus(), stock.getFactoryCode())));
+				stock.getSourceQualityEvidenceSnapshot(), stock.getExpirationStatus(),
+				stock.getFactoryCode())));
 	}
 
 	private boolean validQualityTaskIds(String value) {
-		if (StrUtil.isBlank(value)) return false;
+		if (StrUtil.isBlank(value)) {
+			return false;
+		}
 		try {
 			return JSONUtil.toList(value, Long.class).stream().allMatch(Objects::nonNull);
 		} catch (Exception exception) {
@@ -740,7 +807,9 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	private List<Long> qualityTaskIds(List<WmsLiveStockEntity> stocks) {
 		SortedSet<Long> result = new TreeSet<>();
 		for (WmsLiveStockEntity stock : stocks) {
-			if (!validQualityTaskIds(stock.getSourceQualityTaskIds())) continue;
+			if (!validQualityTaskIds(stock.getSourceQualityTaskIds())) {
+				continue;
+			}
 			result.addAll(JSONUtil.toList(stock.getSourceQualityTaskIds(), Long.class));
 		}
 		return new ArrayList<>(result);
@@ -752,7 +821,8 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 				"手机端请选择1至1000条当前仓库库存");
 		Set<Long> ids = new HashSet<>();
 		for (var line : requested) {
-			require(line != null && line.getStockId() != null && line.getStockId() > 0 && ids.add(line.getStockId()),
+			require(line != null && line.getStockId() != null && line.getStockId() > 0 &&
+							ids.add(line.getStockId()),
 					"所选库存重复或已失效，请重新选择");
 		}
 		var rows = proof.stocks().stream().filter(stock -> ids.contains(stock.getId())).toList();
@@ -802,7 +872,8 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 			}
 			result.add(new SelectedStock(stock, selectedQuantity));
 		}
-		require(result.stream().map(SelectedStock::quantity).reduce(BigDecimal.ZERO, BigDecimal::add).signum() > 0,
+		require(result.stream().map(SelectedStock::quantity).reduce(BigDecimal.ZERO, BigDecimal::add).signum() >
+						0,
 				"本次红冲选择数量必须大于0");
 		return result;
 	}
@@ -810,13 +881,14 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	private List<SelectedStock> frozenSelections(Proof proof,
 	                                             List<WmsFinishedGoodsReceiptCorrectionDetailEntity> frozen) {
 		require(frozen != null && !frozen.isEmpty(), "红冲申请缺少冻结库存明细");
-		List<WmsFinishedGoodsReceiptCorrectionCommand.StockSelection> selections = frozen.stream().map(detail -> {
-			WmsFinishedGoodsReceiptCorrectionCommand.StockSelection item =
-					new WmsFinishedGoodsReceiptCorrectionCommand.StockSelection();
-			item.setStockId(detail.getStockId());
-			item.setQuantity(detail.getQuantity());
-			return item;
-		}).toList();
+		List<WmsFinishedGoodsReceiptCorrectionCommand.StockSelection> selections = frozen.stream()
+				.map(detail -> {
+					WmsFinishedGoodsReceiptCorrectionCommand.StockSelection item =
+							new WmsFinishedGoodsReceiptCorrectionCommand.StockSelection();
+					item.setStockId(detail.getStockId());
+					item.setQuantity(detail.getQuantity());
+					return item;
+				}).toList();
 		List<SelectedStock> result = selectStocks(proof, selections);
 		Map<Long, WmsFinishedGoodsReceiptCorrectionDetailEntity> detailByStock = frozen.stream()
 				.collect(Collectors.toMap(WmsFinishedGoodsReceiptCorrectionDetailEntity::getStockId,
@@ -837,9 +909,14 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 				&& zero(proof.notice().getFinishedGoodsReversedNum()).signum() == 0) {
 			return "FULL_RECEIPT";
 		}
-		long barcoded = selected.stream().filter(item -> StrUtil.isNotBlank(item.stock().getMatBarcode())).count();
-		if (barcoded == selected.size()) return "SN_EXACT";
-		if (barcoded == 0) return "PARTIAL_BATCH";
+		long barcoded = selected.stream().filter(item -> StrUtil.isNotBlank(item.stock().getMatBarcode()))
+				.count();
+		if (barcoded == selected.size()) {
+			return "SN_EXACT";
+		}
+		if (barcoded == 0) {
+			return "PARTIAL_BATCH";
+		}
 		return "MIXED_EXACT";
 	}
 
@@ -858,10 +935,14 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 
 	private BigDecimal selectableQuantity(WmsLiveStockEntity stock,
 	                                      BigDecimal productionReserved, BigDecimal salesReserved) {
-		if (!WmsStockAvailability.isUsable(stock)) return BigDecimal.ZERO;
+		if (!WmsStockAvailability.isUsable(stock)) {
+			return BigDecimal.ZERO;
+		}
 		BigDecimal physical = quantity(stock.getMatNum());
 		BigDecimal reserved = zero(productionReserved).add(zero(salesReserved));
-		if (StrUtil.isNotBlank(stock.getMatBarcode()) && reserved.signum() > 0) return BigDecimal.ZERO;
+		if (StrUtil.isNotBlank(stock.getMatBarcode()) && reserved.signum() > 0) {
+			return BigDecimal.ZERO;
+		}
 		return physical.subtract(reserved).max(BigDecimal.ZERO);
 	}
 
@@ -940,12 +1021,15 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	}
 
 	private WmsFinishedGoodsReceiptCorrectionOperationEntity replayedOperation(Long correctionId,
-	                                                                           String commandId, String fingerprint,
+	                                                                           String commandId,
+	                                                                           String fingerprint,
 	                                                                           String operationType) {
 		WmsFinishedGoodsReceiptCorrectionOperationEntity replay = operationMapper.selectOne(
 				new LambdaQueryWrapper<WmsFinishedGoodsReceiptCorrectionOperationEntity>()
 						.eq(WmsFinishedGoodsReceiptCorrectionOperationEntity::getCommandId, commandId), false);
-		if (replay == null) return null;
+		if (replay == null) {
+			return null;
+		}
 		require(Objects.equals(replay.getCorrectionId(), correctionId)
 						&& Objects.equals(replay.getCommandFingerprint(), fingerprint)
 						&& Objects.equals(replay.getOperationType(), operationType),
@@ -973,19 +1057,25 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 				&& !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
 				&& Objects.equals(row.getTenantId(), tenant), "请在原租户、原工厂办理红冲申请");
 		user();
-		var frozen = detailMapper.selectList(new LambdaQueryWrapper<WmsFinishedGoodsReceiptCorrectionDetailEntity>()
-				.eq(WmsFinishedGoodsReceiptCorrectionDetailEntity::getTenantId, tenant)
-				.eq(WmsFinishedGoodsReceiptCorrectionDetailEntity::getFactoryCode, row.getFactoryCode())
-				.eq(WmsFinishedGoodsReceiptCorrectionDetailEntity::getCorrectionId, row.getId()).last("LIMIT 10001"));
+		var frozen = detailMapper.selectList(
+				new LambdaQueryWrapper<WmsFinishedGoodsReceiptCorrectionDetailEntity>()
+						.eq(WmsFinishedGoodsReceiptCorrectionDetailEntity::getTenantId, tenant)
+						.eq(WmsFinishedGoodsReceiptCorrectionDetailEntity::getFactoryCode, row.getFactoryCode())
+						.eq(WmsFinishedGoodsReceiptCorrectionDetailEntity::getCorrectionId, row.getId())
+						.last("LIMIT 10001"));
 		// 缺失或被范围过滤的仓库明细不能缩小原申请的授权范围；保留原10000行合同。
-		require(row.getStockLineCount() != null && row.getStockLineCount() > 0 && row.getStockLineCount() <= 10000
+		require(row.getStockLineCount() != null && row.getStockLineCount() > 0 &&
+						row.getStockLineCount() <= 10000
 						&& frozen.size() == row.getStockLineCount() && frozen.stream().allMatch(line ->
-						Objects.equals(line.getTenantId(), tenant) && Objects.equals(line.getFactoryCode(), row.getFactoryCode())
+						Objects.equals(line.getTenantId(), tenant) &&
+								Objects.equals(line.getFactoryCode(), row.getFactoryCode())
 								&& "0".equals(line.getDelFlag()) && StrUtil.isNotBlank(line.getWarehouseCode())),
 				"原申请冻结仓库证据不完整，请保留历史核对");
 		require(decisionPermissions.hasPermission(permission) || frozen.stream().map(
-				WmsFinishedGoodsReceiptCorrectionDetailEntity::getWarehouseCode).distinct().allMatch(warehouse ->
-				decisionPermissions.hasPermission(permission + "_" + warehouse)), "当前账号无权办理原申请所属仓库");
+								WmsFinishedGoodsReceiptCorrectionDetailEntity::getWarehouseCode).distinct()
+						.allMatch(warehouse ->
+								decisionPermissions.hasPermission(permission + "_" + warehouse)),
+				"当前账号无权办理原申请所属仓库");
 	}
 
 	private MomUser user() {
@@ -1005,11 +1095,14 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	}
 
 	private void requireFactory(String factory) {
-		require(StrUtil.isNotBlank(factory) && Objects.equals(factory, requireFactory()), "当前工厂无权操作该红冲申请");
+		require(StrUtil.isNotBlank(factory) && Objects.equals(factory, requireFactory()),
+				"当前工厂无权操作该红冲申请");
 	}
 
 	private BigDecimal quantity(Double value) {
-		if (value == null) return BigDecimal.ZERO;
+		if (value == null) {
+			return BigDecimal.ZERO;
+		}
 		require(Double.isFinite(value) && value >= 0, "库存或单据数量不是有效非负数");
 		return BigDecimal.valueOf(value);
 	}
@@ -1032,7 +1125,9 @@ public class WmsFinishedGoodsReceiptCorrectionServiceImpl
 	}
 
 	private void require(boolean value, String message) {
-		if (!value) throw new CheckedException(message);
+		if (!value) {
+			throw new CheckedException(message);
+		}
 	}
 
 	private record Proof(WmsInNoticeEntity notice, List<WmsInNoticeDetailEntity> noticeDetails,

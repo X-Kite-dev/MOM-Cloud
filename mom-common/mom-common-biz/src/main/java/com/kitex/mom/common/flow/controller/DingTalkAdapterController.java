@@ -39,7 +39,7 @@ public class DingTalkAdapterController {
     private final DingTalkUtil dingTalkUtil;
     private final DingTalkPropsConfig dingTalkPropsConfig;
 
-//	private String AES_TOKEN = "ULraek6esTrFCF83z";
+//	private String AES_TOKEN = "REDACTED_TOKEN";
 //	private String AES_KEY = "ezhtU0ahN1bKK87kzvBOeYnKeNdkMAIK1XWLF7UyBsV";
 //	private String OWNER_KEY = "dingjglhp2v7174nhkk1";
 

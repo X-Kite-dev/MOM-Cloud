@@ -432,7 +432,8 @@ public class MesStartPreparationQueryService {
                 .eq(MesStartPreparationCheck::getFactoryCode, FactoryContextHolder.getFactoryCode());
     }
 
-    private Map<String, Object> decode(MesStartPreparationCheck row) {
+    /** 包内历史阅读复用原指纹核验；调用者须先按实名租户工厂及派工限定表行。 */
+    Map<String, Object> decode(MesStartPreparationCheck row) {
         require(CONTRACT.equals(row.getContractVersion()), "快照合同不支持");
         var evidence = JSONUtil.parseObj(row.getSnapshotJson());
         require(Objects.equals(evidence.getStr("evidenceFingerprint"), row.getEvidenceFingerprint()), "快照摘要不一致");

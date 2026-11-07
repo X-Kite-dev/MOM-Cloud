@@ -33,6 +33,29 @@
         a.factory_code
         FROM wms_out_notice_detail a LEFT JOIN wms_out_notice b on a.notice_id = b.id
         where a.del_flag = '0'
+        <!-- 其他收发入口覆盖此范围；空授权不得省略过滤，主/明细必须同组织同仓。 -->
+        <if test="params.scopeTenantId != null">
+            and a.tenant_id = #{params.scopeTenantId}
+            and b.tenant_id = #{params.scopeTenantId}
+            and a.factory_code = #{params.scopeFactoryCode}
+            and b.factory_code = #{params.scopeFactoryCode}
+            and b.del_flag = '0'
+            and a.warehouse_code = b.warehouse_code
+        </if>
+        <if test="params.permittedWarehouseCodes != null">
+            <choose>
+                <when test="params.permittedWarehouseCodes.size() == 0">
+                    and 1 = 0
+                </when>
+                <otherwise>
+                    and b.warehouse_code in
+                    <foreach collection="params.permittedWarehouseCodes" item="warehouse"
+                             open="(" separator="," close=")">
+                        #{warehouse}
+                    </foreach>
+                </otherwise>
+            </choose>
+        </if>
         <if test="params.billType != null and params.billType != ''">
             and b.bill_type = #{params.billType}
         </if>
@@ -48,8 +71,9 @@
         <if test="params.warehouseCode != null and params.warehouseCode != ''">
             and a.warehouse_code = #{params.warehouseCode}
         </if>
-        <if test="params.noticeId != null and params.noticeId != ''">
-            and a.notice_id like concat('%', #{params.noticeId}, '%')
+        <bind name="noticeIdValue" value="params.noticeIdValue()"/>
+        <if test="noticeIdValue != null">
+            and a.notice_id = #{noticeIdValue, jdbcType=BIGINT}
         </if>
         <if test="params.matCode != null and params.matCode != ''">
             and a.mat_code like concat('%', #{params.matCode}, '%')

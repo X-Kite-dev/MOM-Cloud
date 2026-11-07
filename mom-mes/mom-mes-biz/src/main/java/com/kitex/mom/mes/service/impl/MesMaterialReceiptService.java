@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.dto.MdmFactoryAccessCheck;
@@ -22,6 +23,7 @@ import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -30,6 +32,10 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.*;
 
+/**
+ * 正式WMS来源的通知登记、签收及异人冲销。工单关联写入先参加统一材料执行互斥，
+ * 永久签收原号在新生产准入前回读；数量、质量、来源与原指纹合同保持。
+ */
 @Service
 @RequiredArgsConstructor
 public class MesMaterialReceiptService {
@@ -43,6 +49,8 @@ public class MesMaterialReceiptService {
     private final RemoteMdmFactoryAccessService factoryAccessService;
     private final RemoteFactoryModelService factoryModelService;
     private final com.kitex.mom.wms.api.feign.RemoteProductionPickingOutBillService wmsSourceService;
+    private final MesMaterialExecutionGuard materialExecution;
+    private final MesPickingWmsSourceGuard pickingWmsSources;
 
     public void requireWriteAccess(String factory) {
         access(factory, "write");
@@ -72,18 +80,60 @@ public class MesMaterialReceiptService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void registerNotice(MesWarehouseMaterialInBillEntity notice) {
-        require(notice != null && notice.getWmsOutDetailId() != null && StrUtil.isNotBlank(notice.getResourceNo())
-                && StrUtil.isNotBlank(notice.getFactoryCode()) && StrUtil.isNotBlank(notice.getMatCode())
-                && notice.getNoticeInNum() != null && notice.getNoticeInNum().signum() > 0, "WMS收料通知缺少精确来源、工厂或数量");
-        if (notice.getBillId() != null) {
-            MesWarehousePickingBillEntity picking = lockPicking(notice.getBillId());
-            require(Objects.equals(notice.getFactoryCode(), picking.getFactoryCode()), "WMS出库与领料单工厂不一致");
+        validateNotice(notice);
+        MesWarehousePickingBillEntity picking = notice.getBillId() == null ? null : lockPicking(notice.getBillId());
+        registerNoticeLocked(notice, picking);
+    }
+
+    /**
+     * 同一真实领料的完整回调批次只保护一次父单，逐行仍核来源和累计量。
+     * 父单由本方法实际取得，不能让外部上传“已锁实体”充当生产许可；旧回调与新版Inbox共用。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void registerPickingNotices(Long pickingId, List<MesWarehouseMaterialInBillEntity> notices) {
+        require(notices != null && !notices.isEmpty() &&
+                        notices.stream().allMatch(row -> row != null && row.getWmsOutDetailId() != null),
+                "WMS发料批次缺少精确出库明细");
+        MesWarehousePickingBillEntity picking = lockPicking(pickingId);
+        for (MesWarehouseMaterialInBillEntity notice : notices.stream()
+                .sorted(Comparator.comparing(MesWarehouseMaterialInBillEntity::getWmsOutDetailId)).toList()) {
+            require(StrUtil.isBlank(notice.getFactoryCode()) ||
+                            Objects.equals(notice.getFactoryCode(), picking.getFactoryCode()),
+                    "WMS发料工厂与领料单不一致");
+            notice.setBillId(picking.getId());
+            notice.setBillNo(picking.getBillNo());
+            notice.setFactoryCode(picking.getFactoryCode());
+            validateNotice(notice);
+            registerNoticeLocked(notice, picking);
         }
+        refreshPickingLocked(picking);
+    }
+
+    /** 通知形状和当前可信组织核验，与是否存在生产工单归属分开。 */
+    private void validateNotice(MesWarehouseMaterialInBillEntity notice) {
+        require(notice != null && notice.getWmsOutDetailId() != null && StrUtil.isNotBlank(notice.getResourceNo())
+                        && StrUtil.isNotBlank(notice.getFactoryCode()) && StrUtil.isNotBlank(notice.getMatCode())
+                        && notice.getNoticeInNum() != null && notice.getNoticeInNum().signum() > 0,
+                "WMS收料通知缺少精确来源、工厂或数量");
+        MesQualityGateSourceEvidence.scope();
+        require(Objects.equals(notice.getFactoryCode(), FactoryContextHolder.getFactoryCode())
+                        && (notice.getTenantId() == null ||
+                        Objects.equals(notice.getTenantId(), TenantContextHolder.getTenantId())),
+                "WMS收料来源与当前实际组织不一致");
+    }
+
+    /** 仅在本服务已保护的父单下登记；无领料来源必须同时没有父实体，不能伪造绕过门禁。 */
+    private void registerNoticeLocked(MesWarehouseMaterialInBillEntity notice, MesWarehousePickingBillEntity picking) {
+        require(notice.getBillId() == null ?
+                picking == null : picking != null && Objects.equals(notice.getBillId(), picking.getId())
+                && Objects.equals(notice.getFactoryCode(), picking.getFactoryCode()), "通知与已保护的原领料不一致");
         receiptMapper.lockSource(notice.getWmsOutDetailId());
-        MesWarehouseMaterialInBillEntity existing = noticeMapper.selectOne(new LambdaQueryWrapper<MesWarehouseMaterialInBillEntity>()
-                .eq(MesWarehouseMaterialInBillEntity::getWmsOutDetailId, notice.getWmsOutDetailId()));
+        MesWarehouseMaterialInBillEntity existing = noticeMapper.selectOne(
+                new LambdaQueryWrapper<MesWarehouseMaterialInBillEntity>()
+                        .eq(MesWarehouseMaterialInBillEntity::getWmsOutDetailId, notice.getWmsOutDetailId()));
         if (existing != null) {
-            require(Objects.equals(sourceFingerprint(existing), sourceFingerprint(notice)), "同一WMS发料明细重复投递的物料、批次、数量或来源不同，禁止覆盖");
+            require(Objects.equals(sourceFingerprint(existing), sourceFingerprint(notice)),
+                    "同一WMS发料明细重复投递的物料、批次、数量或来源不同，禁止覆盖");
             return;
         }
         // 不能把旧无精确来源的同单物料，再作为新通知静默重复导入。
@@ -97,11 +147,13 @@ public class MesMaterialReceiptService {
                     new LambdaQueryWrapper<MesWarehousePickingBillDetailEntity>()
                             .eq(MesWarehousePickingBillDetailEntity::getBillId, notice.getBillId()));
             BigDecimal planned = requirements.stream().filter(d -> Objects.equals(materialKey(d), materialKey(notice)))
-                    .map(MesWarehousePickingBillDetailEntity::getMatNum).filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+                    .map(MesWarehousePickingBillDetailEntity::getMatNum).filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal issued = noticeMapper.selectList(new LambdaQueryWrapper<MesWarehouseMaterialInBillEntity>()
                             .eq(MesWarehouseMaterialInBillEntity::getBillId, notice.getBillId())).stream()
                     .filter(n -> Objects.equals(materialKey(n), materialKey(notice)))
-                    .map(MesWarehouseMaterialInBillEntity::getNoticeInNum).filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+                    .map(MesWarehouseMaterialInBillEntity::getNoticeInNum).filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
             require(planned.signum() > 0 && issued.add(notice.getNoticeInNum()).compareTo(planned) <= 0,
                     "WMS发料物料/替代关系/仓库/预留与领料单不一致或累计超出申请量");
         }
@@ -127,9 +179,14 @@ public class MesMaterialReceiptService {
     }
 
     private com.kitex.mom.wms.entity.WmsOutBillEntity verifyWmsSource(MesWarehouseMaterialInBillEntity notice) {
-        R<com.kitex.mom.wms.entity.WmsOutBillEntity> response = wmsSourceService.sourceByDetailId(notice.getWmsOutDetailId());
-        require(response != null && response.isOk() && response.getData() != null, "WMS正式发料来源不可核验，本次不入库");
+        R<com.kitex.mom.wms.entity.WmsOutBillEntity> response = wmsSourceService.sourceByDetailId(
+                notice.getWmsOutDetailId());
+        require(response != null && response.isOk() && response.getData() != null,
+                "WMS正式发料来源不可核验，本次不入库");
         com.kitex.mom.wms.entity.WmsOutBillEntity bill = response.getData();
+        require(!com.kitex.mom.wms.enums.DocumentEnum.MES_PICKING.getCode().equals(bill.getDocumentTable())
+                        || bill.getDocumentId() != null,
+                "MES生产领料出库缺少原领料单关联，不能按无工单来源签收，请先核对");
         require(com.kitex.mom.wms.enums.OutBillTypeEnum.PRODUCE_OUT.getCode().equals(bill.getBillType())
                 && Set.of("2", "12").contains(StrUtil.blankToDefault(bill.getState(), ""))
                 && bill.getDetails() != null && bill.getDetails().size() == 1, "WMS发料来源未完成或类型不符");
@@ -140,12 +197,14 @@ public class MesMaterialReceiptService {
         MesWarehouseMaterialInBillEntity live = new MesWarehouseMaterialInBillEntity();
         BeanUtil.copyProperties(detail, live, "id", "billId");
         live.setWmsOutDetailId(detail.getId());
-        live.setBillId(com.kitex.mom.wms.enums.DocumentEnum.MES_PICKING.getCode().equals(bill.getDocumentTable()) ? bill.getDocumentId() : null);
+        live.setBillId(com.kitex.mom.wms.enums.DocumentEnum.MES_PICKING.getCode()
+                .equals(bill.getDocumentTable()) ? bill.getDocumentId() : null);
         live.setFactoryCode(bill.getFactoryCode());
         live.setResourceNo(bill.getBillNo());
         live.setNoticeInNum(BigDecimal.valueOf(detail.getMatNum()));
         live.setInspectionStatus(detail.getQualityResult());
-        require(Objects.equals(sourceFingerprint(notice), sourceFingerprint(live)), "MES收料通知与WMS已提交来源不一致，先对账，不按旧回调入库");
+        require(Objects.equals(sourceFingerprint(notice), sourceFingerprint(live)),
+                "MES收料通知与WMS已提交来源不一致，先对账，不按旧回调入库");
         return bill;
     }
 
@@ -196,18 +255,23 @@ public class MesMaterialReceiptService {
     public MesMaterialReceiptEntity receive(MesMaterialReceiptCommand command) {
         validate(command, false);
         MomUser user = user();
-        MesWarehouseMaterialInBillEntity notice = lockNotice(command.getNoticeId());
-        access(notice.getFactoryCode(), "write");
+        access(FactoryContextHolder.getFactoryCode(), "write");
+        // 原号先串行且只查一次，已接受签收在修订冻结期间仍返回原回执，不制造锁前null缓存。
+        materialExecution.request("MATERIAL_RECEIPT", command.getRequestId());
         String fingerprint = fingerprint(command, "RECEIVE");
         MesMaterialReceiptEntity replay = replay(command.getRequestId(), fingerprint);
         if (replay != null) {
-            if (command.getRequestId().startsWith("LEGACY-")) requireNoLegacyReversal(command.getRequestId());
+            if (command.getRequestId().startsWith("LEGACY-")) {
+                requireNoLegacyReversal(command.getRequestId());
+            }
             return replay;
         }
+        MesWarehouseMaterialInBillEntity notice = lockNotice(command.getNoticeId());
         BigDecimal before = received(notice);
         verifyLedger(notice, before);
         require(before.compareTo(command.getExpectedReceivedQuantity()) == 0, "累计已收量已变化，请刷新后提交新签收");
-        require(before.add(command.getQuantity()).compareTo(notice.getNoticeInNum()) <= 0, "本批签收超出剩余待收量，溢料须回源核对，禁止直接增库存");
+        require(before.add(command.getQuantity()).compareTo(notice.getNoticeInNum()) <= 0,
+                "本批签收超出剩余待收量，溢料须回源核对，禁止直接增库存");
         require(notice.getWmsOutDetailId() != null && StrUtil.isNotBlank(notice.getResourceNo()),
                 "缺少精确WMS出库来源，历史通知须先完成来源对账，不得凭手填物料入库");
         com.kitex.mom.wms.entity.WmsOutBillEntity sourceBill = verifyWmsSource(notice);
@@ -235,8 +299,9 @@ public class MesMaterialReceiptService {
         stock.setMatDetailType(MesWarehouseMatDetailTypeEnum.RAW.name());
         stock.setInspectionStatus(quality);
         require(Boolean.TRUE.equals(stockService.inStock(stock)), "线边签收入库失败");
-        MesWarehouseLiveStockEntity created = stockMapper.selectOne(new LambdaQueryWrapper<MesWarehouseLiveStockEntity>()
-                .eq(MesWarehouseLiveStockEntity::getMaterialReceiptId, receipt.getId()));
+        MesWarehouseLiveStockEntity created = stockMapper.selectOne(
+                new LambdaQueryWrapper<MesWarehouseLiveStockEntity>()
+                        .eq(MesWarehouseLiveStockEntity::getMaterialReceiptId, receipt.getId()));
         require(created != null, "签收未形成唯一来源库存");
         receipt.setStockFingerprint(stockFingerprint(created));
         require(receiptMapper.updateById(receipt) == 1, "签收库存证据保存失败");
@@ -248,15 +313,21 @@ public class MesMaterialReceiptService {
     @Transactional(rollbackFor = Exception.class)
     public MesMaterialReceiptEntity reverse(MesMaterialReceiptCommand command) {
         validate(command, true);
-        MesMaterialReceiptEntity original = receiptMapper.selectById(command.getSourceReceiptId());
+        MomUser user = user();
+        access(FactoryContextHolder.getFactoryCode(), "write");
+        materialExecution.request("MATERIAL_RECEIPT", command.getRequestId());
+        String fingerprint = fingerprint(command, "REVERSE");
+        MesMaterialReceiptEntity replay = replay(command.getRequestId(), fingerprint);
+        if (replay != null) {
+            return replay;
+        }
+        MesMaterialReceiptEntity original = receiptMapper.selectOne(new LambdaQueryWrapper<MesMaterialReceiptEntity>()
+                .eq(MesMaterialReceiptEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MesMaterialReceiptEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
+                .eq(MesMaterialReceiptEntity::getId, command.getSourceReceiptId()));
         require(original != null && "RECEIVE".equals(original.getOperationType()), "请选择原始签收记录冲销");
         require(Objects.equals(original.getNoticeId(), command.getNoticeId()), "冲销来源与收料通知不一致");
         MesWarehouseMaterialInBillEntity notice = lockNotice(original.getNoticeId());
-        access(notice.getFactoryCode(), "write");
-        MomUser user = user();
-        String fingerprint = fingerprint(command, "REVERSE");
-        MesMaterialReceiptEntity replay = replay(command.getRequestId(), fingerprint);
-        if (replay != null) return replay;
         require(!Objects.equals(user.getId(), original.getOperatorId()), "签收冲销须由非原签收人复核执行");
         require(receiptMapper.selectCount(new LambdaQueryWrapper<MesMaterialReceiptEntity>()
                 .eq(MesMaterialReceiptEntity::getSourceReceiptId, original.getId())) == 0, "该批签收已冲销");
@@ -275,7 +346,8 @@ public class MesMaterialReceiptService {
         BigDecimal after = before.subtract(original.getQuantity());
         require(after.signum() >= 0, "签收数量账不一致，先对账");
         MesMaterialReceiptEntity reversal = operation(command, notice, user, "REVERSE", before, after)
-                .setQuantity(original.getQuantity()).setSiteCode(original.getSiteCode()).setSiteName(original.getSiteName())
+                .setQuantity(original.getQuantity()).setSiteCode(original.getSiteCode())
+                .setSiteName(original.getSiteName())
                 .setStockFingerprint(original.getStockFingerprint());
         require(receiptMapper.insert(reversal) == 1, "冲销履历保存失败");
         MesWarehouseInoutEntity movement = new MesWarehouseInoutEntity();
@@ -287,7 +359,8 @@ public class MesMaterialReceiptService {
         movement.setOperateType(InOutEnum.OUT.getCode());
         movement.setOperateNum(original.getQuantity());
         movement.setBizType(WarehouseInBizTypeEnum.RECEPTION_REVERSE.getCode());
-        require(stockMapper.deleteById(stock.getId()) == 1 && inoutMapper.insert(movement) == 1, "签收冲销库存操作失败");
+        require(stockMapper.deleteById(stock.getId()) == 1 && inoutMapper.insert(movement) == 1,
+                "签收冲销库存操作失败");
         updateNotice(notice, after, notice.getSiteCode(), notice.getSiteName(), user);
         refreshPicking(notice.getBillId());
         return reversal;
@@ -299,7 +372,6 @@ public class MesMaterialReceiptService {
     @Transactional(rollbackFor = Exception.class)
     public Boolean receiveLegacy(MesWarehouseMaterialInBillEntity input) {
         require(input != null && input.getId() != null && input.getInNum() != null, "缺少收料通知和实际数量");
-        requireNoLegacyReversal("LEGACY-LINE-" + input.getId());
         receive(new MesMaterialReceiptCommand().setNoticeId(input.getId()).setQuantity(input.getInNum())
                 .setExpectedReceivedQuantity(BigDecimal.ZERO).setSiteCode(input.getSiteCode())
                 .setRequestId("LEGACY-LINE-" + input.getId()).setReason("旧单行入口首次签收"));
@@ -313,14 +385,17 @@ public class MesMaterialReceiptService {
     public Boolean receiveAll(Long pickingId, String siteCode) {
         MesWarehousePickingBillEntity picking = lockPicking(pickingId);
         access(picking.getFactoryCode(), "write");
-        List<MesWarehouseMaterialInBillEntity> notices = noticeMapper.selectList(new LambdaQueryWrapper<MesWarehouseMaterialInBillEntity>()
-                .eq(MesWarehouseMaterialInBillEntity::getBillId, pickingId).orderByAsc(MesWarehouseMaterialInBillEntity::getId));
+        List<MesWarehouseMaterialInBillEntity> notices = noticeMapper.selectList(
+                new LambdaQueryWrapper<MesWarehouseMaterialInBillEntity>()
+                        .eq(MesWarehouseMaterialInBillEntity::getBillId, pickingId)
+                        .orderByAsc(MesWarehouseMaterialInBillEntity::getId));
         require(!notices.isEmpty(), "没有可签收的WMS发料通知");
         for (MesWarehouseMaterialInBillEntity notice : notices) {
             BigDecimal received = received(notice);
-            if (received.compareTo(notice.getNoticeInNum()) == 0) continue;
+            if (received.compareTo(notice.getNoticeInNum()) == 0) {
+                continue;
+            }
             require(received.signum() == 0, "已有部分签收，请进入签收明细按剩余量继续接收");
-            requireNoLegacyReversal("LEGACY-BILL-" + notice.getId());
             receive(new MesMaterialReceiptCommand().setNoticeId(notice.getId()).setQuantity(notice.getNoticeInNum())
                     .setExpectedReceivedQuantity(BigDecimal.ZERO).setSiteCode(siteCode)
                     .setRequestId("LEGACY-BILL-" + notice.getId()).setReason("旧整单入口首次签收"));
@@ -329,20 +404,19 @@ public class MesMaterialReceiptService {
         return true;
     }
 
+    /** 有领料来源先取真实工单锁，再锁通知；合法无领料来源保持无根并沿原来源门禁。 */
     private MesWarehouseMaterialInBillEntity lockNotice(Long id) {
-        MesWarehouseMaterialInBillEntity reference = noticeMapper.selectById(id);
-        require(reference != null, "收料通知不存在");
-        if (reference.getBillId() != null) lockPicking(reference.getBillId());
-        MesWarehouseMaterialInBillEntity notice = noticeMapper.selectOne(new LambdaQueryWrapper<MesWarehouseMaterialInBillEntity>()
-                .eq(MesWarehouseMaterialInBillEntity::getId, id).last("FOR UPDATE"));
-        require(notice != null && Objects.equals(reference.getBillId(), notice.getBillId()), "收料来源已变化");
-        return notice;
+        return materialExecution.notice(id);
     }
 
     private void requireNoLegacyReversal(String requestId) {
         MesMaterialReceiptEntity original = receiptMapper.selectOne(new LambdaQueryWrapper<MesMaterialReceiptEntity>()
+                .eq(MesMaterialReceiptEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MesMaterialReceiptEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
                 .eq(MesMaterialReceiptEntity::getRequestId, requestId));
         require(original == null || receiptMapper.selectCount(new LambdaQueryWrapper<MesMaterialReceiptEntity>()
+                        .eq(MesMaterialReceiptEntity::getTenantId, TenantContextHolder.getTenantId())
+                        .eq(MesMaterialReceiptEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
                         .eq(MesMaterialReceiptEntity::getSourceReceiptId, original.getId())) == 0,
                 "旧入口原签收已冲销，请在签收工作台按新批次重新交接，不可重用旧请求");
     }
@@ -362,33 +436,50 @@ public class MesMaterialReceiptService {
         require(net.compareTo(received) == 0, "签收履历净量与通知累计量不一致，请先对账，禁止继续叠加");
     }
 
+    /** 兼容外层整单入口，同样不能先锁材料父单再补工单互斥。 */
     private MesWarehousePickingBillEntity lockPicking(Long id) {
-        MesWarehousePickingBillEntity picking = pickingMapper.selectOne(new LambdaQueryWrapper<MesWarehousePickingBillEntity>()
-                .eq(MesWarehousePickingBillEntity::getId, id).last("FOR UPDATE"));
-        require(picking != null && !MesPickingBillStateEnum.CREATED.getCode().equals(picking.getStatus()), "领料单不存在或未正式提交");
+        MesWarehousePickingBillEntity picking = materialExecution.picking(id);
+        // 远端实际发料可先于本地受理apply；只允许已持久准备的准确V1来源，仍由后续实际WMS明细核验。
+        require(picking != null && (!MesPickingBillStateEnum.CREATED.getCode().equals(picking.getStatus())
+                || pickingWmsSources.acceptsEarlyIssue(id)), "领料单不存在或未正式提交");
         return picking;
     }
 
+    /** 通知登记、签收及冲销的同事务结果回写；独立调用也先保护原工单归属。 */
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public void refreshPicking(Long id) {
-        if (id == null) return;
-        List<MesWarehouseMaterialInBillEntity> notices = noticeMapper.selectList(new LambdaQueryWrapper<MesWarehouseMaterialInBillEntity>()
-                .eq(MesWarehouseMaterialInBillEntity::getBillId, id));
+        if (id == null) {
+            return;
+        }
+        refreshPickingLocked(lockPicking(id));
+    }
+
+    /** 同服务已取得实际父单锁的批次汇总，不逐行重走目录核验；独立入口仍先经过lockPicking。 */
+    private void refreshPickingLocked(MesWarehousePickingBillEntity picking) {
+        Long id = picking.getId();
+        List<MesWarehouseMaterialInBillEntity> notices = noticeMapper.selectList(
+                new LambdaQueryWrapper<MesWarehouseMaterialInBillEntity>()
+                        .eq(MesWarehouseMaterialInBillEntity::getBillId, id));
         List<MesWarehousePickingBillDetailEntity> requirements = pickingDetailMapper.selectList(
-                new LambdaQueryWrapper<MesWarehousePickingBillDetailEntity>().eq(MesWarehousePickingBillDetailEntity::getBillId, id));
+                new LambdaQueryWrapper<MesWarehousePickingBillDetailEntity>().eq(
+                        MesWarehousePickingBillDetailEntity::getBillId, id));
         Map<String, BigDecimal> expected = new HashMap<>(), supplied = new HashMap<>();
         for (MesWarehousePickingBillDetailEntity d : requirements) {
             require(d.getMatNum() != null && d.getMatNum().signum() > 0, "领料申请数量异常");
             expected.merge(materialKey(d), d.getMatNum(), BigDecimal::add);
         }
-        for (MesWarehouseMaterialInBillEntity n : notices)
+        for (MesWarehouseMaterialInBillEntity n : notices) {
             supplied.merge(materialKey(n), n.getNoticeInNum(), BigDecimal::add);
+        }
         boolean allIssued = !expected.isEmpty() && expected.keySet().equals(supplied.keySet())
                 && expected.entrySet().stream().allMatch(e -> e.getValue().compareTo(supplied.get(e.getKey())) == 0);
         for (MesWarehousePickingBillDetailEntity d : requirements) {
-            boolean issued = expected.get(materialKey(d)).compareTo(supplied.getOrDefault(materialKey(d), BigDecimal.ZERO)) == 0;
+            boolean issued =
+                    expected.get(materialKey(d)).compareTo(supplied.getOrDefault(materialKey(d), BigDecimal.ZERO)) == 0;
             require(pickingDetailMapper.update(null, new LambdaUpdateWrapper<MesWarehousePickingBillDetailEntity>()
                             .eq(MesWarehousePickingBillDetailEntity::getId, d.getId())
-                            .set(MesWarehousePickingBillDetailEntity::getStatus, issued ? YesNoEnum.YES.getCode() : YesNoEnum.NO.getCode())) == 1,
+                            .set(MesWarehousePickingBillDetailEntity::getStatus,
+                                    issued ? YesNoEnum.YES.getCode() : YesNoEnum.NO.getCode())) == 1,
                     "领料行发料状态更新失败");
         }
         boolean complete = allIssued && !notices.isEmpty() && notices.stream()
@@ -436,9 +527,12 @@ public class MesMaterialReceiptService {
 
     private MesMaterialReceiptEntity replay(String requestId, String hash) {
         MesMaterialReceiptEntity row = receiptMapper.selectOne(new LambdaQueryWrapper<MesMaterialReceiptEntity>()
+                .eq(MesMaterialReceiptEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MesMaterialReceiptEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
                 .eq(MesMaterialReceiptEntity::getRequestId, requestId));
-        if (row != null)
+        if (row != null) {
             require(Objects.equals(hash, row.getRequestFingerprint()), "同一签收请求号不能用于不同操作或载荷");
+        }
         return row;
     }
 

@@ -10,6 +10,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
@@ -51,6 +52,8 @@ import com.kitex.mom.tpm.dto.TpmDevicePauseReceipt;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -58,6 +61,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.function.Consumer;
 
 /**
  * 生产派工
@@ -98,12 +102,16 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
     private final MesExecutionTemplateService executionTemplateService;
     private final MesActualFactoryAccessService actualFactoryAccess;
     private final MesIdentifierBindingGroupService identifierBindingGroupService;
+    private final MesManualLaborStandardChangeService manualLaborChanges;
+    private final MesPlanLaborStandardService planLaborStandards;
     private final MesExecutionTaskLock executionTaskLock;
     private final MesTerminalExecutionGuard terminalExecutionGuard;
     private final MesStartContractGuard startContractGuard;
     private final MesWorkpieceTimeService workpieceTimeService;
     private final MesDispatchCorrectionMapper correctionMapper;
     private final MesDispatchCompletionGuard completionGuard;
+	private final MesDispatchAllocationLedger allocationLedger;
+	private final MesPackagingExecutionService packagingExecution;
 
     private static String workbenchFilter(String value, int maxLength, String label) {
         String normalized = StrUtil.trimToNull(value);
@@ -182,241 +190,310 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
         return result;
     }
 
-    /**
-     * 批量派工
-     *
-     * @param dto
-     */
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void arrange(MesTaskArrangeDTO dto) {
-        arrangeInternal(dto, null);
-    }
+	/** 旧无原号入口不能创建新配额，请使用正式派工命令及其永久回执。 */
+	@Override
+	public void arrange(MesTaskArrangeDTO dto) {
+		throw new CheckedException("派工入口已升级，请通过派工分配页面按稳定原号提交");
+	}
 
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void arrangeBatch(List<MesTaskArrangeDTO> batches) {
-        if (CollUtil.isEmpty(batches) || batches.size() > 20 || batches.stream().anyMatch(Objects::isNull)) {
-            throw new CheckedException("请选择同一工单的有效班次，单次最多派工20个班次");
-        }
-        String taskCode = batches.get(0).getCode();
-        if (StrUtil.isBlank(taskCode) || batches.stream().anyMatch(item -> !taskCode.equals(item.getCode()))) {
-            throw new CheckedException("多班次派工只能提交同一生产工单");
-        }
-        Set<String> shifts = new HashSet<>();
-        for (MesTaskArrangeDTO batch : batches) {
-            if (StrUtil.isBlank(batch.getShiftCode()) || !shifts.add(batch.getShiftCode())) {
-                throw new CheckedException("派工班次不能为空或重复");
-            }
-            arrangeInternal(batch, null);
-        }
-    }
+	/** 多班次须与全部分配行共用一个稳定命令，不能由服务端临时生成原号。 */
+	@Override
+	public void arrangeBatch(List<MesTaskArrangeDTO> batches) {
+		throw new CheckedException("多班次派工入口已升级，请通过派工分配页面提交完整原命令");
+	}
 
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void arrangeCorrection(MesTaskArrangeDTO dto, Long correctionId) {
-        if (correctionId == null) throw new CheckedException("修正补派必须提供精确申请");
-        arrangeInternal(dto, correctionId);
-    }
+	/**
+	 * {@inheritDoc}
+	 * 本方法仅负责真实派工出生，不创建另一套命令；提交时数据库再核回调原账全集。
+	 */
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED,
+			rollbackFor = Exception.class)
+	public List<MesTaskArrangeEntity> arrangeAllocated(String taskCode, List<MesDispatchAllocationDTO.Line> lines,
+			Consumer<List<MesTaskArrangeEntity>> beforeSave) {
+		if (lines == null || lines.isEmpty() || lines.size() > 200 || beforeSave == null) {
+			throw new CheckedException("派工分配必须有1至200行及同事务永久出生回调");
+		}
+		Set<String> keys = new HashSet<>();
+		List<MesTaskArrangeEntity> entries = new ArrayList<>();
+		for (var line : lines) {
+			if (line == null || StrUtil.isBlank(line.getAllocationKey()) || !keys.add(line.getAllocationKey())
+					|| StrUtil.isBlank(line.getProduceTaskCode()) || StrUtil.isBlank(line.getShiftCode())
+					|| line.getQuantity() == null || line.getQuantity().signum() <= 0) {
+				throw new CheckedException("派工分配行标识、原工序、班次及正配额必须完整且标识唯一");
+			}
+			entries.add(new MesTaskArrangeEntity().setProduceTaskCode(line.getProduceTaskCode())
+					.setWorkerCode(line.getWorkerCode()).setWorkerName(line.getWorkerName())
+					.setWorksiteCodes(line.getWorksiteCodes()));
+		}
+		MesTaskArrangeDTO dto = new MesTaskArrangeDTO();
+		dto.setCode(taskCode);
+		dto.setShiftCode(lines.get(0).getShiftCode());
+		dto.setShiftName(lines.get(0).getShiftName());
+		dto.setTaskArrangeList(entries);
+		return arrangeInternal(dto, null, lines, beforeSave);
+	}
 
-    private void arrangeInternal(MesTaskArrangeDTO dto, Long correctionId) {
-        String factory = actualFactoryAccess.require("write");
-        Long tenant = TenantContextHolder.getTenantId();
-        if (dto == null || StrUtil.isBlank(dto.getCode()) || StrUtil.isBlank(dto.getShiftCode())) {
-            throw new CheckedException("请选择生产工单和派工班次");
-        }
-        // 先取稳定工单锁再查重；不提前反向锁历史派工，保持现有报工入口安全。
-        identifierBindingGroupService.lockDispatchTask(dto.getCode());
-        long existCount = this.count(new LambdaQueryWrapper<MesTaskArrangeEntity>()
-                .eq(MesTaskArrangeEntity::getTenantId, tenant)
-                .eq(MesTaskArrangeEntity::getFactoryCode, factory)
-                .eq(MesTaskArrangeEntity::getShiftCode, dto.getShiftCode())
-                .eq(MesTaskArrangeEntity::getTaskCode, dto.getCode())
-                .notIn(MesTaskArrangeEntity::getStatus,
-                        MesProduceTaskStatusEnum.CLOSE.name(), MesProduceTaskStatusEnum.FINISH.name()));
-        if (correctionId == null && existCount > 0) {
-            throw new RuntimeException("该班次已完成派工,无法重复派工");
-        }
-        MomUser currentUser = SecurityUtils.getUser();
-        if (correctionId != null) {
-            var correction = correctionMapper.lockedRequest(tenant, factory, correctionId);
-            if (correction == null || !"SUBMITTED".equals(correction.getStatus())
-                    || Objects.equals(correction.getApplicantId(), currentUser.getId())
-                    || Objects.equals(correction.getApplicantCode(), currentUser.getUsername())
-                    || !Objects.equals(correction.getTaskCode(), dto.getCode())
-                    || !Objects.equals(correction.getTargetShiftCode(), dto.getShiftCode())
-                    || !Objects.equals(correction.getTargetShiftName(), dto.getShiftName())
-                    || dto.getTaskArrangeList() == null || dto.getTaskArrangeList().size() != 1) {
-                throw new CheckedException("仅异人审批原待审修正可补派精确目标");
-            }
-            var old = correctionMapper.arrange(tenant, factory, correction.getArrangeId());
-            var input = dto.getTaskArrangeList().get(0);
-            if (old == null || !"CLOSE".equals(old.getStatus()) || !Objects.equals(old.getTaskCode(), dto.getCode())
-                    || !Objects.equals(old.getProduceTaskCode(), correction.getProduceTaskCode())
-                    || !Objects.equals(input.getProduceTaskCode(), correction.getProduceTaskCode())
-                    || !Objects.equals(input.getWorkerCode(), old.getWorkerCode())
-                    || !Objects.equals(input.getWorkerName(), old.getWorkerName())
-                    || !Objects.equals(input.getWorksiteCodes(), correction.getTargetWorksiteCodes())
-                    || correctionMapper.replacement(tenant, factory, correctionId) != null
-                    || correctionMapper.otherActive(tenant, factory, old.getTaskCode(), old.getProduceTaskCode(), old.getId()) > 0) {
-                throw new CheckedException("修正来源未关闭、目标变化、已有替代或同工序活动派工");
-            }
-        }
-        List<MesTaskArrangeEntity> taskArrangeList = dto.getTaskArrangeList();
-        if (CollUtil.isEmpty(taskArrangeList)) {
-            throw new RuntimeException("请维护派工信息");
-        }
+	@Override
+	@Transactional(rollbackFor = Exception.class)
+	public void arrangeCorrection(MesTaskArrangeDTO dto, Long correctionId) {
+		if (correctionId == null) throw new CheckedException("修正补派必须提供精确申请");
+		arrangeInternal(dto, correctionId, null, null);
+	}
 
-        List<MesTaskEntity> mainTasks = mesTaskService.list(new LambdaQueryWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
-                .eq(MesTaskEntity::getCode, dto.getCode()).last("LIMIT 2"));
-        if (mainTasks.size() != 1) {
-            throw new CheckedException("当前实际组织的生产工单不存在或编码不唯一，派工失败");
-        }
-        MesTaskEntity mainTask = mainTasks.get(0);
-        if (terminalParent(mainTask.getStatus())) {
-            throw new CheckedException("已关闭或完工的生产工单不能重新派工");
-        }
-        List<String> requestedProduceTaskCodes = taskArrangeList.stream()
-                .map(MesTaskArrangeEntity::getProduceTaskCode)
-                .filter(StrUtil::isNotBlank)
-                .distinct()
-                .toList();
-        if (requestedProduceTaskCodes.size() != taskArrangeList.size()) {
-            throw new CheckedException("派工工序任务不能为空或重复");
-        }
-        Map<String, MesProduceTaskEntity> produceTaskMap = produceTaskService.list(
-                        new LambdaQueryWrapper<MesProduceTaskEntity>()
-                                .eq(MesProduceTaskEntity::getTenantId, tenant)
-                                .eq(MesProduceTaskEntity::getFactoryCode, factory)
-                                .eq(MesProduceTaskEntity::getTaskCode, mainTask.getCode())
-                                .in(MesProduceTaskEntity::getCode, requestedProduceTaskCodes))
-                .stream().collect(Collectors.toMap(MesProduceTaskEntity::getCode, item -> item));
-        if (produceTaskMap.size() != requestedProduceTaskCodes.size()) {
-            throw new CheckedException("部分工序任务不存在，派工失败");
-        }
-        List<String> produceTaskCodes = new ArrayList<>();
-        List<MesTaskArrangeEntity> finalTaskArrangeList = new ArrayList<>();
+	private List<MesTaskArrangeEntity> arrangeInternal(MesTaskArrangeDTO dto, Long correctionId,
+			List<MesDispatchAllocationDTO.Line> allocationLines, Consumer<List<MesTaskArrangeEntity>> beforeSave) {
+		String factory = actualFactoryAccess.require("write");
+		Long tenant = TenantContextHolder.getTenantId();
+		if (dto == null || StrUtil.isBlank(dto.getCode()) || StrUtil.isBlank(dto.getShiftCode())) {
+			throw new CheckedException("请选择生产工单和派工班次");
+		}
+		// 先取稳定工单锁再查重；不提前反向锁历史派工，保持现有报工入口安全。
+		identifierBindingGroupService.lockDispatchTask(dto.getCode());
+		long existCount = this.count(new LambdaQueryWrapper<MesTaskArrangeEntity>()
+				.eq(MesTaskArrangeEntity::getTenantId, tenant)
+				.eq(MesTaskArrangeEntity::getFactoryCode, factory)
+				.eq(MesTaskArrangeEntity::getShiftCode, dto.getShiftCode())
+				.eq(MesTaskArrangeEntity::getTaskCode, dto.getCode())
+				.notIn(MesTaskArrangeEntity::getStatus,
+						MesProduceTaskStatusEnum.CLOSE.name(), MesProduceTaskStatusEnum.FINISH.name()));
+		if (allocationLines == null && correctionId == null && existCount > 0) {
+			throw new RuntimeException("该班次已完成派工,无法重复派工");
+		}
+		MomUser currentUser = SecurityUtils.getUser();
+		MesTaskArrangeEntity correctionSource = null;
+		if (correctionId != null) {
+			var correction = correctionMapper.lockedRequest(tenant, factory, correctionId);
+			if (correction == null || !"SUBMITTED".equals(correction.getStatus())
+					|| Objects.equals(correction.getApplicantId(), currentUser.getId())
+					|| Objects.equals(correction.getApplicantCode(), currentUser.getUsername())
+					|| !Objects.equals(correction.getTaskCode(), dto.getCode())
+					|| !Objects.equals(correction.getTargetShiftCode(), dto.getShiftCode())
+					|| !Objects.equals(correction.getTargetShiftName(), dto.getShiftName())
+					|| dto.getTaskArrangeList() == null || dto.getTaskArrangeList().size() != 1) {
+				throw new CheckedException("仅异人审批原待审修正可补派精确目标");
+			}
+			var old = correctionMapper.arrange(tenant, factory, correction.getArrangeId());
+			correctionSource = old;
+			var input = dto.getTaskArrangeList().get(0);
+			if (old == null || !"CLOSE".equals(old.getStatus()) || !Objects.equals(old.getTaskCode(), dto.getCode())
+					|| !Objects.equals(old.getProduceTaskCode(), correction.getProduceTaskCode())
+					|| !Objects.equals(input.getProduceTaskCode(), correction.getProduceTaskCode())
+					|| !Objects.equals(input.getWorkerCode(), old.getWorkerCode())
+					|| !Objects.equals(input.getWorkerName(), old.getWorkerName())
+					|| !Objects.equals(input.getWorksiteCodes(), correction.getTargetWorksiteCodes())
+					|| correctionMapper.replacement(tenant, factory, correctionId) != null
+					|| correctionMapper.otherActive(tenant, factory, old.getTaskCode(), old.getProduceTaskCode(), old.getId()) > 0) {
+				throw new CheckedException("修正来源未关闭、目标变化、已有替代或同工序活动派工");
+			}
+		}
+		List<MesTaskArrangeEntity> taskArrangeList = dto.getTaskArrangeList();
+		if (CollUtil.isEmpty(taskArrangeList) || taskArrangeList.stream().anyMatch(Objects::isNull)) {
+			throw new RuntimeException("请维护派工信息");
+		}
 
-        for (MesTaskArrangeEntity task : taskArrangeList) {
-            MesProduceTaskEntity produceTask = produceTaskMap.get(task.getProduceTaskCode());
-            if (!Objects.equals(mainTask.getCode(), produceTask.getTaskCode())) {
-                throw new CheckedException("工序任务不属于当前生产工单，派工失败");
-            }
-            if (StrUtil.isBlank(task.getWorkerCode())) {
-                throw new CheckedException("未绑定执行员工，派工失败");
-            }
-            if (StrUtil.isNotBlank(produceTask.getPlannedWorkerCode())
-                    && !new LinkedHashSet<>(splitCsv(produceTask.getPlannedWorkerCode()))
-                    .equals(new LinkedHashSet<>(splitCsv(task.getWorkerCode())))) {
-                throw new CheckedException(String.format("工序【%s】已由APS锁定员工【%s】，如需调整请返回APS重排",
-                        produceTask.getRouteName(), produceTask.getPlannedWorkerName()));
-            }
-            if (StrUtil.isBlank(task.getWorksiteCodes())) {
-                throw new RuntimeException("未绑定工作中心，派工失败");
-            }
-            List<String> allowedWorksites = splitCsv(produceTask.getWorksiteCodes());
-            List<String> selectedWorksites = splitCsv(task.getWorksiteCodes());
-            if (selectedWorksites.isEmpty() || !allowedWorksites.containsAll(selectedWorksites)) {
-                throw new CheckedException(String.format("工序【%s】选择了未授权工位，派工失败", produceTask.getRouteName()));
-            }
-            if (StrUtil.isNotBlank(produceTask.getPlannedWorksiteCode())
-                    && (selectedWorksites.size() != 1
-                    || !produceTask.getPlannedWorksiteCode().equals(selectedWorksites.get(0)))) {
-                throw new CheckedException(String.format("工序【%s】已由APS锁定工位【%s】，如需调整请返回APS重排",
-                        produceTask.getRouteName(), produceTask.getPlannedWorksiteName()));
-            }
-            MesTaskArrangeEntity newTask = new MesTaskArrangeEntity();
-            BeanUtil.copyProperties(produceTask, newTask);
-            newTask.setId(null);
-            newTask.setCorrectionRequestId(correctionId);
-            newTask.setProduceTaskCode(produceTask.getCode());
-            MesFrozenExecutionGraph.assertArrangement(produceTask, newTask);
-            newTask.setWorkerCode(StrUtil.isNotBlank(produceTask.getPlannedWorkerCode())
-                    ? produceTask.getPlannedWorkerCode() : task.getWorkerCode());
-            newTask.setWorkerName(StrUtil.isNotBlank(produceTask.getPlannedWorkerCode())
-                    ? produceTask.getPlannedWorkerName() : task.getWorkerName());
-            newTask.setWorksiteCodes(String.join(",", selectedWorksites));
-            newTask.setWorksiteNames(resolveSelectedValues(produceTask.getWorksiteCodes(),
-                    produceTask.getWorksiteNames(), selectedWorksites));
-            newTask.setWorksiteTypes(MesWorksiteTriggerProjection.forDispatch(produceTask.getWorksiteCodes(),
-                    produceTask.getWorksiteTypes(), selectedWorksites));
-            newTask.setPlannedStartTime(produceTask.getPlannedStartTime());
-            newTask.setPlannedEndTime(produceTask.getPlannedEndTime());
-            newTask.setPlannedWorksiteCode(produceTask.getPlannedWorksiteCode());
-            newTask.setPlannedWorksiteName(produceTask.getPlannedWorksiteName());
-            newTask.setPlannedWorkerCode(produceTask.getPlannedWorkerCode());
-            newTask.setPlannedWorkerName(produceTask.getPlannedWorkerName());
-            newTask.setPlannedDeviceCode(produceTask.getPlannedDeviceCode());
-            newTask.setPlannedDeviceName(produceTask.getPlannedDeviceName());
-            newTask.setPlannedResourceSlotNo(produceTask.getPlannedResourceSlotNo());
-            newTask.setPlannedResourceGroupCode(produceTask.getPlannedResourceGroupCode());
-            newTask.setPlannedResourceGroupName(produceTask.getPlannedResourceGroupName());
-            newTask.setPlannedResourceGroupCapacity(produceTask.getPlannedResourceGroupCapacity());
-            newTask.setPlannedResourceGroupSlotNo(produceTask.getPlannedResourceGroupSlotNo());
-            newTask.setPlannedToolingCodes(produceTask.getPlannedToolingCodes());
-            newTask.setPlannedToolingNames(produceTask.getPlannedToolingNames());
-            newTask.setToolingAllocationSnapshot(produceTask.getToolingAllocationSnapshot());
-            newTask.setToolingLifeUsageSnapshot(produceTask.getToolingLifeUsageSnapshot());
-            newTask.setApsOperationSnapshot(produceTask.getApsOperationSnapshot());
+		List<MesTaskEntity> mainTasks = mesTaskService.list(new LambdaQueryWrapper<MesTaskEntity>()
+				.eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
+				.eq(MesTaskEntity::getCode, dto.getCode()).last("LIMIT 2"));
+		if (mainTasks.size() != 1) {
+			throw new CheckedException("当前实际组织的生产工单不存在或编码不唯一，派工失败");
+		}
+		MesTaskEntity mainTask = mainTasks.get(0);
+		if (terminalParent(mainTask.getStatus())) {
+			throw new CheckedException("已关闭或完工的生产工单不能重新派工");
+		}
+		List<String> requestedProduceTaskCodes = taskArrangeList.stream()
+				.map(MesTaskArrangeEntity::getProduceTaskCode)
+				.filter(StrUtil::isNotBlank)
+				.distinct()
+				.toList();
+		if (requestedProduceTaskCodes.isEmpty() || (allocationLines == null
+				&& requestedProduceTaskCodes.size() != taskArrangeList.size())
+				|| taskArrangeList.stream().anyMatch(item -> item == null || StrUtil.isBlank(item.getProduceTaskCode()))) {
+			throw new CheckedException("派工工序任务不能为空或重复");
+		}
+		Map<String, MesProduceTaskEntity> produceTaskMap = produceTaskService.list(
+						new LambdaQueryWrapper<MesProduceTaskEntity>()
+								.eq(MesProduceTaskEntity::getTenantId, tenant)
+								.eq(MesProduceTaskEntity::getFactoryCode, factory)
+								.eq(MesProduceTaskEntity::getTaskCode, mainTask.getCode())
+								.in(MesProduceTaskEntity::getCode, requestedProduceTaskCodes))
+				.stream().collect(Collectors.toMap(MesProduceTaskEntity::getCode, item -> item));
+		if (produceTaskMap.size() != requestedProduceTaskCodes.size()) {
+			throw new CheckedException("部分工序任务不存在，派工失败");
+		}
+		List<String> produceTaskCodes = new ArrayList<>();
+		List<MesTaskArrangeEntity> finalTaskArrangeList = new ArrayList<>();
 
-            // 生成新的编码
-            newTask.setCode(remoteSeqConfigService.create("mes_task_arrange").getData());
-            newTask.setDispatcherCode(currentUser.getUsername());
-            newTask.setDispatcherName(currentUser.getName());
-            newTask.setDispatcherTime(LocalDateTime.now());
-            newTask.setShiftCode(dto.getShiftCode());
-            newTask.setShiftName(dto.getShiftName());
-            newTask.setStatus(MesProduceTaskStatusEnum.UN_RECEIVE.name());
+		for (int rowIndex = 0; rowIndex < taskArrangeList.size(); rowIndex++) {
+			MesTaskArrangeEntity task = taskArrangeList.get(rowIndex);
+			MesDispatchAllocationDTO.Line allocationLine = allocationLines == null ? null : allocationLines.get(rowIndex);
+			MesProduceTaskEntity produceTask = produceTaskMap.get(task.getProduceTaskCode());
+			if (terminalParent(produceTask.getStatus())) {
+				throw new CheckedException("已关闭或完工的工序不能借补派重新打开");
+			}
+			if (!Objects.equals(mainTask.getCode(), produceTask.getTaskCode())) {
+				throw new CheckedException("工序任务不属于当前生产工单，派工失败");
+			}
+			if (StrUtil.isBlank(task.getWorkerCode())) {
+				throw new CheckedException("未绑定执行员工，派工失败");
+			}
+			if (StrUtil.isNotBlank(produceTask.getPlannedWorkerCode())
+					&& !new LinkedHashSet<>(splitCsv(produceTask.getPlannedWorkerCode()))
+					.equals(new LinkedHashSet<>(splitCsv(task.getWorkerCode())))) {
+				throw new CheckedException(String.format("工序【%s】已由APS锁定员工【%s】，如需调整请返回APS重排",
+						produceTask.getRouteName(), produceTask.getPlannedWorkerName()));
+			}
+			if (StrUtil.isBlank(task.getWorksiteCodes())) {
+				throw new RuntimeException("未绑定工作中心，派工失败");
+			}
+			List<String> allowedWorksites = splitCsv(produceTask.getWorksiteCodes());
+			List<String> selectedWorksites = splitCsv(task.getWorksiteCodes());
+			if (selectedWorksites.isEmpty() || !allowedWorksites.containsAll(selectedWorksites)) {
+				throw new CheckedException(String.format("工序【%s】选择了未授权工位，派工失败", produceTask.getRouteName()));
+			}
+			if (StrUtil.isNotBlank(produceTask.getPlannedWorksiteCode())
+					&& (selectedWorksites.size() != 1
+					|| !produceTask.getPlannedWorksiteCode().equals(selectedWorksites.get(0)))) {
+				throw new CheckedException(String.format("工序【%s】已由APS锁定工位【%s】，如需调整请返回APS重排",
+						produceTask.getRouteName(), produceTask.getPlannedWorksiteName()));
+			}
+			MesTaskArrangeEntity newTask = new MesTaskArrangeEntity();
+			BeanUtil.copyProperties(produceTask, newTask);
+			// 父实体身份不继承；执行策略冻结后才生成本派工身份供永久出生回调引用。
+			newTask.setId(null);
+			BigDecimal assignedQuantity = produceTask.getNoticeNum();
+			if (allocationLine != null) {
+				assignedQuantity = allocationLine.getQuantity();
+			} else if (correctionSource != null) {
+				assignedQuantity = correctionSource.getNoticeNum();
+			}
+			newTask.setNoticeNum(assignedQuantity);
+			newTask.setCreateBy(currentUser.getUsername());
+			newTask.setCreateTime(LocalDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+			newTask.setUpdateBy(null);
+			newTask.setUpdateTime(null);
+			newTask.setDelFlag("0");
+			// 新派工只能继承冻结配置，不能继承父工序已经发生的执行事实。
+			newTask.setCompleteNum(BigDecimal.ZERO);
+			newTask.setUnPassNum(BigDecimal.ZERO);
+			newTask.setQualityReleasedNum(BigDecimal.ZERO);
+			newTask.setStartTime(null);
+			newTask.setFinishTime(null);
+			newTask.setFinishHour(null);
+			newTask.setActualWorksiteCode(null);
+			newTask.setMaterialGateRecordId(null);
+			newTask.setCorrectionRequestId(correctionId);
+			newTask.setProduceTaskCode(produceTask.getCode());
+			MesFrozenExecutionGraph.assertArrangement(produceTask, newTask);
+			newTask.setWorkerCode(StrUtil.isNotBlank(produceTask.getPlannedWorkerCode())
+					? produceTask.getPlannedWorkerCode() : task.getWorkerCode());
+			newTask.setWorkerName(StrUtil.isNotBlank(produceTask.getPlannedWorkerCode())
+					? produceTask.getPlannedWorkerName() : task.getWorkerName());
+			newTask.setWorksiteCodes(String.join(",", selectedWorksites));
+			newTask.setWorksiteNames(resolveSelectedValues(produceTask.getWorksiteCodes(),
+					produceTask.getWorksiteNames(), selectedWorksites));
+			newTask.setWorksiteTypes(MesWorksiteTriggerProjection.forDispatch(produceTask.getWorksiteCodes(),
+					produceTask.getWorksiteTypes(), selectedWorksites));
+			newTask.setPlannedStartTime(produceTask.getPlannedStartTime());
+			newTask.setPlannedEndTime(produceTask.getPlannedEndTime());
+			newTask.setPlannedWorksiteCode(produceTask.getPlannedWorksiteCode());
+			newTask.setPlannedWorksiteName(produceTask.getPlannedWorksiteName());
+			newTask.setPlannedWorkerCode(produceTask.getPlannedWorkerCode());
+			newTask.setPlannedWorkerName(produceTask.getPlannedWorkerName());
+			newTask.setPlannedDeviceCode(produceTask.getPlannedDeviceCode());
+			newTask.setPlannedDeviceName(produceTask.getPlannedDeviceName());
+			newTask.setPlannedResourceSlotNo(produceTask.getPlannedResourceSlotNo());
+			newTask.setPlannedResourceGroupCode(produceTask.getPlannedResourceGroupCode());
+			newTask.setPlannedResourceGroupName(produceTask.getPlannedResourceGroupName());
+			newTask.setPlannedResourceGroupCapacity(produceTask.getPlannedResourceGroupCapacity());
+			newTask.setPlannedResourceGroupSlotNo(produceTask.getPlannedResourceGroupSlotNo());
+			newTask.setPlannedToolingCodes(produceTask.getPlannedToolingCodes());
+			newTask.setPlannedToolingNames(produceTask.getPlannedToolingNames());
+			newTask.setToolingAllocationSnapshot(produceTask.getToolingAllocationSnapshot());
+			newTask.setToolingLifeUsageSnapshot(produceTask.getToolingLifeUsageSnapshot());
+			newTask.setApsOperationSnapshot(produceTask.getApsOperationSnapshot());
 
-            // 设置批次号
-            BatchGenerator generator = batchGeneratorService.getBatchGenerator(mainTask.getBatchRuleCode());
-            if (generator == null) {
-                throw new RuntimeException("未找到对应的批次生成器，请检查批次规则配置");
-            }
-            newTask.setBatchNo(generator.generateBatchNumber(mainTask.getCode(), newTask.getShiftCode()));
+			// 生成新的编码
+			newTask.setCode(remoteSeqConfigService.create("mes_task_arrange").getData());
+			newTask.setDispatcherCode(currentUser.getUsername());
+			newTask.setDispatcherName(currentUser.getName());
+			newTask.setDispatcherTime(LocalDateTime.now());
+			newTask.setShiftCode(allocationLine == null ? dto.getShiftCode() : allocationLine.getShiftCode());
+			newTask.setShiftName(allocationLine == null ? dto.getShiftName() : allocationLine.getShiftName());
+			newTask.setStatus(MesProduceTaskStatusEnum.UN_RECEIVE.name());
 
-            // 设置其他必要信息
-            newTask.setWorkshopCode(mainTask.getWorkshopCode());
-            newTask.setWorkshopName(mainTask.getWorkshopName());
-            newTask.setWrapRuleCode(mainTask.getWrapCode());
-            newTask.setWrapCapacity(mainTask.getWrapCapacity());
-            newTask.setWrapCode(null);
-            newTask.setFactoryCode(mainTask.getFactoryCode());
+			// 设置批次号
+			BatchGenerator generator = batchGeneratorService.getBatchGenerator(mainTask.getBatchRuleCode());
+			if (generator == null) {
+				throw new RuntimeException("未找到对应的批次生成器，请检查批次规则配置");
+			}
+			newTask.setBatchNo(generator.generateBatchNumber(mainTask.getCode(), newTask.getShiftCode()));
 
-            // 派工是生产执行策略的冻结边界；后续模板发布、退役均不得改变在制任务。
-            executionTemplateService.freezeForDispatch(mainTask, newTask);
+			// 设置其他必要信息
+			newTask.setWorkshopCode(mainTask.getWorkshopCode());
+			newTask.setWorkshopName(mainTask.getWorkshopName());
+			newTask.setWrapRuleCode(mainTask.getWrapCode());
+			newTask.setWrapCapacity(mainTask.getWrapCapacity());
+			newTask.setWrapCode(null);
+			newTask.setFactoryCode(mainTask.getFactoryCode());
 
-            produceTaskCodes.add(newTask.getProduceTaskCode());
-            finalTaskArrangeList.add(newTask);
-        }
+			// 派工是生产执行策略的冻结边界；后续模板发布、退役均不得改变在制任务。
+			executionTemplateService.freezeForDispatch(mainTask, newTask);
+			// 执行策略冻结要求尚未出生；冻结完成后才确定真实ID供配额回调引用。
+			newTask.setId(IdWorker.getId());
 
-        // 动态闭合区段不能只派绑定节点；全部冻结角色不齐时原永久组及本批派工一起回滚。
-        executionTemplateService.validateDispatchBundle(finalTaskArrangeList);
-        // 保存派工
-        if (!this.saveBatch(finalTaskArrangeList)) {
-            throw new CheckedException("实际派工未全部保存");
-        }
-        // 更新工序任务状态
-        if (!produceTaskService.update(new LambdaUpdateWrapper<MesProduceTaskEntity>()
-                .eq(MesProduceTaskEntity::getTenantId, tenant).eq(MesProduceTaskEntity::getFactoryCode, factory)
-                .eq(MesProduceTaskEntity::getTaskCode, mainTask.getCode())
-                .in(MesProduceTaskEntity::getCode, produceTaskCodes)
-                .set(MesProduceTaskEntity::getStatus, MesProduceTaskStatusEnum.UN_RECEIVE.name()))) {
-            throw new CheckedException("派工工序状态未保存，整笔派工回滚");
-        }
-        // 补派班次不能把已经开工的原工单退回已派工；终态及锁内旧状态必须仍然一致。
-        if (!mesTaskService.update(new LambdaUpdateWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
-                .eq(MesTaskEntity::getId, mainTask.getId())
-                .eq(MesTaskEntity::getCode, dto.getCode())
-                .eq(MesTaskEntity::getStatus, mainTask.getStatus())
-                .notIn(MesTaskEntity::getStatus, MesTaskStatusEnum.CLOSE.name(), MesTaskStatusEnum.FINISH.name())
-                .set(MesTaskEntity::getStatus, MesTaskStatusEnum.PRODUCT.name().equals(mainTask.getStatus())
-                        ? MesTaskStatusEnum.PRODUCT.name() : MesTaskStatusEnum.DISPATCH.name()))) {
-            throw new CheckedException("派工工单状态未保存，整笔派工回滚");
-        }
-    }
+			produceTaskCodes.add(newTask.getProduceTaskCode());
+			finalTaskArrangeList.add(newTask);
+		}
+
+		// 动态闭合区段不能只派绑定节点；全部冻结角色不齐时原永久组及本批派工一起回滚。
+		executionTemplateService.validateDispatchBundle(finalTaskArrangeList);
+		// 配额先落、实际派工后落；延迟约束提交核真实出生及命令全集，不能补到历史派工。
+		if (beforeSave != null) {
+			beforeSave.accept(List.copyOf(finalTaskArrangeList));
+		} else if (correctionId != null) {
+			allocationLedger.authorizeCorrection(correctionId, correctionSource, finalTaskArrangeList);
+		}
+		// 保存派工
+		if (!this.saveBatch(finalTaskArrangeList)) {
+			throw new CheckedException("实际派工未全部保存");
+		}
+		// 包装采用与真实派工同事务出生；后续主数据改版不能重算在制包装依据。
+		for (MesTaskArrangeEntity arrange : finalTaskArrangeList) {
+			packagingExecution.freezeForDispatch(mainTask, arrange);
+		}
+		// 新派工不改变原有在制/暂停/已接收父状态，仅首次待派节点进入待接收。
+		for (String produceCode : new LinkedHashSet<>(produceTaskCodes)) {
+			MesProduceTaskEntity original = produceTaskMap.get(produceCode);
+			String target = Set.of("WAIT", "ISSUE", "CREATE").contains(original.getStatus())
+					? MesProduceTaskStatusEnum.UN_RECEIVE.name() : original.getStatus();
+			if (!Objects.equals(target, original.getStatus()) && !produceTaskService.update(
+					new LambdaUpdateWrapper<MesProduceTaskEntity>()
+							.eq(MesProduceTaskEntity::getTenantId, tenant)
+							.eq(MesProduceTaskEntity::getFactoryCode, factory)
+							.eq(MesProduceTaskEntity::getId, original.getId())
+							.eq(MesProduceTaskEntity::getTaskCode, mainTask.getCode())
+							.eq(MesProduceTaskEntity::getCode, produceCode)
+							.eq(MesProduceTaskEntity::getStatus, original.getStatus())
+							.set(MesProduceTaskEntity::getStatus, target))) {
+				throw new CheckedException("派工工序状态已变化，整笔分配回滚");
+			}
+		}
+		// 补派班次不能把已经开工的原工单退回已派工；终态及锁内旧状态必须仍然一致。
+		if (!mesTaskService.update(new LambdaUpdateWrapper<MesTaskEntity>()
+				.eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
+				.eq(MesTaskEntity::getId, mainTask.getId())
+				.eq(MesTaskEntity::getCode, dto.getCode())
+				.eq(MesTaskEntity::getStatus, mainTask.getStatus())
+				.notIn(MesTaskEntity::getStatus, MesTaskStatusEnum.CLOSE.name(), MesTaskStatusEnum.FINISH.name())
+				.set(MesTaskEntity::getStatus, MesTaskStatusEnum.PRODUCT.name().equals(mainTask.getStatus())
+						? MesTaskStatusEnum.PRODUCT.name() : MesTaskStatusEnum.DISPATCH.name()))) {
+			throw new CheckedException("派工工单状态未保存，整笔派工回滚");
+		}
+		return List.copyOf(finalTaskArrangeList);
+	}
+
 
     @Override
     public IPage<MesTaskArrangeEntity> padPage(Page<MesTaskArrangeEntity> pageParam, MesTaskArrangeEntity query) {
@@ -478,63 +555,111 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
         return resultList;
     }
 
-    /**
-     * 根据工位查询正在加工任务
-     *
-     * @param shiftCode
-     * @return
-     */
-    @Override
-    public MesArrangeTaskVO getCurrentTask(String shiftCode, String workshopCode, String worksiteCode) {
-        QueryWrapper<MesTaskArrangeEntity> query = padTaskQuery(shiftCode, workshopCode, worksiteCode);
-        String factory = FactoryContextHolder.getFactoryCode();
-        MesArrangeTaskVO result = new MesArrangeTaskVO();
-        List<MesTaskArrangeEntity> matches = this.list(query
-                .eq("actual_worksite_code", worksiteCode).isNotNull("start_time")
-                .in("status", List.of(MesProduceTaskStatusEnum.PRODUCT.name(), MesProduceTaskStatusEnum.PAUSE.name()))
-                .last("LIMIT 2"));
-        if (matches.isEmpty()) {
-            return null;
-        }
-        if (matches.size() != 1) {
-            throw new CheckedException("当前工厂/班次/车间/工位有多份实名在制派工，请先核对归属，禁止猜选任务");
-        }
-        MesTaskArrangeEntity arrange = matches.get(0);
-        BeanUtil.copyProperties(arrange, result);
-        result.setShiftNum(arrange.getNoticeNum());
-        // PAD使用的对象模式和入口规则必须与报工主事务读取的同一派工快照一致。
-        MesExecutionContractDTO contract = executionTemplateService.contract(arrange);
-        result.setExecutionContract(contract);
-        result.setReportMode(contract.getReportMode());
-        MesTaskEntity task = mesTaskService.getOne(new LambdaQueryWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getFactoryCode, factory)
-                .eq(MesTaskEntity::getCode, arrange.getTaskCode()));
-        if (task == null) {
-            throw new CheckedException("当前派工所属工单不存在或不属于当前工厂，请核对来源");
-        }
-        result.setNoticeNum(task.getNoticeNum());
-        result.setProcessCode(task.getProcessRouteCode());
-        // 获取当前工序
-        MesProduceTaskEntity currentProduceTask = produceTaskService.getOne(new LambdaQueryWrapper<MesProduceTaskEntity>()
-                .eq(MesProduceTaskEntity::getFactoryCode, factory)
-                .eq(MesProduceTaskEntity::getTaskCode, arrange.getTaskCode())
-                .eq(MesProduceTaskEntity::getCode, arrange.getProduceTaskCode()));
-        if (currentProduceTask == null) {
-            throw new CheckedException("当前派工所属工序任务不存在或归属不一致，请核对来源");
-        }
-        MesFrozenExecutionGraph.assertArrangement(currentProduceTask, arrange);
-        result.setWorksiteTypes(MesWorksiteTriggerProjection.forExecution(currentProduceTask, arrange).name());
-        result.setCompleteNum(currentProduceTask.getCompleteNum());
-        // DAG汇合工序的可用前序数量取全部直接前置工序完工数量的最小值。
-        List<MesProduceTaskEntity> predecessorTasks = frozenGraph(currentProduceTask).predecessors(currentProduceTask);
-        if (!predecessorTasks.isEmpty()) {
-            predecessorTasks.stream().map(row -> Optional.ofNullable(row.getCompleteNum()).orElse(BigDecimal.ZERO))
-                    .min(BigDecimal::compareTo).ifPresent(result::setLastPassNum);
-        }
-        result.setArrangeCode(arrange.getCode());
+	/** {@inheritDoc} */
+	@Override
+	public MesArrangeTaskVO getCurrentTask(String shiftCode, String workshopCode, String worksiteCode) {
+		return getCurrentTask(shiftCode, workshopCode, worksiteCode, null);
+	}
 
-        return result;
-    }
+	/**
+	 * {@inheritDoc}
+	 * 精确ID仍与实名/实际工厂/班次/车间/工站同时核对，不通过ID旁路扩大现场范围。
+	 */
+	@Override
+	public MesArrangeTaskVO getCurrentTask(String shiftCode, String workshopCode, String worksiteCode,
+			Long arrangeId) {
+		if (arrangeId != null && arrangeId <= 0) {
+			throw new CheckedException("请选择有效的精确派工身份");
+		}
+		QueryWrapper<MesTaskArrangeEntity> query = padTaskQuery(shiftCode, workshopCode, worksiteCode);
+		String factory = FactoryContextHolder.getFactoryCode();
+		MesArrangeTaskVO result = new MesArrangeTaskVO();
+		List<MesTaskArrangeEntity> matches = this.list(query
+				.eq(arrangeId != null, "id", arrangeId)
+				.eq("actual_worksite_code", worksiteCode).isNotNull("start_time")
+				.in("status", List.of(MesProduceTaskStatusEnum.PRODUCT.name(), MesProduceTaskStatusEnum.PAUSE.name()))
+				.last("LIMIT 2"));
+		if (matches.isEmpty()) {
+			if (arrangeId != null) {
+				throw new CheckedException("所选派工已不属于当前实名工站的在制任务，请重新选择");
+			}
+			return null;
+		}
+		if (matches.size() != 1) {
+			throw new CheckedException("当前工厂/班次/车间/工位有多份实名在制派工，请先核对归属，禁止猜选任务");
+		}
+		MesTaskArrangeEntity arrange = matches.get(0);
+		BeanUtil.copyProperties(arrange, result);
+		result.setShiftNum(arrange.getNoticeNum());
+		result.setDispatchCompleteNum(arrange.getCompleteNum());
+		result.setDispatchUnPassNum(arrange.getUnPassNum());
+		result.setDispatchQualityReleasedNum(arrange.getQualityReleasedNum());
+		// PAD使用的对象模式和入口规则必须与报工主事务读取的同一派工快照一致。
+		MesExecutionContractDTO contract = executionTemplateService.contract(arrange);
+		result.setExecutionContract(contract);
+		result.setReportMode(contract.getReportMode());
+		MesTaskEntity task = mesTaskService.getOne(new LambdaQueryWrapper<MesTaskEntity>()
+				.eq(MesTaskEntity::getTenantId, arrange.getTenantId())
+				.eq(MesTaskEntity::getFactoryCode, factory)
+				.eq(MesTaskEntity::getCode, arrange.getTaskCode()));
+		if (task == null) {
+			throw new CheckedException("当前派工所属工单不存在或不属于当前工厂，请核对来源");
+		}
+		result.setNoticeNum(task.getNoticeNum());
+		result.setProcessCode(task.getProcessRouteCode());
+		// 获取当前工序
+		MesProduceTaskEntity currentProduceTask = produceTaskService.getOne(new LambdaQueryWrapper<MesProduceTaskEntity>()
+				.eq(MesProduceTaskEntity::getTenantId, arrange.getTenantId())
+				.eq(MesProduceTaskEntity::getFactoryCode, factory)
+				.eq(MesProduceTaskEntity::getTaskCode, arrange.getTaskCode())
+				.eq(MesProduceTaskEntity::getCode, arrange.getProduceTaskCode()));
+		if (currentProduceTask == null) {
+			throw new CheckedException("当前派工所属工序任务不存在或归属不一致，请核对来源");
+		}
+		MesFrozenExecutionGraph.assertArrangement(currentProduceTask, arrange);
+		result.setWorksiteTypes(MesWorksiteTriggerProjection.forExecution(currentProduceTask, arrange).name());
+		result.setCompleteNum(currentProduceTask.getCompleteNum());
+		// DAG汇合工序的可用前序数量取全部直接前置工序完工数量的最小值。
+		List<MesProduceTaskEntity> predecessorTasks = frozenGraph(currentProduceTask).predecessors(currentProduceTask);
+		if (!predecessorTasks.isEmpty()) {
+			predecessorTasks.stream().map(row -> Optional.ofNullable(row.getCompleteNum()).orElse(BigDecimal.ZERO))
+					.min(BigDecimal::compareTo).ifPresent(result::setLastPassNum);
+		}
+		result.setArrangeCode(arrange.getCode());
+
+		return result;
+	}
+
+	/** {@inheritDoc} */
+	@Override
+	public IPage<MesRunningDispatchVO> runningCandidates(Page<MesTaskArrangeEntity> page,
+			String shiftCode, String workshopCode, String worksiteCode, String keyword) {
+		if (page == null || page.getCurrent() < 1 || page.getSize() < 1 || page.getSize() > 100) {
+			throw new CheckedException("在制派工每页限1至100条");
+		}
+		String search = StrUtil.trimToNull(keyword);
+		if (search != null && search.length() > 100) {
+			throw new CheckedException("工单或派工号搜索长度不能超过100字");
+		}
+		QueryWrapper<MesTaskArrangeEntity> query = padTaskQuery(shiftCode, workshopCode, worksiteCode)
+				.select("id", "code", "task_code", "produce_task_code", "mat_code", "mat_name", "route_name",
+						"notice_num", "complete_num", "shift_code", "shift_name", "actual_worksite_code",
+						"status", "tenant_id", "factory_code")
+				.eq("actual_worksite_code", worksiteCode).isNotNull("start_time")
+				.in("status", List.of(MesProduceTaskStatusEnum.PRODUCT.name(), MesProduceTaskStatusEnum.PAUSE.name()));
+		if (search != null) {
+			query.and(item -> item.like("task_code", search).or().like("code", search));
+		}
+		return page(page, query.orderByDesc("start_time").orderByDesc("id")).convert(row ->
+				new MesRunningDispatchVO().setId(row.getId().toString()).setCode(row.getCode())
+						.setTaskCode(row.getTaskCode()).setProduceTaskCode(row.getProduceTaskCode())
+						.setMatCode(row.getMatCode()).setMatName(row.getMatName()).setRouteName(row.getRouteName())
+						.setNoticeNum(row.getNoticeNum() == null ? null : row.getNoticeNum().toPlainString())
+						.setCompleteNum(row.getCompleteNum() == null ? null : row.getCompleteNum().toPlainString())
+						.setShiftCode(row.getShiftCode()).setShiftName(row.getShiftName())
+						.setActualWorksiteCode(row.getActualWorksiteCode()).setStatus(row.getStatus())
+						.setTenantId(row.getTenantId().toString()).setFactoryCode(row.getFactoryCode()));
+	}
 
     /**
      * 获取当前设备
@@ -1030,6 +1155,9 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
             }
         }
 
+        // 同原工单事务锁内永久记录标准工时采用来源，保存失败须整体回滚接收。
+        manualLaborChanges.freezeForReceive(task);
+        planLaborStandards.freezeForReceive(task);
         task.setStatus(MesProduceTaskStatusEnum.RECEIVE.name());
         task.setActualWorksiteCode(worksiteCode);
         if (!this.updateById(task)) throw new CheckedException("派工接收事实保存失败");
@@ -1327,91 +1455,93 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
         return String.join(",", selectedValues);
     }
 
-    /**
-     * 关闭
-     *
-     * @param id
-     */
-    @Override
-    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
-    public void close(Long id) {
-        MesTaskArrangeEntity task = lockedForStateChange(id);
-        terminalExecutionGuard.assertUnoccupied(task);
-        if (MesProduceTaskStatusEnum.RECEIVE.name().equals(task.getStatus())) {
-            throw new CheckedException("已接收未开工任务必须走受控退派申请，不能直接关闭");
-        }
-        assertAssignedWorker(task);
-        if (MesProduceTaskStatusEnum.CLOSE.name().equals(task.getStatus())) return;
-        if (task.getStatus() == null || !Set.of("WAIT", "UN_RECEIVE", "PRODUCT", "PAUSE").contains(task.getStatus())) {
-            throw new CheckedException("当前派工状态不能关闭，已完成事实不得改成关闭");
-        }
-        MesProduceTaskEntity produceTask = frozenParent(task);
-        MesTaskEntity mainTask = mainTaskForArrange(task);
-        long inUseToolings = toolingExecutionMapper.selectCount(new LambdaQueryWrapper<MesToolingExecutionEntity>()
-                .eq(MesToolingExecutionEntity::getArrangeCode, task.getCode())
-                .eq(MesToolingExecutionEntity::getStatus, "IN_USE"));
-        if (inUseToolings > 0) {
-            throw new CheckedException("加工中工装尚未进行完工寿命结算，不能直接关闭任务");
-        }
-        toolingExecutionMapper.update(null, new LambdaUpdateWrapper<MesToolingExecutionEntity>()
-                .eq(MesToolingExecutionEntity::getArrangeCode, task.getCode())
-                .eq(MesToolingExecutionEntity::getStatus, "CHECKED_IN")
-                .set(MesToolingExecutionEntity::getStatus, "RELEASED")
-                .set(MesToolingExecutionEntity::getReleaseTime, LocalDateTime.now()));
-        LocalDateTime closeTime = LocalDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
-        closeExecutionSegment(task, "CLOSE", "CANCELLED", closeTime);
-        workpieceTimeService.finishForArrange(task, closeTime, "CLOSE");
-        if (!this.update(new LambdaUpdateWrapper<MesTaskArrangeEntity>().eq(MesTaskArrangeEntity::getId, id)
-                .set(MesTaskArrangeEntity::getStatus, MesProduceTaskStatusEnum.CLOSE.name()))) {
-            throw new CheckedException("派工关闭事实保存失败");
-        }
-        task.setStatus(MesProduceTaskStatusEnum.CLOSE.name());
-        // 可以停止已关闭父对象的残留派工，但不能由此恢复父对象或再次回传完工。
-        if (!terminalParent(produceTask.getStatus()) && !terminalParent(mainTask.getStatus())) {
-            completeParents(task, produceTask, mainTask, closeTime, true);
-        }
-    }
+	/**
+	 * 关闭
+	 *
+	 * @param id
+	 */
+	@Override
+	@Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+	public void close(Long id) {
+		MesTaskArrangeEntity task = lockedForStateChange(id);
+		terminalExecutionGuard.assertUnoccupied(task);
+		if (MesProduceTaskStatusEnum.RECEIVE.name().equals(task.getStatus())) {
+			throw new CheckedException("已接收未开工任务必须走受控退派申请，不能直接关闭");
+		}
+		assertAssignedWorker(task);
+		if (MesProduceTaskStatusEnum.CLOSE.name().equals(task.getStatus())) return;
+		if (task.getStatus() == null || !Set.of("WAIT", "UN_RECEIVE", "PRODUCT", "PAUSE").contains(task.getStatus())) {
+			throw new CheckedException("当前派工状态不能关闭，已完成事实不得改成关闭");
+		}
+		MesProduceTaskEntity produceTask = frozenParent(task);
+		MesTaskEntity mainTask = mainTaskForArrange(task);
+		long inUseToolings = toolingExecutionMapper.selectCount(new LambdaQueryWrapper<MesToolingExecutionEntity>()
+				.eq(MesToolingExecutionEntity::getArrangeCode, task.getCode())
+				.eq(MesToolingExecutionEntity::getStatus, "IN_USE"));
+		if (inUseToolings > 0) {
+			throw new CheckedException("加工中工装尚未进行完工寿命结算，不能直接关闭任务");
+		}
+		toolingExecutionMapper.update(null, new LambdaUpdateWrapper<MesToolingExecutionEntity>()
+				.eq(MesToolingExecutionEntity::getArrangeCode, task.getCode())
+				.eq(MesToolingExecutionEntity::getStatus, "CHECKED_IN")
+				.set(MesToolingExecutionEntity::getStatus, "RELEASED")
+				.set(MesToolingExecutionEntity::getReleaseTime, LocalDateTime.now()));
+		LocalDateTime closeTime = LocalDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+		closeExecutionSegment(task, "CLOSE", "CANCELLED", closeTime);
+		workpieceTimeService.finishForArrange(task, closeTime, "CLOSE");
+		if (!this.update(new LambdaUpdateWrapper<MesTaskArrangeEntity>().eq(MesTaskArrangeEntity::getId, id)
+				.set(MesTaskArrangeEntity::getStatus, MesProduceTaskStatusEnum.CLOSE.name()))) {
+			throw new CheckedException("派工关闭事实保存失败");
+		}
+		task.setStatus(MesProduceTaskStatusEnum.CLOSE.name());
+		allocationLedger.settleTerminal(task);
+		// 可以停止已关闭父对象的残留派工，但不能由此恢复父对象或再次回传完工。
+		if (!terminalParent(produceTask.getStatus()) && !terminalParent(mainTask.getStatus())) {
+			completeParents(task, produceTask, mainTask, closeTime, true);
+		}
+	}
 
-    /**
-     * 完工
-     *
-     * @param id
-     */
-    @Override
-    @org.springframework.security.access.prepost.PreAuthorize("@pms.hasPermission('mesProduceTask:finish')")
-    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
-    public void finish(Long id) {
-        MesTaskArrangeEntity arrange = lockedForStateChange(id);
-        terminalExecutionGuard.assertUnoccupied(arrange);
-        assertAssignedWorker(arrange);
-        if (!arrange.getStatus().equals(MesProduceTaskStatusEnum.PRODUCT.name())) {
-            throw new RuntimeException("只有加工中任务才能完工");
-        }
-        MesProduceTaskEntity produceTask = frozenParent(arrange);
-        MesTaskEntity mainTask = mainTaskForArrange(arrange);
-        if (terminalParent(produceTask.getStatus()) || terminalParent(mainTask.getStatus())) {
-            throw new CheckedException("父工序或工单已经关闭/完工，残留派工不能重新完成");
-        }
-        produceTask = checkFinishQuality(produceTask, mainTask);
-        consumeToolingLife(arrange);
-        LocalDateTime finishTime = LocalDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
-        closeExecutionSegment(arrange, "FINISH", "CLOSED", finishTime);
-        workpieceTimeService.finishForArrange(arrange, finishTime, "FINISH");
-        arrange.setFinishTime(finishTime);
-        arrange.setFinishHour(getFinishHour(arrange.getStartTime(), arrange.getFinishTime()));
-        arrange.setStatus(MesProduceTaskStatusEnum.FINISH.name());
-        // 质量同步刚刚可能增加合格放行量，只写完工字段，禁止旧整实体覆盖本事务的新质量数量。
-        if (!this.update(new LambdaUpdateWrapper<MesTaskArrangeEntity>()
-                .eq(MesTaskArrangeEntity::getId, arrange.getId())
-                .eq(MesTaskArrangeEntity::getTenantId, arrange.getTenantId())
-                .eq(MesTaskArrangeEntity::getFactoryCode, arrange.getFactoryCode())
-                .set(MesTaskArrangeEntity::getFinishTime, arrange.getFinishTime())
-                .set(MesTaskArrangeEntity::getFinishHour, arrange.getFinishHour())
-                .set(MesTaskArrangeEntity::getStatus, MesProduceTaskStatusEnum.FINISH.name()))) {
-            throw new CheckedException("派工完工事实保存失败");
-        }
-        completeParents(arrange, produceTask, mainTask, finishTime, false);
-    }
+	/**
+	 * 完工
+	 *
+	 * @param id
+	 */
+	@Override
+	@org.springframework.security.access.prepost.PreAuthorize("@pms.hasPermission('mesProduceTask:finish')")
+	@Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+	public void finish(Long id) {
+		MesTaskArrangeEntity arrange = lockedForStateChange(id);
+		terminalExecutionGuard.assertUnoccupied(arrange);
+		assertAssignedWorker(arrange);
+		if (!arrange.getStatus().equals(MesProduceTaskStatusEnum.PRODUCT.name())) {
+			throw new RuntimeException("只有加工中任务才能完工");
+		}
+		MesProduceTaskEntity produceTask = frozenParent(arrange);
+		MesTaskEntity mainTask = mainTaskForArrange(arrange);
+		if (terminalParent(produceTask.getStatus()) || terminalParent(mainTask.getStatus())) {
+			throw new CheckedException("父工序或工单已经关闭/完工，残留派工不能重新完成");
+		}
+		produceTask = checkFinishQuality(produceTask, mainTask);
+		consumeToolingLife(arrange);
+		LocalDateTime finishTime = LocalDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+		closeExecutionSegment(arrange, "FINISH", "CLOSED", finishTime);
+		workpieceTimeService.finishForArrange(arrange, finishTime, "FINISH");
+		arrange.setFinishTime(finishTime);
+		arrange.setFinishHour(getFinishHour(arrange.getStartTime(), arrange.getFinishTime()));
+		arrange.setStatus(MesProduceTaskStatusEnum.FINISH.name());
+		// 质量同步刚刚可能增加合格放行量，只写完工字段，禁止旧整实体覆盖本事务的新质量数量。
+		if (!this.update(new LambdaUpdateWrapper<MesTaskArrangeEntity>()
+				.eq(MesTaskArrangeEntity::getId, arrange.getId())
+				.eq(MesTaskArrangeEntity::getTenantId, arrange.getTenantId())
+				.eq(MesTaskArrangeEntity::getFactoryCode, arrange.getFactoryCode())
+				.set(MesTaskArrangeEntity::getFinishTime, arrange.getFinishTime())
+				.set(MesTaskArrangeEntity::getFinishHour, arrange.getFinishHour())
+				.set(MesTaskArrangeEntity::getStatus, MesProduceTaskStatusEnum.FINISH.name()))) {
+			throw new CheckedException("派工完工事实保存失败");
+		}
+		allocationLedger.settleTerminal(arrange);
+		completeParents(arrange, produceTask, mainTask, finishTime, false);
+	}
 
     private MesProduceTaskEntity checkFinishQuality(MesProduceTaskEntity produceTask, MesTaskEntity mainTask) {
         MesQualityGateDecision qualityGate;

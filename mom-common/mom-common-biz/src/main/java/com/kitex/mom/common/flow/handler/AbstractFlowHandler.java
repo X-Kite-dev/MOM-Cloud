@@ -53,7 +53,7 @@ public abstract class AbstractFlowHandler implements FlowHandler {
         );
         // 通过回调地址请求业务模块接口
         BeanUtil.copyProperties(startFlowData, flowBizRecord, CopyOptions.create().ignoreNullValue());
-        String url = "http://" + bizService + backUrl;
+        String url = "service.example.invalid" + bizService + backUrl;
         HttpEntity<FlowInstanceBizRecordEntity> httpEntity = new HttpEntity<>(flowBizRecord, new HttpHeaders());
         R aBoolean = restTemplateAdapter.postForObject(url, httpEntity, R.class);
         if (aBoolean == null) {

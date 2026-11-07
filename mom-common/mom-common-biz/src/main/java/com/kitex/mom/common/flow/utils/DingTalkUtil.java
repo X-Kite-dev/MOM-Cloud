@@ -39,7 +39,7 @@ import java.util.List;
 public class DingTalkUtil {
     private final RemoteUserService remoteUserService;
     private String appKey = "dingjglhp2v7174nhkk1";
-    private String appSecret = "7Jwv-uuDCxC_im3K6EEuyYA_MMYFsWHqy8Q2zoTAf02-_wV78B4XEsaCmAYnOyW3";
+    private String appSecret = "REDACTED_TOKEN";
 
     public String getAccessToken() {
         com.aliyun.dingtalkoauth2_1_0.Client client = createClient_2_1_0();
@@ -119,7 +119,7 @@ public class DingTalkUtil {
      * @param accessToken token
      */
     public OapiV2UserGetResponse.UserGetResponse getDingUserInfo(String userId, String accessToken) {
-        DingTalkClient client = new DefaultDingTalkClient("https://oapi.dingtalk.com/topapi/v2/user/get");
+        DingTalkClient client = new DefaultDingTalkClient("https://service.example.invalid/topapi/v2/user/get");
         OapiV2UserGetRequest req = new OapiV2UserGetRequest();
         req.setUserid(userId);
         try {

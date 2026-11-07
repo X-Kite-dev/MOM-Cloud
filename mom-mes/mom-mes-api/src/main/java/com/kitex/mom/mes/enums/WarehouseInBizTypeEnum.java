@@ -17,6 +17,8 @@ public enum WarehouseInBizTypeEnum {
     RECEPTION_REVERSE("reception_reverse", "线边签收冲销"),
     PROCESS_PRODUCT_IN("process_product_in", "工序生产入库"),
     PROCESS_PRODUCT_OUT("process_product_out", "工序生产出库"),
+    PRODUCTION_NG_MATERIAL_OUT("production_ng_material_out", "生产不良逐料出库"),
+    PRODUCTION_NG_MATERIAL_RESTORE("production_ng_material_restore", "生产不良原库存份额恢复"),
     BACK_FLUSH_OUT("back_flush_out", "倒冲出库"),
     REPORT_REVERSE_PRODUCT_OUT("report_reverse_product_out", "报工冲销产出退回"),
     REPORT_REVERSE_MATERIAL_IN("report_reverse_material_in", "报工冲销物料恢复"),

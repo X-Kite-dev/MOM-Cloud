@@ -11,6 +11,15 @@ import java.util.List;
 @Accessors(chain = true)
 @Schema(description = "MES工单/工序任务到PLAN来源计划的权威分配映射")
 public class MesPlanSourceMappingDTO {
+    /** 原映射工单保存的产品编码；不能用当前产品主数据替代。 */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String productCode;
+    /** 原映射工单冻结的工程发布ID文本；旧来源缺失时不补造。 */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String engineeringReleaseId;
+    /** 原映射工单的联合工程包SHA256；不纳入既有mappingFingerprint算法，新增消费方须另行核对。 */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String engineeringContentHash;
     private String requestedTaskCode;
     private String requestedProduceTaskCode;
     private Long mesTaskId;

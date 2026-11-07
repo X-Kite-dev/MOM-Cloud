@@ -7,10 +7,37 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.util.Date;
 
+/**
+ * 生产工单当前详情投影，含精确组织、来源和冻结依据，用于命令后的原单事实核对。
+ * 不是可回写实体或某次普通管理命令的永久回执。
+ */
 @Data
 public class MesTaskDTO {
 
-    private Long id;
+	/**
+	 * 精确父工单身份，按字符串传输以保留Long精度。
+	 */
+	@JsonFormat(shape = JsonFormat.Shape.STRING)
+	private Long id;
+
+	/**
+	 * 数据库原单所属租户身份，只读；不得从列表或当前会话补造。
+	 */
+	@JsonFormat(shape = JsonFormat.Shape.STRING)
+	@Schema(description = "原单所属租户ID")
+	private Long tenantId;
+
+	/**
+	 * 数据库原单所属实际工厂编码，已经读取权限核对。
+	 */
+	@Schema(description = "原单所属工厂编码")
+	private String factoryCode;
+
+	/**
+	 * 原单来源类型，例如MANUAL手工、REWORK返工；仅MANUAL候选不等于已取得作废资格。
+	 */
+	@Schema(description = "原单来源类型")
+	private String resourceType;
 
     @Schema(description = "工单编码")
     private String code;

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.kitex.mom.mdm.mapper.MdmStockOwnerIdentityMapper">
+    <resultMap id="identity" type="com.kitex.mom.mdm.dto.MdmStockOwnerIdentityDTO">
+        <result property="id" column="id"/>
+        <result property="tenantId" column="tenant_id"/>
+        <result property="factoryCode" column="factory_code"/>
+        <result property="ownerType" column="owner_type"/>
+        <result property="code" column="code"/>
+        <result property="name" column="name"/>
+        <result property="enabled" column="enabled"/>
+        <result property="supplierCheckStatus" column="supplier_check_status"/>
+    </resultMap>
+    <!-- 固定表与最小投影，不拼接用户输入；类型在服务层严格校验。 -->
+    <sql id="projection">
+        SELECT CAST(s.id AS varchar) AS id,
+               CAST(s.tenant_id AS varchar) AS tenant_id,
+               s.factory_code, #{ownerType} AS owner_type,
+        <choose>
+            <when test="ownerType == 'CUSTOMER_SUPPLIED'">
+               s.customer_code AS code, s.customer_name AS name,
+               s.status AS enabled, CAST(NULL AS varchar) AS supplier_check_status
+               FROM mom_mdm.mdm_customer s
+            </when>
+            <otherwise>
+               s.supplier_code AS code, s.supplier_name AS name,
+               s.status AS enabled, s.check_status AS supplier_check_status
+               FROM mom_mdm.mdm_supplier s
+            </otherwise>
+        </choose>
+        WHERE s.tenant_id = #{tenantId} AND s.factory_code = #{factoryCode}
+          AND s.del_flag = '0'
+    </sql>
+    <select id="resolve" resultMap="identity">
+        <include refid="projection"/>
+        <choose>
+            <when test="ownerType == 'CUSTOMER_SUPPLIED'">
+                AND s.customer_code = #{ownerCode}
+            </when>
+            <otherwise>
+                AND s.supplier_code = #{ownerCode}
+            </otherwise>
+        </choose>
+        ORDER BY s.id ASC
+        LIMIT 2
+    </select>
+    <select id="search" resultMap="identity">
+        <include refid="projection"/>
+        <!-- strpos使用绑定关键词进行字面子串搜索，不把百分号或下划线扩展为全量通配符。 -->
+        <choose>
+            <when test="ownerType == 'CUSTOMER_SUPPLIED'">
+                AND (strpos(s.customer_code, #{keyword}) > 0 OR strpos(s.customer_name, #{keyword}) > 0)
+            </when>
+            <otherwise>
+                AND (strpos(s.supplier_code, #{keyword}) > 0 OR strpos(s.supplier_name, #{keyword}) > 0)
+            </otherwise>
+        </choose>
+        ORDER BY s.id ASC
+        LIMIT 20
+    </select>
+</mapper>

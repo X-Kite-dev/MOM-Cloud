@@ -108,6 +108,13 @@ public class QmsReworkCompletionReceiptService {
                 ("PRODUCT".equals(type) ? "productTask" : "procedureTask") + ":show"))
             throw new AccessDeniedException("没有查看该类检验回执的权限");
         access.requireRead();
+        return inCurrentTransaction(type, orderId);
+    }
+
+    /** 调用方已作实际工厂授权；与逐件关联使用同一事务的一致性视图。 */
+    View inCurrentTransaction(String type, Long orderId) {
+        access.requireScope();
+        require(TransactionSynchronizationManager.isActualTransactionActive(), "完工回执协作读取须加入实际事务");
         ready();
         var row = order(type, orderId, false);
         var receipt = find(orderId);

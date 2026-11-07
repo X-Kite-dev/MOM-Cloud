@@ -1,18 +1,34 @@
 package com.kitex.mom.wms.service;
 
 import com.kitex.common.core.exception.CheckedException;
-import com.kitex.mom.wms.dto.WmsWarehouseCapacityDTO.*;
+import com.kitex.mom.wms.dto.WmsWarehouseCapacityDTO.Limit;
+import com.kitex.mom.wms.dto.WmsWarehouseCapacityDTO.Factor;
+import com.kitex.mom.wms.dto.WmsWarehouseCapacityDTO.Model;
+import com.kitex.mom.wms.dto.WmsWarehouseCapacityDTO.Location;
+import com.kitex.mom.wms.dto.WmsWarehouseCapacityDTO.StockGroup;
+import com.kitex.mom.wms.dto.WmsWarehouseCapacityDTO.Contribution;
+import com.kitex.mom.wms.dto.WmsWarehouseCapacityDTO.Position;
+import com.kitex.mom.wms.dto.WmsWarehouseCapacityDTO.Summary;
+import com.kitex.mom.wms.dto.WmsWarehouseCapacityDTO.Result;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
-/** 仅显式SKU/库存单位系数可折算；未知量绝不当成空置容量。 */
+/**
+ * 仅显式SKU/库存单位系数可折算；未知量绝不当成空置容量。
+ */
 @Component
 public class WmsWarehouseCapacityCalculator {
 	public Model normalize(Model model) {
-		require(model != null && model.schemaVersion() == 1 && Set.of("M3", "KG", "SLOT").contains(model.unit())
+		require(model != null && model.schemaVersion() == 1 && model.unit() != null && Set.of("M3", "KG", "SLOT").contains(model.unit())
 				&& model.limits() != null && model.limits().size() <= 2000
 				&& model.factors() != null && model.factors().size() <= 5000, "容量配置格式不完整");
 		var limits = new TreeMap<String, Limit>();
@@ -77,7 +93,7 @@ public class WmsWarehouseCapacityCalculator {
 					known = known.add(new BigDecimal(contribution.occupied()));
 				}
 				if (!"READY".equals(contribution.status())) {
-					missing += group.stockRows() + group.invalidRows();
+					missing += group.invalidRows() + (contribution.occupied() == null ? group.stockRows() : 0);
 				}
 				invalidQuantity |= "QUANTITY_INVALID".equals(contribution.status());
 			}
@@ -103,6 +119,9 @@ public class WmsWarehouseCapacityCalculator {
 			}
 			if ("OVER_CAPACITY".equals(status)) {
 				overloaded++;
+			}
+			if (!enabled) {
+				missing = Math.max(missing, stockRows);
 			}
 			unresolved += missing;
 			result.add(new Position(site, location == null ? "未匹配库位" : location.locationName(), enabled,
@@ -141,11 +160,11 @@ public class WmsWarehouseCapacityCalculator {
 		} catch (NumberFormatException | NullPointerException invalid) {
 			// 损坏或非有限库存不是负占用，也不能折算成零占用。
 		}
-		var factor = factors.get(key(row.matCode(), row.matUnit()));
+		var factor = code(row.matCode()) && code(row.matUnit()) ? factors.get(key(row.matCode(), row.matUnit())) : null;
 		String status = quantity == null || row.invalidRows() > 0 ? "QUANTITY_INVALID"
 				: factor == null ? "CONVERSION_MISSING" : "READY";
 		return new Contribution(row.matCode(), row.matName(), row.matUnit(), quantity == null ? null : number(quantity),
-				factor == null ? null : number(factor), "READY".equals(status) ? number(quantity.multiply(factor)) : null,
+				factor == null ? null : number(factor), quantity != null && factor != null ? number(quantity.multiply(factor)) : null,
 				row.stockRows(), row.invalidRows(), status);
 	}
 

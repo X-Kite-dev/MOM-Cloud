@@ -228,22 +228,32 @@ public class WmsProductInBillController {
         return handler.listDetails(params, ids);
     }
 
-    public QueryWrapper<WmsInBillEntity> getMainQueryWrapper(WmsInBillDetailQueryDTO wmsInBill) {
-        QueryWrapper<WmsInBillEntity> wrapper = new QueryWrapper<>();
-        if (CollUtil.isNotEmpty(wmsInBill.getCreateTime())) {
-            wrapper.lambda().ge(BaseCore::getCreateTime, wmsInBill.getCreateTime().get(0));
-            if (wmsInBill.getCreateTime().size() > 1) {
-                wrapper.lambda().lt(BaseCore::getCreateTime, wmsInBill.getCreateTime().get(1));
-            }
-        }
-        wrapper.lambda().like(StrUtil.isNotBlank(wmsInBill.getBillNo()), WmsInBillEntity::getBillNo, wmsInBill.getBillNo())
-                .like(StrUtil.isNotBlank(wmsInBill.getNoticeId()), WmsInBillEntity::getNoticeId, wmsInBill.getNoticeId())
-                .eq(StrUtil.isNotBlank(wmsInBill.getState()), WmsInBillEntity::getState, wmsInBill.getState())
-                .eq(StrUtil.isNotBlank(wmsInBill.getWarehouseCode()), WmsInBillEntity::getWarehouseCode, wmsInBill.getWarehouseCode())
-                .like(StrUtil.isNotBlank(wmsInBill.getCreateBy()), WmsInBillEntity::getCreateBy, wmsInBill.getCreateBy())
-                .eq(WmsInBillEntity::getBillType, billType)
-                .orderByAsc(WmsInBillEntity::getState)
-                .orderByDesc(BaseCore::getCreateTime);
-        return wrapper;
-    }
+	/**
+	 * 按完整原通知身份构造列表和主表导出条件；现有业务类型与组织权限由原调用入口约束。
+	 *
+	 * @param wmsInBill 查询参数，空通知号不筛选，非法通知号拒绝查询
+	 * @return 主表查询条件，通知号以Long等值绑定
+	 */
+	public QueryWrapper<WmsInBillEntity> getMainQueryWrapper(WmsInBillDetailQueryDTO wmsInBill) {
+		Long noticeId = wmsInBill.noticeIdValue();
+		QueryWrapper<WmsInBillEntity> wrapper = new QueryWrapper<>();
+		if (CollUtil.isNotEmpty(wmsInBill.getCreateTime())) {
+			wrapper.lambda().ge(BaseCore::getCreateTime, wmsInBill.getCreateTime().get(0));
+			if (wmsInBill.getCreateTime().size() > 1) {
+				wrapper.lambda().lt(BaseCore::getCreateTime, wmsInBill.getCreateTime().get(1));
+			}
+		}
+		wrapper.lambda().like(StrUtil.isNotBlank(wmsInBill.getBillNo()), WmsInBillEntity::getBillNo,
+						wmsInBill.getBillNo())
+				.eq(noticeId != null, WmsInBillEntity::getNoticeId, noticeId)
+				.eq(StrUtil.isNotBlank(wmsInBill.getState()), WmsInBillEntity::getState, wmsInBill.getState())
+				.eq(StrUtil.isNotBlank(wmsInBill.getWarehouseCode()), WmsInBillEntity::getWarehouseCode,
+						wmsInBill.getWarehouseCode())
+				.like(StrUtil.isNotBlank(wmsInBill.getCreateBy()), WmsInBillEntity::getCreateBy,
+						wmsInBill.getCreateBy())
+				.eq(WmsInBillEntity::getBillType, billType)
+				.orderByAsc(WmsInBillEntity::getState)
+				.orderByDesc(BaseCore::getCreateTime);
+		return wrapper;
+	}
 }

@@ -14,6 +14,27 @@ import java.util.List;
 @Mapper
 public interface MesWorkpieceTimeMapper {
 
+    @Select("SELECT (CASE WHEN to_regclass('mom_mes.mes_workpiece_task_birth') IS NULL THEN 0 ELSE 1 END) "
+            + "+ (CASE WHEN to_regclass('mom_mes.mes_workpiece_entry_source') IS NULL THEN 0 ELSE 1 END)")
+    int entryTableCount();
+
+    @Select("SELECT mom_mes.mom_workpiece_entry_ready_v1()")
+    Boolean entryReady();
+
+    record EntryRow(String tenantId, String factoryCode, String arrangeId, String sessionId,
+                    String operationId, String raw, String fingerprint, String receiptJson, String requestHash) {}
+
+    @Select("<script>SELECT CAST(e.tenant_id AS varchar),e.factory_code,CAST(e.arrange_id AS varchar),"
+            + "CAST(e.session_id AS varchar),CAST(e.operation_id AS varchar),e.entry_raw,e.fingerprint,o.receipt_json,o.request_hash "
+            + "FROM mom_mes.mes_workpiece_entry_source e LEFT JOIN mom_mes.mes_workpiece_time_operation o ON o.id=e.operation_id "
+            + "AND o.tenant_id=e.tenant_id AND o.factory_code=e.factory_code AND o.arrange_id=e.arrange_id "
+            + "AND o.session_id=e.session_id AND o.action='START' AND o.del_flag='0' "
+            + "WHERE e.tenant_id=#{tenant} AND e.factory_code=#{factory} AND e.arrange_id=#{arrange} "
+            + "AND e.session_id IN <foreach collection='sessions' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
+            + "ORDER BY e.session_id</script>")
+    List<EntryRow> entrySources(@Param("tenant") Long tenant, @Param("factory") String factory,
+                               @Param("arrange") Long arrange, @Param("sessions") List<Long> sessions);
+
     @Select("SELECT mom_mes.mom_workpiece_time_ready()")
     Boolean ready();
 

@@ -26,7 +26,9 @@ import java.util.TreeMap;
 import static com.kitex.mom.wms.service.impl.WmsInventoryPlanAccess.factory;
 import static com.kitex.mom.wms.service.impl.WmsInventoryPlanAccess.require;
 
-/** 只读盘点范围建议；保存计划时再次校验范围并重算账面数量。 */
+/**
+ * 只读盘点范围建议；保存计划时再次校验范围并重算账面数量。
+ */
 @Service
 @RequiredArgsConstructor
 public class WmsInventoryScopeSuggestionService {
@@ -49,8 +51,21 @@ public class WmsInventoryScopeSuggestionService {
 		return suggest(warehouseCode, siteCode, ruleCode, thresholdDays, false);
 	}
 
+	Suggestion suggestEvent(String warehouse, String site, String rule, Integer days, String material, String batch) {
+		return suggest(warehouse, site, rule, days, false, new EventTarget(material, batch));
+	}
+
 	private Suggestion suggest(String warehouseCode, String siteCode, String ruleCode,
-							   Integer thresholdDays, boolean requireUserPermission) {
+	                           Integer thresholdDays, boolean requireUserPermission) {
+		return suggest(warehouseCode, siteCode, ruleCode, thresholdDays, requireUserPermission, null);
+	}
+
+	private Suggestion suggest(String warehouseCode, String siteCode, String ruleCode, Integer thresholdDays,
+	                           boolean requireUserPermission, EventTarget target) {
+		require(target == null ||
+						(StrUtil.isNotBlank(target.material()) && target.material().equals(target.material().trim())
+								&& (StrUtil.isBlank(target.batch()) || target.batch().equals(target.batch().trim()))),
+				"预警盘点物料批次范围无效");
 		Rule rule = resolveRule(ruleCode, thresholdDays);
 		Long tenant = TenantContextHolder.getTenantId();
 		String currentFactory = factory();
@@ -79,6 +94,9 @@ public class WmsInventoryScopeSuggestionService {
 				.eq(WmsLiveStockEntity::getFactoryCode, currentFactory)
 				.eq(WmsLiveStockEntity::getWarehouseCode, warehouse)
 				.eq(WmsLiveStockEntity::getSiteCode, site)
+				.eq(target != null, WmsLiveStockEntity::getMatCode, target == null ? null : target.material())
+				.eq(target != null && StrUtil.isNotBlank(target.batch()), WmsLiveStockEntity::getMatBatch,
+						target == null ? null : target.batch())
 				.gt(WmsLiveStockEntity::getMatNum, 0)
 				.orderByAsc(WmsLiveStockEntity::getId)
 				.last("LIMIT " + (MAX_STOCK_ROWS + 1)));
@@ -100,6 +118,10 @@ public class WmsInventoryScopeSuggestionService {
 				require(Objects.equals(stock.getMatBatch(), stock.getMatBatch().trim()),
 						"库存批次含首尾空格，请先修正库存标识");
 			}
+			if (target != null && (!target.material().equals(stock.getMatCode())
+					|| (StrUtil.isNotBlank(target.batch()) && !target.batch().equals(stock.getMatBatch())))) {
+				continue;
+			}
 			byMaterial.computeIfAbsent(stock.getMatCode(), ignored -> new ArrayList<>()).add(stock);
 		}
 
@@ -111,7 +133,8 @@ public class WmsInventoryScopeSuggestionService {
 			String unit = materialStocks.get(0).getMatUnit();
 			require(materialStocks.stream().allMatch(stock -> Objects.equals(unit, stock.getMatUnit())),
 					"同一物料库位存在不同库存单位，请先核对");
-			boolean allBatches = materialStocks.stream().anyMatch(stock -> StrUtil.isBlank(stock.getMatBatch()));
+			boolean allBatches = (target != null && StrUtil.isBlank(target.batch())) ||
+					materialStocks.stream().anyMatch(stock -> StrUtil.isBlank(stock.getMatBatch()));
 			Map<String, List<WmsLiveStockEntity>> byBatch = new TreeMap<>();
 			for (WmsLiveStockEntity stock : materialStocks) {
 				String batch = allBatches ? "" : stock.getMatBatch();
@@ -124,14 +147,16 @@ public class WmsInventoryScopeSuggestionService {
 				BigDecimal quantity = batch.getValue().stream()
 						.map(stock -> BigDecimal.valueOf(stock.getMatNum()))
 						.reduce(BigDecimal.ZERO, BigDecimal::add);
-				boolean external = batch.getValue().stream().anyMatch(stock -> !WmsStockOwnership.isCompanyOwned(stock));
+				boolean external = batch.getValue().stream()
+						.anyMatch(stock -> !WmsStockOwnership.isCompanyOwned(stock));
 				WmsLiveStockEntity first = batch.getValue().get(0);
 				rows.add(new Row(material.getKey(), StrUtil.blankToDefault(first.getMatName(), material.getKey()),
 						unit, batch.getKey().isEmpty() ? null : batch.getKey(), site, location.getLocationName(),
 						quantity, external));
 			}
 		}
-		return new Suggestion(warehouse, site, observed.size(), rule.name(), thresholdDays, List.copyOf(rows));
+		return new Suggestion(warehouse, site, byMaterial.values().stream().mapToInt(List::size).sum(), rule.name(),
+				thresholdDays, List.copyOf(rows));
 	}
 
 	public static void validateRule(String ruleCode, Integer thresholdDays) {
@@ -154,7 +179,7 @@ public class WmsInventoryScopeSuggestionService {
 	}
 
 	private boolean matches(WmsLiveStockEntity stock, Rule rule, Integer days,
-							LocalDate today, LocalDateTime now) {
+	                        LocalDate today, LocalDateTime now) {
 		return switch (rule) {
 			case ALL_POSITIVE -> true;
 			case NEAR_EXPIRY -> stock.getMatValidEndDate() != null
@@ -165,16 +190,19 @@ public class WmsInventoryScopeSuggestionService {
 		};
 	}
 
+	private record EventTarget(String material, String batch) {
+	}
+
 	private enum Rule {
 		ALL_POSITIVE, NEAR_EXPIRY, LONG_STAY, EXTERNAL_OWNER
 	}
 
 	public record Suggestion(String warehouseCode, String siteCode, int stockRowCount,
-							 String ruleCode, Integer thresholdDays, List<Row> rows) {
+	                         String ruleCode, Integer thresholdDays, List<Row> rows) {
 	}
 
 	public record Row(String matCode, String matName, String matUnit, String matBatch,
-					  String siteCode, String siteName, BigDecimal currentNumber,
-					  boolean externalOwnerPresent) {
+	                  String siteCode, String siteName, BigDecimal currentNumber,
+	                  boolean externalOwnerPresent) {
 	}
 }

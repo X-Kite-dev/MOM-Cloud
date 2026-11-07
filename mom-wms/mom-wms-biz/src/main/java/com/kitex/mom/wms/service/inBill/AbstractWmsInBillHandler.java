@@ -1,6 +1,7 @@
 package com.kitex.mom.wms.service.inBill;
 
 import cn.hutool.core.bean.BeanUtil;
+import com.kitex.mom.wms.service.special.WmsSpecialExecutionContext;
 import cn.hutool.core.bean.copier.CopyOptions;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.lang.Assert;
@@ -115,6 +116,10 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 	 * @param entity 入库单
 	 */
 	public void beforeSaveDeep(WmsInBillEntity entity) {
+		if (entity != null) {
+			WmsSpecialExecutionContext.check(entity.getBillType(), entity.getDocumentId(),
+					entity.getDocumentTable());
+		}
 		validateBasicInboundDetails(entity == null ? null : entity.getDetails());
 		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(entity.getWarehouseCode(), entity.getBillType())),
 				"仓库不支持当前业务");
@@ -256,7 +261,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		existingNotice.setDetails(entity.getDetails());
 		validateBasicInboundDetails(entity.getDetails());
 		checkInboundPlacements(existingNotice);
-		prepareDraftIdentifiers(existingNotice.getBillType(), entity.getDetails(), persistedDetailIds(entity.getId()));
+		prepareDraftIdentifiers(existingNotice.getBillType(), entity.getDetails(),
+				persistedDetailIds(entity.getId()));
 		checkData(existingNotice);
 		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(
 						existingNotice.getWarehouseCode(), existingNotice.getBillType())),
@@ -297,6 +303,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 
 	@Override
 	public Page<WmsInBillDetailEntity> pageDetails(Page page, WmsInBillDetailQueryDTO params) {
+		// 先在Java边界核完整通知号，避免格式错误被MyBatis表达式包装成系统异常。
+		params.noticeIdValue();
 		return wmsInBillDetailMapper.fetchDetails(page, params, null);
 	}
 
@@ -322,11 +330,13 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		// 1. 校验必填数据
 		validateBasicInboundDetails(entity == null ? null : entity.getDetails());
 		checkInboundPlacements(entity);
-		Optional.ofNullable(entity.getWarehouseCode()).orElseThrow(() -> new CheckedException("仓库编码不能为空"));
+		Optional.ofNullable(entity.getWarehouseCode())
+				.orElseThrow(() -> new CheckedException("仓库编码不能为空"));
 		Optional.ofNullable(entity.getBillType()).orElseThrow(() -> new CheckedException("单据类型不能为空"));
 
 		// 2. 校验单据类型是否有效
-		Assert.isTrue(InBillTypeEnum.isValid(entity.getBillType()) || OtherInBillTypeEnum.isValid(entity.getBillType()),
+		Assert.isTrue(InBillTypeEnum.isValid(entity.getBillType()) ||
+						OtherInBillTypeEnum.isValid(entity.getBillType()),
 				"无效的单据类型：" + entity.getBillType());
 
 		entity.getDetails().forEach(detail -> {
@@ -334,12 +344,9 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 			identifierPolicyService.validateInbound(entity.getBillType(), detail);
 		});
 
-		// 3. 校验明细是否重复
-		Map<String, List<WmsInBillDetailEntity>> collectGroup = entity.getDetails().stream()
-				.collect(Collectors.groupingBy(it -> it.getMatCode() + it.getSiteCode() + it.getContainerCode()
-						+ it.getMatBatch() + it.getMatBarcode() + it.getSupplierCode()
-						+ it.getReservationNo() + it.getRequirementMatCode()
-						+ it.getStockOwnerType() + it.getStockOwnerCode() + it.getSourceBusinessNo()));
+		// 不同原流水允许同位置分别收回；同原流水仍去重，普通入库沿原物流身份校验。
+		Map<List<Object>, List<WmsInBillDetailEntity>> collectGroup = entity.getDetails().stream()
+				.collect(Collectors.groupingBy(this::inboundDuplicateKey));
 		for (List<WmsInBillDetailEntity> value : collectGroup.values()) {
 			if (value.size() > 1) {
 				throw new CheckedException("数据重复【物料编码：" + value.get(0).getMatCode()
@@ -350,6 +357,25 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 						+ "】");
 			}
 		}
+	}
+
+	/**
+	 * 按真实原件和目标位置识别特殊收回重复行，普通入库保留原物流判重合同。
+	 * 原流水已冻结物料和批次等身份，不能用本次自动补出的临时标识拆开同一原件。
+	 *
+	 * @param detail 当前实际入库明细，原流水只取受控事务的同对象绑定
+	 * @return 特殊收回的原流水及目标位置组合，或普通入库的完整原物流身份键
+	 */
+	private List<Object> inboundDuplicateKey(WmsInBillDetailEntity detail) {
+		Long sourceFlowId = WmsSpecialExecutionContext.inboundSourceFlowId(detail);
+		if (sourceFlowId != null) {
+			return Arrays.<Object>asList("SPECIAL_RETURN", sourceFlowId, detail.getSiteCode(),
+					detail.getContainerCode());
+		}
+		return Collections.singletonList(detail.getMatCode() + detail.getSiteCode() + detail.getContainerCode()
+				+ detail.getMatBatch() + detail.getMatBarcode() + detail.getSupplierCode()
+				+ detail.getReservationNo() + detail.getRequirementMatCode()
+				+ detail.getStockOwnerType() + detail.getStockOwnerCode() + detail.getSourceBusinessNo());
 	}
 
 	private void checkInboundPlacements(WmsInBillEntity bill) {
@@ -367,7 +393,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 			throw new CheckedException("明细数据不能为空");
 		}
 		for (WmsInBillDetailEntity detail : details) {
-			if (detail == null || StrUtil.isBlank(detail.getMatCode()) || StrUtil.isBlank(detail.getMatUnit())) {
+			if (detail == null || StrUtil.isBlank(detail.getMatCode()) ||
+					StrUtil.isBlank(detail.getMatUnit())) {
 				throw new CheckedException("入库明细物料和标准单位不能为空");
 			}
 			if (detail.getMatNum() == null || !Double.isFinite(detail.getMatNum())
@@ -536,8 +563,10 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		Assert.notNull(bill, "入库单不存在");
 		InOutBillStateEnum state = InOutBillStateEnum.getByCode(bill.getState());
 		Assert.notNull(state, "入库单状态无效");
-		Assert.isTrue(state.isEditable(), String.format("入库单[%s]当前状态[%s]不允许提交", bill.getBillNo(), state.getDesc()));
-		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(bill.getWarehouseCode(), bill.getBillType())), "仓库不支持当前业务");
+		Assert.isTrue(state.isEditable(),
+				String.format("入库单[%s]当前状态[%s]不允许提交", bill.getBillNo(), state.getDesc()));
+		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(bill.getWarehouseCode(), bill.getBillType())),
+				"仓库不支持当前业务");
 		bill.setDetails(wmsInBillDetailMapper.selectList(Wrappers.<WmsInBillDetailEntity>lambdaQuery()
 				.eq(WmsInBillDetailEntity::getBillId, id)));
 		checkInboundPlacements(bill);
@@ -567,9 +596,11 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		Assert.notNull(bill, "入库单不存在");
 		InOutBillStateEnum state = InOutBillStateEnum.getByCode(bill.getState());
 		Assert.notNull(state, "入库单状态无效");
-		Assert.isTrue(state.isReviewable(), String.format("入库单[%s]当前状态[%s]不允许审核", bill.getBillNo(), state.getDesc()));
+		Assert.isTrue(state.isReviewable(),
+				String.format("入库单[%s]当前状态[%s]不允许审核", bill.getBillNo(), state.getDesc()));
 
-		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(bill.getWarehouseCode(), bill.getBillType())), "仓库不支持当前业务");
+		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(bill.getWarehouseCode(), bill.getBillType())),
+				"仓库不支持当前业务");
 
 		// 2. 更新状态为已通过
 		List<WmsInBillDetailEntity> billDetails = wmsInBillDetailMapper.selectList(
@@ -595,7 +626,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		}
 		wmsInBillDetailMapper.update(Wrappers.<WmsInBillDetailEntity>lambdaUpdate()
 				.set(WmsInBillDetailEntity::getInTime, now)
-				.in(BaseEntity::getId, billDetails.stream().map(BaseEntity::getId).collect(Collectors.toList())));
+				.in(BaseEntity::getId,
+						billDetails.stream().map(BaseEntity::getId).collect(Collectors.toList())));
 		bill.setState(InOutBillStateEnum.PASSED.getCode());
 		bill.setInTime(now);
 		bill.setReviewer(SecurityUtils.getUser().getUsername());
@@ -661,8 +693,9 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		double totalNum = 0d;
 		for (WmsInBillDetailEntity billDetail : billDetails) {
 			WmsInNoticeDetailEntity noticeDetail = Optional.ofNullable(map.get(billDetail.getNoticeDetailId()))
-					.orElseThrow(() -> new CheckedException("入库通知单明细[" + billDetail.getNoticeDetailId() + "]查找失败！物料编码：["
-							+ billDetail.getMatCode() + "]"));
+					.orElseThrow(() -> new CheckedException(
+							"入库通知单明细[" + billDetail.getNoticeDetailId() + "]查找失败！物料编码：["
+									+ billDetail.getMatCode() + "]"));
 			if (!matchesNoticeDetail(noticeDetail, billDetail)) {
 				throw new CheckedException("入库单明细与来源通知明细的物料、批次或单位不一致");
 			}
@@ -679,7 +712,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 				throw new CheckedException("入库单或通知单明细数量无效");
 			}
 			if (billNum > noticeNum) {
-				throw new CheckedException(String.format("物料编码为[%s]的物料超出通知未入库量！", billDetail.getMatCode()));
+				throw new CheckedException(
+						String.format("物料编码为[%s]的物料超出通知未入库量！", billDetail.getMatCode()));
 			}
 			double remaining = WmsQuantityMath.subtract(noticeNum, billNum);
 			double received = WmsQuantityMath.add(inNum, billNum);
@@ -844,6 +878,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 	 */
 	@Transactional
 	public void afterInStock(WmsInBillEntity inBill) {
+		WmsSpecialExecutionContext.check(inBill.getBillType(), inBill.getDocumentId(),
+				inBill.getDocumentTable());
 		checkInboundPlacements(inBill);
 		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(inBill.getWarehouseCode(), inBill.getBillType())),
 				"仓库不支持当前业务");
@@ -866,7 +902,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		}
 		for (WmsInBillDetailEntity detail : details) {
 			WmsStockOwnership.prepareInbound(inBill.getBillType(), detail);
-			boolean serialManaged = identifierPolicyService.validateInboundForPosting(inBill.getBillType(), detail);
+			boolean serialManaged = identifierPolicyService.validateInboundForPosting(inBill.getBillType(),
+					detail);
 			if (detail.getMatNum() == null || !Double.isFinite(detail.getMatNum()) || detail.getMatNum() <= 0) {
 				throw new CheckedException("入库标准数量必须为正有限数值");
 			}
@@ -878,6 +915,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 			liveStock.setSourceInBillDetailId(detail.getId());
 			liveStock.setSourceMesInboundRequestId(mesInboundRequestId);
 			liveStock.setStatus(0);
+			WmsSpecialExecutionContext.restoreInbound(detail, liveStock);
 			if (wmsLiveStockMapper.insert(liveStock) != 1) {
 				throw new CheckedException("入库库存保存失败，整笔入库回滚");
 			}
@@ -902,6 +940,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 			inoutFlow.setBillNo(inBill.getBillNo());
 			inoutFlow.setBillType(inBill.getBillType());
 			inoutFlow.setOperateType(InOutEnum.IN.getCode());
+			WmsSpecialExecutionContext.restoreInboundFlow(detail, inoutFlow, liveStock);
 			if (wmsInoutFlowMapper.insert(inoutFlow) != 1) {
 				throw new CheckedException("入库流水保存失败，整笔入库回滚");
 			}
@@ -957,7 +996,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		Assert.notNull(bill, "入库单不存在");
 		InOutBillStateEnum state = InOutBillStateEnum.getByCode(bill.getState());
 		Assert.notNull(state, "入库单状态无效");
-		Assert.isTrue(state.isReviewable(), String.format("入库单[%s]当前状态[%s]不允许审核", bill.getBillNo(), state.getDesc()));
+		Assert.isTrue(state.isReviewable(),
+				String.format("入库单[%s]当前状态[%s]不允许审核", bill.getBillNo(), state.getDesc()));
 		// 2. 更新状态为待提交
 		if (wmsInBillMapper.update(new LambdaUpdateWrapper<WmsInBillEntity>()
 				.set(WmsInBillEntity::getState, InOutBillStateEnum.PENDING_COMMIT.getCode())
@@ -994,9 +1034,10 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 	 */
 	public boolean checkContainerOfWarehouse(String warehouseCode, String containerCode) {
 		WmsContainerBarcodeEntity container = Optional
-				.ofNullable(wmsContainerBarcodeMapper.selectOne(new LambdaQueryWrapper<WmsContainerBarcodeEntity>()
-						.eq(WmsContainerBarcodeEntity::getCode, containerCode)
-						.last("limit 1")))
+				.ofNullable(
+						wmsContainerBarcodeMapper.selectOne(new LambdaQueryWrapper<WmsContainerBarcodeEntity>()
+								.eq(WmsContainerBarcodeEntity::getCode, containerCode)
+								.last("limit 1")))
 				.orElse(new WmsContainerBarcodeEntity());
 		return StrUtil.equals(warehouseCode, container.getWarehouseCode());
 	}
@@ -1029,7 +1070,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 				"入库必须指定原通知单ID");
 		requireInbound(params.getNoticeDetailId() == null || params.getNoticeDetailId() > 0,
 				"来源入库通知明细无效");
-		requireInbound(params.getMatNum() != null && Double.isFinite(params.getMatNum()) && params.getMatNum() > 0
+		requireInbound(
+				params.getMatNum() != null && Double.isFinite(params.getMatNum()) && params.getMatNum() > 0
 						&& (params.getOperateNum() == null
 						|| Double.isFinite(params.getOperateNum()) && params.getOperateNum() > 0),
 				"入库数量和已提供的操作数量必须为大于0的有限数值");
@@ -1066,7 +1108,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 								params.getNoticeDetailId())
 						.eq(WmsInNoticeDetailEntity::getMatCode, params.getMatCode())
 						.eq(WmsInNoticeDetailEntity::getMatBatch, params.getMatBatch())
-						.eq(StrUtil.isNotBlank(params.getSupplierCode()), WmsInNoticeDetailEntity::getSupplierCode,
+						.eq(StrUtil.isNotBlank(params.getSupplierCode()),
+								WmsInNoticeDetailEntity::getSupplierCode,
 								params.getSupplierCode()));
 		if (noticeDetails.size() == 0) {// 入库通知单的批次可以不填,没查到的话批次为空查一下
 			noticeDetails = wmsInNoticeDetailMapper.selectList(new LambdaQueryWrapper<WmsInNoticeDetailEntity>()
@@ -1148,7 +1191,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 							.eq(WmsInBillDetailEntity::getMatCode, params.getMatCode())
 							.eq(WmsInBillDetailEntity::getMatBatch, params.getMatBatch())
 							.eq(WmsInBillDetailEntity::getSiteCode, params.getSiteCode())
-							.eq(StrUtil.isNotBlank(params.getSupplierCode()), WmsInBillDetailEntity::getSupplierCode,
+							.eq(StrUtil.isNotBlank(params.getSupplierCode()),
+									WmsInBillDetailEntity::getSupplierCode,
 									params.getSupplierCode())
 							.apply(StrUtil.isBlank(params.getMatBarcode()),
 									"coalesce(btrim(mat_barcode), '') = ''")
@@ -1160,7 +1204,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 					params.getMatBarcode(), billDetails);
 			if (!addDetail) {
 				billDetails = billDetails.stream().filter(detail -> Objects.equals(
-								StrUtil.emptyToNull(detail.getContainerCode()), StrUtil.emptyToNull(params.getContainerCode())))
+								StrUtil.emptyToNull(detail.getContainerCode()),
+								StrUtil.emptyToNull(params.getContainerCode())))
 						.toList();
 				requireInbound(billDetails.size() <= 1, "入库单存在重复匹配明细，请先核对，不能取首条继续追加");
 				addDetail = billDetails.isEmpty();
@@ -1182,7 +1227,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 				detailAdd.setOperateUnit(
 						params.getOperateUnit() == null ? detailAdd.getMatUnit() : params.getOperateUnit());
 				detailAdd
-						.setOperateNum(params.getOperateNum() == null ? detailAdd.getMatNum() : params.getOperateNum());
+						.setOperateNum(params.getOperateNum() ==
+								null ? detailAdd.getMatNum() : params.getOperateNum());
 				inBill.setDetails(Collections.singletonList(detailAdd));
 				checkInboundPlacements(inBill);
 				prepareNewInboundDetail(inBill.getBillType(), detailAdd);
@@ -1247,7 +1293,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 			}
 			requireInbound(wmsInBillDetailMapper.update(Wrappers.<WmsInBillDetailEntity>lambdaUpdate()
 					.set(WmsInBillDetailEntity::getInTime, now)
-					.in(BaseEntity::getId, billDetails.stream().map(BaseEntity::getId).collect(Collectors.toList())))
+					.in(BaseEntity::getId,
+							billDetails.stream().map(BaseEntity::getId).collect(Collectors.toList())))
 					== billDetails.size(), "入库单明细完成时间更新未确认，入库整体回滚");
 			inBill.setDetails(billDetails);
 			afterInStock(inBill);
@@ -1306,6 +1353,8 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 	 */
 	@Override
 	public List<WmsInBillDetailExcelVO> listDetails(WmsInBillDetailQueryDTO params, Long[] ids) {
+		// 先在Java边界核完整通知号，避免格式错误被MyBatis表达式包装成系统异常。
+		params.noticeIdValue();
 		List<WmsInBillDetailEntity> list = wmsInBillDetailMapper.fetchDetails(params, ids);
 		List<WmsInBillDetailExcelVO> result = new ArrayList<>();
 		for (int i = 0; i < list.size(); i++) {

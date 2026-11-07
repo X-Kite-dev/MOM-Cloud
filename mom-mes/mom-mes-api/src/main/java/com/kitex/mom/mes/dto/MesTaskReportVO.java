@@ -239,4 +239,8 @@ public class MesTaskReportVO {
     @Schema(hidden = true)
     private String stationPassValidationSnapshot;
 
+	/** 可选的单件精确用料原文；随报工永久号保存，内部耗用前再核真实原来源。 */
+	@Schema(description = "本件用料选择原文")
+	private String materialSelectionJson;
+
 }

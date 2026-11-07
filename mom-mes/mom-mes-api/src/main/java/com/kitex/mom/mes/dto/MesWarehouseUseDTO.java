@@ -67,4 +67,8 @@ public class MesWarehouseUseDTO {
     @Schema(description = "实际工厂编码")
     private String factoryCode;
 
+	/** 可选的单件精确用料原文；随报工永久号保存，内部耗用前再核真实原来源。 */
+	@Schema(description = "本件用料选择原文")
+	private String materialSelectionJson;
+
 }

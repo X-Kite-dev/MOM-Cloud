@@ -134,7 +134,8 @@ public class PlnApsReplanAdapterImpl implements PlnApsReplanAdapter {
             }
             case "EXECUTION_DEVIATION" -> {
                 PlnResourceReplanCaseEntity row = required(resourceMapper.selectById(id), "执行偏差重排案件不存在");
-                require("EXECUTION_DEVIATION".equals(row.getEvidenceSourceType()),
+                require("EXECUTION".equals(row.getResourceType())
+                                && "PLAN_MES_EFFECT".equals(row.getEvidenceSourceType()),
                         "指定资源案件不是执行偏差来源");
                 yield new SourceIdentity("EXECUTION_DEVIATION_CASE", "EXECUTION_DEVIATION_REPLAN", id,
                         row.getCaseNo(), version(row.getUpdateTime(), row.getCreateTime(), row.getStatus()));

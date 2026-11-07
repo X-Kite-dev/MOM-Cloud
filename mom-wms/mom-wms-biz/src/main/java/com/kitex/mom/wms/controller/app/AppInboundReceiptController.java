@@ -1,6 +1,7 @@
 package com.kitex.mom.wms.controller.app;
 
 import com.kitex.common.core.util.R;
+import com.kitex.mom.wms.dto.app.WmsMobileNoticeListDTO;
 import com.kitex.mom.wms.dto.app.WmsMobileReceiptHistoryDTO.Page;
 import com.kitex.mom.wms.dto.app.WmsMobileInboundReceiptDTO.Cancellation;
 import com.kitex.mom.wms.dto.app.WmsMobileInboundReceiptDTO.Command;
@@ -32,6 +33,24 @@ public class AppInboundReceiptController {
 	@Operation(summary = "读取收货实际组织与操作人")
 	public R<Context> context() {
 		return R.ok(service.context());
+	}
+
+	/**
+	 * 读取当前授权仓库的收货候选，实际办理仍须重新读取完整来源。
+	 *
+	 * @param warehouseCode 实际单仓编码，不接受无仓查询
+	 * @param billType      当前收货入口类型
+	 * @param reference     通知/来源编号或备注，可为空
+	 * @param page          1至100，每页最多20条
+	 * @return 当前实际组织和查询范围内的待办摘要
+	 */
+	@GetMapping("/notices")
+	@Operation(summary = "选择当前仓库待办通知")
+	public R<WmsMobileNoticeListDTO.Page> notices(@RequestParam String warehouseCode,
+	                                              @RequestParam String billType,
+	                                              @RequestParam(defaultValue = "") String reference,
+	                                              @RequestParam(defaultValue = "1") int page) {
+		return R.ok(service.pendingNotices(warehouseCode, billType, reference, page));
 	}
 
 	@GetMapping("/history")

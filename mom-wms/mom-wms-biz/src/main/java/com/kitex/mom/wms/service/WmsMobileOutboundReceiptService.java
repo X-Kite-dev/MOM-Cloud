@@ -1,5 +1,6 @@
 package com.kitex.mom.wms.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.exception.CheckedException;
@@ -8,12 +9,14 @@ import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.component.PermissionService;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.wms.dto.app.WmsMobileReceiptHistoryDTO.Page;
+import com.kitex.mom.wms.dto.app.WmsMobileNoticeListDTO;
 import com.kitex.mom.wms.dto.app.WmsMobileOutboundReceiptDTO.Command;
 import com.kitex.mom.wms.dto.app.WmsMobileOutboundReceiptDTO.Context;
 import com.kitex.mom.wms.dto.app.WmsMobileOutboundReceiptDTO.View;
 import com.kitex.mom.wms.dto.app.WmsOutBillDetailAppDTO;
 import com.kitex.mom.wms.entity.WmsOutBillEntity;
 import com.kitex.mom.wms.entity.WmsOutNoticeEntity;
+import com.kitex.mom.wms.entity.WmsOutNoticeDetailEntity;
 import com.kitex.mom.wms.enums.menu.MenuOutBizTypeEnum;
 import com.kitex.mom.wms.mapper.WmsLiveStockMapper;
 import com.kitex.mom.wms.mapper.WmsMobileOutboundReceiptMapper.Receipt;
@@ -24,6 +27,7 @@ import com.kitex.mom.wms.service.outBill.WmsOutBillFactory;
 import com.kitex.mom.wms.service.outNotice.WmsOutNoticeFactory;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -34,6 +38,8 @@ import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Objects;
+import java.util.List;
+import java.util.HashMap;
 
 /**
  * 永久原请求、库存扣减与拣配同事务；网络重试不得重复扣账。
@@ -49,6 +55,7 @@ public class WmsMobileOutboundReceiptService {
 	private final PermissionService permissions;
 	private final ObjectMapper json;
 	private final WmsWarehouseBusinessGuard warehouseGuard;
+	private final WmsMobileWarehouseAccess mobileAccess;
 
 	public Context context() {
 		Scope scope = scope();
@@ -56,22 +63,109 @@ public class WmsMobileOutboundReceiptService {
 	}
 
 	/**
-	 * 兼容调用仍须使用实际组织与原通知仓库的操作权限，不能绕过新入口。
+	 * 当前实际仓库的待办通知候选；只读摘要不表示库存、质量和来源已满足实际办理条件。
+	 *
+	 * @param warehouseCode 实际手机作业仓库，须有原出入库权限
+	 * @param billType      当前业务入口，其他出库只列其已启用细分类型
+	 * @param reference     通知/来源编号或备注文本，最多80字
+	 * @param page          1至100，每页最多20条，失败不得冒充空结果
+	 * @return 当前组织和查询页的待处理/处理中候选，选择后仍须重读正式来源
 	 */
-	@Transactional(rollbackFor = Exception.class)
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+	public WmsMobileNoticeListDTO.Page pendingNotices(String warehouseCode, String billType,
+	                                                  String reference, int page) {
+		Scope scope = scope();
+		String warehouse = warehouse(warehouseCode);
+		String type = text(billType);
+		String keyword = text(reference);
+		require(page >= 1 && page <= 100 && keyword.length() <= 80, "查询页码或条件超出允许范围");
+		require(supportedType(type), "请选择当前出库业务入口");
+		checkPermission(type, warehouse);
+		warehouseGuard.checkMobile(warehouse);
+		List<String> types = warehouseGuard.previewMatrix(warehouse).stream()
+				.filter(row -> !row.inbound() && row.allowed() && supportedType(row.billType()))
+				.map(WmsWarehouseBusinessGuard.MatrixRow::billType)
+				.filter(code -> "other_out".equals(type) ? code.startsWith("other_") : code.equals(type))
+				.toList();
+		if (types.isEmpty()) {
+			return new WmsMobileNoticeListDTO.Page(1, scope.tenant().toString(), scope.factory(), warehouse,
+					type, page, false, List.of());
+		}
+		var query = new QueryWrapper<WmsOutNoticeEntity>()
+				.select("id", "bill_type", "state", "warehouse_code", "warehouse_name", "document_id",
+						"remark", "create_time", "create_by", "tenant_id", "factory_code", "del_flag")
+				.eq("tenant_id", scope.tenant()).eq("factory_code", scope.factory())
+				.eq("warehouse_code", warehouse).eq("del_flag", "0")
+				.in("bill_type", types).in("state", List.of("0", "1"));
+		if (!keyword.isEmpty()) {
+			boolean numeric = keyword.matches("[1-9][0-9]{0,18}")
+					&& (keyword.length() < 19 || keyword.compareTo("9223372036854775807") <= 0);
+			query.and(part -> {
+				part.apply("POSITION({0} IN COALESCE(remark,'')) > 0", keyword);
+				if (numeric) {
+					part.or().eq("id", Long.valueOf(keyword)).or().eq("document_id", Long.valueOf(keyword));
+				}
+			});
+		}
+		// 固定顺序和21条预读；偏移量只来自已限定范围的整数，不拼接任何用户文本。
+		query.orderByDesc("id").last("LIMIT 21 OFFSET " + ((page - 1) * 20));
+		var rows = notices.selectList(query);
+		var selectedRows = rows.stream().limit(20).toList();
+		var previews = new HashMap<Long, WmsOutNoticeDetailEntity>();
+		if (!selectedRows.isEmpty()) {
+			// 单次批量读取各通知的首项预览，不逐张加载全部明细，也不将不同物料单位相加。
+			var previewRows = details.selectList(new QueryWrapper<WmsOutNoticeDetailEntity>()
+					.select("DISTINCT ON (notice_id) notice_id", "mat_code", "mat_name")
+					.eq("tenant_id", scope.tenant()).eq("factory_code", scope.factory())
+					.eq("warehouse_code", warehouse).eq("del_flag", "0")
+					.in("notice_id", selectedRows.stream().map(row -> row.getId()).toList())
+					.orderByAsc("notice_id", "id"));
+			previewRows.forEach(row -> previews.put(row.getNoticeId(), row));
+		}
+		var records = selectedRows.stream().map(row -> {
+			checkNoticeScope(row, scope, row.getId(), warehouse);
+			checkPermission(row.getBillType(), warehouse);
+			var preview = previews.get(row.getId());
+			return new WmsMobileNoticeListDTO.Item(row.getId().toString(), row.getBillType(), row.getState(),
+					warehouse, row.getWarehouseName(),
+					row.getDocumentId() == null ? null : row.getDocumentId().toString(),
+					preview == null ? null : preview.getMatCode(),
+					preview == null ? null : preview.getMatName(),
+					row.getRemark(), row.getCreateTime(), row.getCreateBy());
+		}).toList();
+		return new WmsMobileNoticeListDTO.Page(1, scope.tenant().toString(), scope.factory(), warehouse,
+				type, page, rows.size() > 20, records);
+	}
+
+	/**
+	 * 兼容调用先核实际组织/原通知仓库权限，锁内重核类型及移动配置。
+	 * 原单号返回合同保持；旧接口不新增永久幂等，不得自动重复发送。
+	 */
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
 	public String executeLegacy(WmsOutBillDetailAppDTO params) {
 		Long noticeId = params == null ? null : params.getNoticeId();
 		Scope scope = scope();
 		require(noticeId != null && noticeId > 0, "请指定原出库通知");
+		WmsOutNoticeEntity original = notices.selectById(noticeId);
+		String warehouse = warehouse(original == null ? null : original.getWarehouseCode());
+		checkNoticeScope(original, scope, noticeId, warehouse);
+		checkPermission(original.getBillType(), warehouse);
+		mobileAccess.requireFactory(true);
 		require(notices.lockNotice(noticeId) != null, "原出库通知不存在或不可访问");
-		WmsOutNoticeEntity notice = notices.selectById(noticeId);
-		require(notice != null, "原出库通知不存在或不可访问");
-		String warehouse = warehouse(notice.getWarehouseCode());
-		checkNoticeScope(notice, scope, noticeId, warehouse);
-		checkPermission(notice.getBillType(), warehouse);
-		return WmsOutBillFactory.getHandler(notice.getBillType()).setOutBillNum(params);
+		WmsOutNoticeEntity locked = notices.selectById(noticeId);
+		checkNoticeScope(locked, scope, noticeId, warehouse);
+		require(Objects.equals(original.getBillType(), locked.getBillType()), "通知业务类型已变化，请重新读取");
+		checkPermission(locked.getBillType(), warehouse);
+		warehouseGuard.checkMobile(warehouse);
+		String billNo = WmsOutBillFactory.getHandler(locked.getBillType()).setOutBillNum(params);
+		require(!text(billNo).isEmpty() && billNo.length() <= 80, "出库未返回有效出库单号");
+		return billNo;
 	}
 
+	/**
+	 * 同一只读快照核原通知、授权仓库与返回推荐，读取本身不占用库存。
+	 */
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 	public WmsOutBillEntity sources(Long noticeId, String warehouseCode, String entryType) {
 		Scope scope = scope();
 		require(noticeId != null && noticeId > 0, "请指定原出库通知");
@@ -82,8 +176,9 @@ public class WmsMobileOutboundReceiptService {
 		checkPermission(notice.getBillType(), warehouse);
 		String category = notice.getBillType().startsWith("other_") ? "other_out" : notice.getBillType();
 		require(entryType == null || category.equals(entryType), "通知业务类型与当前出库入口不一致");
-		WmsOutBillEntity result = WmsOutNoticeFactory.getHandler(notice.getBillType()).getLiveStockByNoticeIdApp(
-				noticeId);
+		WmsOutBillEntity result = WmsOutNoticeFactory.getHandler(notice.getBillType())
+				.getLiveStockByNoticeIdApp(
+						noticeId);
 		require(result != null && Objects.equals(result.getNoticeId(), noticeId)
 						&& Objects.equals(result.getTenantId(), scope.tenant())
 						&& Objects.equals(result.getFactoryCode(), scope.factory())
@@ -101,6 +196,8 @@ public class WmsMobileOutboundReceiptService {
 		if (existing != null) {
 			return replay(existing, prepared, scope);
 		}
+		// 已有终态回读不依赖今日移动配置；首次扣库存必须核当前工厂写授权。
+		mobileAccess.requireFactory(true);
 		checkNotice(prepared, scope);
 		warehouseGuard.checkMobile(prepared.row().warehouseCode());
 		int reserved = receipts.reserve(prepared.row());
@@ -121,7 +218,8 @@ public class WmsMobileOutboundReceiptService {
 						&& Objects.equals(source.getMatCode(), prepared.input().getMatCode())
 						&& Objects.equals(source.getMatUnit(), prepared.input().getOperateUnit())
 						&&
-						(source.getSourceStockId() == null || Objects.equals(source.getSourceStockId(), row.sourceStockId())),
+						(source.getSourceStockId() == null ||
+								Objects.equals(source.getSourceStockId(), row.sourceStockId())),
 				"出库明细或标准单位已变化，请核对原通知");
 		var stock = stocks.selectById(row.sourceStockId());
 		var input = prepared.input();
@@ -152,6 +250,7 @@ public class WmsMobileOutboundReceiptService {
 		if (existing != null) {
 			return replay(existing, prepared, scope);
 		}
+		mobileAccess.requireFactory(true);
 		checkPermission(prepared.row().billType(), prepared.row().warehouseCode());
 		// 撤销只封存原号，允许原通知已变更时安全结束待核请求，不回退实物业务。
 		int reserved = receipts.reserve(prepared.row());
@@ -187,7 +286,8 @@ public class WmsMobileOutboundReceiptService {
 	 * 原回执独立留存；查询不依赖仍有余额的库存或当前通知状态。
 	 */
 	@Transactional(readOnly = true)
-	public Page<View> history(String warehouseCode, String billType, String reference, String status, int page) {
+	public Page<View> history(String warehouseCode, String billType, String reference, String status,
+	                          int page) {
 		Scope scope = scope();
 		String warehouse = warehouse(warehouseCode);
 		String type = text(billType);
@@ -195,7 +295,8 @@ public class WmsMobileOutboundReceiptService {
 		require(page >= 1 && page <= 100 && text(reference).length() <= 80,
 				"查询页码或单据号超出允许范围");
 		String state = text(status);
-		require(state.isEmpty() || "CONFIRMED".equals(state) || "CANCELLED".equals(state), "请选择有效的作业结果");
+		require(state.isEmpty() || "CONFIRMED".equals(state) || "CANCELLED".equals(state),
+				"请选择有效的作业结果");
 		checkPermission(type, warehouse);
 		LocalDateTime through = LocalDateTime.now();
 		var rows = receipts.history(scope.tenant(), scope.factory(), scope.operator(), warehouse, type,
@@ -254,6 +355,7 @@ public class WmsMobileOutboundReceiptService {
 
 	private void checkNoticeScope(WmsOutNoticeEntity notice, Scope scope, Long noticeId, String warehouse) {
 		require(notice != null && Objects.equals(notice.getId(), noticeId)
+				&& "0".equals(notice.getDelFlag())
 				&& Objects.equals(notice.getTenantId(), scope.tenant())
 				&& Objects.equals(notice.getFactoryCode(), scope.factory())
 				&& Objects.equals(notice.getWarehouseCode(), warehouse), "原出库通知不存在或不可访问");
@@ -262,7 +364,8 @@ public class WmsMobileOutboundReceiptService {
 	private void checkPermission(String type, String warehouse) {
 		require(supportedType(type), "不支持当前出库业务");
 		String permission = "wms_notice_inout_" + (type.startsWith("other_") ? "other_out" : type);
-		require(permissions.hasPermission(permission) || permissions.hasPermission(permission + "_" + warehouse),
+		require(permissions.hasPermission(permission) ||
+						permissions.hasPermission(permission + "_" + warehouse),
 				"当前账号无权办理该仓库出库");
 	}
 
@@ -286,7 +389,8 @@ public class WmsMobileOutboundReceiptService {
 				&& !text(source.getOperateUnit()).isEmpty(), "物料、库位和标准单位不能为空");
 		// 仅复制实际作业字段，显示名称、货权等从受锁保护的原通知继承。
 		var input = new WmsOutBillDetailAppDTO().setNoticeId(source.getNoticeId())
-				.setNoticeDetailId(source.getNoticeDetailId()).setSourceStockId(source.getSourceStockId()).setBillNo(
+				.setNoticeDetailId(source.getNoticeDetailId()).setSourceStockId(source.getSourceStockId())
+				.setBillNo(
 						optional(source.getBillNo()))
 				.setMatCode(text(source.getMatCode())).setMatBatch(optional(source.getMatBatch()))
 				.setMatBarcode(optional(source.getMatBarcode())).setMatNum(source.getMatNum())
@@ -329,7 +433,11 @@ public class WmsMobileOutboundReceiptService {
 				|| "other_outsource".equals(type) || "other_pms".equals(type);
 	}
 
+	/**
+	 * 读取及既有终态先核工厂read；首次登记和未登记原号结束另在写入前核write。
+	 */
 	private Scope scope() {
+		mobileAccess.requireFactory(false);
 		Long tenant = TenantContextHolder.getTenantId();
 		String factory = FactoryContextHolder.getFactoryCode();
 		var actor = SecurityUtils.getUser();

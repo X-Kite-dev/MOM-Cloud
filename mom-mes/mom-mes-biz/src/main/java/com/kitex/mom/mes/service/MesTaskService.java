@@ -67,9 +67,9 @@ public interface MesTaskService extends IService<MesTaskEntity> {
     MesSourceQuantityMappingDTO sourceQuantityMapping(String requestId, String factoryCode);
 
     /**
-     * 生产工单编辑
+     * 在实际工厂、同一生产根锁和未下达状态内编辑白名单配置，保留冻结来源与执行事实。
      *
-     * @param mesTask
+     * @param mesTask 含准确原工单ID及本次允许修改的字段，不能改变组织或来源
      */
     void edit(MesTaskEntity mesTask);
 
@@ -82,16 +82,17 @@ public interface MesTaskService extends IService<MesTaskEntity> {
     MesTaskDTO findBydId(Long id);
 
     /**
-     * 生产工单下达任务
+     * 在原工单根锁及修订准入内冻结执行依据并生成工序任务，状态须仍为CREATE。
      *
-     * @param id
+     * @param id 当前租户实际工厂内的准确工单ID
      */
     void issue(Long id);
 
     /**
-     * 关闭任务
+     * 仅作废无执行、资源、材料或上游分配事实的正式独立手工CREATE草稿。
+     * 已关闭只返回当前观察，不修改原事实；不能代办完工、计划撤回或在制整单停止。
      *
-     * @param id
+     * @param id 当前租户实际工厂内的准确工单ID
      */
     void close(Long id);
 
@@ -146,11 +147,12 @@ public interface MesTaskService extends IService<MesTaskEntity> {
      */
     MesTaskCurrentWorkVO getCurrentWorkByProductAndWorksite(MesTaskQueryByProductWorksiteDTO queryDTO);
 
-    /**
-     * 根据额任务编码获取工单详情
-     *
-     * @param taskCode
-     * @return
-     */
-    MesTaskDTO getByTaskCode(String taskCode);
+	/**
+	 * 按准确工单编码读取当前实名租户和已授权实际工厂内唯一的未删除父工单详情。
+	 * 编码保持原值，不修剪或默认；编码为空、无读取权限、无唯一原单或归属无法核验时拒绝。
+	 *
+	 * @param taskCode 非空白的准确原始工单编码
+	 * @return 保留原工单ID、租户、工厂及业务事实的详情
+	 */
+	MesTaskDTO getByTaskCode(String taskCode);
 }

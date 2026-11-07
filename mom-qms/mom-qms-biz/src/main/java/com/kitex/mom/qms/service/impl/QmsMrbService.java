@@ -41,6 +41,7 @@ public class QmsMrbService {
     private final QmsBadInfoMapper headers;
     private final QmsBadInfoDetailMapper details;
     private final RemoteMdmFactoryAccessService factories;
+	private final QmsNcrReworkRepository ncrReworkLedger;
     private final org.mybatis.spring.SqlSessionTemplate sqlSession;
 
     private static String hash(String value) {
@@ -169,38 +170,46 @@ public class QmsMrbService {
      * 在原MRB发布事务中校验；不可在独立事务先消费会签。
      */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
-    public void claim(QmsBadHandleReq req, QmsBadInfoEntity info, QmsBadInfoDetailEntity detail) {
-        String factory = access("write");
-        require(req.getMrbProposalId() != null && validRequest(req.getRequestId()), "新MRB决策必须引用已全签提案及永久请求号");
-        var row = proposals.selectOne(scope(factory).eq(QmsMrbProposal::getId, req.getMrbProposalId()).eq(QmsMrbProposal::getDetailId, detail.getId()).last("FOR UPDATE"));
-        require(row != null && "APPROVED".equals(row.getStatus()), "提案未全签或已发布/撤回");
-        require(Objects.equals(row.getApplicantId(), SecurityUtils.getUser().getId()) && new PermissionService().hasPermission("bad:handle"), "由原申请人明确发布已全签提案");
-        require(row.getCommandJson().equals(JSONUtil.toJsonStr(normalize(req))), "实际发布命令与会签内容不一致");
-        fresh(row, new Source(info, detail));
-        var signed = operations.selectList(opScope(factory).eq(QmsMrbOperation::getProposalId, row.getId()).eq(QmsMrbOperation::getOperationType, "SIGN"));
-        Set<String> roles = new HashSet<>();
-        Set<Long> users = new HashSet<>();
-        for (var op : signed) {
-            require(roles.add(op.getRoleCode()) && users.add(op.getOperatorId()) && !Objects.equals(op.getOperatorId(), row.getApplicantId()), "签名岗位或人员不独立");
-        }
-        require(roles.equals(new HashSet<>(Arrays.asList(row.getRequiredRoles().split(",")))), "会签岗位不完整");
-        String fingerprint = executionHash(req);
-        row.setExecutionRequestId(req.getRequestId());
-        row.setExecutionFingerprint(fingerprint);
-        row.setExecutorId(SecurityUtils.getUser().getId());
-        row.setExecutionTime(LocalDateTime.now());
-        row.setStatus("APPLIED");
-        row.setRevision(row.getRevision() + 1);
-        require(proposals.updateById(row) == 1, "MRB发布回执保存失败");
-        detail.setMrbProposalId(row.getId());
-        var normalized = normalize(req);
-        req.setHandleResult(normalized.getHandleResult());
-        req.setHandleRemark(normalized.getHandleRemark());
-        req.setHandleFile(normalized.getHandleFile());
-        req.setMesConcessionUnrestricted(normalized.getMesConcessionUnrestricted());
-        req.setExpectedCompletionTime(normalized.getExpectedCompletionTime());
-        audit(row, req.getRequestId(), fingerprint, "APPLY", null, "APPROVED", "按完整会签内容发布处置决策；实物执行和独立验证继续走原业务链");
-    }
+	public void claim(QmsBadHandleReq req, QmsBadInfoEntity info, QmsBadInfoDetailEntity detail) {
+		String factory = access("write");
+		// 发布沿原事务持有detail锁，不能跳过跨域验证未知意图换parent。
+		assertNoPendingRework(detail);
+		require(req.getMrbProposalId() != null && validRequest(req.getRequestId()),
+				"新MRB决策必须引用已全签提案及永久请求号");
+		var row = proposals.selectOne(scope(factory).eq(QmsMrbProposal::getId, req.getMrbProposalId())
+				.eq(QmsMrbProposal::getDetailId, detail.getId()).last("FOR UPDATE"));
+		require(row != null && "APPROVED".equals(row.getStatus()), "提案未全签或已发布/撤回");
+		require(Objects.equals(row.getApplicantId(), SecurityUtils.getUser().getId()) &&
+				new PermissionService().hasPermission("bad:handle"), "由原申请人明确发布已全签提案");
+		require(row.getCommandJson().equals(JSONUtil.toJsonStr(normalize(req))), "实际发布命令与会签内容不一致");
+		fresh(row, new Source(info, detail));
+		var signed = operations.selectList(opScope(factory).eq(QmsMrbOperation::getProposalId, row.getId())
+				.eq(QmsMrbOperation::getOperationType, "SIGN"));
+		Set<String> roles = new HashSet<>();
+		Set<Long> users = new HashSet<>();
+		for (var op : signed) {
+			require(roles.add(op.getRoleCode()) && users.add(op.getOperatorId()) &&
+					!Objects.equals(op.getOperatorId(), row.getApplicantId()), "签名岗位或人员不独立");
+		}
+		require(roles.equals(new HashSet<>(Arrays.asList(row.getRequiredRoles().split(",")))), "会签岗位不完整");
+		String fingerprint = executionHash(req);
+		row.setExecutionRequestId(req.getRequestId());
+		row.setExecutionFingerprint(fingerprint);
+		row.setExecutorId(SecurityUtils.getUser().getId());
+		row.setExecutionTime(LocalDateTime.now());
+		row.setStatus("APPLIED");
+		row.setRevision(row.getRevision() + 1);
+		require(proposals.updateById(row) == 1, "MRB发布回执保存失败");
+		detail.setMrbProposalId(row.getId());
+		var normalized = normalize(req);
+		req.setHandleResult(normalized.getHandleResult());
+		req.setHandleRemark(normalized.getHandleRemark());
+		req.setHandleFile(normalized.getHandleFile());
+		req.setMesConcessionUnrestricted(normalized.getMesConcessionUnrestricted());
+		req.setExpectedCompletionTime(normalized.getExpectedCompletionTime());
+		audit(row, req.getRequestId(), fingerprint, "APPLY", null, "APPROVED",
+				"按完整会签内容发布处置决策；实物执行和独立验证继续走原业务链");
+	}
 
     public boolean replay(QmsBadHandleReq req) {
         String factory = access("write");
@@ -245,19 +254,35 @@ public class QmsMrbService {
         return op;
     }
 
-    private Source source(Long id, String factory, boolean lock) {
-        require(id != null, "须明确NCR分类明细");
-        sqlSession.clearCache();
-        var q = new LambdaQueryWrapper<QmsBadInfoDetailEntity>().eq(QmsBadInfoDetailEntity::getId, id).eq(QmsBadInfoDetailEntity::getTenantId, tenant()).eq(QmsBadInfoDetailEntity::getFactoryCode, factory);
-        if (lock) q.last("FOR UPDATE");
-        var d = details.selectOne(q);
-        require(d != null, "当前工厂NCR分类不存在");
-        var hq = new LambdaQueryWrapper<QmsBadInfoEntity>().eq(QmsBadInfoEntity::getId, d.getBadId()).eq(QmsBadInfoEntity::getTenantId, tenant()).eq(QmsBadInfoEntity::getFactoryCode, factory);
-        if (lock) hq.last("FOR UPDATE");
-        var h = headers.selectOne(hq);
-        require(h != null, "当前工厂NCR来源不存在");
-        return new Source(h, d);
-    }
+	private Source source(Long id, String factory, boolean lock) {
+		require(id != null, "须明确NCR分类明细");
+		sqlSession.clearCache();
+		var q = new LambdaQueryWrapper<QmsBadInfoDetailEntity>().eq(QmsBadInfoDetailEntity::getId, id)
+				.eq(QmsBadInfoDetailEntity::getTenantId, tenant()).eq(QmsBadInfoDetailEntity::getFactoryCode, factory);
+		if (lock) {
+			q.last("FOR UPDATE");
+		}
+		var d = details.selectOne(q);
+		require(d != null, "当前工厂NCR分类不存在");
+		var hq = new LambdaQueryWrapper<QmsBadInfoEntity>().eq(QmsBadInfoEntity::getId, d.getBadId())
+				.eq(QmsBadInfoEntity::getTenantId, tenant()).eq(QmsBadInfoEntity::getFactoryCode, factory);
+		if (lock) {
+			hq.last("FOR UPDATE");
+		}
+		var h = headers.selectOne(hq);
+		require(h != null, "当前工厂NCR来源不存在");
+		if (lock) {
+			assertNoPendingRework(d);
+		}
+		return new Source(h, d);
+	}
+
+    /** 调用方已持有同detail锁；PREPARED期间不允许提案/重发变更冻结原件。 */
+	private void assertNoPendingRework(QmsBadInfoDetailEntity detail) {
+		if (!com.kitex.mom.mes.dto.MesInventoryQualityOrigin.isMesResource(detail.getResourceType())) {
+			ncrReworkLedger.noPending(detail.getTenantId(), detail.getFactoryCode(), detail.getId());
+		}
+	}
 
     private void ready(Source s, QmsBadHandleReq c) {
         require("WAIT_MRB".equals(s.detail().getStatus()) && "SUCCESS".equals(s.info().getHoldSyncStatus()) && !"CLOSED".equals(s.info().getStatus()), "须为已隔离且待MRB的有效分类");

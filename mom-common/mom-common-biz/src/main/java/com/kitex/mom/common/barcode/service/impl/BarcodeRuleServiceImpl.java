@@ -85,18 +85,26 @@ public class BarcodeRuleServiceImpl extends ServiceImpl<BarcodeRuleMapper, Barco
     }
 
     /**
-     * @param barcodeRuleReq
-     * @return
+     * 更新父规则并替换业务字段，必须在同一事务内完成，避免冻结读取到中间定义。
+     *
+     * @param barcodeRuleReq 规则及完整业务字段
+     * @return 更新结果
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Boolean updateById(BarcodeRuleReq barcodeRuleReq) {
         if (barcodeRuleReq.getId() == null) {
             throw new ValidateCodeException("id不能为空");
         }
         List<BarcodeBusinessFieldReq> fieldReqList = barcodeRuleReq.getBusinessReqList();
+        if (CollUtil.isEmpty(fieldReqList)) {
+            throw new ValidateCodeException("业务字段不能为空");
+        }
         BarcodeRuleEntity barcodeRule = new BarcodeRuleEntity();
         BeanUtil.copyProperties(barcodeRuleReq, barcodeRule);
-        this.updateById(barcodeRule);
+        if (!this.updateById(barcodeRule)) {
+            throw new ValidateCodeException("条码原规则更新失败，请重新读取");
+        }
         barcodeBusinessFieldService.remove(Wrappers.<BarcodeBusinessFieldEntity>lambdaQuery()
                 .eq(BarcodeBusinessFieldEntity::getBarcodeRuleId, barcodeRuleReq.getId()));
         List<BarcodeBusinessFieldEntity> fieldList = fieldReqList.stream().map(item -> {
@@ -107,7 +115,9 @@ public class BarcodeRuleServiceImpl extends ServiceImpl<BarcodeRuleMapper, Barco
             barcodeBusinessField.setFactoryCode(barcodeRule.getFactoryCode());
             return barcodeBusinessField;
         }).collect(Collectors.toList());
-        barcodeBusinessFieldService.saveBatch(fieldList);
+        if (!barcodeBusinessFieldService.saveBatch(fieldList)) {
+            throw new ValidateCodeException("条码业务字段保存失败，整笔规则更新回滚");
+        }
         return Boolean.TRUE;
     }
 

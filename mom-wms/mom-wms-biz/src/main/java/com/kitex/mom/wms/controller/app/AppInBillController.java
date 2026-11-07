@@ -3,10 +3,8 @@ package com.kitex.mom.wms.controller.app;
 import com.kitex.common.core.util.R;
 import com.kitex.mom.wms.dto.app.WmsInBillDetailAppDTO;
 import com.kitex.mom.wms.entity.WmsInNoticeEntity;
-import com.kitex.mom.wms.service.inBill.WmsInBillFactory;
+import com.kitex.mom.wms.service.WmsMobileInboundReceiptService;
 import com.kitex.mom.wms.service.WmsReturnReceiptAccessService;
-import com.kitex.mom.wms.service.inBill.WmsInBillHandler;
-import com.kitex.mom.wms.service.inNotice.DefaultWmsInNoticeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -17,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 
 /**
  * 移动端入库单
+ * 兼容地址复用正式收货服务的组织与仓库准入；新作业台仍使用永久原请求接口。
  *
  * @author kitex
  * @date 2024/12/30 15:31
@@ -28,7 +27,7 @@ import org.springframework.web.bind.annotation.*;
 @SecurityRequirement(name = HttpHeaders.AUTHORIZATION)
 public class AppInBillController {
 
-	private final DefaultWmsInNoticeService inNoticeService;
+	private final WmsMobileInboundReceiptService mobileReceiptService;
 	private final WmsReturnReceiptAccessService returnReceiptAccess;
 
 	/**
@@ -38,8 +37,8 @@ public class AppInBillController {
 	 */
 	@Operation(summary = "查询入库通知单详情", description = "查询入库通知单详情")
 	@GetMapping("/detailsById")
-	public R getDetails(@RequestParam Long id) {
-		WmsInNoticeEntity notice = inNoticeService.selectByIdApp(id);
+	public R<WmsInNoticeEntity> getDetails(@RequestParam Long id) {
+		WmsInNoticeEntity notice = mobileReceiptService.sources(id);
 		if (notice != null && "return".equals(notice.getBillType())
 				&& "mom_mes.mes_warehouse_stock_feed_judge".equals(notice.getDocumentTable())) {
 			notice.setReturnReceiptCapabilities(returnReceiptAccess.capabilities(notice));
@@ -55,10 +54,8 @@ public class AppInBillController {
 	 */
 	@Operation(summary = "入库", description = "入库")
 	@PostMapping("/setInBillNum")
-	public R setInBillNum(@RequestBody @Valid WmsInBillDetailAppDTO params) {
-		WmsInNoticeEntity inNotice = inNoticeService.selectById(params.getNoticeId());
-		WmsInBillHandler handler = WmsInBillFactory.getHandler(inNotice.getBillType());
-		String billNo = handler.setInBillNum(params);
+	public R<String> setInBillNum(@RequestBody @Valid WmsInBillDetailAppDTO params) {
+		String billNo = mobileReceiptService.executeLegacy(params);
 		return R.ok(billNo);
 	}
 }

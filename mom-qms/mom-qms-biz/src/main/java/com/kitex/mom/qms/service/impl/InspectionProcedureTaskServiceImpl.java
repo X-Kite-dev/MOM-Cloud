@@ -22,6 +22,7 @@ import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
 import com.kitex.mom.mes.dto.MesTaskReceiveDTO;
 import com.kitex.mom.mes.dto.MesTaskReceiveRequestSigner;
+import com.kitex.mom.qms.dto.QmsInspectionPieceDTO;
 import com.kitex.mom.qms.dto.QmsProcedureSourceWithdrawalDTO;
 import com.kitex.mom.qms.dto.ReportListRespDTO;
 import com.kitex.mom.qms.dto.inspection.*;
@@ -96,6 +97,7 @@ public class InspectionProcedureTaskServiceImpl extends ServiceImpl<QmsInspectio
     private final QmsInspectionHistorySupport inspectionAccess;
     private final QmsInspectionBasisService inspectionBasis;
     private final QmsInspectionPieceService inspectionPieces;
+    private final QmsInspectionPieceEntryService inspectionPieceEntry;
 
     /**
      * 创建质检任务
@@ -1028,8 +1030,8 @@ private List<Frequency> samplingFrequencies(QmsQualityStandardItemEntity item) {
 
     /** 实物标识、原请求、实际样本、累计和正式判定在同一父任务事务中提交。 */
     @Transactional(rollbackFor = Exception.class)
-    public com.kitex.mom.qms.dto.QmsInspectionPieceDTO.Receipt collectPiece(
-            com.kitex.mom.qms.dto.QmsInspectionPieceDTO.Command command) {
+    public QmsInspectionPieceDTO.Receipt collectPiece(
+            QmsInspectionPieceDTO.Command command) {
         inspectionAccess.requireWrite();
         require(command != null, "请提供逐件检验原请求");
         var task = lockInspection(QmsInspectionPieceService.id(command.taskId()));
@@ -1046,7 +1048,9 @@ private List<Frequency> samplingFrequencies(QmsQualityStandardItemEntity item) {
             require(updateById(task), "检验任务开始状态保存失败");
         }
         finishInspection(task, false);
-        return inspectionPieces.completed(context);
+        var receipt = inspectionPieces.completed(context);
+        inspectionPieceEntry.capture(context, receipt);
+        return receipt;
     }
 
     @Transactional(rollbackFor = Exception.class)

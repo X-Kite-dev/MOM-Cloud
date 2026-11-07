@@ -159,6 +159,12 @@ public final class MesFrozenExecutionGraph {
         }
     }
 
+    /** 直接后继；跨层直连不能用最长后裔深度代替，旧合同不推断。 */
+    public List<MesProduceTaskEntity> successors(MesProduceTaskEntity current) {
+        require(nodeContract, "直接后继需要完整冻结节点执行合同");
+        return successors.get(key(current)).stream().map(tasks::get).toList();
+    }
+
     public List<MesProduceTaskEntity> predecessors(MesProduceTaskEntity current) {
         String currentKey = key(current);
         return predecessors.get(currentKey).stream().map(tasks::get).toList();

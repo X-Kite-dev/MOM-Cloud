@@ -76,7 +76,7 @@ public interface Constants {
         /**
          * 默认服务器地址
          */
-        String DEFAULT_SERVER = "tcp://broker.emqx.io";
+        String DEFAULT_SERVER = "tcp://service.example.invalid";
 
         /**
          * 默认端口

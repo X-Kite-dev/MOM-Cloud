@@ -1,5 +1,6 @@
 package com.kitex.mom.wms.util;
 
+import com.kitex.mom.wms.service.impl.externalinventory.ExternalLossContext;
 import cn.hutool.core.util.StrUtil;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.wms.entity.WmsInBillDetailEntity;
@@ -151,7 +152,8 @@ public final class WmsStockOwnership {
             throw new CheckedException("出库库存货权与单据不一致");
         }
         if (!OWNED.equals(stockType)) {
-            if (!supportsExternalOwnership(billType, false)
+            if ((!supportsExternalOwnership(billType, false)
+                    && !ExternalLossContext.exact(billType, detail, stock))
                     || !Objects.equals(detail.getSourceStockId(), stock.getId())
                     || StrUtil.isBlank(stock.getStockOwnerCode())) {
                 throw new CheckedException("客供或寄售库存只能由其他出库精确锁定原库存行");

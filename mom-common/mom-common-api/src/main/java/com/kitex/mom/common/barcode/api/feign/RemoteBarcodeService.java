@@ -3,6 +3,8 @@ package com.kitex.mom.common.barcode.api.feign;
 import cn.hutool.json.JSONObject;
 import com.kitex.common.core.util.R;
 import com.kitex.mom.common.Constants;
+import com.kitex.mom.common.barcode.dto.FrozenBarcodeDefinition;
+import com.kitex.mom.common.barcode.dto.req.BarcodeDefinitionFreezeReq;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,6 +16,14 @@ import org.springframework.web.bind.annotation.RequestParam;
  */
 @FeignClient(contextId = "remoteBarcodeService", value = Constants.Name)
 public interface RemoteBarcodeService {
+
+	/**
+	 * 以原实名令牌读取实际工厂内的条码定义，调用方须具备条码查看权限。
+	 * @param request 规则编码，不接受客户端指定组织或规则内容
+	 * @return 一致原定义及指纹，供业务域随执行实例持久冻结；不创建箱码
+	 */
+	@PostMapping("/barcodeRule/freezeDefinition")
+	R<FrozenBarcodeDefinition> freezeDefinition(@RequestBody BarcodeDefinitionFreezeReq request);
 
     /**
      * 生成条码

@@ -27,6 +27,9 @@
 			c.status AS source_status,
 			CASE WHEN c.reverse_request_id IS NOT NULL OR EXISTS(SELECT 1 FROM mom_mes.mes_report_quantity_correction_line l WHERE l.tenant_id=c.tenant_id AND l.factory_code=c.factory_code AND l.report_id=c.report_id AND l.allocation_type='MATERIAL_CONSUME' AND l.source_id=c.id) THEN 'HAS_RESTORATION' ELSE 'NONE_RECORDED' END AS restoration_status,
 			c.create_time AS occurred_at,
+			r.transfer_code AS product_identifier,
+			r.report_mode AS production_report_mode,
+			CAST(r.report_num AS text) AS production_report_quantity,
 			r.id AS report_found,
 			f.id AS feed_found
 		FROM mom_mes.mes_report_material_consume c
@@ -39,7 +42,7 @@
 			'GOOD_BACKFLUSH' AS source_kind,
 			'mes_warehouse_inout' AS source_table,
 			a.task_code AS task_code,
-			c.produce_task_code AS produce_task_code,
+			a.produce_task_code AS produce_task_code,
 			c.bill_no AS arrange_code,
 			NULL AS feed_id,
 			c.source_stock_id AS stock_id,
@@ -59,10 +62,13 @@
 			r.status AS source_status,
 			CASE WHEN r.reverse_request_id IS NOT NULL OR EXISTS(SELECT 1 FROM mom_mes.mes_report_quantity_correction_line l WHERE l.tenant_id=c.tenant_id AND l.factory_code=c.factory_code AND l.report_id=c.bill_id AND l.allocation_type='MATERIAL_FLOW' AND l.source_id=c.id) THEN 'HAS_RESTORATION' ELSE 'NONE_RECORDED' END AS restoration_status,
 			c.create_time AS occurred_at,
+			r.transfer_code AS product_identifier,
+			r.report_mode AS production_report_mode,
+			CAST(r.report_num AS text) AS production_report_quantity,
 			r.id AS report_found,
 			NULL AS feed_found
 		FROM mom_mes.mes_warehouse_inout c
-		JOIN mom_mes.mes_task_arrange a ON a.tenant_id=c.tenant_id AND a.factory_code=c.factory_code AND a.code=c.bill_no AND a.produce_task_code=c.produce_task_code
+		JOIN mom_mes.mes_task_arrange a ON a.tenant_id=c.tenant_id AND a.factory_code=c.factory_code AND a.code=c.bill_no
 		LEFT JOIN mom_mes.mes_task_report r ON r.id=c.bill_id AND r.tenant_id=c.tenant_id AND r.factory_code=c.factory_code AND r.task_code=a.task_code AND r.arrange_code=a.code AND r.produce_task_code=a.produce_task_code AND r.request_id=c.resource_no
 		WHERE c.tenant_id=#{tenant} AND c.factory_code=#{factory} AND a.task_code=#{q.taskCode} AND c.biz_type='back_flush_out' AND c.operate_type='out'
 		UNION ALL
@@ -90,12 +96,15 @@
 			b.status AS source_status,
 			CASE WHEN EXISTS(SELECT 1 FROM mom_mes.mes_production_material_restore z WHERE z.tenant_id=c.tenant_id AND z.factory_code=c.factory_code AND z.operation_id=c.operation_id AND z.feed_id=c.feed_id) THEN 'HAS_RESTORATION' ELSE 'NONE_RECORDED' END AS restoration_status,
 			c.create_time AS occurred_at,
+			n.transfer_code AS product_identifier,
+			n.report_mode AS production_report_mode,
+			CAST(n.unqualified_num AS text) AS production_report_quantity,
 			n.id AS report_found,
 			f.id AS feed_found
 		FROM mom_mes.mes_production_material_allocation c
 		JOIN mom_mes.mes_production_material_operation b ON b.id=c.operation_id AND b.tenant_id=c.tenant_id AND b.factory_code=c.factory_code AND b.source_unqualified_report_id=c.source_unqualified_report_id
 		LEFT JOIN mom_mes.mes_warehouse_feed f ON f.id=c.feed_id AND f.tenant_id=c.tenant_id AND f.factory_code=c.factory_code AND f.task_code=b.task_code AND f.arrange_code=b.arrange_code AND f.mat_code=c.mat_code
-		LEFT JOIN mom_mes.mes_task_report_unqualified n ON n.id=c.source_unqualified_report_id AND n.tenant_id=c.tenant_id AND n.factory_code=c.factory_code AND n.task_code=b.task_code AND n.arrange_code=b.arrange_code AND n.produce_task_code=b.produce_task_code
+		LEFT JOIN mom_mes.mes_task_report_unqualified n ON n.id=c.source_unqualified_report_id AND n.tenant_id=c.tenant_id AND n.factory_code=c.factory_code AND n.task_code=b.task_code AND n.arrange_code=b.arrange_code AND n.produce_task_code=b.produce_task_code AND n.request_id=b.request_id
 		WHERE c.tenant_id=#{tenant} AND c.factory_code=#{factory} AND b.task_code=#{q.taskCode}
 		UNION ALL
 		SELECT c.id AS source_numeric_id,
@@ -122,6 +131,9 @@
 			b.status AS source_status,
 			CASE WHEN EXISTS(SELECT 1 FROM mom_mes.mes_production_feed_restore_line z WHERE z.tenant_id=c.tenant_id AND z.factory_code=c.factory_code AND z.consumption_id=c.id AND z.feed_id=c.feed_id) THEN 'HAS_RESTORATION' ELSE 'NONE_RECORDED' END AS restoration_status,
 			c.create_time AS occurred_at,
+			NULL AS product_identifier,
+			NULL AS production_report_mode,
+			NULL AS production_report_quantity,
 			NULL AS report_found,
 			f.id AS feed_found
 		FROM mom_mes.mes_production_feed_consumption c
@@ -129,8 +141,47 @@
 		LEFT JOIN mom_mes.mes_warehouse_feed f ON f.id=c.feed_id AND f.tenant_id=c.tenant_id AND f.factory_code=c.factory_code AND f.task_code=b.task_code AND f.arrange_code=b.arrange_code AND f.mat_code=c.mat_code
 
 		WHERE c.tenant_id=#{tenant} AND c.factory_code=#{factory} AND b.task_code=#{q.taskCode}
+		UNION ALL
+		SELECT c.id AS source_numeric_id,
+			CASE WHEN c.source_kind='FEED' THEN 'NG_POLICY_FEED' ELSE 'NG_POLICY_BACKFLUSH' END AS source_kind,
+			'mes_ng_material_policy_allocation' AS source_table,
+			b.task_code AS task_code,b.produce_task_code AS produce_task_code,b.arrange_code AS arrange_code,
+			CASE WHEN c.source_kind='FEED' THEN c.source_id ELSE NULL END AS feed_id,
+			CASE WHEN c.source_kind='STOCK' THEN c.source_id ELSE NULL END AS stock_id,
+			b.source_unqualified_report_id AS report_id,'NG' AS report_domain,b.id AS root_id,b.request_id AS request_id,
+			c.mat_code AS actual_material_code,c.requirement_mat_code AS requirement_material_code,
+			CASE WHEN c.source_kind='FEED' THEN f.mat_batch ELSE original_out.mat_batch END AS batch_no,
+			CASE WHEN c.source_kind='FEED' THEN f.mat_barcode ELSE original_out.mat_barcode END AS barcode,
+			c.mat_unit AS unit,c.requirement_unit AS requirement_unit,CAST(c.quantity AS text) AS quantity,
+			CAST(c.requirement_quantity AS text) AS requirement_quantity,CAST(c.substitute_ratio AS text) AS substitute_ratio,
+			'MATERIAL_RECORDED' AS source_status,
+			CASE WHEN EXISTS(SELECT 1 FROM mom_mes.mes_ng_material_policy_restore z WHERE z.tenant_id=c.tenant_id
+			 AND z.factory_code=c.factory_code AND z.operation_id=c.operation_id AND z.allocation_id=c.id
+			 AND z.source_kind=c.source_kind AND z.source_id=c.source_id) THEN 'HAS_RESTORATION' ELSE 'NONE_RECORDED' END AS restoration_status,
+			n.report_time AS occurred_at,n.transfer_code AS product_identifier,n.report_mode AS production_report_mode,
+			CAST(n.unqualified_num AS text) AS production_report_quantity,n.id AS report_found,f.id AS feed_found
+		FROM mom_mes.mes_ng_material_policy_allocation c
+		JOIN mom_mes.mes_ng_material_policy_operation b ON b.id=c.operation_id AND b.tenant_id=c.tenant_id
+		 AND b.factory_code=c.factory_code AND b.evidence_version='MES_NG_MATERIAL_POLICY_V1'
+		LEFT JOIN mom_mes.mes_warehouse_feed f ON c.source_kind='FEED' AND f.id=c.source_id
+		 AND f.tenant_id=c.tenant_id AND f.factory_code=c.factory_code AND f.task_code=b.task_code
+		 AND f.arrange_code=b.arrange_code AND f.mat_code=c.mat_code AND f.mat_unit=c.mat_unit
+		LEFT JOIN mom_mes.mes_warehouse_inout original_out ON c.source_kind='STOCK' AND original_out.id=c.source_flow_id
+		 AND original_out.tenant_id=c.tenant_id AND original_out.factory_code=c.factory_code
+		 AND original_out.source_stock_id=c.source_id AND original_out.bill_id=b.source_unqualified_report_id
+		 AND original_out.bill_no=b.arrange_code AND original_out.resource_no=b.request_id
+		 AND original_out.mat_code=c.mat_code AND original_out.mat_unit=c.mat_unit
+		 AND original_out.biz_type='production_ng_material_out' AND original_out.operate_type='out'
+		LEFT JOIN mom_mes.mes_task_report_unqualified n ON n.id=b.source_unqualified_report_id AND n.tenant_id=b.tenant_id
+		 AND n.factory_code=b.factory_code AND n.task_code=b.task_code AND n.produce_task_code=b.produce_task_code
+		 AND n.arrange_code=b.arrange_code AND n.request_id=b.request_id AND n.source_fingerprint=b.source_fingerprint
+		WHERE c.tenant_id=#{tenant} AND c.factory_code=#{factory} AND b.task_code=#{q.taskCode}
+		 AND c.source_kind IN ('FEED','STOCK')
+
 	</sql>
 	<sql id="filters">
+		<if test="q.productIdentifier != null">AND x.product_identifier=#{q.productIdentifier}</if>
+		<if test="q.reportId != null">AND x.report_id=CAST(#{q.reportId} AS bigint) AND x.report_domain=#{q.reportDomain}</if>
 		<if test="q.arrangeCode != null">AND x.arrange_code=#{q.arrangeCode}</if>
 		<if test="q.requirementMaterialCode != null">AND x.requirement_material_code=#{q.requirementMaterialCode}</if>
 		<if test="q.actualMaterialCode != null">AND x.actual_material_code=#{q.actualMaterialCode}</if>
@@ -152,6 +203,7 @@
 	<select id="root" resultType="map">
 		SELECT r.* FROM
 		<choose>
+			<when test="kind == 'NG_POLICY_FEED' or kind == 'NG_POLICY_BACKFLUSH'">mom_mes.mes_ng_material_policy_operation</when>
 			<when test="kind == 'NG_FEED'">mom_mes.mes_production_material_operation</when>
 			<when test="kind == 'COMBINED_FEED'">mom_mes.mes_production_feed_batch</when>
 			<otherwise>mom_mes.mes_task_report</otherwise>
@@ -165,6 +217,7 @@
 		<choose>
 			<when test="kind == 'GOOD_FEED'">mom_mes.mes_report_material_consume</when>
 			<when test="kind == 'GOOD_BACKFLUSH'">mom_mes.mes_warehouse_inout</when>
+			<when test="kind == 'NG_POLICY_FEED' or kind == 'NG_POLICY_BACKFLUSH'">mom_mes.mes_ng_material_policy_allocation</when>
 			<when test="kind == 'NG_FEED'">mom_mes.mes_production_material_allocation</when>
 			<otherwise>mom_mes.mes_production_feed_consumption</otherwise>
 		</choose> r
@@ -173,15 +226,26 @@
 	<select id="feedOrStock" resultType="map">
 		SELECT r.* FROM
 		<choose>
-			<when test="kind == 'GOOD_BACKFLUSH'">mom_mes.mes_warehouse_live_stock</when>
+			<when test="kind == 'GOOD_BACKFLUSH' or kind == 'NG_POLICY_BACKFLUSH'">mom_mes.mes_warehouse_live_stock</when>
 			<otherwise>mom_mes.mes_warehouse_feed</otherwise>
 		</choose> r
 		WHERE r.tenant_id=#{tenant} AND r.factory_code=#{factory} AND r.mat_code=#{material}
 		<choose>
-			<when test="kind == 'GOOD_BACKFLUSH'">AND r.id=#{stockId}</when>
+			<when test="kind == 'GOOD_BACKFLUSH' or kind == 'NG_POLICY_BACKFLUSH'">AND r.id=#{stockId}</when>
 			<otherwise>AND r.id=#{feedId} AND r.task_code=#{task} AND r.arrange_code=#{arrange}</otherwise>
 		</choose>
 	</select>
+	<select id="nativePolicyOut" resultType="map">
+		SELECT f.* FROM mom_mes.mes_ng_material_policy_allocation c
+		JOIN mom_mes.mes_ng_material_policy_operation b ON b.id=c.operation_id AND b.tenant_id=c.tenant_id AND b.factory_code=c.factory_code
+		JOIN mom_mes.mes_warehouse_inout f ON f.id=c.source_flow_id AND f.tenant_id=c.tenant_id AND f.factory_code=c.factory_code
+		 AND f.source_stock_id=c.source_id AND f.bill_id=b.source_unqualified_report_id AND f.bill_no=b.arrange_code
+		 AND f.resource_no=b.request_id AND f.mat_code=c.mat_code AND f.mat_unit=c.mat_unit
+		 AND f.biz_type='production_ng_material_out' AND f.operate_type='out'
+		WHERE c.tenant_id=#{tenant} AND c.factory_code=#{factory} AND c.id=#{id} AND c.operation_id=#{rootId}
+		 AND c.source_kind='STOCK' AND b.task_code=#{task} AND b.produce_task_code=#{produce} AND b.arrange_code=#{arrange}
+	</select>
+
 	<select id="attributions" resultType="map">
 		SELECT o.*,CAST(s.id AS text) AS share_id,CAST(s.consume_num AS text) AS share_quantity,
 		CAST(s.requirement_num AS text) AS share_requirement_quantity
@@ -191,8 +255,26 @@
 		WHERE s.tenant_id=#{tenant} AND s.factory_code=#{factory} AND s.batch_id=#{rootId}
 		AND s.consumption_id=#{id} ORDER BY s.id
 	</select>
+	<select id="nativePolicyRestores" resultType="map">
+		SELECT f.* FROM mom_mes.mes_ng_material_policy_restore l
+		JOIN mom_mes.mes_ng_material_policy_operation b ON b.id=l.operation_id AND b.tenant_id=l.tenant_id AND b.factory_code=l.factory_code
+		JOIN mom_mes.mes_ng_material_policy_reversal r ON r.id=l.reversal_id AND r.operation_id=l.operation_id
+		 AND r.tenant_id=l.tenant_id AND r.factory_code=l.factory_code
+		JOIN mom_mes.mes_warehouse_inout f ON f.id=l.restore_flow_id AND f.tenant_id=l.tenant_id AND f.factory_code=l.factory_code
+		 AND f.source_stock_id=l.source_id AND f.bill_id=r.id AND f.bill_no=b.arrange_code AND f.resource_no=r.request_id
+		 AND f.mat_code=l.mat_code AND f.mat_unit=l.mat_unit
+		 AND f.biz_type='production_ng_material_restore' AND f.operate_type='in'
+		WHERE l.tenant_id=#{tenant} AND l.factory_code=#{factory} AND l.operation_id=#{rootId} AND l.allocation_id=#{id}
+		 AND l.source_kind='STOCK' AND b.task_code=#{task} AND b.produce_task_code=#{produce} AND b.arrange_code=#{arrange}
+		ORDER BY f.id
+	</select>
 	<select id="restores" resultType="map">
 		<choose>
+			<when test="kind == 'NG_POLICY_FEED' or kind == 'NG_POLICY_BACKFLUSH'">
+				SELECT r.* FROM mom_mes.mes_ng_material_policy_restore r
+				WHERE r.tenant_id=#{tenant} AND r.factory_code=#{factory} AND r.operation_id=#{rootId}
+				AND r.allocation_id=#{id} ORDER BY r.id
+			</when>
 			<when test="kind == 'COMBINED_FEED'">
 				SELECT r.* FROM mom_mes.mes_production_feed_restore_line r
 				WHERE r.tenant_id=#{tenant} AND r.factory_code=#{factory} AND r.batch_id=#{rootId}
@@ -221,6 +303,10 @@
 	</select>
 	<select id="reversals" resultType="map">
 		<choose>
+			<when test="kind == 'NG_POLICY_FEED' or kind == 'NG_POLICY_BACKFLUSH'">
+				SELECT r.* FROM mom_mes.mes_ng_material_policy_reversal r
+				WHERE r.tenant_id=#{tenant} AND r.factory_code=#{factory} AND r.operation_id=#{rootId} ORDER BY r.id
+			</when>
 			<when test="kind == 'COMBINED_FEED'">
 				SELECT r.* FROM mom_mes.mes_production_feed_reversal r
 				WHERE r.tenant_id=#{tenant} AND r.factory_code=#{factory} AND r.batch_id=#{rootId}

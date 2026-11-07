@@ -43,7 +43,22 @@ public enum ButtonInventoryTypeEnum {
     EXPORT("wms_wmsInsideInventoryPlan_export", "导入导出", 6),
 
     /** 保留原盘点记录后作废。 */
-    CANCEL("wms_wmsInsideInventoryPlan_cancel", "作废", 7);
+    CANCEL("wms_wmsInsideInventoryPlan_cancel", "作废", 7),
+
+	/**
+	 * 查看本仓外部货主盘亏授权。
+	 */
+	OWNER_VIEW("wms_wmsInsideInventoryPlan_owner_view", "查看货主授权", 8),
+
+	/**
+	 * 本仓外部货主授权提议。
+	 */
+	OWNER_MANAGE("wms_wmsInsideInventoryPlan_owner_manage", "提议货主授权", 9),
+
+	/**
+	 * 本仓外部货主授权审核与撤销。
+	 */
+	OWNER_REVIEW("wms_wmsInsideInventoryPlan_owner_review", "审核货主授权", 10);
 
     private final String code;
     private final String name;

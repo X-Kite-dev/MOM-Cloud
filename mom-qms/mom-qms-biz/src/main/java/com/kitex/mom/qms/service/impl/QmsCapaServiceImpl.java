@@ -12,6 +12,7 @@ import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
+import com.kitex.mom.qms.agent.service.QmsRootCauseImportService;
 import com.kitex.mom.qms.dto.QmsCapaExternalCreateCommand;
 import com.kitex.mom.qms.dto.QmsCapaLinkDTO;
 import com.kitex.mom.qms.dto.req.*;
@@ -20,6 +21,7 @@ import com.kitex.mom.qms.mapper.*;
 import com.kitex.mom.qms.service.QmsCapaService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -49,6 +51,7 @@ public class QmsCapaServiceImpl extends ServiceImpl<QmsCapaMapper, QmsCapaEntity
     private final QmsCapaCauseMapper causeMapper;
     private final QmsCapaOperationMapper operationMapper;
     private final QmsBadInfoMapper badInfoMapper;
+    private final ObjectProvider<QmsRootCauseImportService> aiCauseImport;
 
     @Override
     public Page<QmsCapaEntity> queryPage(Page<QmsCapaEntity> page, QmsCapaEntity query) {
@@ -116,10 +119,13 @@ public class QmsCapaServiceImpl extends ServiceImpl<QmsCapaMapper, QmsCapaEntity
     @Override
     public List<QmsCapaCauseEntity> causes(Long capaId) {
         getDetail(capaId);
-        return causeMapper.selectList(new LambdaQueryWrapper<QmsCapaCauseEntity>()
+        List<QmsCapaCauseEntity> result = causeMapper.selectList(new LambdaQueryWrapper<QmsCapaCauseEntity>()
                 .eq(QmsCapaCauseEntity::getCapaId, capaId)
                 .orderByAsc(QmsCapaCauseEntity::getCycleNo)
                 .orderByAsc(QmsCapaCauseEntity::getCreateTime));
+        // 来源摘要仅查本地已安装技术账，普通人工查询不要求AI在线或824安装。
+        aiCauseImport.getObject().decorate(result);
+        return result;
     }
 
     @Override
@@ -369,6 +375,8 @@ public class QmsCapaServiceImpl extends ServiceImpl<QmsCapaMapper, QmsCapaEntity
                 && Objects.equals(capa.getCycleNo(), cause.getCycleNo()), "根因不属于当前分析周期");
         require("PENDING".equals(cause.getVerificationStatus()), "根因已完成验证");
         require(!Objects.equals(cause.getProposedBy(), currentUserCode()), "根因提出人与验证人必须独立");
+        // 新AI引用另核接受账的稳定人员主键，账号改名不能绕过原异人验证；未安装824的人工根因保持原规则。
+        aiCauseImport.getObject().requireIndependentVerifier(cause);
         String before = cause.getVerificationStatus();
         cause.setVerificationStatus(req.getResult()).setVerificationRemark(req.getRemark())
                 .setVerifierCode(currentUserCode()).setVerifierName(currentUserName())

@@ -4,6 +4,7 @@ target/
 !**/src/test/**/target/
 .idea/*
 
+deploy-jars/
 logs/**
 
 ### Eclipse ###
@@ -30,6 +31,70 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# Deployment secrets: keep only the empty variable contract in source control.
+.env
+.env.*
+!.env.example
+
+# Code Sync: public source export rules
+node_modules/
+target/
+dist/
+.pnpm-store/
+.turbo/
+.cache/
+.idea/
+.vscode/
+logs/
+*.log
+.env
+.env.*
+!.env.example
+settings.xml
+!/settings.xml
+.npmrc
+!pnpm-lock.yaml
+!**/src/main/**/target/
+!**/src/test/**/target/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# Minimal public source distribution
+**/src/test/
+**/tests/
+**/__tests__/
+**/__mocks__/
+**/e2e/
+**/cypress/
+**/verification/
+*.test.*
+*.spec.*
+*Test.java
+*Tests.java
+!**/src/main/**/*Test.java
+!**/src/main/**/*Tests.java
+!**/src/main/**/tests/
+!**/src/main/**/test/
+!**/src/main/**/verification/
+test_*.py
+*_test.py
+run-*-regression.py
+.agents/
+.codex/
+.claude/
+.superpowers/
+.workbuddy/
+outputs/
+*.sql
+*.md
+!/README.md
+!/LICENSE.md
+!/NOTICE.md
+!/settings.xml
+!/mom-iot/mom-iot-protocol/src/main/resources/document-mqtt.md
+!/mom-iot/mom-iot-protocol/src/main/resources/document-tcp.md
+!/mom-iot/mom-iot-protocol/src/main/resources/document-http.md
 
 # SQL resources are supplied separately from public sources
 *.[sS][qQ][lL]

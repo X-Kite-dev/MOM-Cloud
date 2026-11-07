@@ -1,5 +1,8 @@
 package com.kitex.mom.wms.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import com.kitex.mom.wms.service.impl.externalinventory.ExternalLossReceipt;
+import com.kitex.mom.wms.service.impl.externalinventory.ExternalLossContext;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.kitex.common.data.tenant.TenantContextHolder;
@@ -38,6 +41,23 @@ public class WmsInventoryAdjustmentService {
 	private final DefaultWmsOutBillService outbound;
 	private final WmsInventoryAdjustmentApprovalService approvals;
 	private final WmsWarehouseBusinessGuard warehouseGuard;
+	private final WmsInventoryStockCheckService stockChecks;
+	private final WmsInventoryMovementReceipt movementReceipt;
+	private final WmsInventoryLossSelectionService lossSelection;
+
+	@Autowired
+	private ExternalLossReceipt externalReceipt;
+
+	/**
+	 * 仅受托POST可创建外部指定库存盘亏单，单头校验与真实出库服务都在同一事务。
+	 */
+	public void postExternal(WmsOutBillEntity bill) {
+		ExternalLossContext.checkBill(bill);
+		WmsInventoryAdjustmentContext.execute(bill.getDocumentId(), () -> {
+			require(Boolean.TRUE.equals(outbound.addAndPass(bill)), "外部盘亏出库失败");
+			return true;
+		});
+	}
 
 	@Transactional(rollbackFor = Exception.class)
 	public boolean adjust(WmsInventoryAdjustmentCommand command) {
@@ -106,12 +126,18 @@ public class WmsInventoryAdjustmentService {
 		BigDecimal balance = scope.stream().map(s -> number(s.getMatNum(), "实时库存数量")).reduce(BigDecimal.ZERO,
 				BigDecimal::add);
 		require(balance.compareTo(current) == 0, "盘点后库存已发生变化，请先核对库存及原实盘依据，禁止直接按旧差异调账");
+		if (delta.signum() == 0) {
+			stockChecks.requireOwnerBalanced(row, scope);
+		}
 		if (delta.signum() != 0) {
-			WmsInBillDetailEntity selected = command.getDetail();
+			var frozen = WmsInventorySelectionSnapshot.read(row, approved.getSelectedDetailJson(), true);
+			lossSelection.requireCurrent(row, frozen, scope);
+			WmsInBillDetailEntity selected = frozen.detail();
 			require(selected != null, "请选择损益批次及物料属性");
 			if (delta.signum() > 0) {
 				require(StrUtil.isNotBlank(selected.getMatBatch()) && StrUtil.isNotBlank(selected.getSupplierCode())
-								&& StrUtil.isNotBlank(selected.getSupplierName()) && selected.getMatProduceDate() != null,
+								&& StrUtil.isNotBlank(selected.getSupplierName())
+								&& selected.getMatProduceDate() != null,
 						"盘盈必须明确批次、供应商和生产日期");
 			}
 			require(StrUtil.isBlank(row.getMatBatch()) || Objects.equals(row.getMatBatch(), selected.getMatBatch()),
@@ -140,11 +166,23 @@ public class WmsInventoryAdjustmentService {
 					bill.setFactoryCode(factory());
 					bill.setDocumentTable(WmsInventoryAdjustmentContext.DOCUMENT);
 					bill.setDocumentId(row.getId());
-					bill.setDetails(List.of(detail));
+					if (frozen.lossStocks().isEmpty()) {
+						bill.setDetails(List.of(detail));
+					} else {
+						bill.setDetails(frozen.lossStocks().stream().map(source -> {
+							var exact = new WmsOutBillDetailEntity();
+							var physical = material(row, source.detail().material(),
+									WmsInventoryLossSnapshot.quantity(source.quantity()).doubleValue());
+							BeanUtils.copyProperties(physical, exact, "id", "billId");
+							exact.setSourceStockId(WmsInventoryLossSnapshot.id(source.stockId()));
+							return exact;
+						}).toList());
+					}
 					require(Boolean.TRUE.equals(outbound.addAndPass(bill)), "盘亏出库失败");
 				}
 				return true;
 			});
+			requireReceipt(row, frozen, true);
 		}
 		row.setPlStatus("1");
 		require(details.updateById(row) == 1, "盘点损益状态保存失败，本次调账已回滚");
@@ -152,8 +190,25 @@ public class WmsInventoryAdjustmentService {
 		return true;
 	}
 
+	public void requireOwnerBalancedForCompletion(WmsInsideInventoryPlanDetailEntity row,
+	                                              List<WmsLiveStockEntity> lockedStocks) {
+		stockChecks.requireOwnerBalanced(row, lockedStocks);
+	}
+
 	public void requireReceipt(WmsInsideInventoryPlanDetailEntity row) {
-		BigDecimal delta = number(row.getInventoryNum(), "实盘数量").subtract(number(row.getCurrentNumber(), "账面数量"));
+		var external = approvals.postedExternal(row);
+		if (external != null) {
+			externalReceipt.posted(row, external);
+			return;
+		}
+		var delta = number(row.getInventoryNum(), "实盘数量").subtract(number(row.getCurrentNumber(), "账面数量"));
+		requireReceipt(row, delta.signum() == 0 ? null : approvals.postedSelection(row), false);
+	}
+
+	private void requireReceipt(WmsInsideInventoryPlanDetailEntity row,
+	                            WmsInventorySelectionSnapshot.Frozen frozen, boolean firstPosting) {
+		BigDecimal delta = number(row.getInventoryNum(), "实盘数量").subtract(
+				number(row.getCurrentNumber(), "账面数量"));
 		var receiptsIn = inBills.selectList(Wrappers.<WmsInBillEntity>lambdaQuery()
 				.eq(WmsInBillEntity::getDocumentId, row.getId())
 				.eq(WmsInBillEntity::getDocumentTable, WmsInventoryAdjustmentContext.DOCUMENT)
@@ -184,6 +239,10 @@ public class WmsInventoryAdjustmentService {
 					&& Objects.equals(row.getSiteCode(), d.getSiteCode())
 					&& (StrUtil.isBlank(row.getMatBatch()) || Objects.equals(row.getMatBatch(), d.getMatBatch()))
 					&& Objects.equals(row.getWarehouseCode(), d.getWarehouseCode())), "盘盈回执范围不一致");
+			if (frozen != null) {
+				items.forEach(d -> WmsInventorySelectionSnapshot.requireReceipt(row, frozen, d, true));
+				movementReceipt.requireMovement(row, frozen, bill.getId(), items, true, firstPosting);
+			}
 			total = items.stream().map(d -> number(d.getMatNum(), "盘盈数量")).reduce(BigDecimal.ZERO, BigDecimal::add);
 		} else {
 			require(receiptsOut.size() == 1 && receiptsIn.isEmpty(), "历史盘亏缺少唯一回执，请人工核对，禁止重复调账");
@@ -199,6 +258,20 @@ public class WmsInventoryAdjustmentService {
 					&& Objects.equals(row.getSiteCode(), d.getSiteCode())
 					&& (StrUtil.isBlank(row.getMatBatch()) || Objects.equals(row.getMatBatch(), d.getMatBatch()))
 					&& Objects.equals(row.getWarehouseCode(), d.getWarehouseCode())), "盘亏回执范围不一致");
+			if (frozen != null) {
+				WmsInventoryLossSnapshot.requireOutDetails(frozen, items);
+				items.forEach(d -> {
+					var receipt = new WmsInBillDetailEntity();
+					BeanUtils.copyProperties(d, receipt);
+					WmsInventorySelectionSnapshot.requireReceipt(row, frozen, receipt, false);
+				});
+				var physical = items.stream().map(d -> {
+					var receipt = new WmsInBillDetailEntity();
+					BeanUtils.copyProperties(d, receipt);
+					return receipt;
+				}).toList();
+				movementReceipt.requireMovement(row, frozen, bill.getId(), physical, false, firstPosting);
+			}
 			total = items.stream().map(d -> number(d.getMatNum(), "盘亏数量")).reduce(BigDecimal.ZERO, BigDecimal::add);
 		}
 		require(total.compareTo(delta.abs()) == 0, "盘点差异与原损益回执数量不一致，请人工核对");
@@ -207,7 +280,10 @@ public class WmsInventoryAdjustmentService {
 	private WmsInBillDetailEntity material(WmsInsideInventoryPlanDetailEntity row, WmsInBillDetailEntity selected,
 	                                       double quantity) {
 		var result = new WmsInBillDetailEntity();
-		// Only physical attributes are accepted from the UI; source IDs, scope and quantity cannot be injected.
+		// 批准属性来自不可变快照；范围、单位及数量仍由原盘点决定。
+		result.setStockOwnerType("OWNED");
+		result.setStockOwnerCode(null);
+		result.setSourceBusinessNo(selected.getSourceBusinessNo());
 		result.setSupplierCode(selected.getSupplierCode());
 		result.setSupplierName(selected.getSupplierName());
 		result.setMatBatch(selected.getMatBatch());

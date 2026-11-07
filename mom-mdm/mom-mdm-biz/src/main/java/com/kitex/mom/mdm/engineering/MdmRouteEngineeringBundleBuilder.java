@@ -22,6 +22,7 @@ import com.kitex.mom.mdm.service.impl.MdmBomGovernance;
 import com.kitex.mom.mdm.sop.MdmFormalSopSourceService;
 import com.kitex.mom.mdm.sop.MdmSopSupport;
 import com.kitex.mom.mdm.support.MdmRouteNodeGraphSupport;
+import com.kitex.mom.mdm.support.MdmProcedureLaborStandardCodec;
 import com.kitex.mom.mdm.vo.MdmFactoryModelAncestorVO;
 import com.kitex.mom.mdm.vo.MdmProcessRouteProcedureVO;
 import com.kitex.mom.mdm.vo.MdmProcessRouteWorkingVO;
@@ -63,6 +64,7 @@ public class MdmRouteEngineeringBundleBuilder {
     private final MdmProcessParameterStandardService parameters;
     private final MdmFormalSopSourceService sops;
     private final MdmRouteEngineeringSourceMapper sources;
+    private final MdmProcedureLaborStandardCapture laborStandards;
     private final ObjectMapper objectMapper;
 
     /**
@@ -97,6 +99,10 @@ public class MdmRouteEngineeringBundleBuilder {
      */
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public MdmRouteEngineeringDTO.Preview build(MdmRouteEngineeringDTO.PreviewQuery query) {
+        return build(query, true);
+    }
+
+    private MdmRouteEngineeringDTO.Preview build(MdmRouteEngineeringDTO.PreviewQuery query, boolean captureLabor) {
         require(query != null, "请提供路线、精确BOM与节点适用声明");
         MdmProcessRouteEntity route = lockedRoute(query.getRouteId());
         require(query.getExpectedGraphRevision() != null
@@ -140,6 +146,8 @@ public class MdmRouteEngineeringBundleBuilder {
                 .orderByAsc(MdmProcessProcedureSettingEntity::getRouteNodeCode)
                 .orderByAsc(MdmProcessProcedureSettingEntity::getId)
                 .last("LIMIT 10001"));
+        MdmMaterialSettingSource.apply(settingRows,
+                settings.nullableByRoute(tenant(), factory(), route.getRouteCode()));
         List<MdmProcessProcedureMatEntity> matRows = assignments.selectList(new LambdaQueryWrapper<MdmProcessProcedureMatEntity>()
                 .eq(MdmProcessProcedureMatEntity::getTenantId, tenant())
                 .eq(MdmProcessProcedureMatEntity::getFactoryCode, factory())
@@ -169,6 +177,12 @@ public class MdmRouteEngineeringBundleBuilder {
         validateRows(json, toolRows, route, nodes, "工装需求");
         validateRows(json, legacyRows, route, nodes, "旧SOP附件");
         ArrayNode molds = molds(json, route, nodes);
+        // 同主工序重复节点使用同次原标准；全批按主工序编码排序锁定，避免跨路线反向锁序。
+        var laborByProcess = new TreeMap<String, com.kitex.mom.mdm.dto.MdmProcedureLaborStandardDTO>();
+        if (captureLabor) {
+            nodes.values().stream().map(MdmProcessRouteWorkingVO::getProcessCode).distinct().sorted()
+                    .forEach(process -> laborByProcess.put(process, laborStandards.capture(process)));
+        }
         List<Map<String, Object>> frozenNodes = new ArrayList<>();
         Map<String, List<Map<String, Object>>> worksByProcess = new HashMap<>();
         for (var node : nodes.values()) {
@@ -226,6 +240,9 @@ public class MdmRouteEngineeringBundleBuilder {
             frozen.put("routeNodeCode", rn);
             frozen.put("processCode", node.getProcessCode());
             frozen.put("processName", node.getProcessName());
+            if (captureLabor) {
+                frozen.put("laborStandard", laborByProcess.get(node.getProcessCode()));
+            }
             frozen.put("setting", nodeSettings.isEmpty() ? null : nodeSettings.get(0));
             frozen.put("materials", nodeMaterials);
             frozen.put("tooling", nodeTools);
@@ -254,6 +271,9 @@ public class MdmRouteEngineeringBundleBuilder {
         }
         var bundle = new LinkedHashMap<String, Object>();
         bundle.put("schemaVersion", MdmRouteEngineeringDTO.SCHEMA_VERSION);
+        if (captureLabor) {
+            bundle.put("laborStandardSchemaVersion", MdmProcedureLaborStandardCodec.VERSION);
+        }
         bundle.put("tenantId", tenant().toString());
         bundle.put("factoryCode", factory());
         bundle.put("route", route);
@@ -275,6 +295,12 @@ public class MdmRouteEngineeringBundleBuilder {
                 .setReady(gaps.isEmpty())
                 .setGaps(gaps)
                 .setExecutionReady(gaps.isEmpty());
+    }
+
+    /** 只按已持久化原包选择采集代际；新预检始终走含标准来源的build，客户端没有降级参数。 */
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+    public MdmRouteEngineeringDTO.Preview rebuildForExisting(MdmRouteEngineeringDTO.PreviewQuery query, String originalBundle) {
+        return build(query, MdmProcedureLaborStandardCodec.captureGeneration(originalBundle));
     }
 
     /**

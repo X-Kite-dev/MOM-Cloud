@@ -18,6 +18,8 @@
     </properties>
 
     <dependencies>
+        <!-- 共享原件协议：严格文本身份，不依赖业务实现。 -->
+        <dependency><groupId>com.kitex</groupId><artifactId>mom-common-api</artifactId><version>${project.version}</version></dependency>
         <!-- 连表查询注解 -->
         <dependency>
             <groupId>com.github.yulichang</groupId>

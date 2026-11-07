@@ -1,129 +1,141 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.kitex.mom.mes.mapper.MesProductionTimeMapper">
-    <select id="orphanedSources" resultType="long">
-        SELECT COUNT(*) FROM (
-            SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,start_time,end_time,
-                CAST(NULL AS varchar) AS identifier,CAST(NULL AS varchar) AS identifier_type
-                FROM mom_mes.mes_task_execution_segment
-            UNION ALL
-            SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,labor_start,labor_end,
-                CAST(NULL AS varchar) AS identifier,CAST(NULL AS varchar) AS identifier_type
-                FROM mom_mes.mes_labor_entry WHERE status IN ('APPROVED','VOID_PENDING')
-            UNION ALL
-            SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,start_time,end_time,identifier,identifier_type
-                FROM mom_mes.mes_workpiece_time_interval WHERE status IN ('OPEN','CLOSED')
-        ) source
-        WHERE source.tenant_id=#{tenant} AND source.factory_code=#{factory} AND source.del_flag='0'
-            AND (source.start_time &lt; #{q.endTime} OR source.start_time IS NULL)
-            AND (source.end_time &gt; #{q.startTime} OR source.end_time IS NULL OR source.end_time &lt; source.start_time
-                OR (source.end_time=source.start_time AND source.start_time &gt;= #{q.startTime}))
-            <if test="q.taskCode != null">AND source.task_code=#{q.taskCode}</if>
-            <if test="q.produceTaskCode != null">AND source.produce_task_code=#{q.produceTaskCode}</if>
-            <if test="q.arrangeCode != null">AND source.arrange_code=#{q.arrangeCode}</if>
-            <if test="q.identifier != null">
-                AND source.identifier=#{q.identifier} AND source.identifier_type=#{q.identifierType}
-            </if>
-            AND NOT EXISTS (SELECT 1 FROM mom_mes.mes_task_arrange a WHERE a.id=source.arrange_id
-                AND a.code=source.arrange_code AND a.task_code=source.task_code
-                AND a.produce_task_code=source.produce_task_code AND a.tenant_id=source.tenant_id
-                AND a.factory_code=source.factory_code AND a.del_flag='0')
-    </select>
-    <!-- a必须是来源事实精确关联的同组织派工，不取同号其他厂或重复候选。 -->
-    <sql id="arrangeScope">
-        a.tenant_id=#{tenant} AND a.factory_code=#{factory} AND a.del_flag='0'
-        <if test="q.taskCode != null">AND a.task_code=#{q.taskCode}</if>
-        <if test="q.produceTaskCode != null">AND a.produce_task_code=#{q.produceTaskCode}</if>
-        <if test="q.arrangeCode != null">AND a.code=#{q.arrangeCode}</if>
-        <if test="q.workshopCode != null">AND a.workshop_code=#{q.workshopCode}</if>
-        <if test="q.shiftCode != null">AND a.shift_code=#{q.shiftCode}</if>
-    </sql>
-    <select id="segments" resultType="com.kitex.mom.mes.dto.MesProductionTimeDTO$Fact">
-        SELECT 'RUN_SEGMENT' AS source_type,CAST(s.id AS varchar) AS source_id,
-            s.task_code,s.produce_task_code,s.arrange_code,a.workshop_code,a.shift_code,
-            s.device_code,CASE WHEN s.segment_type='RUN' THEN 'RUN' ELSE 'UNKNOWN' END AS kind,
-            s.start_time,s.end_time,s.status AS state,
-            CASE WHEN s.close_reason='LEGACY_GAP' THEN FALSE
-                WHEN s.sample_eligible=TRUE OR (s.status='CANCELLED' AND s.close_reason='CLOSE') THEN TRUE
-                ELSE FALSE END AS eligible,COALESCE(s.exclusion_reason,s.close_reason) AS reason
-        FROM mom_mes.mes_task_execution_segment s
-        JOIN mom_mes.mes_task_arrange a ON a.id=s.arrange_id AND a.code=s.arrange_code
-            AND a.task_code=s.task_code AND a.produce_task_code=s.produce_task_code
-            AND a.tenant_id=s.tenant_id AND a.factory_code=s.factory_code
-        WHERE s.tenant_id=#{tenant} AND s.factory_code=#{factory} AND s.del_flag='0'
-            AND (s.start_time &lt; #{q.endTime} OR s.start_time IS NULL)
-            AND (s.end_time &gt; #{q.startTime} OR s.end_time IS NULL OR s.end_time &lt; s.start_time
-                OR (s.end_time=s.start_time AND s.start_time &gt;= #{q.startTime}))
-            <if test="q.identifier != null">AND 1=0</if>
-            AND <include refid="arrangeScope"/>
-        ORDER BY s.id LIMIT #{limit}
-    </select>
-    <select id="labor" resultType="com.kitex.mom.mes.dto.MesProductionTimeDTO$Fact">
-        SELECT 'APPROVED_LABOR' AS source_type,CAST(l.id AS varchar) AS source_id,
-            l.task_code,l.produce_task_code,l.arrange_code,a.workshop_code,a.shift_code,
-            l.worker_code,'LABOR' AS kind,l.labor_start AS start_time,l.labor_end AS end_time,
-            l.status AS state,TRUE AS eligible,l.reason
-        FROM mom_mes.mes_labor_entry l
-        JOIN mom_mes.mes_task_arrange a ON a.id=l.arrange_id AND a.code=l.arrange_code
-            AND a.task_code=l.task_code AND a.produce_task_code=l.produce_task_code
-            AND a.tenant_id=l.tenant_id AND a.factory_code=l.factory_code
-        WHERE l.tenant_id=#{tenant} AND l.factory_code=#{factory} AND l.del_flag='0'
-            AND l.status IN ('APPROVED','VOID_PENDING')
-            AND l.labor_start &lt; #{q.endTime} AND l.labor_end &gt; #{q.startTime}
-            <if test="q.identifier != null">AND 1=0</if>
-            AND <include refid="arrangeScope"/>
-        ORDER BY l.id LIMIT #{limit}
-    </select>
-    <select id="pauses" resultType="com.kitex.mom.mes.dto.MesProductionTimeDTO$Fact">
-        WITH transitions AS (
-            SELECT e.*,LEAD(e.event_time) OVER (PARTITION BY e.arrange_id ORDER BY e.event_version) AS next_time,
-                LEAD(e.event_version) OVER (PARTITION BY e.arrange_id ORDER BY e.event_version) AS next_version,
-                LEAD(e.previous_status) OVER (PARTITION BY e.arrange_id ORDER BY e.event_version) AS next_previous,
-                LEAD(e.status) OVER (PARTITION BY e.arrange_id ORDER BY e.event_version) AS next_status,
-                LEAD(e.proven) OVER (PARTITION BY e.arrange_id ORDER BY e.event_version) AS next_proven
-            FROM mom_mes.mes_arrange_timing_event e
-            WHERE e.tenant_id=#{tenant} AND e.factory_code=#{factory} AND e.del_flag='0'
-        )
-        SELECT 'PAUSE_EVENT' AS source_type,CAST(e.id AS varchar) AS source_id,
-            e.task_code,e.produce_task_code,e.arrange_code,a.workshop_code,a.shift_code,
-            a.planned_device_code AS device_code,'PAUSE' AS kind,e.event_time AS start_time,
-            e.next_time AS end_time,CASE WHEN e.next_time IS NULL THEN 'OPEN' ELSE 'CLOSED' END AS state,
-            CASE WHEN e.proven=TRUE AND e.event_kind='STATE_CHANGE' AND e.previous_status='PRODUCT'
-                AND ((e.next_time IS NULL AND a.status='PAUSE') OR (e.next_version=e.event_version+1 AND e.next_previous='PAUSE'
-                    AND e.next_status IN ('PRODUCT','FINISH','CLOSE') AND e.next_proven=TRUE))
-                THEN TRUE ELSE FALSE END AS eligible,
-            COALESCE(s.close_reason,e.reason) AS reason
-        FROM transitions e
-        JOIN mom_mes.mes_task_arrange a ON a.id=e.arrange_id AND a.code=e.arrange_code
-            AND a.task_code=e.task_code AND a.produce_task_code=e.produce_task_code
-            AND a.tenant_id=e.tenant_id AND a.factory_code=e.factory_code
-        LEFT JOIN mom_mes.mes_task_execution_segment s ON s.id=e.segment_id AND s.arrange_id=e.arrange_id
-            AND s.tenant_id=e.tenant_id AND s.factory_code=e.factory_code AND s.del_flag='0'
-        WHERE e.status='PAUSE' AND e.event_time &lt; #{q.endTime}
-            AND (e.next_time &gt; #{q.startTime} OR e.next_time IS NULL OR e.next_time &lt; e.event_time
-                OR (e.next_time=e.event_time AND e.event_time &gt;= #{q.startTime}))
-            <if test="q.identifier != null">AND 1=0</if>
-            AND <include refid="arrangeScope"/>
-        ORDER BY e.id LIMIT #{limit}
-    </select>
-    <select id="workpieces" resultType="com.kitex.mom.mes.dto.MesProductionTimeDTO$Fact">
-        SELECT 'WORKPIECE_TIME' AS source_type,CAST(w.id AS varchar) AS source_id,
-            w.task_code,w.produce_task_code,w.arrange_code,a.workshop_code,a.shift_code,
-            w.device_code,w.worker_code,w.identifier,w.identifier_type,
-            CASE WHEN w.kind='RUN' THEN 'WORKPIECE_RUN' WHEN w.kind='PAUSE' THEN 'WORKPIECE_PAUSE' ELSE 'UNKNOWN' END AS kind,
-            w.start_time,w.end_time,w.status AS state,TRUE AS eligible,w.reason_code AS reason
-        FROM mom_mes.mes_workpiece_time_interval w
-        JOIN mom_mes.mes_task_arrange a ON a.id=w.arrange_id AND a.code=w.arrange_code
-            AND a.task_code=w.task_code AND a.produce_task_code=w.produce_task_code
-            AND a.tenant_id=w.tenant_id AND a.factory_code=w.factory_code
-        WHERE w.tenant_id=#{tenant} AND w.factory_code=#{factory} AND w.del_flag='0'
-            AND w.status IN ('OPEN','CLOSED') AND w.start_time &lt; #{q.endTime}
-            AND (w.end_time &gt; #{q.startTime} OR w.end_time IS NULL OR w.end_time &lt; w.start_time
-                OR (w.end_time=w.start_time AND w.start_time &gt;= #{q.startTime}))
-            <if test="q.identifier != null">
-                AND w.identifier=#{q.identifier} AND w.identifier_type=#{q.identifierType}
-            </if>
-            AND <include refid="arrangeScope"/>
-        ORDER BY w.id LIMIT #{limit}
-    </select>
+	<select id="orphanedSources" resultType="long">
+		SELECT COUNT(*) FROM (
+			SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,start_time,end_time,
+				CAST(NULL AS varchar) AS identifier,CAST(NULL AS varchar) AS identifier_type
+				FROM mom_mes.mes_task_execution_segment
+			UNION ALL
+			SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,labor_start,labor_end,
+				CAST(NULL AS varchar) AS identifier,CAST(NULL AS varchar) AS identifier_type
+				FROM mom_mes.mes_labor_entry WHERE status IN ('APPROVED','VOID_PENDING')
+			UNION ALL
+			SELECT arrange_id,arrange_code,task_code,produce_task_code,tenant_id,factory_code,del_flag,start_time,end_time,identifier,identifier_type
+				FROM mom_mes.mes_workpiece_time_interval WHERE status IN ('OPEN','CLOSED')
+			UNION ALL
+			<!-- 暂停事件也须披露孤立来源；先沿原版本链取结束点，再裁剪统计范围，不用整表旧暂停冒充本窗缺口。 -->
+			SELECT e.arrange_id,e.arrange_code,e.task_code,e.produce_task_code,e.tenant_id,e.factory_code,e.del_flag,
+				e.event_time,e.next_time,CAST(NULL AS varchar),CAST(NULL AS varchar)
+			FROM (
+				SELECT timing.*,LEAD(timing.event_time) OVER (
+					PARTITION BY timing.arrange_id ORDER BY timing.event_version
+				) AS next_time
+				FROM mom_mes.mes_arrange_timing_event timing
+				WHERE timing.tenant_id=#{tenant} AND timing.factory_code=#{factory} AND timing.del_flag='0'
+			) e
+			WHERE e.status='PAUSE'
+		) source
+		WHERE source.tenant_id=#{tenant} AND source.factory_code=#{factory} AND source.del_flag='0'
+			AND (source.start_time &lt; #{q.endTime} OR source.start_time IS NULL)
+			AND (source.end_time &gt; #{q.startTime} OR source.end_time IS NULL OR source.end_time &lt; source.start_time
+				OR (source.end_time=source.start_time AND source.start_time &gt;= #{q.startTime}))
+			<if test="q.taskCode != null">AND source.task_code=#{q.taskCode}</if>
+			<if test="q.produceTaskCode != null">AND source.produce_task_code=#{q.produceTaskCode}</if>
+			<if test="q.arrangeCode != null">AND source.arrange_code=#{q.arrangeCode}</if>
+			<if test="q.identifier != null">
+				AND source.identifier=#{q.identifier} AND source.identifier_type=#{q.identifierType}
+			</if>
+			AND NOT EXISTS (SELECT 1 FROM mom_mes.mes_task_arrange a WHERE a.id=source.arrange_id
+				AND a.code=source.arrange_code AND a.task_code=source.task_code
+				AND a.produce_task_code=source.produce_task_code AND a.tenant_id=source.tenant_id
+				AND a.factory_code=source.factory_code AND a.del_flag='0')
+	</select>
+	<!-- a必须是来源事实精确关联的同组织派工，不取同号其他厂或重复候选。 -->
+	<sql id="arrangeScope">
+		a.tenant_id=#{tenant} AND a.factory_code=#{factory} AND a.del_flag='0'
+		<if test="q.taskCode != null">AND a.task_code=#{q.taskCode}</if>
+		<if test="q.produceTaskCode != null">AND a.produce_task_code=#{q.produceTaskCode}</if>
+		<if test="q.arrangeCode != null">AND a.code=#{q.arrangeCode}</if>
+		<if test="q.workshopCode != null">AND a.workshop_code=#{q.workshopCode}</if>
+		<if test="q.shiftCode != null">AND a.shift_code=#{q.shiftCode}</if>
+	</sql>
+	<select id="segments" resultType="com.kitex.mom.mes.dto.MesProductionTimeDTO$Fact">
+		SELECT 'RUN_SEGMENT' AS source_type,CAST(s.id AS varchar) AS source_id,
+			s.task_code,s.produce_task_code,s.arrange_code,a.workshop_code,a.shift_code,
+			s.device_code,CASE WHEN s.segment_type='RUN' THEN 'RUN' ELSE 'UNKNOWN' END AS kind,
+			s.start_time,s.end_time,s.status AS state,
+			CASE WHEN s.close_reason='LEGACY_GAP' THEN FALSE
+				WHEN s.sample_eligible=TRUE OR (s.status='CANCELLED' AND s.close_reason='CLOSE') THEN TRUE
+				ELSE FALSE END AS eligible,COALESCE(s.exclusion_reason,s.close_reason) AS reason
+		FROM mom_mes.mes_task_execution_segment s
+		JOIN mom_mes.mes_task_arrange a ON a.id=s.arrange_id AND a.code=s.arrange_code
+			AND a.task_code=s.task_code AND a.produce_task_code=s.produce_task_code
+			AND a.tenant_id=s.tenant_id AND a.factory_code=s.factory_code
+		WHERE s.tenant_id=#{tenant} AND s.factory_code=#{factory} AND s.del_flag='0'
+			AND (s.start_time &lt; #{q.endTime} OR s.start_time IS NULL)
+			AND (s.end_time &gt; #{q.startTime} OR s.end_time IS NULL OR s.end_time &lt; s.start_time
+				OR (s.end_time=s.start_time AND s.start_time &gt;= #{q.startTime}))
+			<if test="q.identifier != null">AND 1=0</if>
+			AND <include refid="arrangeScope"/>
+		ORDER BY s.id LIMIT #{limit}
+	</select>
+	<select id="labor" resultType="com.kitex.mom.mes.dto.MesProductionTimeDTO$Fact">
+		SELECT 'APPROVED_LABOR' AS source_type,CAST(l.id AS varchar) AS source_id,
+			l.task_code,l.produce_task_code,l.arrange_code,a.workshop_code,a.shift_code,
+			l.worker_code,'LABOR' AS kind,l.labor_start AS start_time,l.labor_end AS end_time,
+			l.status AS state,TRUE AS eligible,l.reason
+		FROM mom_mes.mes_labor_entry l
+		JOIN mom_mes.mes_task_arrange a ON a.id=l.arrange_id AND a.code=l.arrange_code
+			AND a.task_code=l.task_code AND a.produce_task_code=l.produce_task_code
+			AND a.tenant_id=l.tenant_id AND a.factory_code=l.factory_code
+		WHERE l.tenant_id=#{tenant} AND l.factory_code=#{factory} AND l.del_flag='0'
+			AND l.status IN ('APPROVED','VOID_PENDING')
+			AND l.labor_start &lt; #{q.endTime} AND l.labor_end &gt; #{q.startTime}
+			<if test="q.identifier != null">AND 1=0</if>
+			AND <include refid="arrangeScope"/>
+		ORDER BY l.id LIMIT #{limit}
+	</select>
+	<select id="pauses" resultType="com.kitex.mom.mes.dto.MesProductionTimeDTO$Fact">
+		WITH transitions AS (
+			SELECT e.*,LEAD(e.event_time) OVER (PARTITION BY e.arrange_id ORDER BY e.event_version) AS next_time,
+				LEAD(e.event_version) OVER (PARTITION BY e.arrange_id ORDER BY e.event_version) AS next_version,
+				LEAD(e.previous_status) OVER (PARTITION BY e.arrange_id ORDER BY e.event_version) AS next_previous,
+				LEAD(e.status) OVER (PARTITION BY e.arrange_id ORDER BY e.event_version) AS next_status,
+				LEAD(e.proven) OVER (PARTITION BY e.arrange_id ORDER BY e.event_version) AS next_proven
+			FROM mom_mes.mes_arrange_timing_event e
+			WHERE e.tenant_id=#{tenant} AND e.factory_code=#{factory} AND e.del_flag='0'
+		)
+		SELECT 'PAUSE_EVENT' AS source_type,CAST(e.id AS varchar) AS source_id,
+			e.task_code,e.produce_task_code,e.arrange_code,a.workshop_code,a.shift_code,
+			a.planned_device_code AS device_code,'PAUSE' AS kind,e.event_time AS start_time,
+			e.next_time AS end_time,CASE WHEN e.next_time IS NULL THEN 'OPEN' ELSE 'CLOSED' END AS state,
+			CASE WHEN e.proven=TRUE AND e.event_kind='STATE_CHANGE' AND e.previous_status='PRODUCT'
+				AND ((e.next_time IS NULL AND a.status='PAUSE') OR (e.next_version=e.event_version+1 AND e.next_previous='PAUSE'
+					AND e.next_status IN ('PRODUCT','FINISH','CLOSE') AND e.next_proven=TRUE))
+				THEN TRUE ELSE FALSE END AS eligible,
+			COALESCE(s.close_reason,e.reason) AS reason
+		FROM transitions e
+		JOIN mom_mes.mes_task_arrange a ON a.id=e.arrange_id AND a.code=e.arrange_code
+			AND a.task_code=e.task_code AND a.produce_task_code=e.produce_task_code
+			AND a.tenant_id=e.tenant_id AND a.factory_code=e.factory_code
+		LEFT JOIN mom_mes.mes_task_execution_segment s ON s.id=e.segment_id AND s.arrange_id=e.arrange_id
+			AND s.tenant_id=e.tenant_id AND s.factory_code=e.factory_code AND s.del_flag='0'
+		WHERE e.status='PAUSE' AND e.event_time &lt; #{q.endTime}
+			AND (e.next_time &gt; #{q.startTime} OR e.next_time IS NULL OR e.next_time &lt; e.event_time
+				OR (e.next_time=e.event_time AND e.event_time &gt;= #{q.startTime}))
+			<if test="q.identifier != null">AND 1=0</if>
+			AND <include refid="arrangeScope"/>
+		ORDER BY e.id LIMIT #{limit}
+	</select>
+	<select id="workpieces" resultType="com.kitex.mom.mes.dto.MesProductionTimeDTO$Fact">
+		SELECT 'WORKPIECE_TIME' AS source_type,CAST(w.id AS varchar) AS source_id,
+			w.task_code,w.produce_task_code,w.arrange_code,a.workshop_code,a.shift_code,
+			w.device_code,w.worker_code,w.identifier,w.identifier_type,
+			CASE WHEN w.kind='RUN' THEN 'WORKPIECE_RUN' WHEN w.kind='PAUSE' THEN 'WORKPIECE_PAUSE' ELSE 'UNKNOWN' END AS kind,
+			w.start_time,w.end_time,w.status AS state,TRUE AS eligible,w.reason_code AS reason
+		FROM mom_mes.mes_workpiece_time_interval w
+		JOIN mom_mes.mes_task_arrange a ON a.id=w.arrange_id AND a.code=w.arrange_code
+			AND a.task_code=w.task_code AND a.produce_task_code=w.produce_task_code
+			AND a.tenant_id=w.tenant_id AND a.factory_code=w.factory_code
+		WHERE w.tenant_id=#{tenant} AND w.factory_code=#{factory} AND w.del_flag='0'
+			AND w.status IN ('OPEN','CLOSED') AND w.start_time &lt; #{q.endTime}
+			AND (w.end_time &gt; #{q.startTime} OR w.end_time IS NULL OR w.end_time &lt; w.start_time
+				OR (w.end_time=w.start_time AND w.start_time &gt;= #{q.startTime}))
+			<if test="q.identifier != null">
+				AND w.identifier=#{q.identifier} AND w.identifier_type=#{q.identifierType}
+			</if>
+			AND <include refid="arrangeScope"/>
+		ORDER BY w.id LIMIT #{limit}
+	</select>
 </mapper>

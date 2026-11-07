@@ -3,8 +3,11 @@ package com.kitex.mom.mes.controller;
 import com.kitex.common.core.util.R;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.mes.dto.MesWipTransferCommand;
+import com.kitex.mom.mes.service.impl.MesWipNextStationsService;
 import com.kitex.mom.mes.service.impl.MesWipTransferService;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,6 +18,20 @@ import java.util.Locale;
 @RequestMapping("/mesWipTransfer")
 public class MesWipTransferController {
     private final MesWipTransferService service;
+    private final MesWipNextStationsService nextStations;
+
+    @GetMapping("/source/{id}/nextStations")
+    @PreAuthorize("@pms.hasPermission('mes_wipTransfer_dispatch')")
+    public R nextStations(@PathVariable Long id, @RequestParam(required = false) Long afterId) {
+        return R.ok(nextStations.query(id, afterId));
+    }
+
+    @GetMapping("/{id}/nextStations")
+    @PreAuthorize("@pms.hasPermission('mes_wipTransfer_view')")
+    public R transferNextStations(
+            @PathVariable Long id, @RequestParam(required = false) Long afterId) {
+        return R.ok(nextStations.queryTransfer(id, afterId));
+    }
 
     @GetMapping("/source/{id}")
     @PreAuthorize("@pms.hasPermission('mes_wipTransfer_dispatch')")
@@ -24,8 +41,11 @@ public class MesWipTransferController {
 
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('mes_wipTransfer_view')")
-    public R page(@RequestParam(defaultValue = "1") long current, @RequestParam(defaultValue = "OPEN") String status,
-                  @RequestParam(required = false) Long sourceReportId, @RequestParam(required = false) String matCode) {
+    public R page(
+            @RequestParam(defaultValue = "1") long current,
+            @RequestParam(defaultValue = "OPEN") String status,
+            @RequestParam(required = false) Long sourceReportId,
+            @RequestParam(required = false) String matCode) {
         return R.ok(service.page(current, status, sourceReportId, matCode));
     }
 
@@ -39,6 +59,8 @@ public class MesWipTransferController {
     @PreAuthorize("@pms.hasPermission('mes_wipTransfer_' + #operation)")
     @SysLog("在制实物转运交接")
     public R command(@PathVariable String operation, @RequestBody MesWipTransferCommand command) {
+        if (command.getDispatchTarget() != null)
+            throw new IllegalArgumentException("绑定工序目标须使用版本2原请求接口");
         command.setOperationType(operation.toUpperCase(Locale.ROOT));
         return R.ok(service.execute(command));
     }

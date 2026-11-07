@@ -1,5 +1,7 @@
 package com.kitex.mom.mes.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.kitex.mom.mdm.dto.MdmProcedureLaborStandardDTO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
@@ -14,6 +16,11 @@ import java.util.List;
  */
 @Data
 public class MdmProcessRouteWorkingDTO {
+
+    /** 原批准工程包的工序时间标准；历史缺失不从当前主数据补齐。 */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private MdmProcedureLaborStandardDTO laborStandard;
+
     /**
      * 来源真实路线节点；旧已下达快照保持为空，不从当前MDM反推。
      */

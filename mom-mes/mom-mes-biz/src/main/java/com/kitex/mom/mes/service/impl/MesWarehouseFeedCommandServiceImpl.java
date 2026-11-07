@@ -49,6 +49,7 @@ public class MesWarehouseFeedCommandServiceImpl
     private final MesPhysicalTransformCodec codec;
     private final MesActualFactoryAccessService access;
     private final MesPhysicalTransformSourceScopeLock locks;
+    private final MesMaterialExecutionGuard materialExecution;
     private final MesTaskArrangeMapper arrangements;
     private final MesTaskMapper tasks;
     private final MesWarehouseFeedService feeds;
@@ -114,6 +115,8 @@ public class MesWarehouseFeedCommandServiceImpl
             require(candidates.size() == 1, "投料实际派工未唯一归属当前工厂");
             var initial = candidates.get(0);
             require(Objects.equals(initial.getTaskCode(), feed.getTaskCode()), "投料期望工单与实际派工不一致");
+            // 永久原号已在上方回读；只有新投料在任何父/派工行锁之前核修订冻结。
+            materialExecution.task(initial.getTaskCode());
             locks.task(tenant(), factory, initial.getTaskCode());
             var parents = tasks.selectList(new LambdaQueryWrapper<MesTaskEntity>()
                     .eq(MesTaskEntity::getTenantId, tenant()).eq(MesTaskEntity::getFactoryCode, factory)
@@ -137,7 +140,8 @@ public class MesWarehouseFeedCommandServiceImpl
             require("RECORDED".equals(birth.status()) && birth.birth() != null
                     && Objects.equals(birth.birth().getActorId(), actor())
                     && Objects.equals(birth.birth().getUnit(), commands.text(body, "expectedUnit"))
-                    && Objects.equals(birth.birth().getReceivingWorksiteCode() == null ? "" : birth.birth().getReceivingWorksiteCode(),
+                    && Objects.equals(
+                    birth.birth().getReceivingWorksiteCode() == null ? "" : birth.birth().getReceivingWorksiteCode(),
                     commands.text(body, "receivingWorksiteCode")), "真实投料原单位/本人/接收工位不一致，整笔回滚");
             row.setFeedId(feed.getId());
             row.setBirthId(birth.birth().getId());

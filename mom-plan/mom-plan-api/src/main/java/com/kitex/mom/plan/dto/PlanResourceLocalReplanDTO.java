@@ -60,6 +60,8 @@ public final class PlanResourceLocalReplanDTO {
     public static class CaseQuery {
         private String caseNo;
         private String issueNo;
+        @Schema(description = "原业务定位按案件号和计划号精确匹配；未开启保持手工列表模糊查询")
+        private Boolean exactMatch;
         private String resourceType;
         private String resourceCode;
         private String status;

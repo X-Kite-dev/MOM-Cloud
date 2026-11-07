@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -119,12 +121,21 @@ public class MesExecutionTemplateEntity extends BaseEntity<MesExecutionTemplateE
     @Schema(description = "是否允许超出派工数量报工")
     private Boolean overReportAllowed;
 
-    @Schema(description = "允许超报比例，例如0.05表示5%")
-    private BigDecimal overReportRate;
+	/**
+	 * 允许超报比例，0至1之间且最多六位小数；例如0.05表示5%，响应以精确十进制文本返回。
+	 */
+	@Schema(description = "允许超报比例，0至1且最多六位小数，例如0.05表示5%；响应为精确文本")
+	@JsonSerialize(using = ToStringSerializer.class)
+	private BigDecimal overReportRate;
 
-    @Schema(description = "单次报工数量上限；为空表示不额外限制")
-    @TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
-    private BigDecimal maxSingleQuantity;
+	/**
+	 * 单次报工数量上限，单位沿派工物料；可空表示不额外限制，正数且小于一万亿、最多八位小数。
+	 * 响应以精确十进制文本返回，避免编辑回传时丢失精度。
+	 */
+	@Schema(description = "单次报工数量上限，单位沿派工物料；可空，正数且小于一万亿、最多八位小数；响应为精确文本")
+	@JsonSerialize(using = ToStringSerializer.class)
+	@TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+	private BigDecimal maxSingleQuantity;
 
     @Schema(description = "报工前是否必须校验前置工序")
     private Boolean predecessorRequired;

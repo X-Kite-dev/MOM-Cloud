@@ -1,5 +1,7 @@
 package com.kitex.mom.mes.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.kitex.mom.mdm.dto.MdmProcedureLaborStandardDTO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
@@ -8,6 +10,11 @@ import java.util.List;
 
 @Data
 public class ProcessProcedureDTO {
+
+    /** 原批准工程包的工序时间标准；历史缺失不从当前主数据补齐。 */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private MdmProcedureLaborStandardDTO laborStandard;
+
 
     @Schema(description = "主键ID")
     private String id;
@@ -107,6 +114,10 @@ public class ProcessProcedureDTO {
 
     @Data
     public static class ProcessProcedureMatDTO {
+        /** 按原工程冻结的逐物料耗料方式；历史缺失保持空值。 */
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private String consumptionMode;
+
         @Schema(description = "主键ID")
         private String id;
 

@@ -25,28 +25,28 @@ import java.util.List;
 @Tag(description = "wmsReservationMovementPolicy", name = "WMS作业类型预留策略")
 @SecurityRequirement(name = HttpHeaders.AUTHORIZATION)
 public class WmsReservationMovementPolicyController {
-    private final WmsReservationMovementPolicyService service;
+	private final WmsReservationMovementPolicyService service;
 
-    @Operation(summary = "查询当前工厂的作业类型预留策略")
-    @GetMapping("/list")
-    @PreAuthorize("@pms.hasPermission('wms_reservationMovementPolicy_view')")
-    public R<List<WmsReservationMovementPolicyEntity>> list() {
-        return R.ok(service.listPolicies());
-    }
+	@Operation(summary = "查询当前工厂的作业类型预留策略")
+	@GetMapping("/list")
+	@PreAuthorize("@pms.hasPermission('wms_reservationMovementPolicy_view')")
+	public R<List<WmsReservationMovementPolicyEntity>> list() {
+		return R.ok(service.listPolicies());
+	}
 
-    @Operation(summary = "试算当前工厂作业类型的预留规则")
-    @GetMapping("/preview")
-    @PreAuthorize("@pms.hasPermission('wms_reservationMovementPolicy_view')")
-    public R<WmsReservationMovementPolicyService.Evaluation> preview(@RequestParam String movementType) {
-        return R.ok(service.preview(movementType));
-    }
+	@Operation(summary = "试算当前工厂作业类型的预留规则")
+	@GetMapping("/preview")
+	@PreAuthorize("@pms.hasPermission('wms_reservationMovementPolicy_view')")
+	public R<WmsReservationMovementPolicyService.Evaluation> preview(@RequestParam String movementType) {
+		return R.ok(service.preview(movementType));
+	}
 
-    @Operation(summary = "保存或停用作业类型预留策略")
-    @PostMapping
-    @SysLog("保存WMS作业类型预留策略")
-    @PreAuthorize("@pms.hasPermission('wms_reservationMovementPolicy_edit')")
-    public R<WmsReservationMovementPolicyEntity> save(
-            @RequestBody WmsReservationMovementPolicyEntity policy) {
-        return R.ok(service.savePolicy(policy));
-    }
+	@Operation(summary = "保存或停用作业类型预留策略")
+	@PostMapping
+	@SysLog("保存WMS作业类型预留策略")
+	@PreAuthorize("@pms.hasPermission('wms_reservationMovementPolicy_edit')")
+	public R<WmsReservationMovementPolicyEntity> save(
+			@RequestBody WmsReservationMovementPolicyEntity policy) {
+		throw new com.kitex.common.core.exception.CheckedException("请更新客户端并先读取配置版本后保存预留策略");
+	}
 }

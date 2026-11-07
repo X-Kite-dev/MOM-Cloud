@@ -76,6 +76,11 @@ public class QmsInspectionTraceService {
             isolation = Isolation.REPEATABLE_READ,
             propagation = Propagation.REQUIRES_NEW)
     public View view(String type, Long taskId) {
+        return inCurrentTransaction(type, taskId);
+    }
+
+    /** 领域协作沿用调用方事务，复用完整的来源、分支数量与成环校验。 */
+    View inCurrentTransaction(String type, Long taskId) {
         require("PROCEDURE".equals(type) || "PRODUCT".equals(type), "不支持的检验类型");
         if (!permissions.hasPermission(
                 ("PRODUCT".equals(type) ? "productTask" : "procedureTask") + ":show"))

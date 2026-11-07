@@ -9,6 +9,7 @@ import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.dto.MdmFactoryAccessCheck;
 import com.kitex.mom.mdm.feign.RemoteMdmFactoryAccessService;
 import com.kitex.mom.mes.entity.MesTaskEntity;
+import com.kitex.mom.mes.agent.service.MesProcessEffectCandidateQueryService;
 import com.kitex.mom.mes.mapper.MesTaskMapper;
 import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
 import jakarta.validation.Valid;
@@ -38,6 +39,16 @@ public class MesProcessProposalEvidenceController {
 
     private final ObjectMapper mapper;
     private final RemoteMdmFactoryAccessService factories;
+    private final MesProcessEffectCandidateQueryService effectCandidates;
+
+    /** 实施回采共用原MES工单，不加载知识正文或要求知识库权限。 */
+    @PostMapping("/candidates")
+    @PreAuthorize("@pms.hasPermission('mesTask:show')")
+    public R<MesProcessEffectCandidateQueryService.CandidatePage> candidates(
+            @Valid @RequestBody MesProcessEffectCandidateQueryService.CandidateQuery query) {
+        return R.ok(effectCandidates.candidates(query));
+    }
+
 
     @PostMapping("/source")
     @PreAuthorize("@pms.hasPermission('mesTask:show')")

@@ -1,6 +1,7 @@
 package com.kitex.mom.wms.service.impl;
 
 import cn.hutool.core.util.StrUtil;
+import com.kitex.mom.wms.service.inventoryapproval.WmsInventoryApprovalExecutionContext;
 import com.kitex.common.security.component.PermissionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -26,6 +27,10 @@ public class WmsInventoryWarehousePermission {
         if ("entry".equals(action) || "hand".equals(action)) {
             allowed = allowed || permissions.hasPermission(PREFIX + "edit");
         }
+		// 只桥接已核实际组织/仓/明细且持有事务锁的本次恢复申请；不放宽旧入口edit或其它动作。
+		if ("hand".equals(action)) {
+			allowed = allowed || WmsInventoryApprovalExecutionContext.submitWarehouseHand(warehouseCode);
+		}
         WmsInventoryPlanAccess.require(allowed, "无该仓库盘点" + actionName(action) + "权限");
     }
 

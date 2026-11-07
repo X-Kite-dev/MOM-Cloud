@@ -1,6 +1,7 @@
 package com.kitex.mom.wms.controller.app;
 
 import com.kitex.common.core.util.R;
+import com.kitex.mom.wms.dto.app.WmsMobileNoticeListDTO;
 import com.kitex.mom.wms.dto.app.WmsMobileReceiptHistoryDTO.Page;
 import com.kitex.mom.wms.dto.app.WmsMobileOutboundReceiptDTO.Cancellation;
 import com.kitex.mom.wms.dto.app.WmsMobileOutboundReceiptDTO.Command;
@@ -40,6 +41,24 @@ public class AppOutboundReceiptController {
 	public R<WmsOutBillEntity> sources(@RequestParam Long noticeId, @RequestParam String billType,
 	                                   @RequestParam(required = false) String warehouseCode) {
 		return R.ok(service.sources(noticeId, warehouseCode, billType));
+	}
+
+	/**
+	 * 读取当前授权仓库的出库候选，实际办理仍须重新读取完整来源。
+	 *
+	 * @param warehouseCode 实际单仓编码，不接受无仓查询
+	 * @param billType      当前出库入口，其他出库包含已启用的细分类型
+	 * @param reference     通知/来源编号或备注，可为空
+	 * @param page          1至100，每页最多20条
+	 * @return 当前实际组织和查询范围内的待办摘要
+	 */
+	@GetMapping("/notices")
+	@Operation(summary = "选择当前仓库待办通知")
+	public R<WmsMobileNoticeListDTO.Page> notices(@RequestParam String warehouseCode,
+	                                              @RequestParam String billType,
+	                                              @RequestParam(defaultValue = "") String reference,
+	                                              @RequestParam(defaultValue = "1") int page) {
+		return R.ok(service.pendingNotices(warehouseCode, billType, reference, page));
 	}
 
 	@GetMapping("/history")

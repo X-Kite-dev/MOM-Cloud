@@ -42,6 +42,7 @@ public class MesSopExecutionService {
     private final MesExecutionTaskLock taskLock;
     private final MesTerminalExecutionGuard terminalExecutionGuard;
     private final MesSopFreezeService formalSops;
+    private final MesInFlightSopChangeService inFlightSopChanges;
 
     private static void require(boolean ok, String message) {
         if (!ok) throw new CheckedException(message);
@@ -170,6 +171,7 @@ public class MesSopExecutionService {
         List<Map<String, String>> documents = new ArrayList<>();
         String status = "LEGACY_UNDECLARED";
         MesFormalSopNodeDTO formal = null;
+        Map<String, String> approvedChange = null;
         if (StrUtil.isNotBlank(snapshot)) {
             require(snapshot.getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= 2 * 1024 * 1024, "工艺快照超过2MiB，不能截断SOP证据");
             List<MdmProcessRouteWorkingDTO> route;
@@ -192,6 +194,10 @@ public class MesSopExecutionService {
                 formalSops.validateFrozen(formal, task.getTenantId().toString(), task.getFactoryCode(),
                         process.getProcessRouteCode(), process.getSourceRouteNodeCode(), process.getRouteCode());
             }
+            // 独立批准层只改变本稳定节点的正式SOP；原工程快照和旧签收事实仍保留。
+            var effective = inFlightSopChanges.effective(process, formal);
+            formal = effective.node();
+            approvedChange = effective.change();
             var sops = selected.get(0).getMdmProcessProcedureSopList();
             if (sops != null) {
                 require(sops.size() <= 50, "SOP引用超过50项，不能截断签收清单");
@@ -244,6 +250,7 @@ public class MesSopExecutionService {
         result.put("status", status);
         result.put("documents", documents);
         if (formal != null) result.put("formalSops", formal);
+        if (approvedChange != null) result.put("approvedSopChange", approvedChange);
         result.put("fingerprint", sha(JSONUtil.toJsonStr(Arrays.asList(task.getTenantId(), task.getFactoryCode(), task.getId(), task.getWorkerCode(), result))));
         return result;
     }

@@ -90,6 +90,12 @@ public interface QmsBadInfoService extends IService<QmsBadInfoEntity> {
 
     Map<String, Object> mesContext(Long detailId);
 
+    /**
+     * 沿原NCR和固定WMS请求号恢复初始隔离；特殊退回只使用永久Target，不能重新选同批库存。
+     * 专用登记必须在本地注册事务提交后，通过本服务独立代理调用；已成功特殊来源回读保持原号。
+     *
+     * @param id 当前实际租户工厂的NCR主键
+     */
     void retryHold(Long id);
 
     void retryDisposition(Long detailId);

@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.wms.entity.WmsWarehouseMenuEntity;
 import com.kitex.mom.wms.vo.WmsWarehouseBizCheckAppVO;
 import com.kitex.mom.wms.vo.WmsWarehouseBizCheckVO;
+import com.kitex.mom.wms.vo.WmsWarehouseConfigurationSnapshot;
+import com.kitex.mom.wms.vo.WmsWarehouseConfigurationCommand;
 
 import java.util.List;
 
@@ -37,6 +39,10 @@ public interface WmsWarehouseMenuService extends IService<WmsWarehouseMenuEntity
 	 * 提交选择的功能
 	 */
 	Boolean commitCheckBiz(List<WmsWarehouseBizCheckVO> list);
+
+	WmsWarehouseConfigurationSnapshot configurationSnapshot();
+
+	WmsWarehouseConfigurationSnapshot commitConfiguration(WmsWarehouseConfigurationCommand command);
 
 	/**
 	 * 同步系统菜单

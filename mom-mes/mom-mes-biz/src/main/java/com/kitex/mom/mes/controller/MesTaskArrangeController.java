@@ -122,8 +122,18 @@ public class MesTaskArrangeController {
     @Operation(summary = "查询详情", description = "查询详情")
     @GetMapping("/getCurrentTask")
     @PreAuthorize("@pms.hasPermission('mesTaskArrange:show')")
-    public R<MesArrangeTaskVO> getCurrentTask(String shiftCode, String workshopCode, String worksiteCode) {
-        return R.ok(service.getCurrentTask(shiftCode, workshopCode, worksiteCode));
+    public R<MesArrangeTaskVO> getCurrentTask(String shiftCode, String workshopCode, String worksiteCode,
+            Long arrangeId) {
+        return R.ok(service.getCurrentTask(shiftCode, workshopCode, worksiteCode, arrangeId));
+    }
+
+    /** 当前实名、班次、车间及实际工站的在制候选，分页只返回选择所需摘要。 */
+    @Operation(summary = "当前工站在制派工候选")
+    @GetMapping("/running-candidates")
+    @PreAuthorize("@pms.hasPermission('mesTaskArrange:show')")
+    public R<IPage<MesRunningDispatchVO>> runningCandidates(Page<MesTaskArrangeEntity> page,
+            String shiftCode, String workshopCode, String worksiteCode, String keyword) {
+        return R.ok(service.runningCandidates(page, shiftCode, workshopCode, worksiteCode, keyword));
     }
 
     @Operation(summary = "查询详情", description = "查询详情")

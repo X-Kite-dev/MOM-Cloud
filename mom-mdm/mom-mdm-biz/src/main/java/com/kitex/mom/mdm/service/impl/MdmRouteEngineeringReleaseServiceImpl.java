@@ -398,12 +398,12 @@ public class MdmRouteEngineeringReleaseServiceImpl
                 "工程版本对或冻结原文指纹不一致，请停止下达并联系管理员核查");
         verifyFrozenIdentity(release, scope);
 
-        MdmRouteEngineeringDTO.Preview current = builder.build(new MdmRouteEngineeringDTO.PreviewQuery()
+        MdmRouteEngineeringDTO.Preview current = builder.rebuildForExisting(new MdmRouteEngineeringDTO.PreviewQuery()
                 .setRouteId(release.getRouteId())
                 .setBomId(release.getBomId())
                 .setExpectedGraphRevision(release.getGraphRevision())
                 .setDeclarations(JSONUtil.toList(release.getApplicabilitySnapshot(),
-                        MdmRouteEngineeringDTO.Applicability.class)));
+                        MdmRouteEngineeringDTO.Applicability.class)), release.getBundleSnapshot());
         require(current.isReady(),
                 "工程版本当前来源已出现阻断项：" + String.join("；", current.getGaps()));
         require(Objects.equals(current.getGraphRevision(), release.getGraphRevision())
@@ -624,12 +624,12 @@ public class MdmRouteEngineeringReleaseServiceImpl
     private MdmRouteEngineeringDTO.Preview previewForRelease(
             MdmRouteEngineeringReleaseEntity release, Scope scope) {
         if (MdmRouteEngineeringDTO.PURPOSE_PRODUCTION.equals(releasePurpose(release))) {
-            return builder.build(new MdmRouteEngineeringDTO.PreviewQuery()
+            return builder.rebuildForExisting(new MdmRouteEngineeringDTO.PreviewQuery()
                     .setReleasePurpose(MdmRouteEngineeringDTO.PURPOSE_PRODUCTION)
                     .setRouteId(release.getRouteId()).setBomId(release.getBomId())
                     .setExpectedGraphRevision(release.getGraphRevision())
                     .setDeclarations(JSONUtil.toList(release.getApplicabilitySnapshot(),
-                            MdmRouteEngineeringDTO.Applicability.class)));
+                            MdmRouteEngineeringDTO.Applicability.class)), release.getBundleSnapshot());
         }
         MdmRouteEngineeringReleaseEntity base = releaseRow(release.getBaseReleaseId(), scope, false);
         require(MdmRouteEngineeringDTO.PURPOSE_PRODUCTION.equals(releasePurpose(base))

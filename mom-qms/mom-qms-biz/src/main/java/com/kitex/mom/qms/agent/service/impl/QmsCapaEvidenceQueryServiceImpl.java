@@ -205,6 +205,11 @@ public class QmsCapaEvidenceQueryServiceImpl implements QmsCapaEvidenceQueryServ
     private Map<String, Object> row(Object entity) {
         Map<String, Object> value = (Map<String, Object>) canonical(objectMapper.valueToTree(entity));
         value.remove("overdueFlag");
+        // 页面可选来源定位不属于原CAPA业务事实，装饰不能改变历史全量源指纹。
+        value.remove("aiSourceRequestId");
+        value.remove("aiSourceRunId");
+        value.remove("aiSourceArtifactId");
+        value.remove("aiSourceHypothesisId");
         return value;
     }
 

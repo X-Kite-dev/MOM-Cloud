@@ -222,9 +222,11 @@ public abstract class AbstractWmsOutNoticeHandler
     }
 
     @Override
-    public Page<WmsOutNoticeDetailEntity> pageDetails(Page page, WmsInNoticeDetailQueryDTO params) {
-        return wmsOutNoticeDetailMapper.fetchDetails(page, params, null);
-    }
+	public Page<WmsOutNoticeDetailEntity> pageDetails(Page page, WmsInNoticeDetailQueryDTO params) {
+		// 先核完整通知号，避免格式错误被MyBatis表达式包装成系统异常。
+		params.noticeIdValue();
+		return wmsOutNoticeDetailMapper.fetchDetails(page, params, null);
+	}
 
     @Override
     public WmsOutNoticeEntity selectById(Long id) {
@@ -677,22 +679,24 @@ public abstract class AbstractWmsOutNoticeHandler
      * @param ids    指定ID
      */
     @Override
-    public List<WmsOutNoticeDetailExcelVO> listDetails(WmsInNoticeDetailQueryDTO params, Long[] ids) {
-        List<WmsOutNoticeDetailEntity> list = wmsOutNoticeDetailMapper.fetchDetails(params, ids);
-        List<WmsOutNoticeDetailExcelVO> result = new ArrayList<>();
-        for (int i = 0; i < list.size(); i++) {
-            WmsOutNoticeDetailExcelVO vo = new WmsOutNoticeDetailExcelVO();
-            WmsOutNoticeDetailEntity entity = list.get(i);
-            BeanUtil.copyProperties(entity, vo);
-            vo.setRowNo(i + 1);
-            vo.setNoticeOutNum(entity.getNoticeOutNum() + entity.getMatUnit());
-            vo.setOutNum(entity.getOutNum() + entity.getMatUnit());
-            vo.setNotOutNum(entity.getNotOutNum() + entity.getMatUnit());
-            vo.setState(InOutNoticeStateEnum.getByCode(entity.getState()).getName());
-            result.add(vo);
-        }
-        return result;
-    }
+	public List<WmsOutNoticeDetailExcelVO> listDetails(WmsInNoticeDetailQueryDTO params, Long[] ids) {
+		// 先核完整通知号，避免格式错误被MyBatis表达式包装成系统异常。
+		params.noticeIdValue();
+		List<WmsOutNoticeDetailEntity> list = wmsOutNoticeDetailMapper.fetchDetails(params, ids);
+		List<WmsOutNoticeDetailExcelVO> result = new ArrayList<>();
+		for (int i = 0; i < list.size(); i++) {
+			WmsOutNoticeDetailExcelVO vo = new WmsOutNoticeDetailExcelVO();
+			WmsOutNoticeDetailEntity entity = list.get(i);
+			BeanUtil.copyProperties(entity, vo);
+			vo.setRowNo(i + 1);
+			vo.setNoticeOutNum(entity.getNoticeOutNum() + entity.getMatUnit());
+			vo.setOutNum(entity.getOutNum() + entity.getMatUnit());
+			vo.setNotOutNum(entity.getNotOutNum() + entity.getMatUnit());
+			vo.setState(InOutNoticeStateEnum.getByCode(entity.getState()).getName());
+			result.add(vo);
+		}
+		return result;
+	}
 
     /**
      * 作废生产领料出库通知单-通过业务单据

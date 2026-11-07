@@ -69,6 +69,8 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
     private final PermissionService permissionService;
     private final WmsPlanShortageEventOutboxService planShortageEventOutboxService;
     private final WmsWarehouseBusinessGuard warehouseBusinessGuard;
+    private final com.kitex.mom.wms.service.overreturn.WmsOverReturnDispatchSource overReturnSource;
+    private final com.kitex.mom.wms.service.overreturn.WmsOverReturnDispatchProtocol overReturnDispatch;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -303,48 +305,87 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void dispose(WmsTransferVarianceDTO.DispositionCommand command) {
-        require(command != null && command.getCaseId() != null, "差异单不能为空");
-        requireText(command.getRequestId(), "处置请求号不能为空");
-        requireText(command.getRemark(), "处置说明不能为空");
-        String snapshot = dispositionSnapshot(command);
-        WmsTransferVarianceCaseEntity entity = lockCase(command.getCaseId());
-        if (idempotentOperation(entity, command.getRequestId(), snapshot)) return;
-        require("PENDING_DISPOSITION".equals(entity.getStatus()), "差异单尚未完成全部审核或已处置");
-        require(!Objects.equals(entity.getReporterCode(), currentUserCode()), "差异申报人不能执行最终处置");
-        WmsAllocationBillEntity bill = lockBill(entity.getAllocationBillId());
-        List<WmsTransferVarianceLineEntity> lines = varianceLines(entity.getId());
-        boolean hasShort = lines.stream().anyMatch(line -> positive(line.getShortQuantity()));
-        boolean hasOver = lines.stream().anyMatch(line -> positive(line.getOverQuantity()));
-        if (hasShort) require(Set.of("SUPPLEMENT_TRANSFER", "CLAIM", "LOSS").contains(command.getShortDisposition()),
-                "短收处置必须选择补调、索赔或报损");
-        if (hasOver) require(Set.of("ACCEPT_TO_STOCK", "RETURN_TO_SOURCE").contains(command.getOverDisposition()),
-                "溢收处置必须选择批准入库或退回源仓");
-        if ("CLAIM".equals(command.getShortDisposition()))
-            requireText(command.getReferenceNo(), "索赔处置必须填写外部索赔单号");
+	public void dispose(WmsTransferVarianceDTO.DispositionCommand command) {
+		disposeInternal(command, false);
+	}
 
-        Long supplementBillId = null;
-        if ("SUPPLEMENT_TRANSFER".equals(command.getShortDisposition())) {
-            supplementBillId = createSupplementTransfer(entity, bill, lines, command);
-        }
-        if (hasOver) disposeOver(entity, bill, lines, command);
-        lines.forEach(line -> {
-            line.setHeldOverQuantity(BigDecimal.ZERO).setDispositionStatus("RESOLVED");
-            varianceLineMapper.updateById(line);
-        });
-        String before = entity.getStatus();
-        entity.setShortDisposition(hasShort ? command.getShortDisposition() : null)
-                .setOverDisposition(hasOver ? command.getOverDisposition() : null)
-                .setDispositionReferenceNo(StrUtil.trim(command.getReferenceNo()))
-                .setDispositionRemark(command.getRemark().trim()).setSupplementAllocationBillId(supplementBillId)
-                .setResolvedBy(currentUserCode()).setResolvedByName(currentUserName())
-                .setResolvedTime(LocalDateTime.now()).setStatus("RESOLVED");
-        bill.setAllocationState(DISCREPANCY_RESOLVED);
-        require(caseMapper.updateById(entity) == 1 && billMapper.updateById(bill) == 1, "差异处置状态更新失败");
-        saveOperation(entity, command.getRequestId(), snapshot, "DISPOSE", before, entity.getStatus(),
-                "短收=" + StrUtil.blankToDefault(command.getShortDisposition(), "无") + "，溢收="
-                        + StrUtil.blankToDefault(command.getOverDisposition(), "无") + "，说明=" + command.getRemark());
-    }
+    /** 新派出仍沿原短收处置和操作头，避免复制补调与Outbox副作用。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+	public void dispatchReturn(com.kitex.mom.wms.dto.WmsOverReturnDTO.DispatchCommand command) {
+		disposeInternal(command, true);
+	}
+
+	private void disposeInternal(WmsTransferVarianceDTO.DispositionCommand command, boolean dispatch) {
+		require(command != null && command.getCaseId() != null, "差异单不能为空");
+		requireText(command.getRequestId(), "处置请求号不能为空");
+		requireText(command.getRemark(), "处置说明不能为空");
+		String snapshot = dispatch ? overReturnDispatch.snapshot(
+				(com.kitex.mom.wms.dto.WmsOverReturnDTO.DispatchCommand) command) : dispositionSnapshot(command);
+		WmsTransferVarianceCaseEntity entity = lockCase(command.getCaseId());
+		if (idempotentOperation(entity, command.getRequestId(), snapshot)) {
+			return;
+		}
+		require(dispatch || !"RETURN_TO_SOURCE".equals(command.getOverDisposition()),
+				"首次溢收退回请使用确认退回发出入口");
+		require("PENDING_DISPOSITION".equals(entity.getStatus()), "差异单尚未完成全部审核或已处置");
+		require(!Objects.equals(entity.getReporterCode(), currentUserCode()), "差异申报人不能执行最终处置");
+		WmsAllocationBillEntity bill = lockBill(entity.getAllocationBillId());
+		List<WmsTransferVarianceLineEntity> lines = dispatch
+				? varianceLineMapper.selectList(new LambdaQueryWrapper<WmsTransferVarianceLineEntity>()
+				.eq(WmsTransferVarianceLineEntity::getTenantId, entity.getTenantId())
+				.eq(WmsTransferVarianceLineEntity::getFactoryCode, entity.getFactoryCode())
+				.eq(WmsTransferVarianceLineEntity::getCaseId, entity.getId())
+				.orderByAsc(WmsTransferVarianceLineEntity::getId).last("FOR UPDATE"))
+				: varianceLines(entity.getId());
+		boolean hasShort = lines.stream().anyMatch(line -> positive(line.getShortQuantity()));
+		boolean hasOver = lines.stream().anyMatch(line -> positive(line.getOverQuantity()));
+		if (hasShort) {
+			require(Set.of("SUPPLEMENT_TRANSFER", "CLAIM", "LOSS").contains(command.getShortDisposition()),
+					"短收处置必须选择补调、索赔或报损");
+		}
+		if (hasOver) {
+			require(Set.of("ACCEPT_TO_STOCK", "RETURN_TO_SOURCE").contains(command.getOverDisposition()),
+					"溢收处置必须选择批准入库或退回源仓");
+		}
+		if ("CLAIM".equals(command.getShortDisposition())) {
+			requireText(command.getReferenceNo(), "索赔处置必须填写外部索赔单号");
+		}
+
+		java.time.LocalDateTime dispatchTime = LocalDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+		if (dispatch) {
+			require(hasOver, "原案没有溢收实物");
+			overReturnSource.freeze(entity, bill, lines,
+					(com.kitex.mom.wms.dto.WmsOverReturnDTO.DispatchCommand) command, dispatchTime);
+		}
+		Long supplementBillId = null;
+		if ("SUPPLEMENT_TRANSFER".equals(command.getShortDisposition())) {
+			supplementBillId = createSupplementTransfer(entity, bill, lines, command);
+		}
+		if (!dispatch && hasOver) {
+			disposeOver(entity, bill, lines, command);
+		}
+		lines.forEach(line -> {
+			line.setHeldOverQuantity(BigDecimal.ZERO)
+					.setDispositionStatus(dispatch && positive(line.getOverQuantity()) ? "PENDING" : "RESOLVED");
+			require(varianceLineMapper.updateById(line) == 1, "差异处置行更新失败");
+		});
+		String before = entity.getStatus();
+		entity.setShortDisposition(hasShort ? command.getShortDisposition() : null)
+				.setOverDisposition(hasOver ? command.getOverDisposition() : null)
+				.setDispositionReferenceNo(StrUtil.trim(command.getReferenceNo()))
+				.setDispositionRemark(command.getRemark().trim()).setSupplementAllocationBillId(supplementBillId)
+				.setResolvedBy(dispatch ? null : currentUserCode())
+				.setResolvedByName(dispatch ? null : currentUserName())
+				.setResolvedTime(dispatch ? null : LocalDateTime.now())
+				.setStatus(dispatch ? "RETURN_IN_TRANSIT" : "RESOLVED");
+		bill.setAllocationState(dispatch ? DISCREPANCY_PENDING : DISCREPANCY_RESOLVED);
+		require(caseMapper.updateById(entity) == 1 && billMapper.updateById(bill) == 1, "差异处置状态更新失败");
+		saveOperation(entity, command.getRequestId(), snapshot, "DISPOSE", before, entity.getStatus(),
+				"短收=" + StrUtil.blankToDefault(command.getShortDisposition(), "无") + "，溢收="
+						+ StrUtil.blankToDefault(command.getOverDisposition(), "无") + "，说明=" + command.getRemark(),
+				dispatchTime);
+	}
 
     private void review(WmsTransferVarianceDTO.ReviewCommand command, String stage, String expectedStatus) {
         require(command != null && command.getCaseId() != null, "差异单不能为空");
@@ -501,49 +542,43 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
         return saved.getId();
     }
 
-    private void disposeOver(WmsTransferVarianceCaseEntity entity, WmsAllocationBillEntity bill,
-                             List<WmsTransferVarianceLineEntity> lines,
-                             WmsTransferVarianceDTO.DispositionCommand command) {
-        Map<Long, WmsTransferVarianceLineEntity> lineById = lines.stream()
-                .collect(Collectors.toMap(WmsTransferVarianceLineEntity::getId, Function.identity()));
-        List<WmsInoutFlowEntity> adjustments = flowMapper.selectList(new LambdaQueryWrapper<WmsInoutFlowEntity>()
-                .eq(WmsInoutFlowEntity::getVarianceCaseId, entity.getId())
-                .eq(WmsInoutFlowEntity::getTransferAction, "OVER_ISSUE_ADJUST")
-                .orderByAsc(WmsInoutFlowEntity::getId));
-        BigDecimal adjusted = adjustments.stream().map(this::quantity).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal declared = lines.stream().map(line -> value(line.getOverQuantity()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        require(adjusted.compareTo(declared) == 0, "溢收源仓补扣流水不完整，禁止处置");
-        MdmWarehouseEntity target = requireWarehouse(bill.getNewWarehouseCode(), bill.getFactoryCode());
-        MdmWarehouseEntity source = requireWarehouse(bill.getOldWarehouseCode(), bill.getFactoryCode());
-        for (WmsInoutFlowEntity adjustment : adjustments) {
-            WmsTransferVarianceLineEntity line = lineById.get(adjustment.getVarianceLineId());
-            require(line != null, "溢收补扣流水缺少差异明细");
-            if ("ACCEPT_TO_STOCK".equals(command.getOverDisposition())) {
-                MdmWarehouseLocationEntity site = requireLocation(line.getTargetSiteCode(), target.getWarehouseCode(), bill.getFactoryCode());
-                requireContainer(line.getTargetContainerCode(), target);
-                liveStockService.transferIn(adjustment, target.getWarehouseCode(), target.getWarehouseName(),
-                        site.getLocationCode(), site.getLocationName(), line.getTargetContainerCode());
-                WmsInoutFlowEntity inbound = inboundFlow(bill, adjustment, adjustment.getId(), target.getWarehouseCode(),
-                        target.getWarehouseName(), site.getLocationCode(), site.getLocationName(),
-                        line.getTargetContainerCode(), "OVER_ACCEPT", command.getRequestId());
-                inbound.setVarianceCaseId(entity.getId());
-                inbound.setVarianceLineId(line.getId());
-                require(flowMapper.insert(inbound) == 1, "溢收批准入库流水保存失败");
-                liveStockService.releaseTransferSourceContainer(adjustment);
-            } else {
-                requireContainer(adjustment.getContainerCode(), source);
-                liveStockService.transferIn(adjustment, source.getWarehouseCode(), source.getWarehouseName(),
-                        adjustment.getSiteCode(), adjustment.getSiteName(), adjustment.getContainerCode());
-                WmsInoutFlowEntity inbound = inboundFlow(bill, adjustment, adjustment.getId(), source.getWarehouseCode(),
-                        source.getWarehouseName(), adjustment.getSiteCode(), adjustment.getSiteName(),
-                        adjustment.getContainerCode(), "OVER_RETURN", command.getRequestId());
-                inbound.setVarianceCaseId(entity.getId());
-                inbound.setVarianceLineId(line.getId());
-                require(flowMapper.insert(inbound) == 1, "溢收退回源仓流水保存失败");
-            }
-        }
-    }
+	private void disposeOver(WmsTransferVarianceCaseEntity entity, WmsAllocationBillEntity bill,
+	                         List<WmsTransferVarianceLineEntity> lines,
+	                         WmsTransferVarianceDTO.DispositionCommand command) {
+		Map<Long, WmsTransferVarianceLineEntity> lineById = lines.stream()
+				.collect(Collectors.toMap(WmsTransferVarianceLineEntity::getId, Function.identity()));
+		List<WmsInoutFlowEntity> adjustments = flowMapper.selectList(new LambdaQueryWrapper<WmsInoutFlowEntity>()
+				.eq(WmsInoutFlowEntity::getVarianceCaseId, entity.getId())
+				.eq(WmsInoutFlowEntity::getTransferAction, "OVER_ISSUE_ADJUST")
+				.orderByAsc(WmsInoutFlowEntity::getId));
+		BigDecimal adjusted = adjustments.stream().map(this::quantity).reduce(BigDecimal.ZERO, BigDecimal::add);
+		BigDecimal declared = lines.stream().map(line -> value(line.getOverQuantity()))
+				.reduce(BigDecimal.ZERO, BigDecimal::add);
+		require(adjusted.compareTo(declared) == 0, "溢收源仓补扣流水不完整，禁止处置");
+		MdmWarehouseEntity target = requireWarehouse(bill.getNewWarehouseCode(), bill.getFactoryCode());
+		MdmWarehouseEntity source = requireWarehouse(bill.getOldWarehouseCode(), bill.getFactoryCode());
+		for (WmsInoutFlowEntity adjustment : adjustments) {
+			WmsTransferVarianceLineEntity line = lineById.get(adjustment.getVarianceLineId());
+			require(line != null, "溢收补扣流水缺少差异明细");
+			if ("ACCEPT_TO_STOCK".equals(command.getOverDisposition())) {
+				MdmWarehouseLocationEntity site = requireLocation(line.getTargetSiteCode(), target.getWarehouseCode(),
+						bill.getFactoryCode());
+				requireContainer(line.getTargetContainerCode(), target);
+				liveStockService.transferIn(adjustment, target.getWarehouseCode(), target.getWarehouseName(),
+						site.getLocationCode(), site.getLocationName(), line.getTargetContainerCode());
+				WmsInoutFlowEntity inbound = inboundFlow(bill, adjustment, adjustment.getId(),
+						target.getWarehouseCode(),
+						target.getWarehouseName(), site.getLocationCode(), site.getLocationName(),
+						line.getTargetContainerCode(), "OVER_ACCEPT", command.getRequestId());
+				inbound.setVarianceCaseId(entity.getId());
+				inbound.setVarianceLineId(line.getId());
+				require(flowMapper.insert(inbound) == 1, "溢收批准入库流水保存失败");
+				liveStockService.releaseTransferSourceContainer(adjustment);
+			} else {
+				throw new CheckedException("首次溢收退回请使用确认退回发出入口");
+			}
+		}
+	}
 
     private WmsTransferVarianceCaseEntity createVarianceCase(WmsAllocationBillEntity bill,
                                                              WmsTransferReceiptEntity receipt,
@@ -692,27 +727,37 @@ public class WmsTransferVarianceServiceImpl implements WmsTransferVarianceServic
         return JSONUtil.toJsonStr(snapshot);
     }
 
-    private boolean idempotentOperation(WmsTransferVarianceCaseEntity entity, String requestId, String snapshot) {
-        WmsTransferVarianceOperationEntity existing = operationMapper.selectOne(
-                new LambdaQueryWrapper<WmsTransferVarianceOperationEntity>()
-                        .eq(WmsTransferVarianceOperationEntity::getRequestId, requestId));
-        if (existing == null) return false;
-        require(Objects.equals(existing.getRequestSnapshot(), snapshot), "差异处理幂等号已被不同请求使用");
-        require(Objects.equals(existing.getCaseId(), entity.getId())
-                && Objects.equals(existing.getFactoryCode(), entity.getFactoryCode()), "差异处理幂等号不属于当前差异单");
-        require(Objects.equals(existing.getOperatorCode(), currentUserCode()), "差异处理幂等号不属于当前操作人");
-        return true;
-    }
+	private boolean idempotentOperation(WmsTransferVarianceCaseEntity entity, String requestId, String snapshot) {
+		WmsTransferVarianceOperationEntity existing = operationMapper.selectOne(
+				new LambdaQueryWrapper<WmsTransferVarianceOperationEntity>()
+						.eq(WmsTransferVarianceOperationEntity::getRequestId, requestId));
+		if (existing == null) {
+			return false;
+		}
+		require(!"DISPOSE_END".equals(existing.getOperationType()), "原派出请求已永久结束");
+		require(Objects.equals(existing.getRequestSnapshot(), snapshot), "差异处理幂等号已被不同请求使用");
+		require(Objects.equals(existing.getCaseId(), entity.getId())
+						&& Objects.equals(existing.getFactoryCode(), entity.getFactoryCode()),
+				"差异处理幂等号不属于当前差异单");
+		require(Objects.equals(existing.getOperatorCode(), currentUserCode()), "差异处理幂等号不属于当前操作人");
+		return true;
+	}
 
-    private void saveOperation(WmsTransferVarianceCaseEntity entity, String requestId, String requestSnapshot,
-                               String type, String before, String after, String content) {
-        WmsTransferVarianceOperationEntity operation = new WmsTransferVarianceOperationEntity()
-                .setCaseId(entity.getId()).setRequestId(requestId).setRequestSnapshot(requestSnapshot)
-                .setOperationType(type).setBeforeStatus(before).setAfterStatus(after).setOperationContent(content)
-                .setOperatorCode(currentUserCode()).setOperatorName(currentUserName())
-                .setOperationTime(LocalDateTime.now()).setFactoryCode(entity.getFactoryCode());
-        require(operationMapper.insert(operation) == 1, "差异操作履历保存失败");
-    }
+	private void saveOperation(WmsTransferVarianceCaseEntity entity, String requestId, String requestSnapshot,
+	                           String type, String before, String after, String content) {
+		saveOperation(entity, requestId, requestSnapshot, type, before, after, content, LocalDateTime.now());
+	}
+
+    /** 派出头与manifest使用同一微秒事件时间，避免生成两个不同的发出事实。 */
+	private void saveOperation(WmsTransferVarianceCaseEntity entity, String requestId, String requestSnapshot,
+	                           String type, String before, String after, String content, LocalDateTime eventTime) {
+		WmsTransferVarianceOperationEntity operation = new WmsTransferVarianceOperationEntity()
+				.setCaseId(entity.getId()).setRequestId(requestId).setRequestSnapshot(requestSnapshot)
+				.setOperationType(type).setBeforeStatus(before).setAfterStatus(after).setOperationContent(content)
+				.setOperatorCode(currentUserCode()).setOperatorName(currentUserName())
+				.setOperationTime(eventTime).setFactoryCode(entity.getFactoryCode());
+		require(operationMapper.insert(operation) == 1, "差异操作履历保存失败");
+	}
 
     private WmsAllocationBillEntity lockBill(Long id) {
         WmsAllocationBillEntity bill = billMapper.selectOne(new LambdaQueryWrapper<WmsAllocationBillEntity>()

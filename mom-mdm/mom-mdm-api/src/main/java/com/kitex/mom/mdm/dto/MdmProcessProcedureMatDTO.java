@@ -15,16 +15,22 @@ import java.util.List;
 @Data
 public class MdmProcessProcedureMatDTO {
 
-    /**
-     * 工艺路线-工序表主键ID
-     */
-    @Schema(description = "工艺路线-工序表主键ID")
-    private Long id;
+	/**
+	 * 工艺路线-工序表主键ID
+	 */
+	@Schema(description = "工艺路线-工序表主键ID")
+	private Long id;
 
-    /**
-     * 工序投料列表
-     */
-    @Schema(description = "工序投料列表")
-    private List<MdmProcessProcedureMatEntity> matList;
+	/**
+	 * 工序投料列表
+	 */
+	@Schema(description = "工序投料列表")
+	private List<MdmProcessProcedureMatEntity> matList;
+
+	/**
+	 * 显式切换策略；缺省/INHERIT仅能沿用旧统一设置，不能擦除已激活逐料配置。
+	 */
+	@Schema(description = "耗料策略：INHERIT、FEED、BACKFLUSH、PER_MATERIAL")
+	private String consumptionPolicy;
 
 }

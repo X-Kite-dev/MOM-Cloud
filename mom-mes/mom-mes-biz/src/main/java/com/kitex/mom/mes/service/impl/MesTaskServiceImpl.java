@@ -54,6 +54,7 @@ import com.kitex.mom.wms.enums.DocumentEnum;
 import com.kitex.mom.wms.enums.InBillTypeEnum;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -67,7 +68,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 工单获取
+ * 生产工单接单、工程冻结下达、草稿维护及计划/质量/仓储衔接。
  *
  * @author kitex
  * @since 2025-05-06
@@ -122,6 +123,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     private final MesManualTaskService manualTasks;
     private final MesProductionOrderService productionOrderService;
     private final MesPlanCompletionOutboxService planCompletionOutbox;
+	private final MesTaskCommandGuard taskCommands;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -552,6 +554,10 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         }
 
         MesPlanSourceMappingDTO result = new MesPlanSourceMappingDTO()
+                .setProductCode(mappedTask.getMatCode())
+                .setEngineeringReleaseId(mappedTask.getEngineeringReleaseId() == null ? null
+                        : mappedTask.getEngineeringReleaseId().toString())
+                .setEngineeringContentHash(mappedTask.getEngineeringContentHash())
                 .setRequestedTaskCode(requestedTask).setRequestedProduceTaskCode(requestedProduce)
                 .setMesTaskId(mappedTask.getId()).setMesTaskCode(mappedTask.getCode())
                 .setProduceTaskId(produceTask == null ? null : produceTask.getId())
@@ -722,49 +728,79 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         return StrUtil.isBlank(value) ? null : value.trim();
     }
 
-    /**
-     * 查询分页
-     *
-     * @param pageParam
-     * @param query
-     * @return
-     */
-    @Override
-    public IPage<MesTaskEntity> queryPage(Page<MesTaskEntity> pageParam, MesTaskEntity query) {
-        QueryWrapper<MesTaskEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
-        autoQueryWrapper.lambda().orderByDesc(MesTaskEntity::getCreateTime);
-        IPage<MesTaskEntity> page = this.page(pageParam, autoQueryWrapper);
-        // 工单的任务id
-        List<String> collect = page.getRecords().stream().map(MesTaskEntity::getCode).collect(Collectors.toList());
-        if (CollUtil.isEmpty(collect)) {
-            return page;
-        }
-        List<MesProduceTaskEntity> list = produceTaskService.list(Wrappers.<MesProduceTaskEntity>lambdaQuery().in(MesProduceTaskEntity::getTaskCode, collect));
-        page.getRecords().forEach(item -> {
-            List<RouteProcessDTO> processDTOS = new ArrayList<>();
-            //获取对应的工序任务进度
-            List<MesProduceTaskEntity> mesProduceTask = list.stream().filter(task -> task.getTaskCode().equals(item.getCode())).toList();
-            if (CollUtil.isNotEmpty(mesProduceTask)) {
-                mesProduceTask.forEach(task -> {
-                    RouteProcessDTO process = new RouteProcessDTO();
-                    process.setProcessName(task.getRouteName());
-                    process.setFinishNum(task.getCompleteNum() != null ? task.getCompleteNum() : BigDecimal.ZERO);
-                    if (task.getNoticeNum() != null && task.getNoticeNum().compareTo(BigDecimal.ZERO) > 0) {
-                        BigDecimal percent = task.getCompleteNum() != null ?
-                                task.getCompleteNum().multiply(new BigDecimal("100")).divide(task.getNoticeNum(), 2, RoundingMode.HALF_UP) :
-                                BigDecimal.ZERO;
-                        process.setPercent(percent);
-                    } else {
-                        process.setPercent(BigDecimal.ZERO);
-                    }
-                    processDTOS.add(process);
-                });
-                item.setProcessList(processDTOS);
-            }
-        });
-
-        return page;
-    }
+	/**
+	 * 查询当前实名租户、实际读取工厂的生产工单及其同组织工序进度。
+	 * 客户端组织字段仅作为筛选输入，不能扩大服务端实际范围；跨组织或编码歧义返回明确失败。
+	 *
+	 * @param pageParam 分页条件
+	 * @param query 业务筛选；非空组织条件必须与当前实际租户、工厂一致
+	 * @return 当前工厂工单分页，工序进度只关联本页原工单的同组织来源
+	 */
+	@Override
+	public IPage<MesTaskEntity> queryPage(Page<MesTaskEntity> pageParam, MesTaskEntity query) {
+		String factory = factoryAccess.require("read");
+		Long tenant = TenantContextHolder.getTenantId();
+		if (tenant == null || tenant <= 0 || pageParam == null || query == null) {
+			throw new CheckedException("生产工单分页缺少实际租户或有效查询条件");
+		}
+		if (query.getTenantId() != null && !Objects.equals(query.getTenantId(), tenant)
+				|| StrUtil.isNotBlank(query.getFactoryCode()) && !Objects.equals(query.getFactoryCode(), factory)) {
+			throw new CheckedException("生产工单筛选组织与当前实际租户、工厂不一致");
+		}
+		QueryWrapper<MesTaskEntity> autoQueryWrapper = QueryGenerator.initQueryWrapper(query);
+		// 不能依赖客户端factory LIKE或通用拦截器；父单和子进度分别精确限定同一真实组织。
+		autoQueryWrapper.lambda().eq(MesTaskEntity::getTenantId, tenant)
+				.eq(MesTaskEntity::getFactoryCode, factory).orderByDesc(MesTaskEntity::getCreateTime);
+		IPage<MesTaskEntity> page = this.page(pageParam, autoQueryWrapper);
+		if (page == null || page.getRecords() == null) {
+			throw new CheckedException("生产工单分页结果无法核验");
+		}
+		Set<String> taskCodes = new LinkedHashSet<>();
+		for (MesTaskEntity task : page.getRecords()) {
+			if (task == null || task.getId() == null || task.getId() <= 0
+					|| !Objects.equals(task.getTenantId(), tenant) || !Objects.equals(task.getFactoryCode(), factory)
+					|| StrUtil.isBlank(task.getCode()) || !taskCodes.add(task.getCode())) {
+				throw new CheckedException("工单分页归属缺失、跨组织或编码不唯一，禁止混合工序进度");
+			}
+		}
+		if (taskCodes.isEmpty()) {
+			return page;
+		}
+		List<MesProduceTaskEntity> processes = produceTaskService.list(Wrappers.<MesProduceTaskEntity>lambdaQuery()
+				.eq(MesProduceTaskEntity::getTenantId, tenant).eq(MesProduceTaskEntity::getFactoryCode, factory)
+				.in(MesProduceTaskEntity::getTaskCode, taskCodes));
+		if (processes == null || processes.stream().anyMatch(process -> process == null
+				|| !Objects.equals(process.getTenantId(), tenant) || !Objects.equals(process.getFactoryCode(), factory)
+				|| !taskCodes.contains(process.getTaskCode()))) {
+			throw new CheckedException("工单工序进度来源不属于当前实际租户、工厂或本页工单");
+		}
+		Map<String, List<MesProduceTaskEntity>> processesByTask = processes.stream()
+				.collect(Collectors.groupingBy(MesProduceTaskEntity::getTaskCode));
+		for (MesTaskEntity item : page.getRecords()) {
+			List<MesProduceTaskEntity> members = processesByTask.getOrDefault(item.getCode(), List.of());
+			if (members.isEmpty()) {
+				continue;
+			}
+			List<RouteProcessDTO> processDTOS = new ArrayList<>();
+			for (MesProduceTaskEntity task : members) {
+				RouteProcessDTO process = new RouteProcessDTO();
+				process.setProcessName(task.getRouteName());
+				process.setFinishNum(task.getCompleteNum() != null ? task.getCompleteNum() : BigDecimal.ZERO);
+				if (task.getNoticeNum() != null && task.getNoticeNum().compareTo(BigDecimal.ZERO) > 0) {
+					BigDecimal percent = task.getCompleteNum() != null
+							? task.getCompleteNum().multiply(new BigDecimal("100"))
+									.divide(task.getNoticeNum(), 2, RoundingMode.HALF_UP)
+								: BigDecimal.ZERO;
+					process.setPercent(percent);
+				} else {
+					process.setPercent(BigDecimal.ZERO);
+				}
+				processDTOS.add(process);
+			}
+			item.setProcessList(processDTOS);
+		}
+		return page;
+	}
 
     /**
      * 根据生产计划生成生产工单
@@ -1410,336 +1446,377 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         return StrUtil.blankToDefault(current.getMessage(), current.getClass().getSimpleName());
     }
 
-    /**
-     * 生产工单编辑
-     *
-     * @param mesTask
-     */
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void edit(MesTaskEntity mesTask) {
-        if (mesTask == null || mesTask.getId() == null) {
-            throw new CheckedException("生产工单不存在，无法编辑");
-        }
-        MesTaskEntity persisted = this.getById(mesTask.getId());
-        if (persisted == null) {
-            throw new CheckedException("生产工单不存在，无法编辑");
-        }
-        if (!MesTaskStatusEnum.CREATE.name().equals(persisted.getStatus())) {
-            throw new CheckedException("生产工单任务已下达或开始，无法进行编辑操作");
-        }
-        if (MesManualTaskService.owns(persisted)) {
-            manualTasks.editDraft(mesTask);
-            return;
-        }
-        mesTask.setStatus(persisted.getStatus());
-        if (StrUtil.isNotBlank(persisted.getApsOperationSnapshot())) {
-            mesTask.setPlanNo(persisted.getPlanNo());
-            mesTask.setType(persisted.getType());
-            mesTask.setMatCode(persisted.getMatCode());
-            mesTask.setMatName(persisted.getMatName());
-            mesTask.setMatSpec(persisted.getMatSpec());
-            mesTask.setNoticeNum(persisted.getNoticeNum());
-            mesTask.setPlanStartDate(persisted.getPlanStartDate());
-            mesTask.setPlanEndDate(persisted.getPlanEndDate());
-            mesTask.setWorkshopCode(persisted.getWorkshopCode());
-            mesTask.setWorkshopName(persisted.getWorkshopName());
-            mesTask.setProcessRouteCode(persisted.getProcessRouteCode());
-            mesTask.setResourceType(persisted.getResourceType());
-            mesTask.setResourceId(persisted.getResourceId());
-            mesTask.setMaterialReservationSnapshot(persisted.getMaterialReservationSnapshot());
-            mesTask.setApsOperationSnapshot(persisted.getApsOperationSnapshot());
-            mesTask.setApsTaskId(persisted.getApsTaskId());
-            mesTask.setApsBatchId(persisted.getApsBatchId());
-            mesTask.setApsBatchNo(persisted.getApsBatchNo());
-            mesTask.setApsBatchType(persisted.getApsBatchType());
-            mesTask.setApsBatchFingerprint(persisted.getApsBatchFingerprint());
-            mesTask.setFactoryCode(persisted.getFactoryCode());
-        }
-        if (persisted.getEngineeringReleaseId() != null) {
-            assertEngineeringSourceUnchanged(persisted, mesTask);
-            // 工程版本工单的计划与产品事实只能由上游受控变更，不接受MES通用编辑入口覆盖。
-            mesTask.setPlanNo(persisted.getPlanNo());
-            mesTask.setProductionOrder(persisted.getProductionOrder());
-            mesTask.setType(persisted.getType());
-            mesTask.setMatCode(persisted.getMatCode());
-            mesTask.setMatName(persisted.getMatName());
-            mesTask.setMatSpec(persisted.getMatSpec());
-            mesTask.setNoticeNum(persisted.getNoticeNum());
-            mesTask.setPlanStartDate(persisted.getPlanStartDate());
-            mesTask.setPlanEndDate(persisted.getPlanEndDate());
-            mesTask.setWorkshopCode(persisted.getWorkshopCode());
-            mesTask.setWorkshopName(persisted.getWorkshopName());
-            mesTask.setFactoryCode(persisted.getFactoryCode());
-            mesTask.setEngineeringReleaseId(persisted.getEngineeringReleaseId());
-            mesTask.setEngineeringContentHash(persisted.getEngineeringContentHash());
-            mesTask.setEngineeringVersionNo(persisted.getEngineeringVersionNo());
-            mesTask.setEngineeringBundleSnapshot(persisted.getEngineeringBundleSnapshot());
-            mesTask.setProcessRouteId(persisted.getProcessRouteId());
-            mesTask.setProcessRouteCode(persisted.getProcessRouteCode());
-            mesTask.setProcessRouteSnapshot(persisted.getProcessRouteSnapshot());
-            mesTask.setBomId(persisted.getBomId());
-            mesTask.setBomVersion(persisted.getBomVersion());
-            mesTask.setBomSnapshot(persisted.getBomSnapshot());
-        }
-        mesTask.setUnInStockNum(BigDecimal.ZERO);
-//        if (MesTaskTypeEnum.PRODUCT.name().equals(mesTask.getType())) {
-//            mesTask.setUnInStockNum(mesTask.getNoticeNum());
-//        }
-        if (!this.updateById(mesTask)) {
-            throw new CheckedException("生产工单保存失败，请刷新后重试");
-        }
-    }
+	/**
+	 * 只在真实父工单根锁及CREATE行锁内编辑允许配置；来源及执行事实不接受整实体回写。
+	 * 手工单继续其原冻结来源校验，其他草稿按原工程/APS/返工约束决定可维护字段。
+	 *
+	 * @param incoming 含精确ID的草稿修改；空值沿原部分更新合同，不表示清除冻结字段
+	 */
+	@Override
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+	public void edit(MesTaskEntity incoming) {
+		if (incoming == null) {
+			throw new CheckedException("生产工单不存在，无法编辑");
+		}
+		MesTaskEntity persisted = taskCommands.lock(incoming.getId());
+		if (!MesTaskStatusEnum.CREATE.name().equals(persisted.getStatus())) {
+			throw new CheckedException("生产工单已下达或开始，无法编辑");
+		}
+		taskCommands.requireNoChildren(persisted);
+		if (MesManualTaskService.owns(persisted)) {
+			manualTasks.editDraft(incoming);
+			return;
+		}
+		if (persisted.getEngineeringReleaseId() != null) {
+			assertEngineeringSourceUnchanged(persisted, incoming);
+		}
+		boolean legacySourceEditable = persisted.getEngineeringReleaseId() == null
+				&& StrUtil.isBlank(persisted.getApsOperationSnapshot())
+				&& persisted.getApsTaskId() == null && persisted.getApsBatchId() == null
+				&& StrUtil.isBlank(persisted.getApsBatchNo()) && StrUtil.isBlank(persisted.getApsBatchFingerprint())
+				&& persisted.getFormalPlanContractId() == null && StrUtil.isBlank(persisted.getFormalPlanContractNo())
+				&& StrUtil.isBlank(persisted.getFormalPlanAllocationSnapshot())
+				&& StrUtil.isBlank(persisted.getSourceRequestId())
+				&& !"REWORK".equals(persisted.getResourceType()) && !"MANUAL".equals(persisted.getResourceType());
+		assertDraftFieldsUnchanged(persisted, incoming, legacySourceEditable);
+		LambdaUpdateWrapper<MesTaskEntity> update = draftCondition(persisted)
+				.set(incoming.getBatchRuleCode() != null, MesTaskEntity::getBatchRuleCode, incoming.getBatchRuleCode())
+				.set(incoming.getWrapCode() != null, MesTaskEntity::getWrapCode, incoming.getWrapCode())
+				.set(incoming.getWrapCapacity() != null, MesTaskEntity::getWrapCapacity, incoming.getWrapCapacity())
+				.set(incoming.getTransferCode() != null, MesTaskEntity::getTransferCode, incoming.getTransferCode())
+				.set(MesTaskEntity::getUpdateBy, SecurityUtils.getAuthentication().getName())
+				.set(MesTaskEntity::getUpdateTime, LocalDateTime.now());
+		if (legacySourceEditable) {
+			update.set(incoming.getType() != null, MesTaskEntity::getType, incoming.getType())
+					.set(incoming.getMatCode() != null, MesTaskEntity::getMatCode, incoming.getMatCode())
+					.set(incoming.getMatName() != null, MesTaskEntity::getMatName, incoming.getMatName())
+					.set(incoming.getMatSpec() != null, MesTaskEntity::getMatSpec, incoming.getMatSpec())
+					.set(incoming.getNoticeNum() != null, MesTaskEntity::getNoticeNum, incoming.getNoticeNum())
+					.set(incoming.getPlanStartDate() != null, MesTaskEntity::getPlanStartDate,
+							incoming.getPlanStartDate())
+					.set(incoming.getPlanEndDate() != null, MesTaskEntity::getPlanEndDate, incoming.getPlanEndDate())
+					.set(incoming.getWorkshopCode() != null, MesTaskEntity::getWorkshopCode, incoming.getWorkshopCode())
+					.set(incoming.getWorkshopName() != null, MesTaskEntity::getWorkshopName, incoming.getWorkshopName())
+					.set(incoming.getProcessRouteId() != null, MesTaskEntity::getProcessRouteId,
+							incoming.getProcessRouteId())
+					.set(incoming.getProcessRouteCode() != null, MesTaskEntity::getProcessRouteCode,
+							incoming.getProcessRouteCode())
+					.set(incoming.getProcessRouteSnapshot() != null, MesTaskEntity::getProcessRouteSnapshot,
+							incoming.getProcessRouteSnapshot())
+					.set(incoming.getBomId() != null, MesTaskEntity::getBomId, incoming.getBomId())
+					.set(incoming.getBomVersion() != null, MesTaskEntity::getBomVersion, incoming.getBomVersion())
+					.set(incoming.getBomSnapshot() != null, MesTaskEntity::getBomSnapshot, incoming.getBomSnapshot());
+		}
+		if (baseMapper.update(null, update) != 1) {
+			throw new CheckedException("生产工单草稿保存未命中原状态，已回滚");
+		}
+	}
 
-    /**
-     * 工程版本工单拒绝客户端携带的不同源事实，避免“服务端静默覆盖后看似保存成功”。
-     * 对旧客户端未发送的新字段保持兼容，但最终始终回填数据库中的冻结值。
-     */
-    private void assertEngineeringSourceUnchanged(MesTaskEntity persisted, MesTaskEntity incoming) {
-        boolean engineeringChanged = incoming.getEngineeringReleaseId() != null
-                && !Objects.equals(persisted.getEngineeringReleaseId(), incoming.getEngineeringReleaseId());
-        engineeringChanged |= StrUtil.isNotBlank(incoming.getEngineeringContentHash())
-                && !Objects.equals(persisted.getEngineeringContentHash(), incoming.getEngineeringContentHash());
-        engineeringChanged |= incoming.getEngineeringVersionNo() != null
-                && !Objects.equals(persisted.getEngineeringVersionNo(), incoming.getEngineeringVersionNo());
-        boolean productChanged = StrUtil.isNotBlank(incoming.getMatCode())
-                && !Objects.equals(persisted.getMatCode(), incoming.getMatCode());
-        boolean quantityChanged = incoming.getNoticeNum() != null
-                && !sameDecimal(persisted.getNoticeNum(), incoming.getNoticeNum());
-        boolean routeChanged = incoming.getProcessRouteId() != null
-                && !Objects.equals(persisted.getProcessRouteId(), incoming.getProcessRouteId());
-        routeChanged |= StrUtil.isNotBlank(incoming.getProcessRouteCode())
-                && !Objects.equals(persisted.getProcessRouteCode(), incoming.getProcessRouteCode());
-        boolean bomChanged = incoming.getBomId() != null
-                && !Objects.equals(persisted.getBomId(), incoming.getBomId());
-        bomChanged |= StrUtil.isNotBlank(incoming.getBomVersion())
-                && !Objects.equals(persisted.getBomVersion(), incoming.getBomVersion());
-        if (engineeringChanged || productChanged || quantityChanged || routeChanged || bomChanged) {
-            throw new CheckedException("已绑定工程版本的工单禁止在MES修改工程版本、产品、数量、路线或BOM；请从PLAN发起受控变更");
-        }
-    }
+	/**
+	 * 只匹配本事务锁定的准确父单及CREATE状态，不能按客户端code覆盖其他来源。
+	 */
+	private LambdaUpdateWrapper<MesTaskEntity> draftCondition(MesTaskEntity current) {
+		return new LambdaUpdateWrapper<MesTaskEntity>()
+				.eq(MesTaskEntity::getId, current.getId())
+				.eq(MesTaskEntity::getTenantId, current.getTenantId())
+				.eq(MesTaskEntity::getFactoryCode, current.getFactoryCode())
+				.eq(MesTaskEntity::getCode, current.getCode())
+				.eq(MesTaskEntity::getStatus, MesTaskStatusEnum.CREATE.name());
+	}
 
-    /**
-     * 查询详情
-     *
-     * @param id
-     * @return
-     */
-    @Override
-    public MesTaskDTO findBydId(Long id) {
-        MesTaskEntity mesTask = this.getById(id);
-        if (Objects.isNull(mesTask)) {
-            throw new CheckedException("查询失败");
-        }
-        MesTaskDTO result = new MesTaskDTO();
-        BeanUtil.copyProperties(mesTask, result);
-        return result;
-    }
+	/**
+	 * 实体只是既有请求载体，持久化字段默认只读；只有明确白名单允许改变。
+	 * 审计字段由服务器维护且不参与客户端时间精度比较，空字段仍视为旧客户端未发送。
+	 */
+	private void assertDraftFieldsUnchanged(MesTaskEntity current, MesTaskEntity incoming, boolean legacy) {
+		Set<String> editable = new HashSet<>(List.of("batchRuleCode", "wrapCode", "wrapCapacity", "transferCode"));
+		if (legacy) {
+			editable.addAll(List.of("type", "matCode", "matName", "matSpec", "noticeNum", "planStartDate",
+					"planEndDate", "workshopCode", "workshopName", "processRouteId", "processRouteCode",
+					"processRouteSnapshot", "bomId", "bomVersion", "bomSnapshot"));
+		}
+		Set<String> serverAudit = Set.of("createBy", "createTime", "updateBy", "updateTime");
+		var before = new org.springframework.beans.BeanWrapperImpl(current);
+		var proposed = new org.springframework.beans.BeanWrapperImpl(incoming);
+		var fields = com.baomidou.mybatisplus.core.metadata.TableInfoHelper.getTableInfo(MesTaskEntity.class)
+				.getFieldList();
+		for (var field : fields) {
+			String name = field.getProperty();
+			if (editable.contains(name) || serverAudit.contains(name)) {
+				continue;
+			}
+			Object value = proposed.getPropertyValue(name);
+			Object original = before.getPropertyValue(name);
+			if (value == null || original == null && value instanceof String text && text.isEmpty()) {
+				continue;
+			}
+			boolean same = value instanceof BigDecimal left && original instanceof BigDecimal right
+					? left.compareTo(right) == 0 : Objects.equals(value, original);
+			if (!same) {
+				throw new CheckedException("工单身份、来源或执行依据不可通过草稿编辑修改：" + name);
+			}
+		}
+	}
 
-    /**
-     * 下达任务
-     *
-     * @param id
-     */
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void issue(Long id) {
-        List<MesProduceTaskEntity> saveTaskList = new ArrayList<>();
-        MesTaskEntity mesTask = this.getOne(new LambdaQueryWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getId, id).last("FOR UPDATE"));
-        if (Objects.isNull(mesTask)) {
-            throw new CheckedException("未找到生产工单");
-        }
-        if (!MesTaskStatusEnum.CREATE.name().equals(mesTask.getStatus())) {
-            throw new CheckedException("生产工单已下达或状态已变化，禁止重复下达");
-        }
-        // 普通生产下达不重选今日默认路线；正式REWORK仍沿用原批准快照合同。
-        MesEngineeringPackageService.FrozenEngineering engineering = "REWORK".equals(mesTask.getResourceType())
-                ? null : engineeringPackages.verifyBeforeIssue(mesTask);
-        reworkMaterialPlans.assertReady(mesTask);
-        if (produceTaskService.count(new LambdaQueryWrapper<MesProduceTaskEntity>()
-                .eq(MesProduceTaskEntity::getTaskCode, mesTask.getCode())) > 0) {
-            throw new CheckedException("生产工单已存在工序任务，禁止重复下达");
-        }
-        if (Objects.isNull(mesTask.getBomId())) {
-            throw new CheckedException("请先维护bom信息");
-        }
-        if (Objects.isNull(mesTask.getProcessRouteId()) || StrUtil.isEmpty(mesTask.getProcessRouteSnapshot())) {
-            throw new CheckedException("请先维护工艺路线信息");
-        }
-        // 根据工艺路线保存生产工序任务表
-        List<MdmProcessRouteWorkingDTO> routeList = engineering == null
-                ? JSONUtil.toList(mesTask.getProcessRouteSnapshot(), MdmProcessRouteWorkingDTO.class)
-                : engineeringPackages.executionRoutes(engineering);
-        normalizeRouteGraph(routeList);
-        // 新正式返工在QMS派发时已经用原实际工序锁定稳定节点，可冻结单节点执行合同；
-        // 升级前没有节点身份的历史返工继续沿原合同，不能在下达时借当前MDM补造节点。
-        boolean freezeExecutionGraph = !"REWORK".equals(mesTask.getResourceType())
-                || StrUtil.isNotBlank(mesTask.getReworkRouteNodeCode());
-        if (freezeExecutionGraph) {
-            mesTask.setProcessRouteSnapshot(MesRouteExecutionFreeze.prepare(mesTask.getProcessRouteSnapshot(), routeList));
-        }
-        boolean exactNodeRework = "REWORK".equals(mesTask.getResourceType())
-                && StrUtil.isNotBlank(mesTask.getReworkRouteNodeCode());
-        MesProcessParameterStandardFreezeService.FrozenBundle parameterStandard = exactNodeRework
-                ? parameterStandardFreezeService.validateReworkSnapshot(mesTask, routeList)
-                : engineering == null ? parameterStandardFreezeService.freeze(mesTask, routeList)
-                : parameterStandardFreezeService.freezeFromEngineeringSnapshot(mesTask, routeList,
-                engineering.parameterCatalogSnapshot());
-        // 普通生产参数与SOP直接取工程批准包内的精确原版，不再按今日时间重新解析。
-        if (exactNodeRework) {
-            sopFreezeService.validateReworkSnapshot(mesTask, routeList);
-        } else if (engineering == null) {
-            sopFreezeService.freeze(mesTask, routeList);
-        } else {
-            sopFreezeService.freezeFromEngineeringSnapshot(mesTask, routeList,
-                    engineering.sopManifestSnapshot());
-        }
-        mesTask.setProcessRouteSnapshot(sopFreezeService.mergeFrozenSnapshot(mesTask.getProcessRouteSnapshot(), routeList));
-        mesTask.setProcessParameterStandardNo(parameterStandard.catalog().getStandardNo());
-        mesTask.setProcessParameterStandardVersion(parameterStandard.catalog().getVersionNo());
-        mesTask.setProcessParameterStandardSnapshot(parameterStandard.snapshot());
-        mesTask.setProcessParameterSnapshotFingerprint(parameterStandard.fingerprint());
-        boolean hasApsSnapshot = StrUtil.isNotBlank(mesTask.getApsOperationSnapshot());
-        List<MesApsOperationSnapshotDTO> apsOperations = new ArrayList<>();
-        if (hasApsSnapshot) {
-            try {
-                apsOperations = JSONUtil.toList(mesTask.getApsOperationSnapshot(), MesApsOperationSnapshotDTO.class);
-            } catch (Exception ex) {
-                throw new CheckedException("APS工序资源快照损坏，禁止下达生产任务");
-            }
-            if (CollUtil.isEmpty(apsOperations) || apsOperations.stream().anyMatch(item -> item == null
-                    || Boolean.TRUE.equals(item.getHardBlocked()) || !Boolean.TRUE.equals(item.getLockStatus()))) {
-                throw new CheckedException("APS工序尚未全部完成有效锁定，禁止下达生产任务");
-            }
-        }
-        Map<String, MesApsOperationSnapshotDTO> apsByNode = hasApsSnapshot
-                ? MesApsRouteNodeMatcher.matchAll(apsOperations, routeList, mesTask.getProcessRouteCode()) : Map.of();
+	/**
+	 * 工程版本工单拒绝客户端携带的不同源事实，避免“服务端静默覆盖后看似保存成功”。
+	 * 对旧客户端未发送的新字段保持兼容；冻结值不进入草稿编辑的可写白名单。
+	 */
+	private void assertEngineeringSourceUnchanged(MesTaskEntity persisted, MesTaskEntity incoming) {
+		boolean engineeringChanged = incoming.getEngineeringReleaseId() != null
+				&& !Objects.equals(persisted.getEngineeringReleaseId(), incoming.getEngineeringReleaseId());
+		engineeringChanged |= StrUtil.isNotBlank(incoming.getEngineeringContentHash())
+				&& !Objects.equals(persisted.getEngineeringContentHash(), incoming.getEngineeringContentHash());
+		engineeringChanged |= incoming.getEngineeringVersionNo() != null
+				&& !Objects.equals(persisted.getEngineeringVersionNo(), incoming.getEngineeringVersionNo());
+		boolean productChanged = StrUtil.isNotBlank(incoming.getMatCode())
+				&& !Objects.equals(persisted.getMatCode(), incoming.getMatCode());
+		boolean quantityChanged = incoming.getNoticeNum() != null
+				&& !sameDecimal(persisted.getNoticeNum(), incoming.getNoticeNum());
+		boolean routeChanged = incoming.getProcessRouteId() != null
+				&& !Objects.equals(persisted.getProcessRouteId(), incoming.getProcessRouteId());
+		routeChanged |= StrUtil.isNotBlank(incoming.getProcessRouteCode())
+				&& !Objects.equals(persisted.getProcessRouteCode(), incoming.getProcessRouteCode());
+		boolean bomChanged = incoming.getBomId() != null
+				&& !Objects.equals(persisted.getBomId(), incoming.getBomId());
+		bomChanged |= StrUtil.isNotBlank(incoming.getBomVersion())
+				&& !Objects.equals(persisted.getBomVersion(), incoming.getBomVersion());
+		if (engineeringChanged || productChanged || quantityChanged || routeChanged || bomChanged) {
+			throw new CheckedException(
+					"已绑定工程版本的工单禁止在MES修改工程版本、产品、数量、路线或BOM；请从原来源发起受控变更");
+		}
+	}
 
-        if (CollUtil.isNotEmpty(routeList)) {
-            routeList.forEach(route -> {
-                MesProduceTaskEntity saveTask = new MesProduceTaskEntity();
-                saveTask.setCode(remoteSeqConfigService.create("mes_produce_task").getData());
-                saveTask.setTaskCode(mesTask.getCode());
-                saveTask.setMatCode(mesTask.getMatCode());
-                saveTask.setMatName(mesTask.getMatName());
-                saveTask.setMatSpec(mesTask.getMatSpec());
-                saveTask.setRouteCode(StrUtil.blankToDefault(route.getProcessCode(), route.getRouteCode()));
-                saveTask.setSourceRouteNodeCode(route.getRouteNodeCode());
-                saveTask.setRouteName(StrUtil.blankToDefault(route.getProcessName(), route.getRouteName()));
-                saveTask.setRouteType(route.getType());
-                saveTask.setRouteOrder(route.getRouteOrder());
-                saveTask.setPredecessorCodes(freezeExecutionGraph
-                        ? String.join(",", route.getPreRouteCode()) : joinCodes(route.getPreRouteCode()));
-                saveTask.setSuccessorCodes(freezeExecutionGraph
-                        ? String.join(",", route.getNextRouteCode()) : joinCodes(route.getNextRouteCode()));
-                saveTask.setOverlapEnabled(Boolean.TRUE.equals(route.getOverlapEnabled()));
-                saveTask.setTransferBatchQuantity(Boolean.TRUE.equals(route.getOverlapEnabled())
-                        ? route.getTransferBatchQuantity() : null);
-                saveTask.setTransferMinutes(Boolean.TRUE.equals(route.getTimeCheck()) && route.getTimeVal() != null
-                        ? route.getTimeVal().max(BigDecimal.ZERO).longValue() : 0L);
-                saveTask.setRouteWorkCenter(JSONUtil.toJsonStr(route.getMdmProcessProcedureWorkList()));
+	/**
+	 * 在当前实名租户和实际读取工厂内查询准确原单，供普通命令后核对当前事实。
+	 * 返回当前状态观察，不是某次编辑、下达或作废的永久命令回执。
+	 *
+	 * @param id 精确父工单ID
+	 * @return 含真实组织、来源及当前状态的详情；不存在或未授权时拒绝
+	 */
+	@Override
+	public MesTaskDTO findBydId(Long id) {
+		MesTaskEntity mesTask = taskCommands.read(id);
+		MesTaskDTO result = new MesTaskDTO();
+		BeanUtil.copyProperties(mesTask, result);
+		return result;
+	}
 
-                List<String> workCodes = route.getMdmProcessProcedureWorkList().stream()
-                        .map(MdmProcessRouteWorkCenterDTO::getWorkCode)
-                        .collect(Collectors.toList());
-                List<String> workNames = route.getMdmProcessProcedureWorkList().stream()
-                        .map(MdmProcessRouteWorkCenterDTO::getWorkName)
-                        .collect(Collectors.toList());
+	/**
+	 * 取得真实根锁和父行后冻结工程执行依据并下达；CREATE状态精确写一行，失败整笔回滚。
+	 *
+	 * @param id 当前租户实际工厂下的准确父工单ID
+	 */
+	@Override
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+	public void issue(Long id) {
+		List<MesProduceTaskEntity> saveTaskList = new ArrayList<>();
+		MesTaskEntity mesTask = taskCommands.lock(id);
+		if (!MesTaskStatusEnum.CREATE.name().equals(mesTask.getStatus())) {
+			throw new CheckedException("生产工单已下达或状态已变化，禁止重复下达");
+		}
+		// 普通生产下达不重选今日默认路线；正式REWORK仍沿用原批准快照合同。
+		MesEngineeringPackageService.FrozenEngineering engineering = "REWORK".equals(mesTask.getResourceType())
+				? null : engineeringPackages.verifyBeforeIssue(mesTask);
+		reworkMaterialPlans.assertReady(mesTask);
+		taskCommands.requireNoChildren(mesTask);
+		if (Objects.isNull(mesTask.getBomId())) {
+			throw new CheckedException("请先维护bom信息");
+		}
+		if (Objects.isNull(mesTask.getProcessRouteId()) || StrUtil.isEmpty(mesTask.getProcessRouteSnapshot())) {
+			throw new CheckedException("请先维护工艺路线信息");
+		}
+		// 根据工艺路线保存生产工序任务表
+		List<MdmProcessRouteWorkingDTO> routeList = engineering == null
+				? JSONUtil.toList(mesTask.getProcessRouteSnapshot(), MdmProcessRouteWorkingDTO.class)
+				: engineeringPackages.executionRoutes(engineering);
+		normalizeRouteGraph(routeList);
+		// 新正式返工在QMS派发时已经用原实际工序锁定稳定节点，可冻结单节点执行合同；
+		// 升级前没有节点身份的历史返工继续沿原合同，不能在下达时借当前MDM补造节点。
+		boolean freezeExecutionGraph = !"REWORK".equals(mesTask.getResourceType())
+				|| StrUtil.isNotBlank(mesTask.getReworkRouteNodeCode());
+		if (freezeExecutionGraph) {
+			mesTask.setProcessRouteSnapshot(
+					MesRouteExecutionFreeze.prepare(mesTask.getProcessRouteSnapshot(), routeList));
+		}
+		boolean exactNodeRework = "REWORK".equals(mesTask.getResourceType())
+				&& StrUtil.isNotBlank(mesTask.getReworkRouteNodeCode());
+		MesProcessParameterStandardFreezeService.FrozenBundle parameterStandard = exactNodeRework
+				? parameterStandardFreezeService.validateReworkSnapshot(mesTask, routeList)
+				: engineering == null ? parameterStandardFreezeService.freeze(mesTask, routeList)
+				: parameterStandardFreezeService.freezeFromEngineeringSnapshot(mesTask, routeList,
+				engineering.parameterCatalogSnapshot());
+		// 普通生产参数与SOP直接取工程批准包内的精确原版，不再按今日时间重新解析。
+		if (exactNodeRework) {
+			sopFreezeService.validateReworkSnapshot(mesTask, routeList);
+		} else if (engineering == null) {
+			sopFreezeService.freeze(mesTask, routeList);
+		} else {
+			sopFreezeService.freezeFromEngineeringSnapshot(mesTask, routeList,
+					engineering.sopManifestSnapshot());
+		}
+		mesTask.setProcessRouteSnapshot(
+				sopFreezeService.mergeFrozenSnapshot(mesTask.getProcessRouteSnapshot(), routeList));
+		mesTask.setProcessParameterStandardNo(parameterStandard.catalog().getStandardNo());
+		mesTask.setProcessParameterStandardVersion(parameterStandard.catalog().getVersionNo());
+		mesTask.setProcessParameterStandardSnapshot(parameterStandard.snapshot());
+		mesTask.setProcessParameterSnapshotFingerprint(parameterStandard.fingerprint());
+		boolean hasApsSnapshot = StrUtil.isNotBlank(mesTask.getApsOperationSnapshot());
+		List<MesApsOperationSnapshotDTO> apsOperations = new ArrayList<>();
+		if (hasApsSnapshot) {
+			try {
+				apsOperations = JSONUtil.toList(mesTask.getApsOperationSnapshot(), MesApsOperationSnapshotDTO.class);
+			} catch (Exception ex) {
+				throw new CheckedException("APS工序资源快照损坏，禁止下达生产任务");
+			}
+			if (CollUtil.isEmpty(apsOperations) || apsOperations.stream().anyMatch(item -> item == null
+					|| Boolean.TRUE.equals(item.getHardBlocked()) || !Boolean.TRUE.equals(item.getLockStatus()))) {
+				throw new CheckedException("APS工序尚未全部完成有效锁定，禁止下达生产任务");
+			}
+		}
+		Map<String, MesApsOperationSnapshotDTO> apsByNode = hasApsSnapshot
+				? MesApsRouteNodeMatcher.matchAll(apsOperations, routeList, mesTask.getProcessRouteCode()) : Map.of();
 
-                saveTask.setWorksiteCodes(String.join(",", workCodes));
-                saveTask.setWorksiteNames(String.join(",", workNames));
-                MesApsOperationSnapshotDTO aps = apsByNode.get(MesApsRouteNodeMatcher.routeKey(route));
-                if (hasApsSnapshot && aps == null) {
-                    throw new CheckedException(String.format("工序【%s】未匹配到唯一APS锁定结果，禁止下达生产任务", route.getRouteName()));
-                }
-                if (aps != null) {
-                    if (!new LinkedHashSet<>(splitCodes(saveTask.getPredecessorCodes()))
-                            .equals(new LinkedHashSet<>(splitCodes(aps.getPredecessorCodes())))) {
-                        throw new CheckedException(String.format("工序【%s】的MES路线快照与APS前置关系不一致，禁止下达生产任务",
-                                route.getRouteName()));
-                    }
-                    if (Boolean.TRUE.equals(saveTask.getOverlapEnabled()) != Boolean.TRUE.equals(aps.getOverlapEnabled())
-                            || !sameDecimal(saveTask.getTransferBatchQuantity(), aps.getTransferBatchQuantity())) {
-                        throw new CheckedException(String.format("工序【%s】的MES路线快照与APS转移批量策略不一致，禁止下达生产任务",
-                                route.getRouteName()));
-                    }
-                    saveTask.setPlannedStartTime(aps.getScheduledStartTime());
-                    saveTask.setPlannedEndTime(aps.getScheduledEndTime());
-                    saveTask.setPlannedDeviceCode(aps.getDeviceCode());
-                    saveTask.setPlannedDeviceName(aps.getDeviceName());
-                    saveTask.setPlannedResourceSlotNo(aps.getResourceSlotNo());
-                    saveTask.setPlannedResourceGroupCode(aps.getResourceGroupCode());
-                    saveTask.setPlannedResourceGroupName(aps.getResourceGroupName());
-                    saveTask.setPlannedResourceGroupCapacity(aps.getResourceGroupCapacity());
-                    saveTask.setPlannedResourceGroupSlotNo(aps.getResourceGroupSlotNo());
-                    saveTask.setPlannedWorkerCode(aps.getEmployeeCode());
-                    saveTask.setPlannedWorkerName(aps.getEmployeeName());
-                    saveTask.setPlannedToolingCodes(aps.getToolingCodes());
-                    saveTask.setPlannedToolingNames(aps.getToolingNames());
-                    saveTask.setToolingAllocationSnapshot(aps.getToolingAllocationSnapshot());
-                    saveTask.setToolingLifeUsageSnapshot(aps.getToolingLifeUsageSnapshot());
-                    saveTask.setApsOperationSnapshot(JSONUtil.toJsonStr(aps));
-                    if ("STATION".equalsIgnoreCase(aps.getResourceType()) && StrUtil.isNotBlank(aps.getResourceCode())) {
-                        saveTask.setPlannedWorksiteCode(aps.getResourceCode());
-                        saveTask.setPlannedWorksiteName(aps.getResourceName());
-                        saveTask.setWorksiteCodes(aps.getResourceCode());
-                        saveTask.setWorksiteNames(StrUtil.blankToDefault(aps.getResourceName(), aps.getResourceCode()));
-                    }
-                }
+		if (CollUtil.isNotEmpty(routeList)) {
+			routeList.forEach(route -> {
+				MesProduceTaskEntity saveTask = new MesProduceTaskEntity();
+				saveTask.setCode(remoteSeqConfigService.create("mes_produce_task").getData());
+				saveTask.setTaskCode(mesTask.getCode());
+				saveTask.setMatCode(mesTask.getMatCode());
+				saveTask.setMatName(mesTask.getMatName());
+				saveTask.setMatSpec(mesTask.getMatSpec());
+				saveTask.setRouteCode(StrUtil.blankToDefault(route.getProcessCode(), route.getRouteCode()));
+				saveTask.setSourceRouteNodeCode(route.getRouteNodeCode());
+				saveTask.setRouteName(StrUtil.blankToDefault(route.getProcessName(), route.getRouteName()));
+				saveTask.setRouteType(route.getType());
+				saveTask.setRouteOrder(route.getRouteOrder());
+				saveTask.setPredecessorCodes(freezeExecutionGraph
+						? String.join(",", route.getPreRouteCode()) : joinCodes(route.getPreRouteCode()));
+				saveTask.setSuccessorCodes(freezeExecutionGraph
+						? String.join(",", route.getNextRouteCode()) : joinCodes(route.getNextRouteCode()));
+				saveTask.setOverlapEnabled(Boolean.TRUE.equals(route.getOverlapEnabled()));
+				saveTask.setTransferBatchQuantity(Boolean.TRUE.equals(route.getOverlapEnabled())
+						? route.getTransferBatchQuantity() : null);
+				saveTask.setTransferMinutes(Boolean.TRUE.equals(route.getTimeCheck()) && route.getTimeVal() != null
+						? route.getTimeVal().max(BigDecimal.ZERO).longValue() : 0L);
+				saveTask.setRouteWorkCenter(JSONUtil.toJsonStr(route.getMdmProcessProcedureWorkList()));
 
-                saveTask.setLastRoute(splitCodes(saveTask.getSuccessorCodes()).isEmpty());
-                if (freezeExecutionGraph) {
-                    MesRouteExecutionFreeze.apply(route, saveTask);
-                }
-                saveTask.setProcessRouteId(mesTask.getProcessRouteId());
-                saveTask.setProcessRouteSnapshot(mesTask.getProcessRouteSnapshot());
-                saveTask.setTimingRulesJson(route.getTimingRulesJson());
-                saveTask.setProcessRouteCode(mesTask.getProcessRouteCode());
-                MesProcessParameterStandardFreezeService.ProcessSnapshot processParameter =
-                        parameterStandard.nodeSnapshots().get(route.getRouteNodeCode());
-                if (processParameter == null) {
-                    throw new CheckedException("路线节点【" + route.getRouteNodeCode() + "】缺少参数标准冻结结果，禁止下达生产任务");
-                }
-                saveTask.setProcessParameterStandardNo(parameterStandard.catalog().getStandardNo());
-                saveTask.setProcessParameterStandardVersion(parameterStandard.catalog().getVersionNo());
-                saveTask.setProcessParameterStandardSnapshot(processParameter.snapshot());
-                saveTask.setProcessParameterSnapshotFingerprint(processParameter.fingerprint());
-                saveTask.setNoticeNum(mesTask.getNoticeNum());
-                saveTask.setNoticeDate(LocalDateTime.now());
-                saveTask.setStatus(MesProduceTaskStatusEnum.WAIT.name());
-                saveTask.setWorkshopCode(mesTask.getWorkshopCode());
-                saveTask.setWorkshopName(mesTask.getWorkshopName());
-                saveTask.setWrapCode(mesTask.getWrapCode());
-                saveTask.setReportType(mesTask.getType());
-                saveTask.setIsInspection(route.getIsInspection());
-                saveTask.setFactoryCode(mesTask.getFactoryCode());
-                saveTaskList.add(saveTask);
-            });
-        }
-        // 先只保存原执行图，供子任务核真实父证据；参数目录仍随CREATE→ISSUE一次冻结。
-        // 不提前提交状态或整实体，避免触发参数标准只能在首次下达时写入的数据库守卫。
-        if (freezeExecutionGraph && !this.update(new LambdaUpdateWrapper<MesTaskEntity>()
-                .eq(MesTaskEntity::getId, mesTask.getId())
-                .eq(MesTaskEntity::getTenantId, mesTask.getTenantId())
-                .eq(MesTaskEntity::getFactoryCode, mesTask.getFactoryCode())
-                .eq(MesTaskEntity::getStatus, MesTaskStatusEnum.CREATE.name())
-                .set(MesTaskEntity::getProcessRouteSnapshot, mesTask.getProcessRouteSnapshot()))) {
-            throw new CheckedException("工单原执行图冻结保存失败");
-        }
-        if (!produceTaskService.saveBatch(saveTaskList)) throw new CheckedException("工序任务冻结保存失败");
+				List<String> workCodes = route.getMdmProcessProcedureWorkList().stream()
+						.map(MdmProcessRouteWorkCenterDTO::getWorkCode)
+						.collect(Collectors.toList());
+				List<String> workNames = route.getMdmProcessProcedureWorkList().stream()
+						.map(MdmProcessRouteWorkCenterDTO::getWorkName)
+						.collect(Collectors.toList());
 
-        // 更新生产工单状态
-        mesTask.setStatus(MesTaskStatusEnum.ISSUE.name());
-        if (!this.updateById(mesTask)) throw new CheckedException("生产工单下达状态保存失败");
+				saveTask.setWorksiteCodes(String.join(",", workCodes));
+				saveTask.setWorksiteNames(String.join(",", workNames));
+				MesApsOperationSnapshotDTO aps = apsByNode.get(MesApsRouteNodeMatcher.routeKey(route));
+				if (hasApsSnapshot && aps == null) {
+					throw new CheckedException(
+							String.format("工序【%s】未匹配到唯一APS锁定结果，禁止下达生产任务", route.getRouteName()));
+				}
+				if (aps != null) {
+					if (!new LinkedHashSet<>(splitCodes(saveTask.getPredecessorCodes()))
+							.equals(new LinkedHashSet<>(splitCodes(aps.getPredecessorCodes())))) {
+						throw new CheckedException(
+								String.format("工序【%s】的MES路线快照与APS前置关系不一致，禁止下达生产任务",
+										route.getRouteName()));
+					}
+					if (Boolean.TRUE.equals(saveTask.getOverlapEnabled()) !=
+							Boolean.TRUE.equals(aps.getOverlapEnabled())
+							|| !sameDecimal(saveTask.getTransferBatchQuantity(), aps.getTransferBatchQuantity())) {
+						throw new CheckedException(
+								String.format("工序【%s】的MES路线快照与APS转移批量策略不一致，禁止下达生产任务",
+										route.getRouteName()));
+					}
+					saveTask.setPlannedStartTime(aps.getScheduledStartTime());
+					saveTask.setPlannedEndTime(aps.getScheduledEndTime());
+					saveTask.setPlannedDeviceCode(aps.getDeviceCode());
+					saveTask.setPlannedDeviceName(aps.getDeviceName());
+					saveTask.setPlannedResourceSlotNo(aps.getResourceSlotNo());
+					saveTask.setPlannedResourceGroupCode(aps.getResourceGroupCode());
+					saveTask.setPlannedResourceGroupName(aps.getResourceGroupName());
+					saveTask.setPlannedResourceGroupCapacity(aps.getResourceGroupCapacity());
+					saveTask.setPlannedResourceGroupSlotNo(aps.getResourceGroupSlotNo());
+					saveTask.setPlannedWorkerCode(aps.getEmployeeCode());
+					saveTask.setPlannedWorkerName(aps.getEmployeeName());
+					saveTask.setPlannedToolingCodes(aps.getToolingCodes());
+					saveTask.setPlannedToolingNames(aps.getToolingNames());
+					saveTask.setToolingAllocationSnapshot(aps.getToolingAllocationSnapshot());
+					saveTask.setToolingLifeUsageSnapshot(aps.getToolingLifeUsageSnapshot());
+					saveTask.setApsOperationSnapshot(JSONUtil.toJsonStr(aps));
+					if ("STATION".equalsIgnoreCase(aps.getResourceType()) &&
+							StrUtil.isNotBlank(aps.getResourceCode())) {
+						saveTask.setPlannedWorksiteCode(aps.getResourceCode());
+						saveTask.setPlannedWorksiteName(aps.getResourceName());
+						saveTask.setWorksiteCodes(aps.getResourceCode());
+						saveTask.setWorksiteNames(StrUtil.blankToDefault(aps.getResourceName(), aps.getResourceCode()));
+					}
+				}
 
-        if (StrUtil.isNotEmpty(mesTask.getPlanNo())) {
-            planMesStatusUpdate(mesTask);
-        }
+				saveTask.setLastRoute(splitCodes(saveTask.getSuccessorCodes()).isEmpty());
+				if (freezeExecutionGraph) {
+					MesRouteExecutionFreeze.apply(route, saveTask);
+				}
+				saveTask.setProcessRouteId(mesTask.getProcessRouteId());
+				saveTask.setProcessRouteSnapshot(mesTask.getProcessRouteSnapshot());
+				saveTask.setTimingRulesJson(route.getTimingRulesJson());
+				saveTask.setProcessRouteCode(mesTask.getProcessRouteCode());
+				MesProcessParameterStandardFreezeService.ProcessSnapshot processParameter =
+						parameterStandard.nodeSnapshots().get(route.getRouteNodeCode());
+				if (processParameter == null) {
+					throw new CheckedException(
+							"路线节点【" + route.getRouteNodeCode() + "】缺少参数标准冻结结果，禁止下达生产任务");
+				}
+				saveTask.setProcessParameterStandardNo(parameterStandard.catalog().getStandardNo());
+				saveTask.setProcessParameterStandardVersion(parameterStandard.catalog().getVersionNo());
+				saveTask.setProcessParameterStandardSnapshot(processParameter.snapshot());
+				saveTask.setProcessParameterSnapshotFingerprint(processParameter.fingerprint());
+				saveTask.setNoticeNum(mesTask.getNoticeNum());
+				saveTask.setNoticeDate(LocalDateTime.now());
+				saveTask.setStatus(MesProduceTaskStatusEnum.WAIT.name());
+				saveTask.setWorkshopCode(mesTask.getWorkshopCode());
+				saveTask.setWorkshopName(mesTask.getWorkshopName());
+				saveTask.setWrapCode(mesTask.getWrapCode());
+				saveTask.setReportType(mesTask.getType());
+				saveTask.setIsInspection(route.getIsInspection());
+				saveTask.setFactoryCode(mesTask.getFactoryCode());
+				saveTaskList.add(saveTask);
+			});
+		}
+		// 先只保存原执行图，供子任务核真实父证据；参数目录仍随CREATE→ISSUE一次冻结。
+		// 不提前提交状态或整实体，避免触发参数标准只能在首次下达时写入的数据库守卫。
+		if (freezeExecutionGraph && baseMapper.update(null, draftCondition(mesTask)
+				.set(MesTaskEntity::getProcessRouteSnapshot, mesTask.getProcessRouteSnapshot())) != 1) {
+			throw new CheckedException("工单原执行图冻结保存失败");
+		}
+		if (!produceTaskService.saveBatch(saveTaskList)) {
+			throw new CheckedException("工序任务冻结保存失败");
+		}
 
-        // 生成质检任务
-        genInspectionTask(saveTaskList, mesTask.getMatCode());
-    }
+		// 仅冻结本次下达生成的执行依据，不重写来源、数量或其他已存在父单事实。
+		LambdaUpdateWrapper<MesTaskEntity> issueUpdate = draftCondition(mesTask)
+				.set(MesTaskEntity::getProcessRouteSnapshot, mesTask.getProcessRouteSnapshot())
+				.set(MesTaskEntity::getProcessParameterStandardNo, mesTask.getProcessParameterStandardNo())
+				.set(MesTaskEntity::getProcessParameterStandardVersion, mesTask.getProcessParameterStandardVersion())
+				.set(MesTaskEntity::getProcessParameterStandardSnapshot, mesTask.getProcessParameterStandardSnapshot())
+				.set(MesTaskEntity::getProcessParameterSnapshotFingerprint,
+						mesTask.getProcessParameterSnapshotFingerprint())
+				.set(MesTaskEntity::getStatus, MesTaskStatusEnum.ISSUE.name())
+				.set(MesTaskEntity::getUpdateBy, SecurityUtils.getAuthentication().getName())
+				.set(MesTaskEntity::getUpdateTime, LocalDateTime.now());
+		if (baseMapper.update(null, issueUpdate) != 1) {
+			throw new CheckedException("生产工单下达状态保存未命中原状态，已回滚");
+		}
+		mesTask.setStatus(MesTaskStatusEnum.ISSUE.name());
+
+		if (StrUtil.isNotEmpty(mesTask.getPlanNo())) {
+			planMesStatusUpdate(mesTask);
+		}
+
+		// 生成质检任务
+		genInspectionTask(saveTaskList, mesTask.getMatCode());
+	}
 
     /**
      * 下达MES前再次校验路线快照DAG，并由前置关系重建后置关系和拓扑层级。
@@ -2078,16 +2155,29 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         return currentTime.plusHours(intervalHours.longValue());
     }
 
-    /**
-     * 关闭任务
-     *
-     * @param id
-     */
-    @Override
-    public void close(Long id) {
-        this.update(new LambdaUpdateWrapper<MesTaskEntity>().eq(MesTaskEntity::getId, id)
-                .set(MesTaskEntity::getStatus, MesTaskStatusEnum.CLOSE.name()));
-    }
+	/**
+	 * 只作废尚未下达且无关联事实的独立手工草稿，保留原建单回执与全部完成事实。
+	 * 既有CLOSE只作当前终态观察；计划/返工/已执行来源必须走各自正式撤回或停止流程。
+	 *
+	 * @param id 当前租户实际工厂内的准确工单ID
+	 */
+	@Override
+	@Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+	public void close(Long id) {
+		MesTaskEntity current = taskCommands.lock(id);
+		if (MesTaskStatusEnum.CLOSE.name().equals(current.getStatus())) {
+			return;
+		}
+		taskCommands.requireIndependentDraft(current);
+		int changed = baseMapper.update(null, draftCondition(current)
+				.eq(MesTaskEntity::getSourceRequestId, current.getSourceRequestId())
+				.set(MesTaskEntity::getStatus, MesTaskStatusEnum.CLOSE.name())
+				.set(MesTaskEntity::getUpdateBy, SecurityUtils.getAuthentication().getName())
+				.set(MesTaskEntity::getUpdateTime, LocalDateTime.now()));
+		if (changed != 1) {
+			throw new CheckedException("手工草稿作废未命中原状态，已回滚");
+		}
+	}
 
     /**
      * 生产工单对接生产计划接口
@@ -2890,10 +2980,17 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         return null;
     }
 
-    @Override
-    public MesTaskDTO getByTaskCode(String taskCode) {
-        return baseMapper.getByTaskCode(taskCode);
-    }
+	/**
+	 * {@inheritDoc}
+	 * 先通过实际组织读取守卫核对唯一原单，再复制准确身份和业务事实，不从客户端补齐归属。
+	 */
+	@Override
+	public MesTaskDTO getByTaskCode(String taskCode) {
+		MesTaskEntity task = taskCommands.readByCode(taskCode);
+		MesTaskDTO result = new MesTaskDTO();
+		BeanUtil.copyProperties(task, result);
+		return result;
+	}
 
     /**
      * 将MesTaskArrange转换为MesTaskCurrentWorkVO

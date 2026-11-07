@@ -40,6 +40,10 @@ public interface WmsWarehouseLifecycleMapper {
 			    WHERE tenant_id = #{tenant} AND factory_code = #{factory}
 			      AND warehouse_code = #{code})
 			UNION ALL
+			SELECT 'WMS盘点差异规则' WHERE EXISTS (
+			    SELECT 1 FROM wms_inventory_variance_policy
+			    WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code})
+			UNION ALL
 			SELECT 'WMS盘点任务模板' WHERE EXISTS (
 			    SELECT 1 FROM wms_inventory_count_template
 			    WHERE tenant_id = #{tenant} AND factory_code = #{factory}
@@ -218,7 +222,8 @@ public interface WmsWarehouseLifecycleMapper {
 			</script>
 			""")
 	List<String> findReferences(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code, @Param("includeConfiguration") boolean includeConfiguration);
+	                            @Param("code") String code,
+	                            @Param("includeConfiguration") boolean includeConfiguration);
 
 	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
 	@Select("""
@@ -226,7 +231,7 @@ public interface WmsWarehouseLifecycleMapper {
 			WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}
 			""")
 	Long countBusinessConfiguration(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code);
+	                                @Param("code") String code);
 
 	/**
 	 * 清理包含历史软删除配置，但永远只作用于此租户/工厂及仓库的配置表。
@@ -237,55 +242,67 @@ public interface WmsWarehouseLifecycleMapper {
 			WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}
 			""")
 	int deleteBusinessConfiguration(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code);
+	                                @Param("code") String code);
 
 	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
 	@Select("SELECT count(*) FROM wms_warehouse_dashboard_policy "
 			+ "WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}")
 	Long countDashboardPolicy(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code);
+	                          @Param("code") String code);
 
 	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
 	@Delete("DELETE FROM wms_warehouse_dashboard_policy "
 			+ "WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}")
 	int deleteDashboardPolicy(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code);
+	                          @Param("code") String code);
 
 	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
 	@Select("SELECT count(*) FROM wms_warehouse_location_map "
 			+ "WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}")
 	Long countLocationMap(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code);
+	                      @Param("code") String code);
 
 	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
 	@Delete("DELETE FROM wms_warehouse_location_map "
 			+ "WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}")
 	int deleteLocationMap(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code);
+	                      @Param("code") String code);
 
 	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
 	@Select("SELECT count(*) FROM wms_inventory_scope_policy "
 			+ "WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}")
 	Long countInventoryScopePolicy(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code);
+	                               @Param("code") String code);
 
 	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
 	@Delete("DELETE FROM wms_inventory_scope_policy "
 			+ "WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}")
 	int deleteInventoryScopePolicy(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code);
+	                               @Param("code") String code);
+
+	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
+	@Select("SELECT count(*) FROM wms_inventory_variance_policy "
+			+ "WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}")
+	Long countInventoryVariancePolicy(@Param("tenant") Long tenant, @Param("factory") String factory,
+	                                  @Param("code") String code);
+
+	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
+	@Delete("DELETE FROM wms_inventory_variance_policy "
+			+ "WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}")
+	int deleteInventoryVariancePolicy(@Param("tenant") Long tenant, @Param("factory") String factory,
+	                                  @Param("code") String code);
 
 	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
 	@Select("SELECT count(*) FROM wms_inventory_count_template "
 			+ "WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}")
 	Long countInventoryCountTemplate(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code);
+	                                 @Param("code") String code);
 
 	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
 	@Delete("DELETE FROM wms_inventory_count_template "
 			+ "WHERE tenant_id = #{tenant} AND factory_code = #{factory} AND warehouse_code = #{code}")
 	int deleteInventoryCountTemplate(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code);
+	                                 @Param("code") String code);
 
 	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
 	@Select("SELECT * FROM wms_warehouse_menu WHERE tenant_id = #{tenant} AND factory_code = #{factory}")
@@ -299,9 +316,11 @@ public interface WmsWarehouseLifecycleMapper {
 			</script>
 			""")
 	int deletePreview(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("ids") Collection<Long> ids);
+	                  @Param("ids") Collection<Long> ids);
 
-	/** 停用未使用仓库的发布状态，永久公司绑定仍保留。 */
+	/**
+	 * 停用未使用仓库的发布状态，永久公司绑定仍保留。
+	 */
 	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
 	@org.apache.ibatis.annotations.Update("""
 			UPDATE mom_wms.wms_org_transfer_policy
@@ -310,6 +329,6 @@ public interface WmsWarehouseLifecycleMapper {
 			  AND warehouse_code = #{code} AND enabled = true
 			""")
 	int disableOrganizationPolicy(@Param("tenant") Long tenant, @Param("factory") String factory,
-			@Param("code") String code);
+	                              @Param("code") String code);
 
 }

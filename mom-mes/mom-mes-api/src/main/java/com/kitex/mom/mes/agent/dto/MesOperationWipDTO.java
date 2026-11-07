@@ -40,6 +40,10 @@ public final class MesOperationWipDTO {
         private String toolCode;
         private String metricDefinition;
         private String factoryCode;
+        @Schema(description = "实际生效的精确工单过滤；为空表示未按工单限制，不得当作单工单汇总")
+        private String taskCode;
+        @Schema(description = "实际生效的精确车间过滤；为空表示未按车间限制")
+        private String workshopCode;
         private LocalDateTime observedAt;
         private Summary summary;
         private List<StatusSummary> statusSummaries = new ArrayList<>();

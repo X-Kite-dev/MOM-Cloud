@@ -5,6 +5,8 @@ import com.kitex.common.security.annotation.HasPermission;
 import com.kitex.mom.wms.service.WmsWarehouseBusinessGuard;
 import com.kitex.mom.wms.service.WmsWarehouseMenuService;
 import com.kitex.mom.wms.vo.WmsWarehouseBizCheckVO;
+import com.kitex.mom.wms.vo.WmsWarehouseConfigurationSnapshot;
+import com.kitex.mom.wms.vo.WmsWarehouseConfigurationCommand;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -50,14 +52,18 @@ public class WmsWarehouseMenuController {
 		return R.ok(wmsWarehouseMenuService.listCheckBiz(warehouseCode));
 	}
 
-	/** 与仓库写入口同源的只读准入试算。 */
+	/**
+	 * 与仓库写入口同源的只读准入试算。
+	 */
 	@GetMapping(value = "/previewBusiness")
 	public R<WmsWarehouseBusinessGuard.Evaluation> previewBusiness(@RequestParam String warehouseCode,
-			@RequestParam String billType, @RequestParam boolean inbound) {
+	                                                               @RequestParam String billType, @RequestParam boolean inbound) {
 		return R.ok(warehouseBusinessGuard.evaluate(warehouseCode, billType, inbound));
 	}
 
-	/** 当前仓库的标准业务类型覆盖情况；与单项试算和写入口共用规则。 */
+	/**
+	 * 当前仓库的标准业务类型覆盖情况；与单项试算和写入口共用规则。
+	 */
 	@GetMapping(value = "/previewMatrix")
 	@HasPermission("wms_wmsWarehouseMenu_view")
 	public R<List<WmsWarehouseBusinessGuard.MatrixRow>> previewMatrix(@RequestParam String warehouseCode) {
@@ -77,8 +83,22 @@ public class WmsWarehouseMenuController {
 	 */
 	@PostMapping(value = "/commitCheckBiz")
 	@HasPermission("wms_wmsWarehouseMenu_add")
-	public R commitCheckBiz(@RequestBody List<WmsWarehouseBizCheckVO> list) {
-		return R.ok(wmsWarehouseMenuService.commitCheckBiz(list));
+	public R<Boolean> commitCheckBiz(@RequestBody List<WmsWarehouseBizCheckVO> list,
+	                                 @RequestHeader("If-Match") String expectedRevision) {
+		wmsWarehouseMenuService.commitConfiguration(new WmsWarehouseConfigurationCommand(expectedRevision, list));
+		return R.ok(true);
+	}
+
+	@GetMapping("/configuration")
+	@HasPermission("wms_wmsWarehouseMenu_view")
+	public R<WmsWarehouseConfigurationSnapshot> configuration() {
+		return R.ok(wmsWarehouseMenuService.configurationSnapshot());
+	}
+
+	@PutMapping("/configuration")
+	@HasPermission("wms_wmsWarehouseMenu_add")
+	public R<WmsWarehouseConfigurationSnapshot> saveConfiguration(@RequestBody WmsWarehouseConfigurationCommand command) {
+		return R.ok(wmsWarehouseMenuService.commitConfiguration(command));
 	}
 
 	/**

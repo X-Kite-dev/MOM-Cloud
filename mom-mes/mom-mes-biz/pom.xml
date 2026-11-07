@@ -108,6 +108,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
         </dependency>
+        <!-- 通用运输进度契约归属IoT API，不依赖设备控制实现。 -->
+        <dependency>
+            <groupId>com.kitex</groupId>
+            <artifactId>mom-iot-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!--引入mdm模块依赖-->
         <dependency>
             <groupId>com.kitex</groupId>

@@ -36,7 +36,9 @@ import java.util.UUID;
 import static com.kitex.mom.wms.service.impl.WmsInventoryPlanAccess.factory;
 import static com.kitex.mom.wms.service.impl.WmsInventoryPlanAccess.require;
 
-/** 可复用盘点任务模板；预览只读，触发后仍走盘点计划的全部保存校验。 */
+/**
+ * 可复用盘点任务模板；预览只读，触发后仍走盘点计划的全部保存校验。
+ */
 @Service
 @RequiredArgsConstructor
 public class WmsInventoryCountTemplateService {
@@ -77,10 +79,10 @@ public class WmsInventoryCountTemplateService {
 		require(StrUtil.isNotBlank(name) && name.length() <= 80, "模板名称须为1至80个字符");
 		require(command.expectedVersion() >= 0, "模板版本无效");
 		require(StrUtil.isNotBlank(command.ruleCode())
-						&& command.ruleCode().equals(command.ruleCode().trim()), "盘点规则无效");
+				&& command.ruleCode().equals(command.ruleCode().trim()), "盘点规则无效");
 		WmsInventoryScopeSuggestionService.validateRule(command.ruleCode(), command.thresholdDays());
 		require("SNAPSHOT".equals(command.stockFreezeMode())
-						|| "FREEZE_COUNT".equals(command.stockFreezeMode()), "盘点冻结模式无效");
+				|| "FREEZE_COUNT".equals(command.stockFreezeMode()), "盘点冻结模式无效");
 		List<String> siteCodes = validateSiteCodes(command.siteCodes());
 		requireConfigurationAccess(scope);
 		requireWarehouseAndSites(scope, siteCodes);
@@ -169,11 +171,14 @@ public class WmsInventoryCountTemplateService {
 		String requestId = StrUtil.trim(command.requestId());
 		require(StrUtil.isNotBlank(requestId) && requestId.matches("[A-Za-z0-9_-]{1,64}"),
 				"触发请求号无效");
+		require(!requestId.startsWith("EVT_"), "事件盘点请求号不能用于手动触发");
 		require(command.expectedVersion() >= 1, "模板版本无效");
-		return triggerInternal(scope, code, requestId, command.expectedVersion(), operator(), false);
+		return triggerInternal(scope, code, requestId, command.expectedVersion(), operator(), false, null);
 	}
 
-	/** 仅供同包内受事务保护的定时执行器调用；不暴露为 HTTP 接口。 */
+	/**
+	 * 仅供同包内受事务保护的定时执行器调用；不暴露为 HTTP 接口。
+	 */
 	RunResult triggerScheduled(String warehouseCode, String templateCode, LocalDateTime dueUtc) {
 		require(dueUtc != null, "盘点周期到期时刻不能为空");
 		String warehouse = StrUtil.trim(warehouseCode);
@@ -183,15 +188,34 @@ public class WmsInventoryCountTemplateService {
 		String source = scope.tenant() + ":" + scope.factory().length() + ":" + scope.factory()
 				+ ":" + code + ":" + dueUtc;
 		String requestId = "SCH_" + UUID.nameUUIDFromBytes(source.getBytes(StandardCharsets.UTF_8));
-		return triggerInternal(scope, code, requestId, null, "WMS_SCHEDULE", true);
+		return triggerInternal(scope, code, requestId, null, "WMS_SCHEDULE", true, null);
+	}
+
+	/**
+	 * 仅限同包内事件事务执行器；事件行由服务端不可变原件提供。
+	 */
+	RunResult triggerEvent(String warehouseCode, String templateCode, String requestId, EventScope event) {
+		require(TenantContextHolder.getTenantId() != null && TenantContextHolder.getTenantId() > 0
+				&& !Boolean.TRUE.equals(TenantContextHolder.getTenantSkip()), "事件盘点组织上下文无效");
+		require(event != null && StrUtil.isNotBlank(event.matCode()) && StrUtil.isNotBlank(event.siteCode())
+				&& requestId != null && requestId.matches("EVT_[A-Za-z0-9_-]{1,60}"), "事件盘点来源无效");
+		return triggerInternal(new Scope(TenantContextHolder.getTenantId(), factory(), warehouseCode),
+				code(templateCode), requestId, null, "WMS_EVENT", true, event);
+	}
+
+	record EventScope(String matCode, String siteCode, String matBatch) {
 	}
 
 	private RunResult triggerInternal(Scope scope, String code, String requestId,
-			Integer expectedVersion, String actor, boolean scheduled) {
+	                                  Integer expectedVersion, String actor, boolean scheduled, EventScope event) {
 		// 与仓库清理、模板修改共用组织锁；触发读取的是一个稳定版本。
 		menus.lockConfiguration("WMS_WAREHOUSE_MENU:" + scope.tenant() + ":" + scope.factory());
 		Template template = requireTemplate(scope, code, true);
 		if (scheduled && !template.enabled()) {
+			return null;
+		}
+		Preview eventPreview = event == null ? null : previewEvent(template, event);
+		if (eventPreview != null && eventPreview.rows().isEmpty()) {
 			return null;
 		}
 		int version = scheduled ? template.version() : expectedVersion;
@@ -205,6 +229,7 @@ public class WmsInventoryCountTemplateService {
 				version, snapshot, actor);
 		require(inserted == 0 || inserted == 1, "盘点触发记录写入结果不确定");
 		if (inserted == 0) {
+			require(event == null, "事件模板原请求已占用，请核对原始处理履历");
 			var prior = templates.findRunForUpdate(scope.tenant(), scope.factory(), requestId);
 			require(prior != null && code.equals(prior.templateCode())
 							&& version == prior.templateVersion()
@@ -220,10 +245,10 @@ public class WmsInventoryCountTemplateService {
 		}
 		require(template.enabled() && template.version() == version,
 				"模板已停用或更新，请刷新后重试");
-		Preview preview = preview(template, scheduled);
+		Preview preview = eventPreview == null ? preview(template, scheduled) : eventPreview;
 		R<String> sequence = sequences.create("inside_inventory");
 		require(sequence != null && sequence.getCode() == 0 && StrUtil.isNotBlank(sequence.getData())
-						&& sequence.getData().length() <= 32, "盘点编号生成失败");
+				&& sequence.getData().length() <= 32, "盘点编号生成失败");
 		String planNo = StrUtil.trim(sequence.getData());
 		WmsInsideInventoryPlanEntity plan = new WmsInsideInventoryPlanEntity();
 		plan.setPlanNo(planNo);
@@ -255,15 +280,33 @@ public class WmsInventoryCountTemplateService {
 		return new RunResult(plan.getId(), planNo, true);
 	}
 
+	private Preview previewEvent(Template template, EventScope event) {
+		if (!template.siteCodes().contains(event.siteCode())) {
+			return new Preview(template, 0, List.of());
+		}
+		var suggestion = suggestions.suggestEvent(template.warehouseCode(), event.siteCode(),
+				template.ruleCode(), template.thresholdDays(), event.matCode(), event.matBatch());
+		require(suggestion != null && template.warehouseCode().equals(suggestion.warehouseCode())
+				&& event.siteCode().equals(suggestion.siteCode()) && suggestion.rows() != null
+				&& template.ruleCode().equals(suggestion.ruleCode())
+				&& Objects.equals(template.thresholdDays(), suggestion.thresholdDays()), "事件盘点范围建议无效");
+		var rows = suggestion.rows().stream().filter(row -> row != null
+				&& event.matCode().equals(row.matCode()) && event.siteCode().equals(row.siteCode())
+				&& Objects.equals(StrUtil.blankToDefault(event.matBatch(), null),
+				StrUtil.blankToDefault(row.matBatch(), null))).toList();
+		require(rows.size() <= 1, "事件盘点物料批次范围重复");
+		return new Preview(template, suggestion.stockRowCount(), rows);
+	}
+
 	private Preview preview(Template template, boolean scheduled) {
 		List<WmsInventoryScopeSuggestionService.Row> rows = new ArrayList<>();
 		int stockRows = 0;
 		for (String site : template.siteCodes()) {
 			var result = scheduled
 					? suggestions.suggestScheduled(template.warehouseCode(), site,
-							template.ruleCode(), template.thresholdDays())
+					template.ruleCode(), template.thresholdDays())
 					: suggestions.suggest(template.warehouseCode(), site,
-							template.ruleCode(), template.thresholdDays());
+					template.ruleCode(), template.thresholdDays());
 			require(result != null && Objects.equals(template.warehouseCode(), result.warehouseCode())
 							&& Objects.equals(site, result.siteCode())
 							&& Objects.equals(template.ruleCode(), result.ruleCode())
@@ -305,7 +348,7 @@ public class WmsInventoryCountTemplateService {
 						|| "FREEZE_COUNT".equals(row.stockFreezeMode())),
 				"盘点模板组织范围或结构无效");
 		require(StrUtil.isNotBlank(row.ruleCode())
-						&& row.ruleCode().equals(row.ruleCode().trim()), "盘点模板规则无效");
+				&& row.ruleCode().equals(row.ruleCode().trim()), "盘点模板规则无效");
 		WmsInventoryScopeSuggestionService.validateRule(row.ruleCode(), row.thresholdDays());
 		try {
 			List<String> sites = json.readValue(row.siteCodesJson(), SITE_CODES);
@@ -384,17 +427,17 @@ public class WmsInventoryCountTemplateService {
 	}
 
 	public record Template(String templateCode, String templateName, String warehouseCode,
-						   String ruleCode, Integer thresholdDays, List<String> siteCodes,
-						   String stockFreezeMode, boolean enabled, int version) {
+	                       String ruleCode, Integer thresholdDays, List<String> siteCodes,
+	                       String stockFreezeMode, boolean enabled, int version) {
 	}
 
 	public record SaveCommand(String templateCode, String templateName, String warehouseCode,
-							  List<String> siteCodes, String ruleCode, Integer thresholdDays,
-							  String stockFreezeMode, boolean enabled, int expectedVersion) {
+	                          List<String> siteCodes, String ruleCode, Integer thresholdDays,
+	                          String stockFreezeMode, boolean enabled, int expectedVersion) {
 	}
 
 	public record Preview(Template template, int stockRowCount,
-						  List<WmsInventoryScopeSuggestionService.Row> rows) {
+	                      List<WmsInventoryScopeSuggestionService.Row> rows) {
 	}
 
 	public record RunCommand(String warehouseCode, String templateCode, int expectedVersion, String requestId) {
@@ -404,6 +447,6 @@ public class WmsInventoryCountTemplateService {
 	}
 
 	public record RunHistory(String requestId, int templateVersion, Long planId, String planNo,
-			String triggeredBy, LocalDateTime createdAt, Template snapshot) {
+	                         String triggeredBy, LocalDateTime createdAt, Template snapshot) {
 	}
 }

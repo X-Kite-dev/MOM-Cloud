@@ -19,7 +19,7 @@ public class FileUrlUtil {
     /**
      * 文件服务基础URL，从配置文件读取
      */
-    @Value("${file.service.base-url:http://localhost:9997/api}")
+    @Value("${file.service.base-url}")
     private String fileServiceBaseUrl;
 
     /**

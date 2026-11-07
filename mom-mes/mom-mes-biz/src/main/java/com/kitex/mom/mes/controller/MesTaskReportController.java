@@ -86,13 +86,19 @@ public class MesTaskReportController {
                 .collect(Collectors.toList()));
     }
 
-    @Operation(summary = "生产报工", description = "生产报工")
-    @PostMapping("/report")
-//    @PreAuthorize("@pms.hasPermission('mesTaskReport:report')")
-    public R<Void> report(@RequestBody MesTaskReportVO params) {
-        service.report(params);
-        return R.ok();
-    }
+	/**
+	 * 工站人工报工：先核功能权限，再由统一报工事务核原号、指定人员及冻结执行依据。
+	 *
+	 * @param params 本次人工报工原命令，未知结果须保留原号核对
+	 * @return 受理响应；最终事实以本人原号回执为准
+	 */
+	@Operation(summary = "生产报工", description = "按工站报工权限及派工冻结依据执行人工报工")
+	@PostMapping("/report")
+	@PreAuthorize("@pms.hasPermission('mesTaskReport:report')")
+	public R<Void> report(@RequestBody MesTaskReportVO params) {
+		service.report(params);
+		return R.ok();
+	}
 
     @Operation(summary = "系统集成报工",
             description = "使用独立权限并按执行模板的API触发来源校验；必须提供派工指定的operatorCode和operatorName")

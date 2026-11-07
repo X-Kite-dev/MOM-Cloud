@@ -42,10 +42,17 @@ public final class MesWorkpieceTimeDTO {
     public record Resolution(String contractVersion, String requestId, String state, Receipt receipt) {
     }
 
+    /** 来源是实际START留存；人工标识仍不是实物认证，不提供首次合格资格。 */
+    public record EntrySource(String sessionId, String taskCode, String produceTaskCode,
+                              String sourceRouteNodeCode, String workerCode, String worksiteCode,
+                              String requestId, String capturedAt, String fingerprint) {}
+
+    public record EntrySources(String availability, List<EntrySource> entries) {}
+
     public record View(String tenantId, String factoryCode, String arrangeId, String captureBasis, String notice,
                        List<MesWorkpieceTimeSessionEntity> sessions,
                        List<MesWorkpieceTimeIntervalEntity> intervals, int sessionPage, int sessionPageSize,
                        long sessionTotal,
-                       int intervalPage, int intervalPageSize, long intervalTotal) {
+                       int intervalPage, int intervalPageSize, long intervalTotal, EntrySources entrySources) {
     }
 }

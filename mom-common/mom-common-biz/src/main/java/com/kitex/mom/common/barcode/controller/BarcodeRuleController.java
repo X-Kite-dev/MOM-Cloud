@@ -13,10 +13,13 @@ import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.common.query.enums.CommonQuery;
 import com.kitex.common.query.utils.QueryGenerator;
+import com.kitex.mom.common.barcode.dto.FrozenBarcodeDefinition;
+import com.kitex.mom.common.barcode.dto.req.BarcodeDefinitionFreezeReq;
 import com.kitex.mom.common.barcode.dto.req.BarcodeRuleReq;
 import com.kitex.mom.common.barcode.entity.BarcodeRuleEntity;
 import com.kitex.mom.common.barcode.plugin.BarcodePlugin;
 import com.kitex.mom.common.barcode.service.BarcodeRuleService;
+import com.kitex.mom.common.barcode.service.FrozenBarcodeDefinitionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -44,6 +47,20 @@ import java.util.Map;
 public class BarcodeRuleController {
 
     private final BarcodeRuleService barcodeRuleService;
+
+	private final FrozenBarcodeDefinitionService frozenDefinitions;
+
+	/**
+	 * 读取当前规则的一致原定义，业务域负责随执行实例持久保存，后续按原定义编码。
+	 * @param request 当前实际工厂内的条码规则编码
+	 * @return 包含组织、确定字段顺序和原文指纹的快照；无权限或规则不兼容时拒绝
+	 */
+	@Operation(summary = "冻结条码定义", description = "实名核工厂读权限后读取一致原定义，不分配条码")
+	@PostMapping("/freezeDefinition")
+	@PreAuthorize("@pms.hasPermission('barcode_barcodeRule_view')")
+	public R<FrozenBarcodeDefinition> freezeDefinition(@RequestBody @Valid BarcodeDefinitionFreezeReq request) {
+		return R.ok(frozenDefinitions.freezeDefinition(request));
+	}
 
     /**
      * 分页查询

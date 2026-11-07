@@ -215,21 +215,34 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
     @Override
     public Page<PlnResourceReplanCaseEntity> casePage(
             SearchPage page, PlanResourceLocalReplanDTO.CaseQuery query) {
+        PlanResourceLocalReplanDTO.CaseQuery q = query == null
+                ? new PlanResourceLocalReplanDTO.CaseQuery() : query;
+        boolean exact = Boolean.TRUE.equals(q.getExactMatch());
+        String entryFactory = FactoryContextHolder.getFactoryCode();
+        if (exact) {
+            requireActualResourceFactory(entryFactory, "精确资源案件查询须实名选择当前租户和实际工厂");
+            require(StrUtil.isNotBlank(q.getCaseNo()) && StrUtil.isNotBlank(q.getIssueNo()),
+                    "精确案件定位必须同时指定原案件号和计划号");
+        }
         LocalDateTime now = LocalDateTime.now();
         caseMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<PlnResourceReplanCaseEntity>()
+                .eq(exact, PlnResourceReplanCaseEntity::getFactoryCode, entryFactory)
                 .eq(PlnResourceReplanCaseEntity::getStatus, "PROPOSED")
                 .le(PlnResourceReplanCaseEntity::getExpiresTime, now)
                 .set(PlnResourceReplanCaseEntity::getStatus, "EXPIRED"));
         scenarioMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<PlnSchedulingScenarioEntity>()
+                .eq(exact, PlnSchedulingScenarioEntity::getFactoryCode, entryFactory)
                 .in(PlnSchedulingScenarioEntity::getTriggerType, LOCAL_REPLAN_TRIGGER_TYPES)
                 .eq(PlnSchedulingScenarioEntity::getScenarioStatus, "EVALUATED")
                 .le(PlnSchedulingScenarioEntity::getExpiresTime, now)
                 .set(PlnSchedulingScenarioEntity::getScenarioStatus, "EXPIRED"));
-        PlanResourceLocalReplanDTO.CaseQuery q = query == null
-                ? new PlanResourceLocalReplanDTO.CaseQuery() : query;
         Page<PlnResourceReplanCaseEntity> result = caseMapper.selectPage(page.toMpPage(), new LambdaQueryWrapper<PlnResourceReplanCaseEntity>()
-                .like(StrUtil.isNotBlank(q.getCaseNo()), PlnResourceReplanCaseEntity::getCaseNo, q.getCaseNo())
-                .like(StrUtil.isNotBlank(q.getIssueNo()), PlnResourceReplanCaseEntity::getIssueNo, q.getIssueNo())
+                .eq(exact, PlnResourceReplanCaseEntity::getFactoryCode, entryFactory)
+                .eq(exact, PlnResourceReplanCaseEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(exact, PlnResourceReplanCaseEntity::getCaseNo, q.getCaseNo())
+                .eq(exact, PlnResourceReplanCaseEntity::getIssueNo, q.getIssueNo())
+                .like(!exact && StrUtil.isNotBlank(q.getCaseNo()), PlnResourceReplanCaseEntity::getCaseNo, q.getCaseNo())
+                .like(!exact && StrUtil.isNotBlank(q.getIssueNo()), PlnResourceReplanCaseEntity::getIssueNo, q.getIssueNo())
                 .eq(StrUtil.isNotBlank(q.getResourceType()), PlnResourceReplanCaseEntity::getResourceType, q.getResourceType())
                 .like(StrUtil.isNotBlank(q.getResourceCode()), PlnResourceReplanCaseEntity::getResourceCode, q.getResourceCode())
                 .eq(StrUtil.isNotBlank(q.getStatus()), PlnResourceReplanCaseEntity::getStatus, q.getStatus())
@@ -2764,12 +2777,17 @@ public class PlnResourceLocalReplanServiceImpl implements PlnResourceLocalReplan
     }
 
     private void requireRecoveryReviewFactory(String factoryCode) {
+        requireActualResourceFactory(factoryCode, "设备恢复排程复核须实名选择当前租户和实际工厂");
+    }
+
+    /** 精确来源查询与原恢复复核共用实际组织边界，不将地址栏参数当作授权。 */
+    private void requireActualResourceFactory(String factoryCode, String message) {
         require(TenantContextHolder.getTenantId() != null && !TenantContextHolder.getTenantSkip()
                         && currentUser() != null
                         && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
                         && StrUtil.isNotBlank(FactoryContextHolder.getFactoryCode())
                         && Objects.equals(FactoryContextHolder.getFactoryCode(), factoryCode),
-                "设备恢复排程复核须实名选择当前租户和实际工厂");
+                message);
     }
 
     /**
