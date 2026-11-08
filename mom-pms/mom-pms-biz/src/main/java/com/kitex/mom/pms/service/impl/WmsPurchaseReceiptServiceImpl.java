@@ -586,9 +586,9 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
             noticeDetail.setInNum(0d);
             noticeDetail.setNotInNum(inNum);
             noticeDetail.setOperateNum(inNum);
-            // 质检结果
-            noticeDetail.setQualityTaskId(batchDetail.getQualityId());
-            noticeDetail.setQualityResult(batchDetail.getQualityResult());
+            // 质量任务和结论只沿服务端原收料批次传递，客户端选择不能覆盖已持久化的质量依据。
+            noticeDetail.setQualityTaskId(persistedBatch.getQualityId());
+            noticeDetail.setQualityResult(persistedBatch.getQualityResult());
             // 所属组织
             noticeDetail.setFactoryCode(String.valueOf(wmsPurchaseReceipt.getFactoryCode()));
             noticeInNum += inNum;

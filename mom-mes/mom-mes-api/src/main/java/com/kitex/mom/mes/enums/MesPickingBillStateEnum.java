@@ -4,8 +4,8 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 /**
- * 线边库领料单状态
- * 0新建、1待接收、2已完成
+ * 生产领料申请单的本域状态。
+ * 0新建、1已提交、2待接收、3已完成；不等同于V1来源阶段或WMS实物出库状态。
  *
  * @author kitex
  * @date 2025-1-2 16:02:49

@@ -17,6 +17,9 @@ import com.kitex.mom.wms.entity.*;
 import com.kitex.mom.wms.enums.InOutBillStateEnum;
 import com.kitex.mom.wms.enums.OutBillTypeEnum;
 import com.kitex.mom.wms.mapper.*;
+import com.kitex.mom.wms.service.bill.WmsOutBillAccess;
+import com.kitex.mom.wms.service.bill.WmsOutBillAccess.Action;
+import com.kitex.mom.wms.service.bill.WmsOutBillAccess.Family;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,6 +46,7 @@ public class WmsLineDeliveryService {
     private final WmsOutBillMapper outBillMapper;
     private final WmsOutBillDetailMapper outBillDetailMapper;
     private final RemoteFactoryModelService factoryModelService;
+	private final WmsOutBillAccess outBillAccess;
 
     /**
      * 新生产发料成功时同事务建立READY任务；重复调用只核对，不重复建账。
@@ -85,7 +89,11 @@ public class WmsLineDeliveryService {
         return task;
     }
 
+	/**
+	 * 按真实生产发料原单的租户、实名工厂及仓级查看权限读取配送；未建任务才返回空。
+	 */
     public WmsLineDeliveryTaskEntity viewByOutBill(Long outBillId) {
+		requireOutBillAccess(outBillId, false);
         WmsOutBillEntity bill = outBillMapper.selectById(outBillId);
         require(bill != null, "生产发料出库单不存在");
         requireFactory(bill.getFactoryCode());
@@ -94,10 +102,13 @@ public class WmsLineDeliveryService {
         return task == null ? null : populate(task);
     }
 
+	/**
+	 * 按任务实际原单核查看范围后返回明细和履历，任务ID不能替代原仓授权。
+	 */
     public WmsLineDeliveryTaskEntity view(Long id) {
         WmsLineDeliveryTaskEntity task = taskMapper.selectById(id);
         require(task != null, "线边配送任务不存在");
-        requireFactory(task.getFactoryCode());
+		requireTaskAccess(task, false);
         return populate(task);
     }
 
@@ -365,6 +376,7 @@ public class WmsLineDeliveryService {
     }
 
     private WmsOutBillEntity lockBill(Long id) {
+		requireOutBillAccess(id, true);
         WmsOutBillEntity bill = outBillMapper.selectOne(new LambdaQueryWrapper<WmsOutBillEntity>()
                 .eq(WmsOutBillEntity::getId, id).last("FOR UPDATE"), false);
         require(bill != null, "生产发料出库单不存在");
@@ -376,7 +388,7 @@ public class WmsLineDeliveryService {
         WmsLineDeliveryTaskEntity task = taskMapper.selectOne(new LambdaQueryWrapper<WmsLineDeliveryTaskEntity>()
                 .eq(WmsLineDeliveryTaskEntity::getId, id).last("FOR UPDATE"), false);
         require(task != null, "线边配送任务不存在");
-        requireFactory(task.getFactoryCode());
+		requireTaskAccess(task, true);
         return task;
     }
 
@@ -398,9 +410,32 @@ public class WmsLineDeliveryService {
     private WmsLineDeliveryOperationEntity replay(String request, String type, String snapshot) {
         WmsLineDeliveryOperationEntity row = operationMapper.selectOne(new LambdaQueryWrapper<WmsLineDeliveryOperationEntity>()
                 .eq(WmsLineDeliveryOperationEntity::getRequestId, request), false);
-        if (row != null) require(type.equals(row.getOperationType()) && snapshot.equals(row.getFactSnapshot()),
-                "请求号已被不同线边配送事实使用");
+		if (row != null) {
+			WmsLineDeliveryTaskEntity task = taskMapper.selectById(row.getTaskId());
+			require(task != null, "线边配送任务不存在");
+			// 回放只读原结果，仍先核当前实名工厂写准入和原仓查看范围，不能凭请求号越权读取履历。
+			requireTaskAccess(task, true);
+			require(type.equals(row.getOperationType()) && snapshot.equals(row.getFactSnapshot()),
+					"请求号已被不同线边配送事实使用");
+		}
         return row;
+	}
+
+	/**
+	 * 复用固定生产发料族的真实原单授权；写入口由原事务核工厂写权限并锁原单。
+	 * 配送各动作权限仍由原Controller独立校验，不以查看权限替代派单、到达或核销权限。
+	 */
+	private void requireOutBillAccess(Long outBillId, boolean write) {
+		require(outBillId != null, "生产发料出库单不能为空");
+		outBillAccess.originals(Family.PRODUCE, List.of(outBillId), Action.VIEW, write);
+	}
+
+	/**
+	 * 任务及回放按实际关联原单核准后，再确认任务工厂与当前实名工厂一致。
+	 */
+	private void requireTaskAccess(WmsLineDeliveryTaskEntity task, boolean write) {
+		requireOutBillAccess(task.getOutBillId(), write);
+		requireFactory(task.getFactoryCode());
     }
 
     private void operation(WmsLineDeliveryTaskEntity task, String request, String type, String before, String after,
@@ -469,7 +504,8 @@ public class WmsLineDeliveryService {
 
     private void requireFactory(String factory) {
         String selected = FactoryContextHolder.getFactoryCode();
-        require(StrUtil.isNotBlank(factory) && (StrUtil.isBlank(selected) || Objects.equals(selected, factory)), "当前工厂无权操作线边配送任务");
+		require(StrUtil.isNotBlank(factory) && StrUtil.isNotBlank(selected) && Objects.equals(selected, factory),
+				"当前工厂无权操作线边配送任务");
     }
 
     private void require(boolean condition, String message) {

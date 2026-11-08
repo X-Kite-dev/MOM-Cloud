@@ -41,7 +41,7 @@ public class WmsBillPermissionProofs {
 	/**
 	 * 其他单据入口复用的证明候选，不允许调用方传入人员、租户或工厂身份。
 	 *
-	 * @param family        固定warehouse/sales/produce/other菜单族
+	 * @param family        固定原菜单族或独立in_bill_*、in_notice_*，不能混用入库与出库页面证明
 	 * @param action        固定单据动作词
 	 * @param warehouseCode 实际原仓或待建目标仓
 	 * @param permission    当前人员持有的精确按钮码
@@ -136,6 +136,6 @@ public class WmsBillPermissionProofs {
 	}
 
 	private CheckedException failure() {
-		return new CheckedException("出库按钮授权来源核验失败，请稍后重试");
+		return new CheckedException("仓储按钮授权来源核验失败，请稍后重试");
 	}
 }

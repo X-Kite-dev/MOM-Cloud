@@ -302,6 +302,11 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
 		if (terminalParent(mainTask.getStatus())) {
 			throw new CheckedException("已关闭或完工的生产工单不能重新派工");
 		}
+		// 派工不猜默认批次，也不改已下达配置；缺失规则须在生成编号及落配额前明确拒绝。
+		BatchGenerator generator = batchGeneratorService.getBatchGenerator(mainTask.getBatchRuleCode());
+		if (generator == null) {
+			throw new CheckedException("原工单未配置有效批次类型，不能派工；请核对工单配置");
+		}
 		List<String> requestedProduceTaskCodes = taskArrangeList.stream()
 				.map(MesTaskArrangeEntity::getProduceTaskCode)
 				.filter(StrUtil::isNotBlank)
@@ -424,10 +429,6 @@ public class MesTaskArrangeServiceImpl extends ServiceImpl<MesTaskArrangeMapper,
 			newTask.setStatus(MesProduceTaskStatusEnum.UN_RECEIVE.name());
 
 			// 设置批次号
-			BatchGenerator generator = batchGeneratorService.getBatchGenerator(mainTask.getBatchRuleCode());
-			if (generator == null) {
-				throw new RuntimeException("未找到对应的批次生成器，请检查批次规则配置");
-			}
 			newTask.setBatchNo(generator.generateBatchNumber(mainTask.getCode(), newTask.getShiftCode()));
 
 			// 设置其他必要信息

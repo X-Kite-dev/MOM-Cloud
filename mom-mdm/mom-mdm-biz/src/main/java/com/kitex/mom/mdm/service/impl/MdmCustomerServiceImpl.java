@@ -6,7 +6,10 @@ import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.excel.vo.ErrorMessage;
 import com.kitex.mom.mdm.entity.MdmCustomerDeliverEntity;
 import com.kitex.mom.mdm.entity.MdmCustomerEntity;
@@ -22,6 +25,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.BindingResult;
 
 import java.util.*;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -41,12 +47,18 @@ public class MdmCustomerServiceImpl extends ServiceImpl<MdmCustomerMapper, MdmCu
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveDeep(MdmCustomerEntity mdmCustomer) {
-        baseMapper.insert(mdmCustomer);
+        validateMaintenance(mdmCustomer);
+        if (baseMapper.insert(mdmCustomer) != 1) {
+            throw new CheckedException("客户主档未保存");
+        }
         DynamicRefreshUtils.refreshMdm(mdmCustomer);
         for (MdmCustomerDeliverEntity mdmCustomerDeliver : mdmCustomer.getMdmCustomerDeliverList()) {
             mdmCustomerDeliver.setCustomerId(mdmCustomer.getId());
             mdmCustomerDeliver.setFactoryCode(mdmCustomer.getFactoryCode());
-            mdmCustomerDeliverMapper.insert(mdmCustomerDeliver);
+            mdmCustomerDeliver.setTenantId(mdmCustomer.getTenantId());
+            if (mdmCustomerDeliverMapper.insert(mdmCustomerDeliver) != 1) {
+                throw new CheckedException("客户发货地址未保存，整单回滚");
+            }
         }
 
         return Boolean.TRUE;
@@ -55,7 +67,17 @@ public class MdmCustomerServiceImpl extends ServiceImpl<MdmCustomerMapper, MdmCu
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean updateDeep(MdmCustomerEntity mdmCustomer) {
-        baseMapper.updateById(mdmCustomer);
+        validateMaintenance(mdmCustomer);
+        MdmCustomerEntity original = getOne(Wrappers.<MdmCustomerEntity>lambdaQuery()
+                .eq(MdmCustomerEntity::getId, mdmCustomer.getId())
+                .eq(MdmCustomerEntity::getTenantId, mdmCustomer.getTenantId())
+                .eq(MdmCustomerEntity::getFactoryCode, mdmCustomer.getFactoryCode()).last("FOR UPDATE"));
+        if (original == null || !Objects.equals(original.getCustomerCode(), mdmCustomer.getCustomerCode())) {
+            throw new CheckedException("客户不存在、组织不符或编码被改绑");
+        }
+        if (baseMapper.updateById(mdmCustomer) != 1) {
+            throw new CheckedException("客户主档未更新，发货地址保持原样");
+        }
         DynamicRefreshUtils.refreshMdm(mdmCustomer);
         mdmCustomerDeliverMapper.delete(Wrappers.<MdmCustomerDeliverEntity>lambdaQuery()
                 .eq(MdmCustomerDeliverEntity::getCustomerId, mdmCustomer.getId()));
@@ -63,7 +85,10 @@ public class MdmCustomerServiceImpl extends ServiceImpl<MdmCustomerMapper, MdmCu
             mdmCustomerDeliver.setId(null);
             mdmCustomerDeliver.setCustomerId(mdmCustomer.getId());
             mdmCustomerDeliver.setFactoryCode(mdmCustomer.getFactoryCode());
-            mdmCustomerDeliverMapper.insert(mdmCustomerDeliver);
+            mdmCustomerDeliver.setTenantId(mdmCustomer.getTenantId());
+            if (mdmCustomerDeliverMapper.insert(mdmCustomerDeliver) != 1) {
+                throw new CheckedException("客户发货地址未保存，整单回滚");
+            }
         }
         return Boolean.TRUE;
     }
@@ -74,6 +99,45 @@ public class MdmCustomerServiceImpl extends ServiceImpl<MdmCustomerMapper, MdmCu
         baseMapper.deleteBatchIds(CollUtil.toList(ids));
         mdmCustomerDeliverMapper.delete(Wrappers.<MdmCustomerDeliverEntity>lambdaQuery().in(MdmCustomerDeliverEntity::getCustomerId, ids));
         return Boolean.TRUE;
+    }
+
+    /**
+     * 维护入口核当前组织和完整地址，外部客户仓库保留文本合同，不擅自认领内部仓库。
+     * @param customer 本次提交的客户及发货地址
+     */
+    private void validateMaintenance(MdmCustomerEntity customer) {
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        if (customer == null || tenant == null || tenant <= 0 || factory == null || factory.isBlank()
+                || Boolean.TRUE.equals(TenantContextHolder.getTenantSkip())
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())) {
+            throw new CheckedException("客户维护需要明确租户及实际工厂");
+        }
+        if ((customer.getTenantId() != null && !tenant.equals(customer.getTenantId()))
+                || (customer.getFactoryCode() != null && !factory.equals(customer.getFactoryCode()))) {
+            throw new CheckedException("客户组织与当前上下文不一致");
+        }
+        customer.setTenantId(tenant);
+        customer.setFactoryCode(factory);
+        if (customer.getCustomerCode() == null || customer.getCustomerCode().isBlank()
+                || customer.getCustomerName() == null || customer.getCustomerName().isBlank()) {
+            throw new CheckedException("客户编码和名称不能为空");
+        }
+        if (customer.getMdmCustomerDeliverList() == null || customer.getMdmCustomerDeliverList().isEmpty()) {
+            throw new CheckedException("请维护客户发货地址");
+        }
+        Set<String> warehouses = new HashSet<>();
+        for (MdmCustomerDeliverEntity address : customer.getMdmCustomerDeliverList()) {
+            if (address == null || address.getWarehouse() == null || address.getWarehouse().isBlank()
+                    || address.getAddress() == null || address.getAddress().isBlank()) {
+                throw new CheckedException("客户发货仓库和地址不能为空");
+            }
+            String warehouse = address.getWarehouse().trim();
+            if (!warehouses.add(warehouse)) {
+                throw new CheckedException("同一客户发货仓库不能重复");
+            }
+            address.setWarehouse(warehouse);
+        }
     }
 
     /**

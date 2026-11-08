@@ -65,8 +65,8 @@ public class ExternalLossReceipt {
 				&& billNo.equals(str(h, "bill_no")) && "wms_inventory_detail".equals(str(h, "document_table"))
 				&& row.getId().toString().equals(str(h, "document_id")) &&
 				row.getWarehouseCode().equals(str(h, "warehouse_code")), "实际盘亏出库头不符");
-		var lines = children("wms_out_bill_detail", row, h);
-		var flows = children("wms_inout_flow", row, h);
+		var lines = outboundLines(row, h);
+		var flows = outboundFlows(row, h, billNo);
 		var pieces = frozen.path("lossStocks");
 		require(lines.size() == pieces.size() && flows.size() == pieces.size(), "实际出库行、流水与精确分配数不符");
 		var result = new ArrayList<PostedLine>();
@@ -76,6 +76,11 @@ public class ExternalLossReceipt {
 			var detail = one(lines, "source_stock_id", sid);
 			String lineId = str(detail, "id");
 			var flow = one(flows, "bill_detail_id", lineId);
+			require(Boolean.TRUE.equals(flow.get("witnessed_flow")) &&
+							Objects.equals(h.get("id"), flow.get("bill_id")) &&
+							Objects.equals(row.getTenantId(), flow.get("tenant_id")) &&
+							row.getFactoryCode().equals(str(flow, "factory_code")),
+					"实际出库流水与原见证、父单或组织不匹配");
 			var source = new ArrayList<JsonNode>();
 			frozen.path("sources").forEach(s -> {
 				if (sid.equals(s.path("stockId").textValue())) {
@@ -143,11 +148,38 @@ public class ExternalLossReceipt {
 		}
 	}
 
-	private List<Map<String, Object>> children(String table, WmsInsideInventoryPlanDetailEntity row,
-	                                           Map<String, Object> h) {
-		return store.jdbc.queryForList(
-				"select * from mom_wms." + table + " where tenant_id=? and factory_code=? and bill_id=? order by id",
-				row.getTenantId(), row.getFactoryCode(), h.get("id"));
+	private List<Map<String, Object>> outboundLines(WmsInsideInventoryPlanDetailEntity row, Map<String, Object> h) {
+		return store.jdbc.queryForList("""
+				select * from mom_wms.wms_out_bill_detail where tenant_id=? and factory_code=? and bill_id=? order by id
+				""", row.getTenantId(), row.getFactoryCode(), h.get("id"));
+	}
+
+	/**
+	 * 以实际出库头的 INSERT 见证定位本次 POST，首次写后与已办复核均可读取同一原号的流水见证。
+	 * 头或行数字同号时仅排除 403 能证明父子关系的独立入库。原 IC 号、操作号、已见证源分别命中，
+	 * 即使实际流已错挂也须进入全量校验。返回的流水须与本次真实见证、出库父头及组织逐项相符。
+	 */
+	private List<Map<String, Object>> outboundFlows(WmsInsideInventoryPlanDetailEntity row, Map<String, Object> h,
+	                                                String billNo) {
+		return store.jdbc.queryForList("""
+						with witnessed as (
+						    select w.source_id, w.after_projection->>'operation_request_id' as operation_id
+						    from mom_wms.wms_external_loss_witness head
+						    join mom_wms.wms_external_loss_witness w
+						      on w.tenant_id=head.tenant_id and w.request_id=head.request_id
+						    where head.tenant_id=? and head.source_table='wms_out_bill' and head.operation='INSERT'
+						      and head.source_id=? and w.source_table='wms_inout_flow'
+						)
+						select f.*, f.id in (select source_id from witnessed) as witnessed_flow
+						from mom_wms.wms_inout_flow f
+						where ((f.bill_id=? or f.bill_detail_id in (select l.id from mom_wms.wms_out_bill_detail l where l.bill_id=?))
+						       and not mom_wms.el_inbound_parent_403(to_jsonb(f)))
+						   or (f.tenant_id=? and f.factory_code=? and f.bill_no=?)
+						   or f.operation_request_id in (select operation_id from witnessed)
+						   or f.id in (select source_id from witnessed)
+						order by f.id
+						""", row.getTenantId(), h.get("id"), h.get("id"), h.get("id"), row.getTenantId(), row.getFactoryCode(),
+				billNo);
 	}
 
 	private Map<String, Object> one(List<Map<String, Object>> rows, String k, String value) {

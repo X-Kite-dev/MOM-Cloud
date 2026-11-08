@@ -11,7 +11,22 @@ import org.springframework.validation.BindingResult;
 
 import java.util.List;
 
+/** 物料主档维护、导入导出及内部业务查询；正式维护遵循当前实际租户与工厂。 */
 public interface MdmMaterialService extends IService<MdmMaterialEntity> {
+
+    /**
+     * 在当前实际组织新增物料，统一校验参数及编码重复。
+     * @param material 待建主档，不得携带原主键或其他组织身份
+     * @return 写入成功为true；校验或写入失败抛出异常并回滚
+     */
+    boolean saveMaintained(MdmMaterialEntity material);
+
+    /**
+     * 精确更新原物料，禁止改绑编码或组织；合并原值后校验关联参数。
+     * @param material 原主键及本次维护参数，null沿既有更新规则保留原值
+     * @return 写入成功为true；归属、参数或写入不符时抛出异常并回滚
+     */
+    boolean updateMaintained(MdmMaterialEntity material);
 
     /**
      * 内部后台任务读取一个明确租户工厂的当前预警参数。

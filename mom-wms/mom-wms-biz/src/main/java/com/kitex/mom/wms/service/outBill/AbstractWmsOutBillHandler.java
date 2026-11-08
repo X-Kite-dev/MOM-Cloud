@@ -891,6 +891,7 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 					proofTotal.compareTo(BigDecimal.valueOf(detail.getMatNum())) != 0) {
 				throw new CheckedException("实际库存扣减证据与出库明细数量不守恒");
 			}
+			freezeActualOutboundQuality(outBill, detail, stockOuted);
 			// 一条实际被消耗库存行形成一条不可拆分证据，保留批次、库位、容器、质量与首次入库时间。
 			for (WmsLiveStockEntity stock : stockOuted) {
 				WmsInoutFlowEntity inoutFlow = new WmsInoutFlowEntity();
@@ -915,6 +916,18 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 			}
 		}
 
+	}
+
+	/**
+	 * 业务族可在真实扣库与标准数量守恒确认后，冻结本次出库明细的源质量结论。
+	 * 默认不改变其它业务；实现拒绝时由原出库事务回滚，不重新查询或预锁源库存。
+	 *
+	 * @param outBill    当前原出库主单
+	 * @param detail     本次实际出库明细，质量不能信任客户端草稿
+	 * @param stockOuted 同事务锁内的实际扣减快照；matNum为本次扣减量，单位为库存标准单位
+	 */
+	protected void freezeActualOutboundQuality(WmsOutBillEntity outBill, WmsOutBillDetailEntity detail,
+	                                           List<WmsLiveStockEntity> stockOuted) {
 	}
 
 	/**
@@ -1158,6 +1171,18 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 		// 将物料从库存中削减
 		List<WmsLiveStockEntity> stockOuted = wmsLiveStockService.reduceStockWhenOut(
 				outBill.getDetails().get(0));
+		WmsOutBillDetailEntity currentDetail = outBill.getDetails().get(0);
+		if (CollUtil.isEmpty(stockOuted)) {
+			throw new CheckedException("拣货出库未形成实际库存扣减证据");
+		}
+		BigDecimal proofTotal = stockOuted.stream().map(item -> BigDecimal.valueOf(item.getMatNum()))
+				.reduce(BigDecimal.ZERO, BigDecimal::add);
+		// 既有PDA明细持久量可能已累计，当前内存量仍是本次增量；不能用累计量核本次实物证明。
+		if (currentDetail.getMatNum() == null ||
+				proofTotal.compareTo(BigDecimal.valueOf(currentDetail.getMatNum())) != 0) {
+			throw new CheckedException("拣货实际扣减证据与本次数量不守恒");
+		}
+		freezeActualOutboundQuality(outBill, currentDetail, stockOuted);
 		// 将削减的物料放到拣货区
 		requireOutbound(Boolean.TRUE.equals(wmsPickingAreaService.insertByStockList(
 						stockOuted, outBill, outBill.getDetails().get(0).getId())),

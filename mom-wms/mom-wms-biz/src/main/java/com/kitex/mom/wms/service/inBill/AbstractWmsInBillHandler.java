@@ -883,6 +883,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		checkInboundPlacements(inBill);
 		Assert.isTrue(Boolean.TRUE.equals(checkWarehouse(inBill.getWarehouseCode(), inBill.getBillType())),
 				"仓库不支持当前业务");
+		validatePurchaseInboundQuality(inBill);
 		List<WmsInBillDetailEntity> details = inBill.getDetails();
 		WmsInNoticeEntity notice = inBill.getNoticeId() == null
 				? null
@@ -977,6 +978,105 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 			}
 		}
 
+	}
+
+	/**
+	 * 采购实收入库前按原通知核验质量镜像，避免客户端把未知或待检来源改成合格库存。
+	 * 通用仓审核使用默认处理器，因此本校验保留在各过账入口共用的基类，并只约束采购业务。
+	 * 原通知锁沿用既有单据过账顺序；只比较并拒绝，不补写旧明细或原通知的质量事实。
+	 *
+	 * @param bill 本次已保存的实际采购入库单，含本次将建立库存的完整明细
+	 * @throws CheckedException 原单组织、通知身份或质量镜像不一致，或无通知却提供质量依据
+	 */
+	private void validatePurchaseInboundQuality(WmsInBillEntity bill) {
+		if (!InBillTypeEnum.PURCHASE.getCode().equals(bill.getBillType())) {
+			return;
+		}
+		Long tenant = TenantContextHolder.getTenantId();
+		String factory = FactoryContextHolder.getFactoryCode();
+		requireInbound(tenant != null && StrUtil.isNotBlank(factory) && bill.getId() != null,
+				"采购入库必须具有实际租户、工厂和原单身份");
+		// INSERT拦截器未必回填新对象的租户字段，以同事务已保存的原单归属为准。
+		WmsInBillEntity originalBill = wmsInBillMapper.selectOne(Wrappers.<WmsInBillEntity>lambdaQuery()
+				.eq(BaseEntity::getId, bill.getId())
+				.eq(WmsInBillEntity::getTenantId, tenant)
+				.eq(WmsInBillEntity::getFactoryCode, factory));
+		requireInbound(originalBill != null
+						&& InBillTypeEnum.PURCHASE.getCode().equals(originalBill.getBillType())
+						&& StrUtil.isNotBlank(originalBill.getWarehouseCode())
+						&& Objects.equals(originalBill.getWarehouseCode(), bill.getWarehouseCode())
+						&& Objects.equals(originalBill.getNoticeId(), bill.getNoticeId())
+						&& (bill.getTenantId() == null || Objects.equals(tenant, bill.getTenantId()))
+						&& (StrUtil.isBlank(bill.getFactoryCode()) || Objects.equals(factory, bill.getFactoryCode())),
+				"采购入库原单的组织、仓库或来源通知不一致");
+		Map<Long, WmsInNoticeDetailEntity> sourceDetails = new HashMap<>();
+		if (originalBill.getNoticeId() != null) {
+			WmsInNoticeEntity originalNotice = wmsInNoticeMapper.selectOne(
+					Wrappers.<WmsInNoticeEntity>lambdaQuery()
+							.eq(BaseEntity::getId, originalBill.getNoticeId())
+							.eq(WmsInNoticeEntity::getTenantId, tenant)
+							.eq(WmsInNoticeEntity::getFactoryCode, factory)
+							.eq(WmsInNoticeEntity::getWarehouseCode, originalBill.getWarehouseCode())
+							.eq(WmsInNoticeEntity::getBillType, InBillTypeEnum.PURCHASE.getCode())
+							.last("FOR UPDATE"));
+			requireInbound(originalNotice != null, "采购入库来源通知不存在或组织、仓库、业务类型不符");
+			List<WmsInNoticeDetailEntity> originals = wmsInNoticeDetailMapper.selectList(
+					Wrappers.<WmsInNoticeDetailEntity>lambdaQuery()
+							.eq(WmsInNoticeDetailEntity::getNoticeId, originalNotice.getId())
+							.eq(WmsInNoticeDetailEntity::getTenantId, tenant)
+							.eq(WmsInNoticeDetailEntity::getFactoryCode, factory));
+			for (WmsInNoticeDetailEntity original : originals) {
+				requireInbound(
+						original.getId() != null && sourceDetails.putIfAbsent(original.getId(), original) == null,
+						"采购入库来源通知明细身份异常，请核对原通知");
+			}
+		}
+		for (WmsInBillDetailEntity detail : bill.getDetails()) {
+			requireInbound(detail != null && Objects.equals(originalBill.getId(), detail.getBillId())
+							&& Objects.equals(factory, detail.getFactoryCode())
+							&& Objects.equals(originalBill.getWarehouseCode(), detail.getWarehouseCode())
+							&& (detail.getTenantId() == null || Objects.equals(tenant, detail.getTenantId())),
+					"采购入库明细不属于当前原单、组织或仓库");
+			String flag = StrUtil.trimToEmpty(detail.getIsQualityTest());
+			requireInbound(flag.isEmpty() || "0".equals(flag) || "1".equals(flag), "采购入库是否质检标记无效");
+			if (originalBill.getNoticeId() == null) {
+				// 无来源通知的旧手工采购可保留未知质量，但不能凭客户端声明取得免检或合格依据。
+				requireInbound(StrUtil.isBlank(detail.getQualityResult()) && detail.getQualityTaskId() == null
+								&& StrUtil.isBlank(detail.getSourceQualityTaskIds())
+								&& StrUtil.isBlank(detail.getSourceQualityEvidenceFingerprint())
+								&& StrUtil.isBlank(detail.getSourceQualityEvidenceSnapshot()) && !"0".equals(flag),
+						"采购入库质量依据须来自原通知，请选择具有质量结论的来源通知");
+				continue;
+			}
+			WmsInNoticeDetailEntity source = sourceDetails.get(detail.getNoticeDetailId());
+			requireInbound(source != null
+							&& Objects.equals(originalBill.getWarehouseCode(), source.getWarehouseCode())
+							&& matchesNoticeDetail(source, detail),
+					"采购入库明细与原通知的来源、仓库、物料、批次或单位不一致");
+			String sourceResult = StrUtil.trimToEmpty(source.getQualityResult());
+			requireInbound(Objects.equals(sourceResult, StrUtil.trimToEmpty(detail.getQualityResult()))
+							&& Objects.equals(source.getQualityTaskId(), detail.getQualityTaskId())
+							&& Objects.equals(purchaseQualityEvidence(source.getSourceQualityTaskIds()),
+							purchaseQualityEvidence(detail.getSourceQualityTaskIds()))
+							&& Objects.equals(purchaseQualityEvidence(source.getSourceQualityEvidenceFingerprint()),
+							purchaseQualityEvidence(detail.getSourceQualityEvidenceFingerprint()))
+							&& Objects.equals(purchaseQualityEvidence(source.getSourceQualityEvidenceSnapshot()),
+							purchaseQualityEvidence(detail.getSourceQualityEvidenceSnapshot())),
+					"采购入库质量依据与原通知不一致，请重新选择原通知明细");
+			// 通知没有是否质检字段；只有其明确免检结论可支持客户端标记0，未知不能派生免检。
+			requireInbound(!"0".equals(flag) || "EXEMPTION".equals(sourceResult),
+					"采购入库免检须有原通知的明确免检结论");
+		}
+	}
+
+	/**
+	 * 源质量证据仅统一未提供的空值，非空原文保持不变，避免改写既有JSON或指纹。
+	 *
+	 * @param value 原通知或当前明细的证据字段
+	 * @return 未提供时为空，否则为原文
+	 */
+	private static String purchaseQualityEvidence(String value) {
+		return StrUtil.isBlank(value) ? null : value;
 	}
 
 	/**

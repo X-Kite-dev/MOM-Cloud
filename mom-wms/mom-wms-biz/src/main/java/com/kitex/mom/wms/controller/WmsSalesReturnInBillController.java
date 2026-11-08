@@ -1,10 +1,5 @@
 package com.kitex.mom.wms.controller;
 
-import cn.hutool.core.collection.CollUtil;
-import cn.hutool.core.util.ArrayUtil;
-import cn.hutool.core.util.StrUtil;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.kitex.common.core.entity.BaseCore;
 import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
@@ -12,10 +7,9 @@ import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.wms.dto.WmsInBillDetailQueryDTO;
 import com.kitex.mom.wms.entity.WmsInBillEntity;
 import com.kitex.mom.wms.entity.WmsOmsSalesReturnEventOutboxEntity;
-import com.kitex.mom.wms.enums.InBillTypeEnum;
+import com.kitex.mom.wms.service.bill.WmsInBillAccess.Family;
+import com.kitex.mom.wms.service.bill.WmsInBillApplicationService;
 import com.kitex.mom.wms.service.impl.WmsOmsSalesReturnEventOutboxService;
-import com.kitex.mom.wms.service.inBill.WmsInBillFactory;
-import com.kitex.mom.wms.service.inBill.WmsInBillHandler;
 import com.kitex.mom.wms.vo.WmsInBillDetailExcelVO;
 import com.kitex.mom.wms.vo.WmsInBillExcelVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,15 +19,20 @@ import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
 /**
- * 销售退货入库单
- *
- * @author kitex
- * @date 2024-12-31 15:37:48
+ * 销售退货入库单的固定Web入口；所有单据动作由办理门面核实际组织、原仓及动作权限。
+ * 原质量、数量、状态及跨模块后续处理继续沿实际类型处理器执行。
  */
 @RestController
 @RequiredArgsConstructor
@@ -42,241 +41,144 @@ import java.util.List;
 @SecurityRequirement(name = HttpHeaders.AUTHORIZATION)
 public class WmsSalesReturnInBillController {
 
-    private final String billType = InBillTypeEnum.SALES_RETURN.getCode();
-    private final WmsOmsSalesReturnEventOutboxService omsSalesReturnEventOutboxService;
+	private final WmsInBillApplicationService documents;
 
-    @GetMapping("/{billId}/omsReturnEvents")
-    @PreAuthorize("@pms.hasPermission('wms_salesReturnOmsEvent_view')")
-    public R<List<WmsOmsSalesReturnEventOutboxEntity>> omsReturnEvents(@PathVariable Long billId) {
-        return R.ok(omsSalesReturnEventOutboxService.listByInBill(billId));
-    }
+	private final WmsOmsSalesReturnEventOutboxService omsSalesReturnEventOutboxService;
 
-    @PostMapping("/omsReturnEvents/{eventId}/retry")
-    @PreAuthorize("@pms.hasPermission('wms_salesReturnOmsEvent_retry')")
-    public R<WmsOmsSalesReturnEventOutboxEntity> retryOmsReturnEvent(@PathVariable Long eventId) {
-        return R.ok(omsSalesReturnEventOutboxService.retry(eventId));
-    }
+	@GetMapping("/{billId}/omsReturnEvents")
+	@PreAuthorize("@pms.hasPermission('wms_salesReturnOmsEvent_view')")
+	public R<List<WmsOmsSalesReturnEventOutboxEntity>> omsReturnEvents(@PathVariable Long billId) {
+		return R.ok(omsSalesReturnEventOutboxService.listByInBill(billId));
+	}
 
-    @PostMapping("/omsReturnEvents/{eventId}/reconcile")
-    @PreAuthorize("@pms.hasPermission('wms_salesReturnOmsEvent_view')")
-    public R<WmsOmsSalesReturnEventOutboxEntity> reconcileOmsReturnEvent(@PathVariable Long eventId) {
-        return R.ok(omsSalesReturnEventOutboxService.reconcile(eventId));
-    }
+	@PostMapping("/omsReturnEvents/{eventId}/retry")
+	@PreAuthorize("@pms.hasPermission('wms_salesReturnOmsEvent_retry')")
+	public R<WmsOmsSalesReturnEventOutboxEntity> retryOmsReturnEvent(@PathVariable Long eventId) {
+		return R.ok(omsSalesReturnEventOutboxService.retry(eventId));
+	}
 
-    /**
-     * 分页查询
-     *
-     * @param page      分页对象
-     * @param wmsInBill 入库单
-     * @return
-     */
-    @Operation(summary = "分页查询", description = "分页查询")
-    @GetMapping("/page")
-    @PreAuthorize("@pms.hasPermission('wms_bill_view_in_salesReturn')")
-    public R getWmsInBillPage(@ParameterObject SearchPage page, @ParameterObject WmsInBillDetailQueryDTO wmsInBill) {
-        QueryWrapper<WmsInBillEntity> wrapper = getMainQueryWrapper(wmsInBill);
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return R.ok(handler.page(page.toMpPage(), wrapper));
-    }
+	@PostMapping("/omsReturnEvents/{eventId}/reconcile")
+	@PreAuthorize("@pms.hasPermission('wms_salesReturnOmsEvent_view')")
+	public R<WmsOmsSalesReturnEventOutboxEntity> reconcileOmsReturnEvent(@PathVariable Long eventId) {
+		return R.ok(omsSalesReturnEventOutboxService.reconcile(eventId));
+	}
 
-    /**
-     * 分页查询明细
-     *
-     * @param page   分页对象
-     * @param params 入库单
-     * @return
-     */
-    @Operation(summary = "分页查询明细", description = "分页查询明细")
-    @GetMapping("/pageDetails")
-    @PreAuthorize("@pms.hasPermission('wms_bill_view_in_salesReturn')")
-    public R getWmsInBillPageDetails(@ParameterObject SearchPage page, @ParameterObject WmsInBillDetailQueryDTO params) {
-        params.setBillType(billType);
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return R.ok(handler.pageDetails(page.toMpPage(), params));
-    }
-
-
-    /**
-     * 通过id查询入库单
-     *
-     * @param id id
-     * @return R
-     */
-    @Operation(summary = "通过id查询", description = "通过id查询")
-    @GetMapping("/{id}")
-    @PreAuthorize("@pms.hasPermission('wms_bill_view_in_salesReturn')")
-    public R getById(@PathVariable("id") Long id) {
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return R.ok(handler.selectById(id));
-    }
-
-    /**
-     * 新增入库单
-     *
-     * @param wmsInBill 入库单
-     * @return R
-     */
-    @Operation(summary = "新增入库单", description = "新增入库单")
-    @SysLog("新增入库单")
-    @PostMapping
-    @PreAuthorize("@pms.hasPermission('wms_bill_add_in_salesReturn')")
-    public R save(@RequestBody WmsInBillEntity wmsInBill) {
-        wmsInBill.setBillType(billType);
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return R.ok(handler.saveDeep(wmsInBill));
-    }
-
-    /**
-     * 新增入库单并直接审核通过
-     *
-     * @param wmsInBill 入库单
-     * @return R
-     */
-    @Operation(summary = "新增入库单并直接审核通过", description = "新增入库单并直接审核通过")
-    @SysLog("新增入库单并直接审核通过")
-    @PostMapping("/addAndPass")
-    @PreAuthorize("@pms.hasPermission('wms_bill_add_review_salesReturn')")
-    public R addAndPass(@RequestBody WmsInBillEntity wmsInBill) {
-        wmsInBill.setBillType(billType);
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return R.ok(handler.addAndPass(wmsInBill));
-    }
-
-    /**
-     * 修改入库单
-     *
-     * @param wmsInBill 入库单
-     * @return R
-     */
-    @Operation(summary = "修改入库单", description = "修改入库单")
-    @SysLog("修改入库单")
-    @PutMapping
-    @PreAuthorize("@pms.hasPermission('wms_bill_edit_in_salesReturn')")
-    public R updateById(@RequestBody WmsInBillEntity wmsInBill) {
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return R.ok(handler.updateDeep(wmsInBill));
-    }
-
-    /**
-     * 通过id删除入库单
-     *
-     * @param ids id列表
-     * @return R
-     */
-    @Operation(summary = "通过id删除入库单", description = "通过id删除入库单")
-    @SysLog("通过id删除入库单")
-    @DeleteMapping
-    @PreAuthorize("@pms.hasPermission('wms_bill_del_in_salesReturn')")
-    public R removeById(@RequestBody String[] ids) {
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return R.ok(handler.removeDeep(ids));
-    }
-
-    /**
-     * 提交入库单
-     *
-     * @param id id
-     * @return R
-     */
-    @Operation(summary = "提交入库单", description = "提交入库单")
-    @GetMapping("/commitBill")
-    @PreAuthorize("@pms.hasPermission('wms_bill_commit_in_salesReturn')")
-    public R commitBill(Long id) {
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return R.ok(handler.commitBill(id));
-    }
-
-    /**
-     * 审核通过入库单
-     *
-     * @param id id
-     * @return R
-     */
-    @Operation(summary = "审核通过入库单", description = "审核通过入库单")
-    @GetMapping("/passBill")
-    @PreAuthorize("@pms.hasPermission('wms_bill_review_in_salesReturn')")
-    public R passBill(Long id) {
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return R.ok(handler.passBill(id));
-    }
-
-    /**
-     * 审核驳回入库单
-     *
-     * @param params 入库单id、原因
-     * @return R
-     */
-    @Operation(summary = "审核驳回入库单", description = "审核驳回入库单")
-    @PostMapping("/rejectBill")
-    @PreAuthorize("@pms.hasPermission('wms_bill_review_in_salesReturn')")
-    public R rejectBill(@RequestBody WmsInBillEntity params) {
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return R.ok(handler.rejectBill(params));
-    }
-
-    /**
-     * 导出主表 excel 表格
-     *
-     * @param wmsInNotice 查询条件
-     * @param ids         导出指定ID
-     * @return excel 文件流
-     */
-    @ResponseExcel
-    @GetMapping("/exportMain")
-    @PreAuthorize("@pms.hasPermission('wms_bill_export_in_salesReturn')")
-    public List<WmsInBillExcelVO> exportMain(WmsInBillDetailQueryDTO wmsInNotice, Long[] ids) {
-        QueryWrapper<WmsInBillEntity> wrapper = new QueryWrapper<>();
-        if (ArrayUtil.isNotEmpty(ids)) {
-            wrapper.lambda().in(WmsInBillEntity::getId, ids);
-        } else {
-            wrapper = getMainQueryWrapper(wmsInNotice);
-        }
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return handler.list(wrapper);
-    }
-
-    /**
-     * 导出明细 excel 表格
-     *
-     * @param params 查询条件
-     * @param ids    导出指定ID
-     * @return excel 文件流
-     */
-    @ResponseExcel
-    @GetMapping("/exportDetails")
-    @PreAuthorize("@pms.hasPermission('wms_bill_export_in_salesReturn')")
-    public List<WmsInBillDetailExcelVO> exportDetails(WmsInBillDetailQueryDTO params, Long[] ids) {
-        params.setBillType(billType);
-        WmsInBillHandler handler = WmsInBillFactory.getHandler(billType);
-        return handler.listDetails(params, ids);
-    }
 
 	/**
-	 * 按完整原通知身份构造列表和主表导出条件；现有业务类型与组织权限由原调用入口约束。
+	 * 查询当前工厂及实际授权仓的入库单，固定业务族由本入口决定。
 	 *
-	 * @param wmsInBill 查询参数，空通知号不筛选，非法通知号拒绝查询
-	 * @return 主表查询条件，通知号以Long等值绑定
+	 * @param page      分页参数
+	 * @param wmsInBill 原通知、类型、状态、仓库和创建时间等筛选条件
+	 * @return 授权范围内的分页；无查看权限时返回零行
 	 */
-	public QueryWrapper<WmsInBillEntity> getMainQueryWrapper(WmsInBillDetailQueryDTO wmsInBill) {
-		Long noticeId = wmsInBill.noticeIdValue();
-		QueryWrapper<WmsInBillEntity> wrapper = new QueryWrapper<>();
-		if (CollUtil.isNotEmpty(wmsInBill.getCreateTime())) {
-			wrapper.lambda().ge(BaseCore::getCreateTime, wmsInBill.getCreateTime().get(0));
-			if (wmsInBill.getCreateTime().size() > 1) {
-				wrapper.lambda().lt(BaseCore::getCreateTime, wmsInBill.getCreateTime().get(1));
-			}
-		}
-		wrapper.lambda().like(StrUtil.isNotBlank(wmsInBill.getBillNo()), WmsInBillEntity::getBillNo,
-						wmsInBill.getBillNo())
-				.eq(noticeId != null, WmsInBillEntity::getNoticeId, noticeId)
-				.eq(StrUtil.isNotBlank(wmsInBill.getState()), WmsInBillEntity::getState, wmsInBill.getState())
-				.eq(StrUtil.isNotBlank(wmsInBill.getWarehouseCode()), WmsInBillEntity::getWarehouseCode,
-						wmsInBill.getWarehouseCode())
-				.like(StrUtil.isNotBlank(wmsInBill.getCreateBy()), WmsInBillEntity::getCreateBy,
-						wmsInBill.getCreateBy())
-				.eq(WmsInBillEntity::getBillType, billType)
-				.orderByAsc(WmsInBillEntity::getState)
-				.orderByDesc(BaseCore::getCreateTime);
-		return wrapper;
+	@Operation(summary = "分页查询", description = "分页查询")
+	@GetMapping("/page")
+	public R getWmsInBillPage(@ParameterObject SearchPage page,
+	                          @ParameterObject WmsInBillDetailQueryDTO wmsInBill) {
+		return R.ok(documents.page(Family.SALES_RETURN, page.toMpPage(), wmsInBill));
+	}
+
+	/**
+	 * 查询入库明细；实际组织、固定业务族和授权仓范围由办理门面覆盖。
+	 */
+	@Operation(summary = "分页查询明细", description = "分页查询明细")
+	@GetMapping("/pageDetails")
+	public R getWmsInBillPageDetails(@ParameterObject SearchPage page,
+	                                 @ParameterObject WmsInBillDetailQueryDTO params) {
+		return R.ok(documents.pageDetails(Family.SALES_RETURN, page.toMpPage(), params));
+	}
+
+	/**
+	 * 先核实际原单和原仓查看权限，再按存储类型读取详情。
+	 */
+	@Operation(summary = "通过id查询", description = "通过id查询")
+	@GetMapping("/{id}")
+	public R getById(@PathVariable("id") Long id) {
+		return R.ok(documents.view(Family.SALES_RETURN, id));
+	}
+
+	/**
+	 * 新增入库单；先核目标仓新增权限及关联通知真实归属，保留原类型来源校验。
+	 */
+	@Operation(summary = "新增入库单", description = "新增入库单")
+	@SysLog("新增入库单")
+	@PostMapping
+	public R save(@RequestBody WmsInBillEntity wmsInBill) {
+		return R.ok(documents.create(Family.SALES_RETURN, wmsInBill, false));
+	}
+
+	/**
+	 * 新增并直接审核须有目标仓独立直接审核权限，原质量与实收规则继续生效。
+	 */
+	@Operation(summary = "新增入库单并直接审核通过", description = "新增入库单并直接审核通过")
+	@SysLog("新增入库单并直接审核通过")
+	@PostMapping("/addAndPass")
+	public R addAndPass(@RequestBody WmsInBillEntity wmsInBill) {
+		return R.ok(documents.create(Family.SALES_RETURN, wmsInBill, true));
+	}
+
+	/**
+	 * 按真实原单类型核原仓与目标仓编辑权限，保留原来源通知和状态约束。
+	 */
+	@Operation(summary = "修改入库单", description = "修改入库单")
+	@SysLog("修改入库单")
+	@PutMapping
+	public R updateById(@RequestBody WmsInBillEntity wmsInBill) {
+		return R.ok(documents.update(Family.SALES_RETURN, wmsInBill));
+	}
+
+	/**
+	 * 全批原单先核删除权限再按实际类型办理，任一原件无权或失败时整体回滚。
+	 */
+	@Operation(summary = "通过id删除入库单", description = "通过id删除入库单")
+	@SysLog("通过id删除入库单")
+	@DeleteMapping
+	public R removeById(@RequestBody String[] ids) {
+		return R.ok(documents.remove(Family.SALES_RETURN, ids));
+	}
+
+	/**
+	 * 核实际原仓提交权限后提交原单，原状态与来源检查继续生效。
+	 */
+	@Operation(summary = "提交入库单", description = "提交入库单")
+	@GetMapping("/commitBill")
+	public R commitBill(Long id) {
+		return R.ok(documents.commit(Family.SALES_RETURN, id));
+	}
+
+	/**
+	 * 审核原单按其真实类型派发，保留采购回写及生产退料回执等业务后续处理。
+	 */
+	@Operation(summary = "审核通过入库单", description = "审核通过入库单")
+	@GetMapping("/passBill")
+	public R passBill(Long id) {
+		return R.ok(documents.pass(Family.SALES_RETURN, id));
+	}
+
+	/**
+	 * 沿实际原单审核权限驳回，只以正文ID和原驳回原因办理。
+	 */
+	@Operation(summary = "审核驳回入库单", description = "审核驳回入库单")
+	@PostMapping("/rejectBill")
+	public R rejectBill(@RequestBody WmsInBillEntity params) {
+		return R.ok(documents.reject(Family.SALES_RETURN, params));
+	}
+
+	/**
+	 * 指定主单整批核原仓导出权限；未选择时沿当前筛选及实际授权范围导出。
+	 */
+	@ResponseExcel
+	@GetMapping("/exportMain")
+	public List<WmsInBillExcelVO> exportMain(WmsInBillDetailQueryDTO wmsInNotice, Long[] ids) {
+		return documents.exportMain(Family.SALES_RETURN, wmsInNotice, ids);
+	}
+
+	/**
+	 * 明细ID须关联同组织实际主单，整批核导出权限，不能只返回部分有权明细。
+	 */
+	@ResponseExcel
+	@GetMapping("/exportDetails")
+	public List<WmsInBillDetailExcelVO> exportDetails(WmsInBillDetailQueryDTO params, Long[] ids) {
+		return documents.exportDetails(Family.SALES_RETURN, params, ids);
 	}
 }

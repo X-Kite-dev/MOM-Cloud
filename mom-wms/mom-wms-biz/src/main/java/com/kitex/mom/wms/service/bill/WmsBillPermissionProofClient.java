@@ -25,8 +25,8 @@ public interface WmsBillPermissionProofClient {
 	R<Proof> prove(@RequestBody List<Item> items);
 
 	/**
-	 * @param family        warehouse表示通用仓库按钮，sales/produce表示固定业务族
-	 * @param action        固定单据动作词
+	 * @param family        原出库warehouse/sales/produce等族保持；入库单使用独立in_bill_*，原入库通知来源使用in_notice_*
+	 * @param action        固定单据八动作；in_notice_*只接受建单来源办理所需inout
 	 * @param warehouseCode 已核实际仓库编码
 	 * @param factoryCode   当前已授权工厂编码
 	 * @param permission    当前人员实际具有的精确权限码，须由菜单祖先证明来源

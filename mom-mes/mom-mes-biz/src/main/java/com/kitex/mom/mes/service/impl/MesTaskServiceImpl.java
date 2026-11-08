@@ -30,6 +30,7 @@ import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteBomService;
 import com.kitex.mom.mdm.feign.RemoteClassesService;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
+import com.kitex.mom.mes.batch.BatchGeneratorService;
 import com.kitex.mom.mes.dto.*;
 import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.*;
@@ -124,6 +125,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     private final MesProductionOrderService productionOrderService;
     private final MesPlanCompletionOutboxService planCompletionOutbox;
 	private final MesTaskCommandGuard taskCommands;
+	private final BatchGeneratorService batchGeneratorService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -1614,6 +1616,10 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
 		MesTaskEntity mesTask = taskCommands.lock(id);
 		if (!MesTaskStatusEnum.CREATE.name().equals(mesTask.getStatus())) {
 			throw new CheckedException("生产工单已下达或状态已变化，禁止重复下达");
+		}
+		// 批次规则只能在草稿维护；首次下达前核实际生成器，避免冻结成无法派工的工单。
+		if (batchGeneratorService.getBatchGenerator(mesTask.getBatchRuleCode()) == null) {
+			throw new CheckedException("请先在编辑工单中选择有效的批次类型并保存，再下达");
 		}
 		// 普通生产下达不重选今日默认路线；正式REWORK仍沿用原批准快照合同。
 		MesEngineeringPackageService.FrozenEngineering engineering = "REWORK".equals(mesTask.getResourceType())

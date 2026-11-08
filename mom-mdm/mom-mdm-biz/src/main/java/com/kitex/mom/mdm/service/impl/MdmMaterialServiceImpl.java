@@ -26,11 +26,14 @@ import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.entity.MdmMaterialGroupEntity;
 import com.kitex.mom.mdm.mapper.MdmMaterialMapper;
 import com.kitex.mom.mdm.service.MdmMaterialGroupService;
+import com.kitex.mom.mdm.service.MdmMaterialMaintenanceValidator;
 import com.kitex.mom.mdm.service.MdmMaterialService;
 import com.kitex.mom.mdm.util.FileUrlUtil;
 import com.kitex.mom.mdm.vo.excel.MdmMaterialExcelVO;
 import lombok.AllArgsConstructor;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.BeanWrapperImpl;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.BindingResult;
@@ -56,6 +59,94 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
     private final RemotePrintService remotePrintService;
 
     private final FileUrlUtil fileUrlUtil;
+
+    private final JdbcTemplate maintenanceJdbc;
+
+    /** {@inheritDoc} */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean saveMaintained(MdmMaterialEntity material) {
+        lockMaintenanceScope();
+        requireMaterial(material != null && material.getId() == null, "新增物料不能携带原主键");
+        applyMaintenanceScope(material);
+        requireMaterial(StrUtil.isNotBlank(material.getMaterialCode()) && StrUtil.isNotBlank(material.getMaterialName())
+                && StrUtil.isNotBlank(material.getBasicUnit()), "物料编码、名称及基本单位不能为空");
+        validateMaintenanceGroup(material);
+        MdmMaterialMaintenanceValidator.validate(material);
+        requireMaterial(count(new LambdaQueryWrapper<MdmMaterialEntity>()
+                .eq(MdmMaterialEntity::getTenantId, material.getTenantId())
+                .eq(MdmMaterialEntity::getFactoryCode, material.getFactoryCode())
+                .eq(MdmMaterialEntity::getMaterialCode, material.getMaterialCode())) == 0, "当前工厂已存在该物料编码");
+        requireMaterial(super.save(material), "物料未保存");
+        return true;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean updateMaintained(MdmMaterialEntity material) {
+        lockMaintenanceScope();
+        requireMaterial(material != null && material.getId() != null, "请选择原物料");
+        applyMaintenanceScope(material);
+        MdmMaterialEntity original = getOne(new LambdaQueryWrapper<MdmMaterialEntity>()
+                .eq(MdmMaterialEntity::getId, material.getId())
+                .eq(MdmMaterialEntity::getTenantId, material.getTenantId())
+                .eq(MdmMaterialEntity::getFactoryCode, material.getFactoryCode()).last("FOR UPDATE"));
+        requireMaterial(original != null, "物料不存在或不属于当前实际组织");
+        requireMaterial(material.getMaterialCode() == null || Objects.equals(original.getMaterialCode(), material.getMaterialCode()), "物料编码不能改绑");
+        if (material.getGroupCode() != null && !Objects.equals(original.getGroupCode(), material.getGroupCode())) {
+            validateMaintenanceGroup(material);
+        }
+        // MyBatis既有更新忽略null；先合并原值，避免部分更新绕过库存上下限等关联校验。
+        var incoming = new BeanWrapperImpl(material);
+        String[] nullFields = Arrays.stream(incoming.getPropertyDescriptors())
+                .map(java.beans.PropertyDescriptor::getName).filter(name -> incoming.getPropertyValue(name) == null)
+                .toArray(String[]::new);
+        BeanUtils.copyProperties(material, original, nullFields);
+        requireMaterial(StrUtil.isNotBlank(original.getMaterialName()) && StrUtil.isNotBlank(original.getBasicUnit()),
+                "物料名称及基本单位不能为空");
+        MdmMaterialMaintenanceValidator.validate(original);
+        requireMaterial(super.updateById(material), "物料未更新，请刷新后核对");
+        return true;
+    }
+
+    /** 新物料及变更分组须匹配当前工厂唯一启用分组，名称由真实来源还原。 */
+    private void validateMaintenanceGroup(MdmMaterialEntity material) {
+        requireMaterial(StrUtil.isNotBlank(material.getGroupCode()), "请选择物料分组");
+        List<MdmMaterialGroupEntity> groups = mdmMaterialGroupService.list(new LambdaQueryWrapper<MdmMaterialGroupEntity>()
+                .eq(MdmMaterialGroupEntity::getTenantId, material.getTenantId())
+                .eq(MdmMaterialGroupEntity::getFactoryCode, material.getFactoryCode())
+                .eq(MdmMaterialGroupEntity::getGroupCode, material.getGroupCode())
+                .eq(MdmMaterialGroupEntity::getEnabled, true).last("LIMIT 2"));
+        requireMaterial(groups.size() == 1, "物料分组未唯一归属当前工厂或未启用");
+        material.setGroupName(groups.get(0).getGroupName());
+    }
+
+    /** 正式维护和导入共用组织锁，防止同一工厂的编码查重与插入相互穿越。 */
+    private void lockMaintenanceScope() {
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        requireMaterial(tenant != null && tenant > 0 && StrUtil.isNotBlank(factory)
+                && !Boolean.TRUE.equals(TenantContextHolder.getTenantSkip())
+                && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()), "物料维护需要明确租户与实际工厂");
+        maintenanceJdbc.queryForList("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "MDM_MATERIAL:" + tenant + ":" + factory);
+    }
+
+    /** 不接受客户端用请求正文覆盖当前组织。 */
+    private void applyMaintenanceScope(MdmMaterialEntity material) {
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        requireMaterial((material.getTenantId() == null || tenant.equals(material.getTenantId()))
+                && (material.getFactoryCode() == null || factory.equals(material.getFactoryCode())), "物料组织与当前上下文不一致");
+        material.setTenantId(tenant);
+        material.setFactoryCode(factory);
+    }
+
+    private static void requireMaterial(boolean valid, String message) {
+        if (!valid) {
+            throw new CheckedException(message);
+        }
+    }
 
     @Override
     @Transactional(readOnly = true)
@@ -144,16 +235,21 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
                 .getData()
                 .stream()
                 .collect(Collectors.toMap(SysDictItemEntity::getLabel, SysDictItemEntity::getItemValue, (a, b) -> a));
-        // 物料列表
-        Map<String, String> materialMap = this.list()
+        lockMaintenanceScope();
+        // 物料编码的唯一范围为当前实际租户及工厂。
+        Map<String, String> materialMap = this.list(new LambdaQueryWrapper<MdmMaterialEntity>()
+                .eq(MdmMaterialEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MdmMaterialEntity::getFactoryCode, FactoryContextHolder.getFactoryCode()))
                 .stream()
                 .collect(Collectors.toMap(MdmMaterialEntity::getMaterialCode, MdmMaterialEntity::getMaterialCode,
                         (a, b) -> a));
         // 物料分组
-        Map<String, String> materialGroupMap = mdmMaterialGroupService.list()
+        Map<String, List<MdmMaterialGroupEntity>> materialGroupMap = mdmMaterialGroupService.list(new LambdaQueryWrapper<MdmMaterialGroupEntity>()
+                .eq(MdmMaterialGroupEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MdmMaterialGroupEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
+                .eq(MdmMaterialGroupEntity::getEnabled, true))
                 .stream()
-                .collect(Collectors.toMap(MdmMaterialGroupEntity::getGroupName,
-                        MdmMaterialGroupEntity::getGroupCode, (a, b) -> a));
+                .collect(Collectors.groupingBy(MdmMaterialGroupEntity::getGroupName));
         List<MdmMaterialEntity> insertList = new ArrayList<>();
         for (MdmMaterialExcelVO excelVO : excelVOList) {
             Set<String> errorMsg = new HashSet<>();
@@ -163,9 +259,11 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
                 errorMsg.add(excelVO.getMaterialCode() + "物料编码已存在");
             }
             // 校验物料分组是否存在
-            String materialGroupCode = materialGroupMap.get(excelVO.getGroupName());
+            List<MdmMaterialGroupEntity> groupMatches = materialGroupMap.get(excelVO.getGroupName());
+            String materialGroupCode = groupMatches != null && groupMatches.size() == 1
+                    ? groupMatches.get(0).getGroupCode() : null;
             if (StrUtil.isEmpty(materialGroupCode)) {
-                errorMsg.add(excelVO.getGroupCode() + "物料分组不存在");
+                errorMsg.add(excelVO.getGroupName() + "物料分组不存在、未启用或名称不唯一");
             } else {
                 excelVO.setGroupCode(materialGroupCode);
             }
@@ -193,17 +291,26 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
 
             // 数据合法情况
             if (CollUtil.isEmpty(errorMsg)) {
-                insertList.add(insertExcel(excelVO));
-                materialMap.put(excelVO.getMaterialCode(), excelVO.getMaterialCode());
+                MdmMaterialEntity row = insertExcel(excelVO);
+                applyMaintenanceScope(row);
+                try {
+                    validateMaintenanceGroup(row);
+                    MdmMaterialMaintenanceValidator.validate(row);
+                    insertList.add(row);
+                    materialMap.put(excelVO.getMaterialCode(), excelVO.getMaterialCode());
+                } catch (CheckedException error) {
+                    errorMessageList.add(new ErrorMessage(excelVO.getLineNum() + 1, Set.of(error.getMessage())));
+                }
             } else {
                 // 数据不合法情况
                 errorMessageList.add(new ErrorMessage(excelVO.getLineNum() + 1, errorMsg));
             }
         }
-        this.saveBatch(insertList);
         if (CollUtil.isNotEmpty(errorMessageList)) {
             return R.failed(errorMessageList);
         }
+        requireMaterial(!insertList.isEmpty(), "导入内容不能为空");
+        requireMaterial(this.saveBatch(insertList), "物料导入未全部保存");
         return R.ok(null, "物料导入成功");
     }
 

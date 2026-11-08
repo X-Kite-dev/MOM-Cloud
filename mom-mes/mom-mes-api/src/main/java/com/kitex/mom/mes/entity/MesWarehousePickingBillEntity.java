@@ -102,9 +102,9 @@ public class MesWarehousePickingBillEntity extends BaseEntity<MesWarehousePickin
     private String warehouseName;
 
     /**
-     * 状态 0新建、1待接收、2已完成
+     * 状态：0新建、1已提交、2待接收、3已完成；与V1来源阶段分别记录
      */
-    @Schema(description = "状态 0新建、1待接收、2已完成")
+    @Schema(description = "状态：0新建、1已提交、2待接收、3已完成；与V1来源阶段分别记录")
     private String status;
 
     /**

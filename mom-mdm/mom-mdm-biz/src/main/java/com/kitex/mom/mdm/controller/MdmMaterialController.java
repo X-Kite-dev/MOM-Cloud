@@ -8,8 +8,10 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.SearchPage;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.excel.annotation.RequestExcel;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
@@ -218,7 +220,16 @@ public class MdmMaterialController {
     @Operation(summary = "通过id查询", description = "通过id查询")
     @GetMapping("/{id}")
     public R<MdmMaterialEntity> getById(@PathVariable("id") Long id) {
-        return R.ok(mdmMaterialService.getById(id));
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        if (tenant == null || tenant <= 0 || StrUtil.isBlank(factory)
+                || Boolean.TRUE.equals(TenantContextHolder.getTenantSkip())
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())) {
+            throw new CheckedException("读取物料需要明确租户和实际工厂");
+        }
+        return R.ok(mdmMaterialService.getOne(new LambdaQueryWrapper<MdmMaterialEntity>()
+                .eq(MdmMaterialEntity::getId, id).eq(MdmMaterialEntity::getTenantId, tenant)
+                .eq(MdmMaterialEntity::getFactoryCode, factory)));
     }
 
     /**
@@ -296,9 +307,9 @@ public class MdmMaterialController {
     public R<Boolean> save(@RequestBody MdmMaterialEntity mdmMaterial) {
         MdmMaterialIdentifierTemplateValidator.validate(mdmMaterial);
         resolveSchedulingFamily(mdmMaterial);
-        mdmMaterialService.save(mdmMaterial);
+        mdmMaterialService.saveMaintained(mdmMaterial);
         DynamicRefreshUtils.refreshMdm(mdmMaterial);
-        return R.ok();
+        return R.ok(Boolean.TRUE);
     }
 
     /**
@@ -314,9 +325,9 @@ public class MdmMaterialController {
     public R<Boolean> updateById(@RequestBody MdmMaterialEntity mdmMaterial) {
         MdmMaterialIdentifierTemplateValidator.validate(mdmMaterial);
         resolveSchedulingFamily(mdmMaterial);
-        mdmMaterialService.updateById(mdmMaterial);
+        mdmMaterialService.updateMaintained(mdmMaterial);
         DynamicRefreshUtils.refreshMdm(mdmMaterial);
-        return R.ok();
+        return R.ok(Boolean.TRUE);
     }
 
     private void resolveSchedulingFamily(MdmMaterialEntity material) {
