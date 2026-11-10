@@ -9,16 +9,23 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.excel.vo.ErrorMessage;
+import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.barcode.api.feign.RemotePrintService;
 import com.kitex.mom.common.barcode.dto.req.PreviewObj;
 import com.kitex.mom.common.barcode.dto.req.PrintReq;
 import com.kitex.mom.mdm.constant.AvailableStatusEnum;
 import com.kitex.mom.mdm.dto.MdmFactoryModelDTO;
 import com.kitex.mom.mdm.entity.MdmFactoryModelEntity;
+import com.kitex.mom.mdm.entity.MdmUserFactoryModelBindEntity;
+import com.kitex.mom.mdm.enums.FactoryModelPermissionEnum;
 import com.kitex.mom.mdm.enums.FactoryModelTypeEnum;
 import com.kitex.mom.mdm.mapper.MdmFactoryModelMapper;
+import com.kitex.mom.mdm.mapper.MdmUserFactoryModelBindMapper;
 import com.kitex.mom.mdm.service.MdmFactoryModelService;
 import com.kitex.mom.mdm.vo.MdmFactoryModelAncestorVO;
 import com.kitex.mom.mdm.vo.MdmFactoryModelTreeVO;
@@ -28,6 +35,7 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -49,6 +57,8 @@ public class MdmFactoryModelServiceImpl extends ServiceImpl<MdmFactoryModelMappe
         implements MdmFactoryModelService {
 
     private final RemotePrintService remotePrintService;
+
+    private final MdmUserFactoryModelBindMapper factoryBindings;
 
     @Override
     @Cacheable(value = "factoryModelTree", key = "'all'")
@@ -75,6 +85,51 @@ public class MdmFactoryModelServiceImpl extends ServiceImpl<MdmFactoryModelMappe
     public List<MdmFactoryModelTreeVO> getNodesByType(String type) {
         List<MdmFactoryModelEntity> nodes = baseMapper.selectByType(type);
         return nodes.stream().map(this::convertToTreeVO).collect(Collectors.toList());
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public List<MdmFactoryModelTreeVO> getScopedNodesByType(String type, String factoryCode) {
+        var user = SecurityUtils.getUser();
+        Long tenant = TenantContextHolder.getTenantId();
+        if (user == null || user.getId() == null || tenant == null || !tenant.equals(user.getTenantId())
+                || TenantContextHolder.getTenantSkip() || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
+                || StrUtil.isBlank(factoryCode) || !factoryCode.equals(FactoryContextHolder.getFactoryCode())) {
+            throw new CheckedException("请实名登录并在当前实际工厂查询启用节点");
+        }
+        if (FactoryModelTypeEnum.getByCode(type) == null) {
+            throw new CheckedException("工厂建模节点类型无效");
+        }
+        List<MdmFactoryModelEntity> factories = lambdaQuery()
+                .eq(MdmFactoryModelEntity::getTenantId, tenant)
+                .eq(MdmFactoryModelEntity::getCode, factoryCode)
+                .eq(MdmFactoryModelEntity::getType, FactoryModelTypeEnum.FACTORY.getCode())
+                .eq(MdmFactoryModelEntity::getStatus, true)
+                .last("LIMIT 2").list();
+        if (factories.size() != 1) {
+            throw new CheckedException("当前工厂不存在、停用或编码重复");
+        }
+        var factory = factories.get(0);
+        var bindings = factoryBindings.selectList(new LambdaQueryWrapper<MdmUserFactoryModelBindEntity>()
+                .eq(MdmUserFactoryModelBindEntity::getTenantId, tenant)
+                .eq(MdmUserFactoryModelBindEntity::getUserId, user.getId())
+                .eq(MdmUserFactoryModelBindEntity::getFactoryModelId, factory.getId())
+                .eq(MdmUserFactoryModelBindEntity::getStatus, true));
+        boolean readable = bindings.stream().map(binding -> FactoryModelPermissionEnum.getByCode(
+                        StrUtil.blankToDefault(binding.getPermissionType(), "").toLowerCase(Locale.ROOT)))
+                .anyMatch(grant -> grant != null && grant.hasPermission(FactoryModelPermissionEnum.READ));
+        if (!readable) {
+            throw new CheckedException("当前账号没有实际工厂的读取权限");
+        }
+
+        // 查询先从真实工厂根限定归属，再投影工厂编码，禁止用请求值补齐无归属节点。
+        return baseMapper.selectEnabledFactoryDescendantsByType(tenant, factory.getId(), type).stream()
+                .map(node -> {
+                    var view = convertToTreeVO(node);
+                    view.setFactoryCode(factory.getCode());
+                    return view;
+                }).toList();
     }
 
     @Override

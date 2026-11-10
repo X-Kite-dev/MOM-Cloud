@@ -36,8 +36,10 @@ import com.kitex.mom.wms.util.WmsStockOwnership;
 import com.kitex.mom.wms.vo.WmsInBillDetailExcelVO;
 import com.kitex.mom.wms.vo.WmsInBillExcelVO;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Function;
@@ -52,12 +54,22 @@ import java.util.stream.Collectors;
 
 public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsInBillEntity, WmsInBillDetailEntity> {
 
+	private static final int MAX_MOBILE_PURCHASE_POSTING_LINES = 1000;
+	private static final BigDecimal MAX_MOBILE_PURCHASE_POSTING_QUANTITY = new BigDecimal("1000000000000000000");
+
+	/** 新单协议由实际服务入口选择，不使用提交正文的来源字段。 */
+	private enum PostingEntry {
+		LEGACY,
+		WEB,
+		ORIGINAL_MOBILE
+	}
+
 	@Autowired
 	protected WmsInNoticeMapper wmsInNoticeMapper;
 	@Autowired
 	protected WmsInNoticeDetailMapper wmsInNoticeDetailMapper;
 	@Autowired
-	private WmsInBillMapper wmsInBillMapper;
+	protected WmsInBillMapper wmsInBillMapper;
 	@Autowired
 	private WmsInBillDetailMapper wmsInBillDetailMapper;
 	@Autowired
@@ -105,7 +117,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		beforeSaveDeep(entity);
 
 		// 2、执行保存
-		doSaveDeep(entity);
+		doSaveDeep(entity, PostingEntry.WEB);
 
 		return Boolean.TRUE;
 	}
@@ -158,6 +170,26 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 	 */
 	@Transactional
 	public Double doSaveDeep(WmsInBillEntity entity) {
+		return doSaveDeep(entity, PostingEntry.LEGACY);
+	}
+
+	private Double doSaveDeep(WmsInBillEntity entity, PostingEntry entry) {
+		// 冻结仅发生在首次插入。老入口和已有单据沿用原协议。
+		entity.setPurchasePostingVersion(null);
+		if (entry == PostingEntry.WEB) {
+			freezePurchasePostingVersion(entity);
+			if (Objects.equals(entity.getPurchasePostingVersion(), 1)) {
+				entity.setSource(InOutBillSourceEnum.PC.getCode());
+			}
+		} else if (entry == PostingEntry.ORIGINAL_MOBILE) {
+			freezeMobilePurchasePostingVersion(entity);
+			if (Objects.equals(entity.getPurchasePostingVersion(), 1)) {
+				requireNoOtherOpenInBill(entity);
+				WmsInBillDetailEntity first = entity.getDetails().get(0);
+				requireMobilePostingQuantity(first.getMatNum());
+				requireMobilePostingCapacity(entity, first);
+			}
+		}
 		// 1、 保存主表数据
 		int result = wmsInBillMapper.insert(entity);
 		if (result <= 0) {
@@ -180,6 +212,22 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 
 		// 3、更新通知单数量
 		return createBillHandleNoticeInNum(entity);
+	}
+
+	/**
+	 * 正式 Web 新单可以由服务端冻结采购回写版本，默认入库处理器不启用采购协议。
+	 *
+	 * @param bill 即将在当前事务插入的入库单
+	 */
+	protected void freezePurchasePostingVersion(WmsInBillEntity bill) {
+	}
+
+	/**
+	 * 按原号办理移动收货时冻结首张采购入库单的协议，默认处理器沿用原流程。
+	 *
+	 * @param bill 持有原通知锁、即将在受理事务内插入的移动入库单
+	 */
+	protected void freezeMobilePurchasePostingVersion(WmsInBillEntity bill) {
 	}
 
 	/**
@@ -206,7 +254,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		inBill.setReviewer(SecurityUtils.getUser().getUsername());
 		inBill.setReviewTime(now);
 		// 3、执行保存
-		doSaveDeep(inBill);
+		doSaveDeep(inBill, PostingEntry.WEB);
 		// 4、判断通知单物料是否已全部完成入库
 		passBillHandleNoticeState(inBill);
 		// 5、增加实时库存、生成入库流水记录
@@ -438,14 +486,18 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		if (CollUtil.isEmpty(matchedDetails)) {
 			return true;
 		}
-		WmsIdentifierPolicyEntity effective = identifierPolicyService.resolveEffective(billType, materialCode);
-		if (effective != null && Boolean.TRUE.equals(effective.getSerialManaged())) {
+		if (isSerialManaged(billType, materialCode)) {
 			if (StrUtil.isNotBlank(barcode)) {
 				throw new CheckedException("单件条码[" + StrUtil.trim(barcode) + "]已在当前入库单中");
 			}
 			return true;
 		}
 		return false;
+	}
+
+	private boolean isSerialManaged(String billType, String materialCode) {
+		WmsIdentifierPolicyEntity effective = identifierPolicyService.resolveEffective(billType, materialCode);
+		return effective != null && Boolean.TRUE.equals(effective.getSerialManaged());
 	}
 
 	@Override
@@ -685,6 +737,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 				&& !InOutNoticeStateEnum.RUNNING.getCode().equals(notice.getState())) {
 			throw new CheckedException("入库通知单已作废或已完成，不能继续入库");
 		}
+		requireNoOtherRunningMobilePurchase(notice, bill.getId());
 		List<WmsInNoticeDetailEntity> noticeDetails = wmsInNoticeDetailMapper.selectList(
 				Wrappers.<WmsInNoticeDetailEntity>lambdaQuery()
 						.eq(WmsInNoticeDetailEntity::getNoticeId, bill.getNoticeId()));
@@ -767,6 +820,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		wmsInNoticeMapper.lockNotice(bill.getNoticeId());
 		WmsInNoticeEntity notice = Optional.ofNullable(wmsInNoticeMapper.selectById(bill.getNoticeId()))
 				.orElseThrow(() -> new CheckedException("入库通知单查询失败"));
+		requireNoOtherRunningMobilePurchase(notice, bill.getId());
 		List<WmsInNoticeDetailEntity> noticeDetails = wmsInNoticeDetailMapper.selectList(
 				Wrappers.<WmsInNoticeDetailEntity>lambdaQuery()
 						.eq(WmsInNoticeDetailEntity::getNoticeId, bill.getNoticeId()));
@@ -831,6 +885,42 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 				|| Objects.equals(noticeDetail.getMatBatch(), billDetail.getMatBatch()))
 				&& (StrUtil.isBlank(noticeDetail.getMatUnit())
 				|| Objects.equals(noticeDetail.getMatUnit(), billDetail.getMatUnit()));
+	}
+
+	/**
+	 * 首笔新版移动收货开始前，要求同一通知已办结其他入库单。通知锁与数量占用共用。
+	 *
+	 * @param bill 尚未插入的新移动入库单
+	 */
+	private void requireNoOtherOpenInBill(WmsInBillEntity bill) {
+		long otherOpenBills = wmsInBillMapper.selectCount(Wrappers.<WmsInBillEntity>lambdaQuery()
+				.eq(WmsInBillEntity::getNoticeId, bill.getNoticeId())
+				.eq(WmsInBillEntity::getTenantId, bill.getTenantId())
+				.eq(WmsInBillEntity::getFactoryCode, bill.getFactoryCode())
+				.notIn(WmsInBillEntity::getState, InOutBillStateEnum.PASSED.getCode(),
+						InOutBillStateEnum.FINISHED.getCode()));
+		requireInbound(otherOpenBills == 0, "原采购通知有未完成的入库单，请先完成或删除其他草稿");
+	}
+
+	/**
+	 * 新版移动原单由最后一笔登记触发过账。持原通知锁拒绝其他单据占用或回退其通知数量。
+	 *
+	 * @param notice 受锁保护的原通知
+	 * @param billId 当前准备占用或回退通知数量的入库单主键
+	 */
+	private void requireNoOtherRunningMobilePurchase(WmsInNoticeEntity notice, Long billId) {
+		if (!InBillTypeEnum.PURCHASE.getCode().equals(notice.getBillType())) {
+			return;
+		}
+		long otherMobileBills = wmsInBillMapper.selectCount(Wrappers.<WmsInBillEntity>lambdaQuery()
+				.eq(WmsInBillEntity::getNoticeId, notice.getId())
+				.eq(WmsInBillEntity::getTenantId, notice.getTenantId())
+				.eq(WmsInBillEntity::getFactoryCode, notice.getFactoryCode())
+				.eq(WmsInBillEntity::getSource, InOutBillSourceEnum.APP.getCode())
+				.eq(WmsInBillEntity::getState, InOutBillStateEnum.APP_RUNNING.getCode())
+				.eq(WmsInBillEntity::getPurchasePostingVersion, 1)
+				.ne(WmsInBillEntity::getId, billId));
+		requireInbound(otherMobileBills == 0, "该采购通知正在移动收货，请在收货作业台完成原入库单");
 	}
 
 	/**
@@ -1155,21 +1245,30 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 				new WmsWarehousePlacementGuard.Placement(params.getSiteCode(), params.getContainerCode())));
 	}
 
-	/**
-	 * app入库 提交某一条物料数量，更新入库单入库数量或生成入库单
-	 * <p>
-	 * 根据通知单号、物料编码、批次、供应商查找通知单明细； 查找有没有入库单，查找入库单明细有没有这个物料；
-	 *
-	 * @param params 物料数量等
-	 * @return R 对象
-	 */
+	/** {@inheritDoc} */
 	@Override
 	@Transactional(rollbackFor = Exception.class)
 	public String setInBillNum(WmsInBillDetailAppDTO params) {
+		return receiveMobile(params, PostingEntry.LEGACY);
+	}
+
+	/** {@inheritDoc} */
+	@Override
+	@Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
+	public String receiveByOriginalRequest(WmsInBillDetailAppDTO params) {
+		return receiveMobile(params, PostingEntry.ORIGINAL_MOBILE);
+	}
+
+	/**
+	 * 按受锁保护的原通知追加实收。原单版本只读，最终收齐后一次性过账全部累计明细。
+	 */
+	private String receiveMobile(WmsInBillDetailAppDTO params, PostingEntry entry) {
 		requireInbound(params != null && params.getNoticeId() != null && params.getNoticeId() > 0,
 				"入库必须指定原通知单ID");
-		requireInbound(params.getNoticeDetailId() == null || params.getNoticeDetailId() > 0,
-				"来源入库通知明细无效");
+		requireInbound(params.getNoticeDetailId() != null
+						? params.getNoticeDetailId() > 0
+						: entry == PostingEntry.LEGACY,
+				"请指定有效的原入库通知明细");
 		requireInbound(
 				params.getMatNum() != null && Double.isFinite(params.getMatNum()) && params.getMatNum() > 0
 						&& (params.getOperateNum() == null
@@ -1272,7 +1371,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 					params.getOperateNum() == null ? inBillDetailAdd.getMatNum() : params.getOperateNum());
 			inBill.setDetails(Collections.singletonList(inBillDetailAdd));
 			// 调用新增方法
-			noticeNotInNum = saveDeepApp(inBill);
+			noticeNotInNum = saveDeepApp(inBill, entry);
 		} else {
 			// 修改入库单数量
 			inBill = inBills.get(0);
@@ -1283,6 +1382,13 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 							&& Objects.equals(notice.getBillType(), inBill.getBillType())
 							&& StrUtil.isNotBlank(inBill.getBillNo()),
 					"原入库单的通知、组织、仓库或业务类型不符");
+			Integer postingVersion = inBill.getPurchasePostingVersion();
+			if (postingVersion != null) {
+				requireInbound(Objects.equals(postingVersion, 1)
+								&& entry == PostingEntry.ORIGINAL_MOBILE,
+						"此采购入库单须在移动收货作业台继续办理");
+			}
+			boolean postingV1 = Objects.equals(postingVersion, 1);
 			// 查找入库单明细，如果有则修改数量，没有则新增明细
 			List<WmsInBillDetailEntity> billDetails = wmsInBillDetailMapper
 					.selectList(new LambdaQueryWrapper<WmsInBillDetailEntity>()
@@ -1332,6 +1438,11 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 				inBill.setDetails(Collections.singletonList(detailAdd));
 				checkInboundPlacements(inBill);
 				prepareNewInboundDetail(inBill.getBillType(), detailAdd);
+				if (postingV1) {
+					requireMobilePurchaseDetail(inBill, noticeDetail, detailAdd, detailAdd.getMatNum());
+					requireMobilePostingCapacity(inBill, detailAdd);
+					requireUniqueMobileSerial(inBill, detailAdd);
+				}
 				requireInbound(wmsInBillDetailMapper.insert(detailAdd) == 1,
 						"入库明细新增未确认，入库整体回滚");
 				// 入库单未完成条数+1
@@ -1358,7 +1469,12 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 						"原入库明细组织或数量无效");
 				inBill.setDetails(Collections.singletonList(detailExist));
 				checkInboundPlacements(inBill);
-				detailExist.setMatNum(WmsQuantityMath.add(detailExist.getMatNum(), params.getMatNum()));
+				double receivedTotal = WmsQuantityMath.add(detailExist.getMatNum(), params.getMatNum());
+				if (postingV1) {
+					requireMobilePostingQuantity(params.getMatNum());
+					requireMobilePurchaseDetail(inBill, noticeDetail, detailExist, receivedTotal);
+				}
+				detailExist.setMatNum(receivedTotal);
 				// 操作数量
 				detailExist.setOperateNum(WmsQuantityMath.add(
 						Optional.ofNullable(detailExist.getOperateNum()).orElse(0d),
@@ -1370,6 +1486,10 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 				noticeNotInNum = createBillHandleNoticeInNum(inBill);
 			}
 		}
+		// 收齐后会重新加载累计明细用于库存过账。先保留本次登记量，供按增量回写的业务使用。
+		List<WmsInBillDetailEntity> receivedDetails = inBill.getDetails().stream()
+				.map(detail -> BeanUtil.copyProperties(detail, WmsInBillDetailEntity.class))
+				.toList();
 		if (noticeNotInNum == 0) {
 			// 通知单所有物料处理完了，入库单可以完成了
 			requireInbound(wmsInBillMapper.update(new LambdaUpdateWrapper<WmsInBillEntity>()
@@ -1400,19 +1520,156 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 			afterInStock(inBill);
 		}
 
-		// 对documentId的单据进行操作
-		handleDocumentBizWhenAdd(inBill);
+		handleDocumentBizAfterMobileReceipt(inBill, receivedDetails);
 
 		return inBill.getBillNo();
 	}
 
 	/**
-	 * app新增
+	 * 按业务类型处理移动收货的来源单。既有处理器沿用当前单据明细，按增量回写的处理器使用本次登记明细。
 	 *
+	 * @param bill 当前入库单，最后一次登记时携带实际过账的完整明细
+	 * @param receivedDetails 本次移动登记的明细快照，数量为本次收货增量
+	 */
+	protected void handleDocumentBizAfterMobileReceipt(WmsInBillEntity bill,
+	                                                   List<WmsInBillDetailEntity> receivedDetails) {
+		handleDocumentBizWhenAdd(bill);
+	}
+
+	/**
+	 * 续扫新版采购单时，在数量写入前核实永久回写需要的采购原行及库存身份。
+	 *
+	 * @param bill 实际移动入库单
+	 * @param source 受原通知锁保护的明细
+	 * @param detail 本次新增或累计数量的入库明细
+	 * @param quantity 入库明细的标准单位总量
+	 */
+	private static void requireMobilePurchaseDetail(WmsInBillEntity bill, WmsInNoticeDetailEntity source,
+			WmsInBillDetailEntity detail, double quantity) {
+		requireInbound(bill.getDocumentId() != null && bill.getDocumentId() > 0
+						&& Objects.equals(bill.getDocumentId(), source.getSourceReceiptId())
+						&& Objects.equals(source.getSourceReceiptId(), detail.getSourceReceiptId())
+						&& source.getSourceReceiptDetailId() != null && source.getSourceReceiptDetailId() > 0
+						&& Objects.equals(source.getSourceReceiptDetailId(), detail.getSourceReceiptDetailId())
+						&& source.getSourceOrderDetailId() != null && source.getSourceOrderDetailId() > 0
+						&& Objects.equals(source.getSourceOrderDetailId(), detail.getSourceOrderDetailId())
+						&& Objects.equals(source.getMatCode(), detail.getMatCode())
+						&& StrUtil.isNotBlank(source.getMatBatch())
+						&& Objects.equals(source.getMatBatch(), detail.getMatBatch())
+						&& Objects.equals(source.getMatUnit(), detail.getMatUnit()),
+				"收货明细与原采购收料的批次、单位或来源不一致，请核对原通知");
+		requireMobilePostingQuantity(quantity);
+	}
+
+	/**
+	 * 移动原单须在最后一次收货时生成完整采购过账事实，明细数量沿用跨服务 V1 合同。
+	 *
+	 * @param quantity 单条明细的标准单位数量
+	 */
+	private static void requireMobilePostingQuantity(double quantity) {
+		requireInbound(Double.isFinite(quantity) && quantity > 0, "采购收货数量必须为有效正数");
+		BigDecimal decimal = BigDecimal.valueOf(quantity).stripTrailingZeros();
+		requireInbound(decimal.scale() <= 6 && decimal.compareTo(MAX_MOBILE_PURCHASE_POSTING_QUANTITY) < 0,
+				"采购收货数量最多支持6位小数，请核对实收数量");
+	}
+
+	/**
+	 * 持原通知锁校验新增后的剩余容量，为每个未登记的来源留行，单件按实际规则一物一行。
+	 * 已有批量物料明细可以在原库位和容器累计，只有余量可能超限时才逐项核实单件规则。
+	 *
+	 * @param bill 可能尚未插入的当前移动入库单
+	 * @param detail 本次准备新增的入库明细
+	 */
+	private void requireMobilePostingCapacity(WmsInBillEntity bill, WmsInBillDetailEntity detail) {
+		List<WmsInBillDetailEntity> existing = bill.getId() == null ? List.of() : wmsInBillDetailMapper.selectList(
+				Wrappers.<WmsInBillDetailEntity>lambdaQuery()
+						.select(WmsInBillDetailEntity::getNoticeDetailId)
+						.eq(WmsInBillDetailEntity::getBillId, bill.getId()));
+		Set<Long> represented = existing.stream().map(WmsInBillDetailEntity::getNoticeDetailId)
+				.collect(Collectors.toCollection(HashSet::new));
+		represented.add(detail.getNoticeDetailId());
+		List<WmsInNoticeDetailEntity> sources = wmsInNoticeDetailMapper.selectList(
+				Wrappers.<WmsInNoticeDetailEntity>lambdaQuery()
+						.select(WmsInNoticeDetailEntity::getId, WmsInNoticeDetailEntity::getMatCode,
+								WmsInNoticeDetailEntity::getNotInNum)
+						.eq(WmsInNoticeDetailEntity::getNoticeId, bill.getNoticeId())
+						.gt(WmsInNoticeDetailEntity::getNotInNum, 0));
+		int required = existing.size() + 1;
+		Map<String, Integer> additionalSerialRows = new LinkedHashMap<>();
+		Set<String> fractionalMaterials = new HashSet<>();
+		for (WmsInNoticeDetailEntity source : sources) {
+			double remaining = source.getNotInNum();
+			if (Objects.equals(source.getId(), detail.getNoticeDetailId())) {
+				remaining = WmsQuantityMath.subtract(remaining, detail.getMatNum());
+			}
+			if (remaining == 0) {
+				continue;
+			}
+			requireMobilePostingQuantity(remaining);
+			int minimum = represented.contains(source.getId()) ? 0 : 1;
+			required += minimum;
+			int possibleSerialRows = (int) Math.min(MAX_MOBILE_PURCHASE_POSTING_LINES + 1, Math.ceil(remaining));
+			additionalSerialRows.merge(source.getMatCode(), possibleSerialRows - minimum, Integer::sum);
+			if (remaining != Math.floor(remaining)) {
+				fractionalMaterials.add(source.getMatCode());
+			}
+		}
+		requireMobilePostingLineCount(required);
+		for (String material : fractionalMaterials) {
+			requireInbound(!isSerialManaged(bill.getBillType(), material),
+					"单件管理物料的剩余收货数量必须为整数，请核对原通知");
+			additionalSerialRows.remove(material);
+		}
+		int possibleExtra = additionalSerialRows.values().stream().mapToInt(Integer::intValue).sum();
+		for (Map.Entry<String, Integer> item : additionalSerialRows.entrySet()) {
+			if (required + possibleExtra <= MAX_MOBILE_PURCHASE_POSTING_LINES) {
+				break;
+			}
+			int extra = item.getValue();
+			if (extra > 0 && isSerialManaged(bill.getBillType(), item.getKey())) {
+				required += extra;
+				requireMobilePostingLineCount(required);
+			}
+			possibleExtra -= extra;
+		}
+	}
+
+	private static void requireMobilePostingLineCount(int required) {
+		requireInbound(required <= MAX_MOBILE_PURCHASE_POSTING_LINES,
+				"剩余收货需要预留明细行，请合并同库位和容器的批量收货或核对通知数量");
+	}
+
+	/**
+	 * 整单过账前库存还未写入。同一原单上的已登记单件条码不能以更换库位或批次再次登记。
+	 *
+	 * @param bill 当前移动入库单
+	 * @param detail 本次新增的入库明细
+	 */
+	private void requireUniqueMobileSerial(WmsInBillEntity bill, WmsInBillDetailEntity detail) {
+		String barcode = StrUtil.trim(detail.getMatBarcode());
+		if (StrUtil.isBlank(barcode)) {
+			return;
+		}
+		List<WmsInBillDetailEntity> duplicates = wmsInBillDetailMapper.selectList(
+				Wrappers.<WmsInBillDetailEntity>lambdaQuery()
+						.eq(WmsInBillDetailEntity::getBillId, bill.getId())
+						.apply("btrim(mat_barcode) = {0}", barcode));
+		if (CollUtil.isNotEmpty(duplicates)) {
+			String billType = bill.getBillType();
+			requireInbound(!isSerialManaged(billType, detail.getMatCode())
+							&& duplicates.stream().noneMatch(row -> isSerialManaged(billType, row.getMatCode())),
+					"该单件条码已在当前入库单中登记，请核对实物");
+		}
+	}
+
+	/**
+	 * 首笔移动登记保存原单。已有原号的入口可以冻结协议，旧接口保持原回写方式。
+	 *
+	 * @param entity 根据原通知生成的移动入库单
+	 * @param entry 已验证的服务端入口
 	 * @return 通知单未入库总数
 	 */
-	@Transactional(rollbackFor = Exception.class)
-	public Double saveDeepApp(WmsInBillEntity entity) {
+	private Double saveDeepApp(WmsInBillEntity entity, PostingEntry entry) {
 		// 1、保存前的校验和处理
 		beforeSaveDeep(entity);
 
@@ -1420,9 +1677,7 @@ public abstract class AbstractWmsInBillHandler implements WmsInBillHandler<WmsIn
 		entity.setState(InOutBillStateEnum.APP_RUNNING.getCode()); // 状态处理中
 
 		// 2、执行保存
-		Double notInNum = doSaveDeep(entity);
-
-		return notInNum;
+		return doSaveDeep(entity, entry);
 	}
 
 	/**

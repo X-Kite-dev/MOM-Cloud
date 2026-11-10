@@ -9,21 +9,27 @@ import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
+import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.pms.dto.PmsOrderPurchaseReceiptInspectionDTO;
+import com.kitex.mom.pms.dto.PmsPurchaseInboundPosting;
 import com.kitex.mom.pms.dto.WmsPurchaseReceiptInNumDTO;
 import com.kitex.mom.pms.dto.WmsPurchaseReceiptRejectDTO;
 import com.kitex.mom.pms.dto.WmsPurchaseReceiptSetQualifiedNumDTO;
 import com.kitex.mom.pms.dto.app.WmsPurchaseReceiptParamsDTO;
 import com.kitex.mom.pms.entity.WmsPurchaseReceiptEntity;
+import com.kitex.mom.pms.exception.PmsReceiptRegistrationRejectedException;
 import com.kitex.mom.pms.service.WmsPurchaseReceiptService;
+import com.kitex.mom.pms.service.impl.PmsPurchaseInboundPostingService;
 import com.kitex.mom.pms.vo.WmsPurchaseReceiptExcelVO;
 import com.kitex.mom.qms.dto.inspection.InspectionPurchaseCreateParam;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpHeaders;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -44,6 +50,8 @@ import java.util.stream.Collectors;
 public class WmsPurchaseReceiptController {
 
     private final WmsPurchaseReceiptService wmsPurchaseReceiptService;
+
+    private final PmsPurchaseInboundPostingService inboundPosting;
 
     /**
      * 分页查询
@@ -138,6 +146,41 @@ public class WmsPurchaseReceiptController {
     }
 
     /**
+     * WMS 正式过账后按原入库单投递。内部服务请求仍须保留实际岗位身份。
+     */
+    @Inner
+    @PostMapping("/internal/wms-inbound-posting")
+    @Operation(summary = "受理正式采购入库永久回写")
+    public R<PmsPurchaseInboundPosting.Receipt> acceptInboundPosting(@RequestBody PmsPurchaseInboundPosting command) {
+        return R.ok(inboundPosting.accept(command));
+    }
+
+    /**
+     * 按原入库单查询同组织已提交的永久回执。
+     */
+    @Inner
+    @GetMapping("/internal/wms-inbound-posting/{wmsBillId}")
+    @Operation(summary = "查询采购入库永久回执")
+    public R<PmsPurchaseInboundPosting.Receipt> inboundPostingReceipt(@PathVariable Long wmsBillId) {
+        return R.ok(inboundPosting.lookup(wmsBillId));
+    }
+
+    /**
+     * WMS 新建采购入库前核对原采购来源和目标仓是否可走 V1。
+     *
+     * @param purchaseReceiptId PMS 原收料单主键
+     * @param warehouseCode WMS 原采购入库通知的目标仓库编码
+     * @return 是否适用 V1，目标仓冲突时返回业务失败
+     */
+    @Inner
+    @GetMapping("/internal/wms-inbound-posting/eligibility/{purchaseReceiptId}")
+    @Operation(summary = "核对采购入库永久回写适用范围")
+    public R<Boolean> inboundPostingEligibility(@PathVariable Long purchaseReceiptId,
+                                                 @RequestParam("warehouseCode") String warehouseCode) {
+        return R.ok(inboundPosting.eligible(purchaseReceiptId, warehouseCode));
+    }
+
+    /**
      * 采购入库通知单作废后回调
      *
      * @param wmsPurchaseReceiptRejectDTO 采购入库通知单作废DTO
@@ -156,21 +199,29 @@ public class WmsPurchaseReceiptController {
     @Operation(summary = "根据单号获取信息", description = "根据单号获取信息")
     @SysLog("根据单号获取信息")
     @PostMapping("/getByBillNo")
+    @PreAuthorize("@pms.hasPermission('pms_pmsOrder_receive')")
     public R getByBillNo(@RequestBody WmsPurchaseReceiptEntity wmsPurchaseReceipt) {
         return R.ok(wmsPurchaseReceiptService.getByBillNo(wmsPurchaseReceipt));
     }
 
     /**
-     * app收料
+     * 按原收料单登记实收；不接受客户端改价，不承担仓库入库或质量判定。
      *
-     * @param wmsPurchaseReceipt 采购收料单
-     * @return R
+     * @param wmsPurchaseReceipt 原收料单、原行及本次实收事实
+     * @return 原行登记保存结果；自身领域拒绝返回非0业务码，事务/数据访问等未知异常沿原异常通道
      */
-    @Operation(summary = "app收料", description = "app收料")
+    @Operation(summary = "原单实收登记", description = "按原收料单登记，核对原行和剩余量并保留权威价格")
     @SysLog("app收料")
     @PostMapping("/appReceipt")
-    public R appReceipt(@RequestBody WmsPurchaseReceiptParamsDTO wmsPurchaseReceipt) {
-        return R.ok(wmsPurchaseReceiptService.appReceipt(wmsPurchaseReceipt));
+    @PreAuthorize("@pms.hasPermission('pms_pmsOrder_receive')")
+    public R<Boolean> appReceipt(@Valid @RequestBody WmsPurchaseReceiptParamsDTO wmsPurchaseReceipt) {
+        try {
+            return R.ok(wmsPurchaseReceiptService.appReceipt(wmsPurchaseReceipt));
+        }
+        catch (PmsReceiptRegistrationRejectedException rejection) {
+            // 两层服务的事务代理已退出并回滚；只承认自身领域拒绝，不能把提交/数据库异常判为未执行。
+            return R.failed(rejection.getMessage());
+        }
     }
 
     /**

@@ -4,8 +4,10 @@ import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
+import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.wms.dto.WmsInBillDetailQueryDTO;
 import com.kitex.mom.wms.entity.WmsInBillEntity;
+import com.kitex.mom.wms.service.WmsPurchaseInboundPostingService;
 import com.kitex.mom.wms.service.bill.WmsInBillAccess.Family;
 import com.kitex.mom.wms.service.bill.WmsInBillApplicationService;
 import com.kitex.mom.wms.vo.WmsInBillDetailExcelVO;
@@ -39,6 +41,7 @@ import java.util.List;
 public class WmsPurchaseInBillController {
 
 	private final WmsInBillApplicationService documents;
+	private final WmsPurchaseInboundPostingService posting;
 
 	/**
 	 * 查询当前工厂及实际授权仓的入库单，固定业务族由本入口决定。
@@ -71,6 +74,29 @@ public class WmsPurchaseInBillController {
 	@GetMapping("/{id}")
 	public R getById(@PathVariable("id") Long id) {
 		return R.ok(documents.view(Family.PURCHASE, id));
+	}
+
+	/** 当前实际工厂与原仓查看权限下核对采购入库回写状态。 */
+	@GetMapping("/{id}/pms-posting")
+	@Operation(summary = "核对采购入库回写")
+	public R<WmsPurchaseInboundPostingService.View> postingStatus(@PathVariable("id") Long id) {
+		return R.ok(posting.status(id));
+	}
+
+	/** 用真实原仓审核权限续投原单，只重试远程回写。 */
+	@PostMapping("/{id}/pms-posting/retry")
+	@Operation(summary = "按原单续投采购入库回写")
+	@SysLog("采购入库回写续投")
+	public R<WmsPurchaseInboundPostingService.View> retryPosting(@PathVariable("id") Long id) {
+		return R.ok(posting.retry(id));
+	}
+
+	/** PMS 受理前核对已提交的原单，内部读取仅返回实际冻结摘要。 */
+	@Inner
+	@GetMapping("/internal/pms-posting-proof/{wmsBillId}")
+	@Operation(summary = "核对已过账采购入库原单证明")
+	public R<String> postingProof(@PathVariable("wmsBillId") Long wmsBillId) {
+		return R.ok(posting.proof(wmsBillId));
 	}
 
 	/**

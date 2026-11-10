@@ -309,7 +309,7 @@ public class WmsLineDeliveryService {
     }
 
     /**
-     * 内部证据不依赖客户端快照；MES只能签收已到达或经异岗追回的数量。
+     * 内部证据返回原配送任务目标工位及已到达或经异岗追回的可签收数量。
      */
     public WmsLineDeliveryEvidenceDTO evidence(Long outBillDetailId) {
         WmsOutBillDetailEntity source = outBillDetailMapper.selectById(outBillDetailId);
@@ -330,6 +330,7 @@ public class WmsLineDeliveryService {
         BigDecimal recovered = nz(line.getRecoveredNum());
         return new WmsLineDeliveryEvidenceDTO().setTaskId(task.getId()).setTaskNo(task.getTaskNo()).setState(task.getState())
                 .setOutBillId(bill.getId()).setOutBillDetailId(source.getId()).setFactoryCode(bill.getFactoryCode())
+                .setTargetSiteCode(task.getTargetSiteCode())
                 .setMatCode(source.getMatCode()).setPlannedNum(line.getPlannedNum()).setDeliveredNum(nz(line.getDeliveredNum()))
                 .setRecoveredNum(recovered).setReceivableNum(nz(line.getDeliveredNum()).add(recovered))
                 .setSourceFingerprint(task.getSourceFingerprint());

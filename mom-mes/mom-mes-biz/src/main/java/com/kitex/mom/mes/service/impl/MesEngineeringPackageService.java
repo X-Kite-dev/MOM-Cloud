@@ -239,6 +239,11 @@ public class MesEngineeringPackageService {
             require(frozen != null && Objects.equals(execution.path("processCode").asText(),
                             frozen.path("processCode").asText()),
                     "MDM工程包路线节点与节点执行来源不一致");
+            // 质检开关以原工程节点为准。历史包可缺省，异常取值不得按无需质检下达。
+            JsonNode inspection = execution.path("isInspection");
+            require(inspection.isMissingNode()
+                            || "0".equals(inspection.textValue()) || "1".equals(inspection.textValue()),
+                    "工程节点工序质检配置无效，禁止下达");
             // 只接受同版nodes权威来源；历史缺失保持缺失，不从当前工序补齐。
             execution.remove("laborStandard");
             if (frozen.has("laborStandard")) {

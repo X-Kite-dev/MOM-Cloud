@@ -416,19 +416,32 @@ public class PmsPlanServiceImpl extends ServiceImpl<PmsPlanMapper, PmsPlanEntity
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void updateInNoticeSave(PmsOrderDetailEntity pmsOrderDetail, Double inNum) {
-        PmsPlanEntity pmsPlanEntity = this.getOne(new LambdaQueryWrapper<PmsPlanEntity>().eq(PmsPlanEntity::getPmsPlanNo, pmsOrderDetail.getPmsPlanNo()));
+        // 同一计划可关联多张订单。锁定实际计划再累计，避免旧回写覆盖 V1 的已提交累计。
+        String factory = pmsOrderDetail.getFactoryCode();
+        PmsPlanEntity pmsPlanEntity = this.getOne(new LambdaQueryWrapper<PmsPlanEntity>()
+                .eq(PmsPlanEntity::getPmsPlanNo, pmsOrderDetail.getPmsPlanNo())
+                .eq(StrUtil.isNotBlank(factory), PmsPlanEntity::getFactoryCode, factory)
+                .last("FOR UPDATE"));
 
         if (pmsPlanEntity == null) {
             return;
         }
         Double planArrivalNum = Optional.ofNullable(pmsPlanEntity.getPlanArrivalNum()).orElse(0.0);
-        double num = planArrivalNum + inNum;
+        // 计划与订单使用相同的十进制累计口径，回写后可按原入库数量核对。
+        double num;
+        if (Double.isFinite(planArrivalNum) && Double.isFinite(inNum)) {
+            num = decimal(planArrivalNum).add(decimal(inNum)).doubleValue();
+        } else {
+            num = planArrivalNum + inNum;
+        }
         pmsPlanEntity.setPlanArrivalNum(num);
         pmsPlanEntity.setLastArrivalTime(java.time.LocalDateTime.now());
         if (num >= pmsPlanEntity.getPmsNum()) {
             pmsPlanEntity.setStatus(PmsPlanStatusEnum.COMPLETE.getCode());
         }
-        this.updateById(pmsPlanEntity);
+        if (!this.updateById(pmsPlanEntity)) {
+            throw new CheckedException("原采购计划到货累计未保存");
+        }
 
         // 生产计划模块-采购计划排产推送
         if (StrUtil.isNotBlank(pmsPlanEntity.getOrderNo())) {

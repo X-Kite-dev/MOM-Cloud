@@ -2,6 +2,7 @@ package com.kitex.mom.mdm.vo;
 
 import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.mom.mdm.entity.MdmProcessProcedureMatEntity;
 import com.kitex.mom.mdm.entity.MdmProcessProcedureSopEntity;
@@ -122,6 +123,13 @@ public class MdmProcessRouteWorkingVO extends BaseEntity<MdmProcessRouteWorkingV
      */
     @Schema(description = "类型 一物一码/数量")
     private String type;
+
+    /**
+     * 工程发布冻结的工序质检开关。历史未配置时省略，保持原工程包的比对口径。
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @Schema(description = "工序质检：1启用，0关闭，空表示历史未配置")
+    private String isInspection;
 
     @Schema(description = "工艺路线下工序关联的投料列表")
     private List<MdmProcessProcedureMatEntity> mdmProcessProcedureMatList;

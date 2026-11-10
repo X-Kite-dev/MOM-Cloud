@@ -62,6 +62,11 @@ public final class MdmRouteNodeIdentitySupport {
             saved.setClientNodeKey(key);
             saved.setPreRouteNodeCodes(input.getPreRouteNodeCodes());
             saved.setNodeTimingRulesJson(input.getNodeTimingRulesJson());
+            // 旧页面可能省略质检配置，只允许显式提交0关闭已启用的节点。
+            if (input.getIsInspection() != null) {
+                require(Set.of("0", "1").contains(input.getIsInspection()), "请选择有效的工序质检配置");
+                saved.setIsInspection(input.getIsInspection());
+            }
             result.add(saved);
         }
         return result;

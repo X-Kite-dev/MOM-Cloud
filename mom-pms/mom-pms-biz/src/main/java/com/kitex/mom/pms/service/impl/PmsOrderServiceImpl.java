@@ -22,6 +22,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.github.yulichang.wrapper.MPJLambdaWrapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.excel.vo.ErrorMessage;
 import com.kitex.mom.common.barcode.api.feign.RemotePrintService;
 import com.kitex.mom.common.barcode.dto.req.PreviewObj;
@@ -306,8 +307,10 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
                 || pmsInNoticeOrderDTO.getNum() <= 0) {
             throw new CheckedException("采购到货回写必须指定订单、订单行和正数到货量");
         }
+        String factory = FactoryContextHolder.getFactoryCode();
         PmsOrderEntity pmsOrderEntity = this.getOne(new LambdaQueryWrapper<PmsOrderEntity>()
-                .eq(PmsOrderEntity::getPmsOrderNo, pmsInNoticeOrderDTO.getPmsOrderNo()).last("FOR UPDATE"));
+                .eq(PmsOrderEntity::getPmsOrderNo, pmsInNoticeOrderDTO.getPmsOrderNo())
+                .eq(StrUtil.isNotBlank(factory), PmsOrderEntity::getFactoryCode, factory).last("FOR UPDATE"));
         if (pmsOrderEntity == null || !Set.of(PmsOrderStatusEnum.CHECK_SUCCESS.getCode(), PmsOrderStatusEnum.RECEIVING.getCode(),
                 PmsOrderStatusEnum.PART_RECEIVE.getCode()).contains(pmsOrderEntity.getStatus())) {
             throw new CheckedException("采购订单不存在、未审核通过或已完成收货");
@@ -322,14 +325,22 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
         }
         Double inNum = pmsInNoticeOrderDTO.getNum();
         Double arrivalNum = Optional.ofNullable(pmsOrderDetail.getArrivalNum()).orElse(0.0);
-        double addNum = inNum + arrivalNum;
+        // 标准单位按十进制累计，避免浮点加法误差导致原单回执核验失败。
+        double addNum;
+        if (Double.isFinite(inNum) && Double.isFinite(arrivalNum)) {
+            addNum = BigDecimal.valueOf(arrivalNum).add(BigDecimal.valueOf(inNum)).doubleValue();
+        } else {
+            addNum = inNum + arrivalNum;
+        }
         if (addNum - Optional.ofNullable(pmsOrderDetail.getOrderNum()).orElse(0.0) > 0.00000001) {
             throw new CheckedException("累计到货量不能超过采购订单行订购数量");
         }
 
         // 更新采购订单明细数量
         pmsOrderDetail.setArrivalNum(addNum);
-        pmsOrderDetailMapper.updateById(pmsOrderDetail);
+        if (pmsOrderDetailMapper.updateById(pmsOrderDetail) != 1) {
+            throw new CheckedException("原采购订单行到货数量未保存");
+        }
 
         boolean fullyReceived = pmsOrderDetailMapper.selectList(new LambdaQueryWrapper<PmsOrderDetailEntity>()
                         .eq(PmsOrderDetailEntity::getPmsOrderId, pmsOrderEntity.getId())).stream()
@@ -343,7 +354,9 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
         } else {
             pmsOrderEntity.setStatus(PmsOrderStatusEnum.PART_RECEIVE.getCode());
         }
-        this.updateById(pmsOrderEntity);
+        if (!this.updateById(pmsOrderEntity)) {
+            throw new CheckedException("原采购订单到货状态未保存");
+        }
 
         // 更新采购计划数量
         pmsPlanService.updateInNoticeSave(pmsOrderDetail, inNum);

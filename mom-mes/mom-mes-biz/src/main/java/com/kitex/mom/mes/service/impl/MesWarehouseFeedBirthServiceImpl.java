@@ -217,8 +217,11 @@ public class MesWarehouseFeedBirthServiceImpl
         birth.setEvidenceSnapshot(codec.snapshot(evidence));
         birth.setEvidenceFingerprint(codec.fingerprint(VERSION, birth.getEvidenceSnapshot()));
         codec.objectDocument(birth.getEvidenceSnapshot(), MAX_DOCUMENT);
-        if (!save(birth) || lines.insertAll(codec.snapshot(originalLines), actor.getUsername(), feed.getFeedTime()) != children.size())
-            throw new CheckedException("投料出生必要主/子账写入失败，实际领出已回滚");
+		if (baseMapper.insertRecordedBirth(feed.getId(), tenant, factory, birth.getEvidenceSnapshot(),
+				birth.getEvidenceFingerprint()) != 1
+				|| lines.insertAll(codec.snapshot(originalLines), actor.getUsername(), feed.getFeedTime()) != children.size()) {
+			throw new CheckedException("投料出生必要主/子账写入失败，实际领出已回滚");
+		}
         verify(birth, children);
         return birth;
     }

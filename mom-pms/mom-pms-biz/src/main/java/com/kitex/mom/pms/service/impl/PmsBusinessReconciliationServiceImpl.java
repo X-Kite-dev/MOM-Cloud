@@ -1,7 +1,9 @@
 package com.kitex.mom.pms.service.impl;
 
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
 import com.kitex.mom.pms.entity.PmsBusinessReconciliationEntity;
 import com.kitex.mom.pms.entity.PmsOrderDetailEntity;
@@ -39,7 +41,11 @@ public class PmsBusinessReconciliationServiceImpl extends ServiceImpl<PmsBusines
         for (PmsOrderDetailEntity pmsOrderDetailEntity : orderDetailList) {
             PmsBusinessReconciliationEntity pmsBusinessReconciliationEntity = new PmsBusinessReconciliationEntity();
             BeanUtils.copyProperties(pmsOrderDetailEntity, pmsBusinessReconciliationEntity, "id");
-            pmsBusinessReconciliationEntity.setReconciliationNo(remoteSeqConfigService.create("pms_business_reconciliation").getData());
+            var sequence = remoteSeqConfigService.create("pms_business_reconciliation");
+            if (sequence == null || !sequence.isOk() || StrUtil.isBlank(sequence.getData())) {
+                throw new CheckedException("采购对账单编号生成未确认");
+            }
+            pmsBusinessReconciliationEntity.setReconciliationNo(sequence.getData());
             pmsBusinessReconciliationEntity.setPmsOrderNo(pmsOrderEntity.getPmsOrderNo());
             pmsBusinessReconciliationEntity.setSupplierName(pmsOrderEntity.getSupplierName());
             pmsBusinessReconciliationEntity.setSupplierCode(pmsOrderEntity.getSupplierCode());
@@ -48,6 +54,8 @@ public class PmsBusinessReconciliationServiceImpl extends ServiceImpl<PmsBusines
             pmsBusinessReconciliationEntity.setStatus(Boolean.FALSE);
             saveList.add(pmsBusinessReconciliationEntity);
         }
-        this.saveBatch(saveList);
+        if (saveList.isEmpty() || !this.saveBatch(saveList)) {
+            throw new CheckedException("采购订单业务对账单未保存");
+        }
     }
 }

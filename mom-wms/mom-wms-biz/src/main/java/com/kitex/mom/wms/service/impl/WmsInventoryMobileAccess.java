@@ -37,6 +37,9 @@ public class WmsInventoryMobileAccess {
 		return plan;
 	}
 
+	/**
+	 * 核对指定仓库能否在手机端新建盘点计划。既有计划和原编号查询无需通过此项前检。
+	 */
 	public WmsMobileInventoryContext context(String warehouseCode) {
 		var scope = WmsAllocationMobileReceiptService.requireScope();
 		require(Objects.equals(SecurityUtils.getUser().getTenantId(), scope.tenantId()), "登录租户与当前上下文不一致");
@@ -47,11 +50,17 @@ public class WmsInventoryMobileAccess {
 		String message;
 		try {
 			enabled = warehouseGuard.mobileEnabled(warehouseCode);
-			message = enabled ? "" : "该仓库未开启手机端作业";
+			if (!enabled) {
+				message = "该仓库未开启手机端作业";
+			} else {
+				// 使用与盘点建单相同的业务范围判定，保留历史未配置仓库的兼容规则。
+				enabled = warehouseGuard.evaluate(warehouseCode, "other_inventory", true).allowed();
+				message = enabled ? "" : "当前仓库未启用库存盘点";
+			}
 		} catch (RuntimeException unavailable) {
 			// 只降低前检能力；实际写入仍重新核验，既有原编号查账不依赖此探测。
 			enabled = false;
-			message = "仓库手机端配置暂不可用，请稍后重新读取";
+			message = "仓库盘点作业配置暂不可用，请稍后重新读取";
 		}
 		return new WmsMobileInventoryContext(1, 1, scope.tenantId(), scope.factoryCode(), scope.operatorCode(),
 				warehouseCode, enabled, message);

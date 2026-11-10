@@ -10,6 +10,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.dto.MdmFactoryPlanningPolicyDTO;
@@ -524,6 +525,29 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
     }
 
     @Override
+    public PlnProductDemandEntity requireExactMrpDemand(Long demandId, String demandNo) {
+        Long tenantId = TenantContextHolder.getTenantId();
+        String factoryCode = FactoryContextHolder.getFactoryCode();
+        if (tenantId == null || tenantId <= 0 || TenantContextHolder.getTenantSkip()
+                || StrUtil.isBlank(factoryCode) || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
+                || demandId == null || demandId <= 0 || StrUtil.isBlank(demandNo)) {
+            throw new CheckedException("精确MRP定位需要当前实际租户、工厂、需求主键和需求号");
+        }
+        List<PlnProductDemandEntity> matches = plnProductDemandMapper.selectList(new LambdaQueryWrapper<PlnProductDemandEntity>()
+                .eq(PlnProductDemandEntity::getTenantId, tenantId)
+                .eq(PlnProductDemandEntity::getFactoryCode, factoryCode)
+                .eq(PlnProductDemandEntity::getDemandNo, demandNo)
+                .last("LIMIT 2"));
+        if (matches.size() > 1) {
+            throw new CheckedException("当前工厂存在重复需求号，MRP无法唯一归属该需求");
+        }
+        if (matches.isEmpty() || !Objects.equals(matches.get(0).getId(), demandId)) {
+            throw new CheckedException("产品需求主键、需求号或当前工厂不一致，请返回原需求重新打开");
+        }
+        return matches.get(0);
+    }
+
+    @Override
     public PlanMrpShortageAnalysisDTO shortageAnalysis(PlanMrpShortageQueryDTO query) {
         if (query == null || StrUtil.isBlank(query.getFactoryCode())) {
             throw new CheckedException("Agent缺料分析必须指定工厂");
@@ -542,22 +566,10 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
         }
         PlnProductDemandEntity scopedDemand = null;
         if (query.getPlanDemandId() != null) {
-            if (query.getPlanDemandId() <= 0 || StrUtil.isBlank(query.getPlanDemandNo())) {
-                throw new CheckedException("精确缺料分析必须同时提供有效需求主键和需求号");
-            }
-            scopedDemand = plnProductDemandMapper.selectOne(new LambdaQueryWrapper<PlnProductDemandEntity>()
-                    .eq(PlnProductDemandEntity::getId, query.getPlanDemandId())
-                    .eq(PlnProductDemandEntity::getFactoryCode, query.getFactoryCode()).last("LIMIT 1"));
-            if (scopedDemand == null || !Objects.equals(scopedDemand.getDemandNo(), query.getPlanDemandNo())
-                    || StrUtil.isNotBlank(query.getSaleOrderCode())
+            scopedDemand = requireExactMrpDemand(query.getPlanDemandId(), query.getPlanDemandNo());
+            if (StrUtil.isNotBlank(query.getSaleOrderCode())
                     && !Objects.equals(scopedDemand.getSaleOrderCode(), query.getSaleOrderCode())) {
-                throw new CheckedException("产品需求主键、需求号、销售订单或当前工厂不一致，请返回需求页面重新选择");
-            }
-            Long sameNo = plnProductDemandMapper.selectCount(new LambdaQueryWrapper<PlnProductDemandEntity>()
-                    .eq(PlnProductDemandEntity::getFactoryCode, query.getFactoryCode())
-                    .eq(PlnProductDemandEntity::getDemandNo, query.getPlanDemandNo()));
-            if (sameNo == null || sameNo != 1L) {
-                throw new CheckedException("当前工厂存在重复需求号，MRP无法唯一归属需求主键，请先完成计划数据治理");
+                throw new CheckedException("产品需求与所选销售订单不一致，请返回需求页面重新选择");
             }
         }
         LambdaQueryWrapper<PlanMatMrpEntity> wrapper = new LambdaQueryWrapper<PlanMatMrpEntity>()

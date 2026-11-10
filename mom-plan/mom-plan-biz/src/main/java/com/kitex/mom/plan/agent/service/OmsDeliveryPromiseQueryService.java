@@ -196,22 +196,32 @@ public class OmsDeliveryPromiseQueryService {
         Optional.ofNullable(life.getDeliverList()).orElse(List.of()).stream().map(OmsLifeWmsDeliverVO::getDeliverPlanCode)
                 .filter(StrUtil::isNotBlank).forEach(code -> refs.add("WMS:wms_deliver_plan:" + code));
 
-        BigDecimal remaining = value(summary.getRemainingQuantity());
-        BigDecimal deliverable = value(summary.getNetDeliverableQuantity()).max(BigDecimal.ZERO);
-        LocalDate internalReady = null;
-        String readyBasis = null;
-        if (remaining.signum() == 0) {
-            internalReady = LocalDate.now();
-            readyBasis = "订单交付行已完成";
-        } else if ("AVAILABLE".equals(summary.getQualityDeliverabilityStatus())
-                && deliverable.compareTo(remaining) >= 0) {
-            internalReady = LocalDate.now();
-            readyBasis = "WMS质量净可交量已覆盖全部剩余量";
-        } else {
-            Projection projection = productionProjection(detail, life, blockers);
-            internalReady = projection.date();
-            readyBasis = projection.basis();
-        }
+		BigDecimal remaining = summary.getRemainingQuantity();
+		BigDecimal ordered = summary.getOrderedQuantity();
+		BigDecimal shipped = summary.getDeliveredQuantity();
+		// 实际发货与计划来源分别核对，计划异常仍保留在阻断依据。
+		boolean fulfilled = "AVAILABLE".equals(summary.getWmsDataStatus())
+				&& ordered != null && ordered.signum() > 0
+				&& shipped != null && shipped.compareTo(ordered) >= 0
+				&& remaining != null && remaining.signum() == 0;
+		boolean outstandingKnown = remaining != null && remaining.signum() > 0;
+		BigDecimal deliverable = value(summary.getNetDeliverableQuantity()).max(BigDecimal.ZERO);
+		LocalDate internalReady = null;
+		String readyBasis = null;
+		if (fulfilled) {
+			internalReady = LocalDate.now();
+			readyBasis = "订单交付行已完成";
+		} else if (!outstandingKnown) {
+			blockers.add("订单剩余量或足量发货依据待核，暂不能形成交付承诺");
+		} else if ("AVAILABLE".equals(summary.getQualityDeliverabilityStatus())
+				&& deliverable.compareTo(remaining) >= 0) {
+			internalReady = LocalDate.now();
+			readyBasis = "WMS质量净可交量已覆盖全部剩余量";
+		} else {
+			Projection projection = productionProjection(detail, life, blockers);
+			internalReady = projection.date();
+			readyBasis = projection.basis();
+		}
         LocalDate dispatchPlan = Optional.ofNullable(life.getDeliverList()).orElse(List.of()).stream()
                 .filter(row -> value(row.getDeliveredNum()).compareTo(value(row.getDeliverNum())) < 0)
                 .map(OmsLifeWmsDeliverVO::getPlanDeliverTime).filter(Objects::nonNull)
@@ -240,13 +250,13 @@ public class OmsDeliveryPromiseQueryService {
                 .anyMatch("UNAVAILABLE"::equals);
         boolean inconsistent = "INCONSISTENT".equals(summary.getPlanDataStatus())
                 || "INCONSISTENT".equals(summary.getQualityDeliverabilityStatus());
-        String status = remaining.signum() == 0 ? "COMPLETED"
-                : detail.getDeliverTime() == null ? "INSUFFICIENT_EVIDENCE"
-                : inconsistent || "BLOCKED".equals(summary.getOverallStatus()) ? "BLOCKED"
-                : unavailable || internalReady == null ? "INSUFFICIENT_EVIDENCE"
-                : candidate == null ? "INTERNAL_DATE_ONLY"
-                : detail.getDeliverTime() != null && candidate.isAfter(detail.getDeliverTime())
-                ? "LATE_RISK" : "ON_TIME_SUPPORTED";
+		String status = fulfilled ? "COMPLETED"
+				: !outstandingKnown || detail.getDeliverTime() == null ? "INSUFFICIENT_EVIDENCE"
+				: inconsistent || "BLOCKED".equals(summary.getOverallStatus()) ? "BLOCKED"
+				: unavailable || internalReady == null ? "INSUFFICIENT_EVIDENCE"
+				: candidate == null ? "INTERNAL_DATE_ONLY"
+				: detail.getDeliverTime() != null && candidate.isAfter(detail.getDeliverTime())
+				? "LATE_RISK" : "ON_TIME_SUPPORTED";
         if ("ON_TIME_SUPPORTED".equals(status) && confidence.equals("MEDIUM")) {
             blockers.add("候选客户日期使用调用方明确提供的发运提前期，仍须销售/PMC确认并核对物流资源");
         }

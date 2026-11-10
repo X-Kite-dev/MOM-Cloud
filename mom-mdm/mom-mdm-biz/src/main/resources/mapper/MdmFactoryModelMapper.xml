@@ -62,6 +62,28 @@
         ORDER BY sort ASC, create_time ASC
     </select>
 
+    <!-- 工厂归属沿父链确定。按级别向下递增，避免错误的循环父链进入查询。 -->
+    <select id="selectEnabledFactoryDescendantsByType" resultMap="BaseResultMap">
+        WITH RECURSIVE factory_nodes AS (
+            SELECT root.id, root.level
+            FROM mom_mdm.mdm_factory_model root
+            WHERE root.id = #{factoryId} AND root.tenant_id = #{tenantId}
+              AND root.type = 'FACTORY' AND root.status = TRUE AND root.del_flag = '0'
+
+            UNION ALL
+
+            SELECT child.id, child.level
+            FROM mom_mdm.mdm_factory_model child
+            JOIN factory_nodes parent ON child.parent_id = parent.id AND child.level = parent.level + 1
+            WHERE child.tenant_id = #{tenantId} AND child.status = TRUE AND child.del_flag = '0'
+        )
+        SELECT node.*
+        FROM mom_mdm.mdm_factory_model node
+        JOIN factory_nodes matched ON matched.id = node.id
+        WHERE node.tenant_id = #{tenantId} AND node.type = #{type} AND node.id != #{factoryId}
+        ORDER BY node.sort ASC, node.create_time ASC, node.id ASC
+    </select>
+
     <!-- 根据节点ID查询所有子孙节点 -->
     <select id="selectDescendants" resultMap="BaseResultMap">
         WITH RECURSIVE descendants AS (SELECT m.id,

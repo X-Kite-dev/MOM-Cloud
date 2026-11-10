@@ -2,8 +2,10 @@ package com.kitex.mom.wms.entity;
 
 import com.alibaba.excel.annotation.ExcelIgnore;
 import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.github.yulichang.annotation.EntityMapping;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
@@ -116,6 +118,14 @@ public class WmsInBillEntity extends BaseEntity<WmsInBillEntity> {
      */
     @Schema(description = "入库单类型")
     private String billType;
+
+	/**
+	 * 建单时由服务端冻结的采购回写版本。空值沿用历史逐次回写，1 表示正式过账后投递整单。
+	 */
+	@Schema(description = "采购回写版本，空值为旧模式，1 为按过账整单投递", accessMode = Schema.AccessMode.READ_ONLY)
+	@JsonProperty(access = JsonProperty.Access.READ_ONLY)
+	@TableField(updateStrategy = FieldStrategy.NEVER)
+	private Integer purchasePostingVersion;
 
     /**
      * 业务单据id;采购订单、生产加工单、外协订单

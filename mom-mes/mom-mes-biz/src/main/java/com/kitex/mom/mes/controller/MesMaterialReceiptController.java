@@ -4,11 +4,15 @@ import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
 import com.kitex.common.log.annotation.SysLog;
 import com.kitex.mom.mes.dto.MesMaterialReceiptCommand;
+import com.kitex.mom.mes.exception.MesMaterialReceiptDestinationRejectedException;
 import com.kitex.mom.mes.service.impl.MesMaterialReceiptService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * 线边物料签收工作台入口，提供通知查询、分批签收和异岗冲销。
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/mesMaterialReceipt")
@@ -46,11 +50,22 @@ public class MesMaterialReceiptController {
         return R.ok(service.sites(id));
     }
 
+    /**
+     * 按原通知和实际配送工位签收入账。
+     *
+     * @param command 带原请求号、工位及预期累计量的签收指令
+     * @return 签收回执，或确认工位不匹配时的明确业务拒绝
+     */
     @PostMapping("/receive")
     @SysLog("线边物料按批签收")
     @PreAuthorize("@pms.hasPermission('mes_materialReceipt_receive')")
     public R<?> receive(@RequestBody MesMaterialReceiptCommand command) {
-        return R.ok(service.receive(command));
+        try {
+            return R.ok(service.receive(command));
+        } catch (MesMaterialReceiptDestinationRejectedException rejection) {
+            // 签收事务退出后再返回明确拒绝，客户端可区分首次工位选错与结果未知。
+            return R.failed(rejection.getMessage());
+        }
     }
 
     @PostMapping("/reverse")

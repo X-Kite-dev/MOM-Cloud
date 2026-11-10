@@ -16,6 +16,7 @@ public interface MesTaskInWmsReceiptMapper extends MomBaseMapper<MesTaskInWmsRec
     @Select("SELECT * FROM \"mom_mes\".mes_task_in_wms_receipt WHERE tenant_id=#{tenantId} AND request_id=#{requestId}")
     MesTaskInWmsReceiptEntity permanentRequest(@Param("tenantId") Long tenantId, @Param("requestId") String requestId);
 
-    @Select("SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('MES_TASK_IN_WMS:', #{requestId}), 0))")
-    void lockRequest(@Param("requestId") String requestId);
+    /** 按成品入库原号取得事务锁，避免同一原号重复登记回执。 */
+    @Select("SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(CONCAT('MES_TASK_IN_WMS:', #{requestId}), 0))")
+    Integer lockRequest(@Param("requestId") String requestId);
 }

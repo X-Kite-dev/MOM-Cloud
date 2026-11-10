@@ -52,6 +52,15 @@ public interface MdmFactoryModelService extends IService<MdmFactoryModelEntity> 
     List<MdmFactoryModelTreeVO> getNodesByType(String type);
 
     /**
+     * 在当前实名用户有读取授权的工厂树中查询指定类型的启用节点。
+     *
+     * @param type        工厂建模节点类型
+     * @param factoryCode 当前请求工厂编码，跨工厂或未授权时拒绝查询
+     * @return 由真实工厂节点绑定归属的启用子节点
+     */
+    List<MdmFactoryModelTreeVO> getScopedNodesByType(String type, String factoryCode);
+
+    /**
      * 根据类型获取节点列表（带缓存）
      */
     List<MdmFactoryModelTreeVO> getNodesByTypeWithCache(String type);

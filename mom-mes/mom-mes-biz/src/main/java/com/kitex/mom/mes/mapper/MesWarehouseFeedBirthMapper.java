@@ -3,6 +3,7 @@ package com.kitex.mom.mes.mapper;
 import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.kitex.common.data.datascope.MomBaseMapper;
 import com.kitex.mom.mes.entity.MesWarehouseFeedBirthEntity;
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -49,6 +50,45 @@ public interface MesWarehouseFeedBirthMapper extends MomBaseMapper<MesWarehouseF
     Map<String, Object> facts(@Param("feedId") Long feedId, @Param("taskId") Long taskId,
                               @Param("arrangeId") Long arrangeId, @Param("tenant") Long tenant,
                               @Param("factory") String factory);
+
+	/**
+	 * 用同事务首次投料的操作人和投料时间写出生主账，保留原证据全文及指纹，避免通用审计填充覆盖。
+	 *
+	 * @param feedId 当前事务首次写入的投料主键
+	 * @param tenant 当前实际租户主键
+	 * @param factory 当前实际工厂编码
+	 * @param evidenceSnapshot 已核定的出生主账及全部逐源证据原文
+	 * @param evidenceFingerprint 原文的版本域指纹
+	 * @return 写入行数，来源不属于当前组织及首次投料事务时为零
+	 */
+	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
+	@Insert("""
+			WITH original AS (
+			    SELECT CAST(#{evidenceSnapshot} AS text) AS raw
+			), evidence AS (
+			    SELECT raw, CAST(raw AS jsonb) AS document
+			    FROM original
+			)
+			INSERT INTO "mom_mes".mes_warehouse_feed_birth
+			    (id, tenant_id, factory_code, feed_id, actor_id, task_id, arrange_id,
+			     quantity, unit, receiving_worksite_code, feed_snapshot, bom_snapshot, arrange_snapshot,
+			     source_count, evidence_version, evidence_snapshot, evidence_fingerprint,
+			     status, create_by, create_time, del_flag)
+			SELECT (e.document->>'id')::bigint, f.tenant_id, f.factory_code, f.id,
+			    (e.document->>'actorId')::bigint, (e.document->>'taskId')::bigint,
+			    (e.document->>'arrangeId')::bigint, (e.document->>'quantity')::numeric,
+			    e.document->>'unit', e.document->>'receivingWorksiteCode',
+			    e.document->>'feedSnapshot', e.document->>'bomSnapshot', e.document->>'arrangeSnapshot',
+			    jsonb_array_length(e.document->'lines'), 'MES_FEED_BIRTH_V1', e.raw, #{evidenceFingerprint},
+			    'RECORDED', f.feed_person_code, f.feed_time, '0'
+			FROM evidence e
+			JOIN "mom_mes".mes_warehouse_feed f ON f.id = #{feedId}
+			    AND f.tenant_id = #{tenant} AND f.factory_code = #{factory}
+			    AND f.birth_version = 'MES_FEED_BIRTH_V1' AND f.birth_created_xid = txid_current()
+			""")
+	int insertRecordedBirth(@Param("feedId") Long feedId, @Param("tenant") Long tenant,
+			@Param("factory") String factory, @Param("evidenceSnapshot") String evidenceSnapshot,
+			@Param("evidenceFingerprint") String evidenceFingerprint);
 
     /**
      * 一次读取本次真实feeding全集；历史无关联流水不被猜测认领。

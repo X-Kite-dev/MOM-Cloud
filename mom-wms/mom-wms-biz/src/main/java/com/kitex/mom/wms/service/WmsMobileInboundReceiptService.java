@@ -219,7 +219,7 @@ public class WmsMobileInboundReceiptService {
 						&& Objects.equals(source.getMatCode(), prepared.input().getMatCode())
 						&& Objects.equals(source.getMatUnit(), prepared.input().getOperateUnit()),
 				"收货明细或标准单位已变化，请核对原通知");
-		String billNo = WmsInBillFactory.getHandler(row.billType()).setInBillNum(prepared.input());
+		String billNo = WmsInBillFactory.getHandler(row.billType()).receiveByOriginalRequest(prepared.input());
 		require(!text(billNo).isEmpty() && billNo.length() <= 80, "收货未返回有效入库单号");
 		complete(row, scope, "CONFIRMED", billNo, null);
 		return terminal(receipts.find(scope.tenant(), row.requestId()));

@@ -133,6 +133,14 @@ public class MdmFactoryModelController {
         return R.ok(nodes);
     }
 
+    /** 查询当前实名用户有权访问的工厂下的启用节点，用于跨域校验工位。 */
+    @Operation(summary = "查询当前授权工厂的启用节点")
+    @GetMapping("/by-type/scoped")
+    public R<List<MdmFactoryModelTreeVO>> getScopedNodesByType(@RequestParam("type") String type,
+                                                              @RequestParam("factoryCode") String factoryCode) {
+        return R.ok(factoryModelService.getScopedNodesByType(type, factoryCode));
+    }
+
     @Operation(summary = "根据类型获取节点列表（带缓存）")
     @GetMapping("/by-type-cache")
     public R<List<MdmFactoryModelTreeVO>> getNodesByTypeWithCache(@Parameter(description = "节点类型", required = true) @RequestParam @NotNull String type) {

@@ -24,15 +24,19 @@ public interface WmsPurchaseReceiptService extends MPJDeepService<WmsPurchaseRec
     List<WmsPurchaseReceiptExcelVO> listExcel(QueryWrapper<WmsPurchaseReceiptEntity> wrapper);
 
     /**
-     * app收料
+     * 沿已存在原单登记单行实收，锁定实际租户/工厂及原行，核正数与剩余量。
+     * 原价格、冻结免检配置和已形成的质量事实不由客户端改写；不同批次不覆盖原行。
      *
-     * @param params
-     * @return
+     * @param params 原收料单与本次实收；同码多行须指定精确原明细ID
+     * @return 登记成功；组织、状态、原行、数量或批次不符时拒绝且无部分写入
      */
     Boolean appReceipt(WmsPurchaseReceiptParamsDTO params);
 
     /**
-     * 根据单号获取信息
+     * 按实名租户和实际工厂读取唯一原收料单及所属明细/质量批次。
+     *
+     * @param wmsPurchaseReceipt 仅使用完整原单号，其他请求字段不覆盖组织归属
+     * @return 当前工厂的唯一原单；无权、原号不存在或重复时拒绝
      */
     WmsPurchaseReceiptEntity getByBillNo(WmsPurchaseReceiptEntity wmsPurchaseReceipt);
 

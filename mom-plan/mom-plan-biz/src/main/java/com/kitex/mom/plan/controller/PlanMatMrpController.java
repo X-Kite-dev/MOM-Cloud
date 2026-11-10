@@ -4,6 +4,7 @@ package com.kitex.mom.plan.controller;
 import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.util.R;
@@ -13,6 +14,7 @@ import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.PlanMatMrpEntity;
 import com.kitex.mom.plan.entity.PlanMrpInventoryPeggingEntity;
+import com.kitex.mom.plan.entity.PlnProductDemandEntity;
 import com.kitex.mom.plan.service.PlanMatMrpService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -53,11 +55,13 @@ public class PlanMatMrpController {
     @Operation(summary = "分页查询", description = "分页查询")
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('plan_planMatMrp_view')")
-    public R getPlanMatMrpPage(@ParameterObject SearchPage page, @ParameterObject PlanMatMrpEntity planMatMrp) {
+    public R getPlanMatMrpPage(@ParameterObject SearchPage page, @ParameterObject PlanMatMrpEntity planMatMrp,
+                               @RequestParam(name = "planDemandId", required = false) Long planDemandId) {
         QueryWrapper<PlanMatMrpEntity> wrapper = Wrappers.query();
+        applyExactDemand(wrapper.lambda(), planDemandId, planMatMrp.getPlanDemandNo());
         wrapper.lambda()
                 .eq(Objects.nonNull(planMatMrp.getId()), PlanMatMrpEntity::getId, planMatMrp.getId())
-                .like(StrUtil.isNotBlank(planMatMrp.getPlanDemandNo()), PlanMatMrpEntity::getPlanDemandNo, planMatMrp.getPlanDemandNo())
+                .like(planDemandId == null && StrUtil.isNotBlank(planMatMrp.getPlanDemandNo()), PlanMatMrpEntity::getPlanDemandNo, planMatMrp.getPlanDemandNo())
                 .like(StrUtil.isNotBlank(planMatMrp.getSaleOrderCode()), PlanMatMrpEntity::getSaleOrderCode, planMatMrp.getSaleOrderCode())
                 .like(StrUtil.isNotBlank(planMatMrp.getMatCode()), PlanMatMrpEntity::getMatCode, planMatMrp.getMatCode())
                 .like(StrUtil.isNotBlank(planMatMrp.getMatName()), PlanMatMrpEntity::getMatName, planMatMrp.getMatName())
@@ -80,11 +84,13 @@ public class PlanMatMrpController {
     @Operation(summary = "查询各下发状态的数量", description = "查询各下发状态的数量")
     @GetMapping("/getCount")
     @PreAuthorize("@pms.hasPermission('plan_planMatMrp_view')")
-    public R getCount(@ParameterObject PlanMatMrpEntity planMatMrp) {
+    public R getCount(@ParameterObject PlanMatMrpEntity planMatMrp,
+                      @RequestParam(name = "planDemandId", required = false) Long planDemandId) {
         QueryWrapper<PlanMatMrpEntity> wrapper = Wrappers.query();
+        applyExactDemand(wrapper.lambda(), planDemandId, planMatMrp.getPlanDemandNo());
         wrapper.lambda().select(PlanMatMrpEntity::getStatus)
                 .eq(Objects.nonNull(planMatMrp.getId()), PlanMatMrpEntity::getId, planMatMrp.getId())
-                .like(StrUtil.isNotBlank(planMatMrp.getPlanDemandNo()), PlanMatMrpEntity::getPlanDemandNo, planMatMrp.getPlanDemandNo())
+                .like(planDemandId == null && StrUtil.isNotBlank(planMatMrp.getPlanDemandNo()), PlanMatMrpEntity::getPlanDemandNo, planMatMrp.getPlanDemandNo())
                 .like(StrUtil.isNotBlank(planMatMrp.getSaleOrderCode()), PlanMatMrpEntity::getSaleOrderCode, planMatMrp.getSaleOrderCode())
                 .like(StrUtil.isNotBlank(planMatMrp.getMatCode()), PlanMatMrpEntity::getMatCode, planMatMrp.getMatCode())
                 .like(StrUtil.isNotBlank(planMatMrp.getMatName()), PlanMatMrpEntity::getMatName, planMatMrp.getMatName())
@@ -97,6 +103,17 @@ public class PlanMatMrpController {
                 .stream()
                 .filter(Objects::nonNull)
                 .collect(Collectors.groupingBy(item -> Objects.requireNonNullElse(item.getStatus(), Boolean.FALSE), Collectors.counting())));
+    }
+
+    /** 三个只读入口沿用同一精确需求规则，普通筛选仍按原行为查询。 */
+    private void applyExactDemand(LambdaQueryWrapper<PlanMatMrpEntity> wrapper, Long demandId, String demandNo) {
+        if (demandId == null) {
+            return;
+        }
+        PlnProductDemandEntity demand = planMatMrpService.requireExactMrpDemand(demandId, demandNo);
+        wrapper.eq(PlanMatMrpEntity::getTenantId, demand.getTenantId())
+                .eq(PlanMatMrpEntity::getFactoryCode, demand.getFactoryCode())
+                .eq(PlanMatMrpEntity::getPlanDemandNo, demand.getDemandNo());
     }
 
     /**
@@ -204,7 +221,11 @@ public class PlanMatMrpController {
     @ResponseExcel
     @GetMapping("/export")
     @PreAuthorize("@pms.hasPermission('plan_planMatMrp_export')")
-    public List<PlanMatMrpEntity> export(PlanMatMrpEntity planMatMrp, Long[] ids) {
-        return planMatMrpService.list(Wrappers.lambdaQuery(planMatMrp).in(ArrayUtil.isNotEmpty(ids), PlanMatMrpEntity::getId, ids));
+    public List<PlanMatMrpEntity> export(PlanMatMrpEntity planMatMrp, Long[] ids,
+                                        @RequestParam(name = "planDemandId", required = false) Long planDemandId) {
+        LambdaQueryWrapper<PlanMatMrpEntity> wrapper = Wrappers.lambdaQuery(planMatMrp)
+                .in(ArrayUtil.isNotEmpty(ids), PlanMatMrpEntity::getId, ids);
+        applyExactDemand(wrapper, planDemandId, planMatMrp.getPlanDemandNo());
+        return planMatMrpService.list(wrapper);
     }
 }

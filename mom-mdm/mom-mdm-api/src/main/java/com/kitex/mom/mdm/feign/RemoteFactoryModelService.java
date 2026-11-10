@@ -40,11 +40,16 @@ public interface RemoteFactoryModelService {
                                                    @RequestParam(required = false) String factoryCode);
 
     /**
-     * 根据类型获取节点列表
+     * 按当前授权工厂查询指定类型的启用节点，返回由实际工厂树确定的归属。
+     * Feign 直连 MDM，此路径不含网关的应用前缀。
+     *
+     * @param type        工厂建模节点类型
+     * @param factoryCode 与当前请求工厂一致的工厂编码
+     * @return 该工厂下的节点列表
      */
-    @GetMapping("/mdm/factory-model/by-type")
-    R<List<MdmFactoryModelTreeVO>> getNodesByType(@RequestParam String type,
-                                                  @RequestParam(required = false) String factoryCode);
+    @GetMapping("/factory-model/by-type/scoped")
+    R<List<MdmFactoryModelTreeVO>> getNodesByType(@RequestParam("type") String type,
+                                                  @RequestParam("factoryCode") String factoryCode);
 
     /**
      * 获取节点的完整路径

@@ -5,6 +5,7 @@ import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
 import com.kitex.mom.plan.dto.*;
 import com.kitex.mom.plan.entity.PlanMatMrpEntity;
 import com.kitex.mom.plan.entity.PlanMrpInventoryPeggingEntity;
+import com.kitex.mom.plan.entity.PlnProductDemandEntity;
 
 import java.util.List;
 import java.util.Set;
@@ -43,6 +44,11 @@ public interface PlanMatMrpService extends IService<PlanMatMrpEntity> {
      * Agent只读工具：在明确计划/订单及工厂范围内返回可复算的缺料证据。
      */
     PlanMrpShortageAnalysisDTO shortageAnalysis(PlanMrpShortageQueryDTO query);
+
+    /**
+     * 按当前实际租户和工厂核验需求主键及唯一需求号。MRP只有需求号，重复编号不能归属。
+     */
+    PlnProductDemandEntity requireExactMrpDemand(Long demandId, String demandNo);
 
     /**
      * Agent人审后的替代决策，先复核工厂范围，再复用原权威决策状态机。

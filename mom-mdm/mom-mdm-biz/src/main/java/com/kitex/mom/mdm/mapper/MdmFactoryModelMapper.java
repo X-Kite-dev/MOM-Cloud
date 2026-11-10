@@ -32,6 +32,18 @@ public interface MdmFactoryModelMapper extends BaseMapper<MdmFactoryModelEntity>
     List<MdmFactoryModelEntity> selectByType(@Param("type") String type);
 
     /**
+     * 沿已确认的工厂根节点和启用祖先查询同租户指定类型子节点。
+     *
+     * @param tenantId  实际登录租户
+     * @param factoryId 已授权且唯一的工厂节点主键
+     * @param type      目标节点类型
+     * @return 工厂树内符合条件的启用节点
+     */
+    List<MdmFactoryModelEntity> selectEnabledFactoryDescendantsByType(@Param("tenantId") Long tenantId,
+                                                                      @Param("factoryId") Long factoryId,
+                                                                      @Param("type") String type);
+
+    /**
      * 根据节点ID查询所有子孙节点
      */
     List<MdmFactoryModelEntity> selectDescendants(@Param("nodeId") Long nodeId);

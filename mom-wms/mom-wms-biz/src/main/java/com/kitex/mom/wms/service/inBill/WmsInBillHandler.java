@@ -166,10 +166,20 @@ public interface WmsInBillHandler<T extends WmsInBillEntity, E extends WmsInBill
     Boolean rejectBill(WmsInBillEntity params);
 
     /**
-     * app入库
-     * 提交某一条物料数量，更新入库单入库数量或生成入库单
+     * 兼容旧版移动收货。沿用历史回写方式，遇到新版采购入库单时停止办理。
+     *
+     * @param params 本次移动收货的原通知、物料及标准数量
+     * @return 实际办理的入库单号
      */
     String setInBillNum(WmsInBillDetailAppDTO params);
+
+    /**
+     * 办理已按原号受理的移动收货。调用方须先登记永久请求、锁定通知并核实精确来源。
+     *
+     * @param params 经受理台账确认的原通知明细、实收数量及库位
+     * @return 实际办理的入库单号
+     */
+    String receiveByOriginalRequest(WmsInBillDetailAppDTO params);
 
     /**
      * 查询主表列表

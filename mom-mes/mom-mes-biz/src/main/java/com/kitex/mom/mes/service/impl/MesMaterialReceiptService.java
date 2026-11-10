@@ -19,8 +19,11 @@ import com.kitex.mom.mes.dto.MesMaterialReceiptCommand;
 import com.kitex.mom.mes.dto.MesWarehouseLiveStockInoutDTO;
 import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.*;
+import com.kitex.mom.mes.exception.MesMaterialReceiptDestinationRejectedException;
 import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.MesWarehouseLiveStockService;
+import com.kitex.mom.wms.dto.WmsLineDeliveryEvidenceDTO;
+import com.kitex.mom.wms.entity.WmsOutBillEntity;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -178,12 +181,11 @@ public class MesMaterialReceiptService {
                 n.getSubstituteFlag(), number(n.getSubstituteRatio()))));
     }
 
-    private com.kitex.mom.wms.entity.WmsOutBillEntity verifyWmsSource(MesWarehouseMaterialInBillEntity notice) {
-        R<com.kitex.mom.wms.entity.WmsOutBillEntity> response = wmsSourceService.sourceByDetailId(
-                notice.getWmsOutDetailId());
+    private WmsOutBillEntity verifyWmsSource(MesWarehouseMaterialInBillEntity notice) {
+        R<WmsOutBillEntity> response = wmsSourceService.sourceByDetailId(notice.getWmsOutDetailId());
         require(response != null && response.isOk() && response.getData() != null,
                 "WMS正式发料来源不可核验，本次不入库");
-        com.kitex.mom.wms.entity.WmsOutBillEntity bill = response.getData();
+        WmsOutBillEntity bill = response.getData();
         require(!com.kitex.mom.wms.enums.DocumentEnum.MES_PICKING.getCode().equals(bill.getDocumentTable())
                         || bill.getDocumentId() != null,
                 "MES生产领料出库缺少原领料单关联，不能按无工单来源签收，请先核对");
@@ -208,18 +210,20 @@ public class MesMaterialReceiptService {
         return bill;
     }
 
-    private void verifyLineDelivery(MesWarehouseMaterialInBillEntity notice, BigDecimal received, BigDecimal incoming) {
-        R<com.kitex.mom.wms.dto.WmsLineDeliveryEvidenceDTO> response =
-                wmsSourceService.lineDeliveryByDetailId(notice.getWmsOutDetailId());
+    /** 只接受原出库行所属配送任务提供的数量与目的工位证据。 */
+    private WmsLineDeliveryEvidenceDTO lineDeliveryEvidence(MesWarehouseMaterialInBillEntity notice,
+                                                            WmsOutBillEntity sourceBill) {
+        R<WmsLineDeliveryEvidenceDTO> response = wmsSourceService.lineDeliveryByDetailId(notice.getWmsOutDetailId());
         require(response != null && response.isOk() && response.getData() != null, "WMS线边配送到达证据不可核验，本次不入库");
-        com.kitex.mom.wms.dto.WmsLineDeliveryEvidenceDTO evidence = response.getData();
-        require(Objects.equals(evidence.getOutBillDetailId(), notice.getWmsOutDetailId())
+        WmsLineDeliveryEvidenceDTO evidence = response.getData();
+        require(sourceBill.getId() != null && Objects.equals(evidence.getOutBillId(), sourceBill.getId())
+                        && Objects.equals(evidence.getOutBillDetailId(), notice.getWmsOutDetailId())
                         && Objects.equals(evidence.getFactoryCode(), notice.getFactoryCode())
                         && Objects.equals(evidence.getMatCode(), notice.getMatCode())
                         && evidence.getReceivableNum() != null && evidence.getReceivableNum().signum() >= 0,
                 "WMS线边配送证据与MES待签收来源不一致");
-        require(received.add(incoming).compareTo(evidence.getReceivableNum()) <= 0,
-                "本批签收超过线边配送已到达/已追回数量；短少、破损、退回或损失不得进入MES库存");
+        require(StrUtil.isNotBlank(evidence.getTargetSiteCode()), "等待WMS确认配送目的工位后再签收");
+        return evidence;
     }
 
     public List<MesWarehouseMaterialInBillEntity> notices(Long pickingId) {
@@ -244,13 +248,33 @@ public class MesMaterialReceiptService {
         MesWarehouseMaterialInBillEntity notice = noticeMapper.selectById(noticeId);
         require(notice != null, "收料通知不存在");
         access(notice.getFactoryCode(), "read");
+        String targetSite = null;
+        if (notice.getWmsOutDetailId() != null && StrUtil.isNotBlank(notice.getResourceNo())) {
+            WmsOutBillEntity sourceBill = verifyWmsSource(notice);
+            if (Boolean.TRUE.equals(sourceBill.getLineDeliveryRequired())) {
+                targetSite = lineDeliveryEvidence(notice, sourceBill).getTargetSiteCode();
+            }
+        }
+        return eligibleSites(notice, targetSite);
+    }
+
+    /** 有配送目的地时仅返回该处的启用工位，普通发料继续使用当前工厂的工位。 */
+    private List<MdmFactoryModelTreeVO> eligibleSites(MesWarehouseMaterialInBillEntity notice, String targetSite) {
         R<List<MdmFactoryModelTreeVO>> result = factoryModelService.getNodesByType("STATION", notice.getFactoryCode());
         require(result != null && result.isOk() && result.getData() != null, "无法核验MDM线边工位");
         return result.getData().stream().filter(node -> Boolean.TRUE.equals(node.getStatus())
-                        && "STATION".equals(node.getType()) && Objects.equals(notice.getFactoryCode(), node.getFactoryCode()))
+                        && "STATION".equals(node.getType()) && Objects.equals(notice.getFactoryCode(), node.getFactoryCode())
+                        && (targetSite == null || targetSite.equals(node.getCode())))
                 .toList();
     }
 
+    /**
+     * 按原号签收并写入线边库存，重复原号先核对载荷并回读已有回执。
+     *
+     * @param command 带原请求号、工位及预期累计量的签收指令
+     * @return 本次签收或同载荷原号的回执
+     * @throws MesMaterialReceiptDestinationRejectedException 工位与已核实的WMS配送目的工位不一致
+     */
     @Transactional(rollbackFor = Exception.class)
     public MesMaterialReceiptEntity receive(MesMaterialReceiptCommand command) {
         validate(command, false);
@@ -274,16 +298,23 @@ public class MesMaterialReceiptService {
                 "本批签收超出剩余待收量，溢料须回源核对，禁止直接增库存");
         require(notice.getWmsOutDetailId() != null && StrUtil.isNotBlank(notice.getResourceNo()),
                 "缺少精确WMS出库来源，历史通知须先完成来源对账，不得凭手填物料入库");
-        com.kitex.mom.wms.entity.WmsOutBillEntity sourceBill = verifyWmsSource(notice);
+        WmsOutBillEntity sourceBill = verifyWmsSource(notice);
+        String targetSite = null;
         if (Boolean.TRUE.equals(sourceBill.getLineDeliveryRequired())) {
-            verifyLineDelivery(notice, before, command.getQuantity());
+            WmsLineDeliveryEvidenceDTO delivery = lineDeliveryEvidence(notice, sourceBill);
+            targetSite = delivery.getTargetSiteCode();
+            if (!targetSite.equals(command.getSiteCode())) {
+                throw new MesMaterialReceiptDestinationRejectedException();
+            }
+            require(before.add(command.getQuantity()).compareTo(delivery.getReceivableNum()) <= 0,
+                    "本批签收超过线边配送已到达/已追回数量；短少、破损、退回或损失不得进入MES库存");
         }
         String quality = StrUtil.blankToDefault(notice.getInspectionStatus(), "").toUpperCase(Locale.ROOT);
         require(Set.of("NOT_REQUIRED", "RELEASED", "QUALIFIED", "RELEASE", "RECEIVE", "EXEMPTION").contains(quality),
                 "发料质量结论未明确放行，须先核实质量来源；不合格/让步物料不得按普通可用库存签收");
         require(notice.getMatValidEndDate() == null || !notice.getMatValidEndDate().isBefore(java.time.LocalDate.now()),
                 "物料已过有效期，请转质量处置，不能签收入可用线边库存");
-        MdmFactoryModelTreeVO site = uniqueSite(notice.getId(), command.getSiteCode());
+        MdmFactoryModelTreeVO site = uniqueSite(notice, command.getSiteCode(), targetSite);
         MesMaterialReceiptEntity receipt = operation(command, notice, user, "RECEIVE", before,
                 before.add(command.getQuantity())).setSiteCode(site.getCode()).setSiteName(site.getName());
         require(receiptMapper.insert(receipt) == 1, "签收履历保存失败");
@@ -584,8 +615,9 @@ public class MesMaterialReceiptService {
         }
     }
 
-    private MdmFactoryModelTreeVO uniqueSite(Long id, String code) {
-        List<MdmFactoryModelTreeVO> matches = sites(id).stream().filter(s -> Objects.equals(s.getCode(), code)).toList();
+    private MdmFactoryModelTreeVO uniqueSite(MesWarehouseMaterialInBillEntity notice, String code, String targetSite) {
+        List<MdmFactoryModelTreeVO> matches = eligibleSites(notice, targetSite).stream()
+                .filter(site -> Objects.equals(site.getCode(), code)).toList();
         require(matches.size() == 1, "工位不存在、停用、跨厂或编码不唯一");
         return matches.get(0);
     }

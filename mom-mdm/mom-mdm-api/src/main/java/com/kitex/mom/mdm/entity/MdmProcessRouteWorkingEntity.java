@@ -129,6 +129,12 @@ public class MdmProcessRouteWorkingEntity extends BaseEntity<MdmProcessRouteWork
     private String type;
 
     /**
+     * 工序质检开关，1启用，0关闭，空表示历史未配置。
+     */
+    @Schema(description = "工序质检：1启用，0关闭，空表示历史未配置")
+    private String isInspection;
+
+    /**
      * 是否控制转序时间
      */
     @Schema(description = "是否控制转序时间")
