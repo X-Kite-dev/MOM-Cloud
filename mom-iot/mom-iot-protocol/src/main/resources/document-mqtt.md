@@ -4,8 +4,8 @@ CONNECT报文:
 
 ```text
 clientId: 设备ID
-username: REDACTED_ACCOUNT
-password: REDACTED_PASSWORD
+username: secureId+"|"+timestamp
+password: md5(secureId+"|"+timestamp+"|"+secureKey)
  ```
 
 说明: secureId以及secureKey在创建设备产品或设备实例时进行配置.

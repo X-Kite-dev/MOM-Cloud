@@ -96,8 +96,8 @@ public class MqttBrokerClient extends AbstractNetwork {
         try {
             // 使用MemoryPersistence作为客户端持久化方式
             MemoryPersistence persistence = new MemoryPersistence();
-            // tcp://service.example.invalid
-            String url = String.format("tcp://service.example.invalid", brokerUrl, port);
+            // tcp://broker.emqx.io:1883
+            String url = String.format("tcp://%s:%s", brokerUrl, port);
             mqttClient = new MqttClient(url, clientId, persistence);
 
             // 设置回调
