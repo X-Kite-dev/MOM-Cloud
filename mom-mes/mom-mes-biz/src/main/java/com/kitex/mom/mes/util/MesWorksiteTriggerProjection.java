@@ -1,6 +1,7 @@
 package com.kitex.mom.mes.util;
 
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.mom.mes.entity.MesAutoReportRuleEntity;
 import com.kitex.mom.mes.entity.MesProduceTaskEntity;
 import com.kitex.mom.mes.entity.MesTaskArrangeEntity;
 import com.kitex.mom.mes.enums.WorksiteTypeEnum;
@@ -12,7 +13,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
-/** Resolves frozen station trigger settings without changing persisted execution facts. */
+/** 根据工序和派工冻结的候选工位、触发方式及实际开工工位判定报工入口。 */
 public final class MesWorksiteTriggerProjection {
 
 	private MesWorksiteTriggerProjection() {
@@ -61,6 +62,33 @@ public final class MesWorksiteTriggerProjection {
 			throw new CheckedException("候选工位的报工方式不同，请先确认实际开工工位");
 		}
 		return mapped.get(index);
+	}
+
+	/**
+	 * 判断设备规则是否适用当前实际工位。已开工派工按接单时确认的工位匹配；
+	 * 多个候选工位分别配置触发方式时，使用实际工位对应的那一项。
+	 * 历史单值触发配置可缺候选清单，但必须有实际工位。
+	 *
+	 * @param arrange 待接收设备事件的派工
+	 * @param rule 当前设备规则，工序、工位限定可空
+	 * @return 实际工位允许自动报工且满足规则限定时为 true
+	 */
+	public static boolean allowsDeviceRule(MesTaskArrangeEntity arrange, MesAutoReportRuleEntity rule) {
+		String actual = arrange.getActualWorksiteCode();
+		if (actual == null || actual.isBlank()
+				|| !matchesLimit(rule.getRouteCode(), arrange.getRouteCode())
+				|| !matchesLimit(rule.getWorksiteCode(), actual)) {
+			return false;
+		}
+		String candidates = arrange.getWorksiteCodes();
+		if (candidates != null && !candidates.isBlank() && !stationCodes(candidates).contains(actual)) {
+			return false;
+		}
+		return forExecution(null, arrange) == WorksiteTypeEnum.AUTO;
+	}
+
+	private static boolean matchesLimit(String limit, String actual) {
+		return limit == null || limit.isBlank() || limit.equals(actual);
 	}
 
 	private static List<WorksiteTypeEnum> triggers(String raw, int count) {

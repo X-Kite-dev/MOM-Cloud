@@ -39,6 +39,10 @@ public class PmsBusinessReconciliationServiceImpl extends ServiceImpl<PmsBusines
                 .eq(PmsOrderDetailEntity::getPmsOrderId, pmsOrderEntity.getId()));
         List<PmsBusinessReconciliationEntity> saveList = new ArrayList<>();
         for (PmsOrderDetailEntity pmsOrderDetailEntity : orderDetailList) {
+            // 整行已撤回且没有实际到货的物料，不生成零金额应付对账明细。
+            if (pmsOrderDetailEntity.getArrivalNum() == null || pmsOrderDetailEntity.getArrivalNum() == 0D) {
+                continue;
+            }
             PmsBusinessReconciliationEntity pmsBusinessReconciliationEntity = new PmsBusinessReconciliationEntity();
             BeanUtils.copyProperties(pmsOrderDetailEntity, pmsBusinessReconciliationEntity, "id");
             var sequence = remoteSeqConfigService.create("pms_business_reconciliation");

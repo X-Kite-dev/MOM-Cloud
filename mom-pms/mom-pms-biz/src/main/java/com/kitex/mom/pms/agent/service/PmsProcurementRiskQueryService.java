@@ -168,6 +168,7 @@ public class PmsProcurementRiskQueryService {
                 .map(String::trim).filter(StrUtil::isNotBlank).distinct().toList();
         return new PmsProcurementRiskDTO.RiskLine()
                 .setOrderId(row.getOrderId()).setOrderDetailId(row.getOrderDetailId())
+                .setPurchasePlanNo(row.getPurchasePlanNo())
                 .setOrderNo(row.getOrderNo()).setOrderStatus(row.getOrderStatus())
                 .setSupplierCode(row.getSupplierCode()).setSupplierName(row.getSupplierName())
                 .setMaterialCode(row.getMaterialCode()).setMaterialName(row.getMaterialName())

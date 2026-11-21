@@ -3,6 +3,8 @@ package com.kitex.mom.mes.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.dto.MesMaterialListDetailDTO;
 import com.kitex.mom.mes.entity.MesMaterialListDetailEntity;
+import com.kitex.mom.mes.entity.MesMaterialListEntity;
+import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.vo.MesMaterialListPickVO;
 import com.kitex.mom.mes.vo.MesMaterialListReturnVO;
 
@@ -70,6 +72,12 @@ public interface MesMaterialListDetailService extends IService<MesMaterialListDe
      * @return 创建结果
      */
     boolean createMaterialDetailsByBom(Long materialListId, Long taskId, Long bomId, String bomVersion, BigDecimal planQuantity);
+
+    /**
+     * 在原工单和清单已加锁的事务中按明细核实整单进度。传入目标状态时须与数量一致。
+     * 返回是否已全部领足，空清单仅已批准免料的返工单可完成。
+     */
+    boolean applyHeadStatus(MesMaterialListEntity head, MesTaskEntity task, String requested);
 
     /**
      * 更新明细的领料状态

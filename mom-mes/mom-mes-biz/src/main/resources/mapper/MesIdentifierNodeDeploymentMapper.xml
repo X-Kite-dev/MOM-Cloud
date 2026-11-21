@@ -2,6 +2,7 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.kitex.mom.mes.mapper.MesIdentifierNodeDeploymentMapper">
     <!-- 只读目录。正文MD5取SQL290最终定义，保留240完整逆向和244DEVICE证据门；不靠函数名或marker放行。 -->
+    <!-- 第418节安装后，原采集守卫与实际工位判定函数须一起匹配对应的正式定义。 -->
     <!-- 未调用nextval/业务函数，不读业务行；FK历史NOT VALID不等于新行不受约束，故不要求convalidated。 -->
     <select id="missingControls" resultType="java.lang.String">
         WITH required_function(name, args, body_md5, language, volatility)
@@ -675,7 +676,16 @@
                           FROM pg_proc p
                                    JOIN pg_language l ON l.oid = p.prolang
                           WHERE p.oid = to_regprocedure('mom_mes.' || e.name || '(' || e.args || ')')
-                            AND md5(p.prosrc) = e.body_md5
+                            AND (md5(p.prosrc) = e.body_md5
+                                 OR (e.name = 'mom_guard_auto_capture_v2'
+                                     AND md5(p.prosrc) = '03631f9d290cb21fe4f1978a56d1545b'
+                                     AND EXISTS (SELECT 1 FROM pg_proc h
+                                                 WHERE h.oid = to_regprocedure('mom_mes.mom_actual_worksite_auto(text,text,text)')
+                                                   AND md5(h.prosrc) = 'b64f527b5c90f617babbfa89f32a040b'
+                                                   AND h.prolang = p.prolang AND h.provolatile = 'i'
+                                                   AND h.prorettype = 'boolean'::regtype
+                                                   AND NOT h.prosecdef AND h.proconfig IS NULL
+                                                   AND has_function_privilege(h.oid, 'EXECUTE'))))
                             AND l.lanname = e.language
                             AND p.provolatile::text = e.volatility
             AND p.prosecdef = false AND p.proconfig IS NULL

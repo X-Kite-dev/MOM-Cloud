@@ -175,12 +175,24 @@ public class MesPlanProductionEventReader {
             return;
         }
         LocalDateTime reportTime = parse(report.getReportTime());
-        LocalDateTime deviceTime = parse(report.getSourceEventTime());
+        LocalDateTime sourceTime = parse(report.getSourceEventTime());
         if (reportTime == null || reportTime.isAfter(observedAt)) {
             event.setTimeGap("原报工时刻缺失、格式损坏或处于采集时刻之后");
+        } else if ("API".equals(report.getReportType()) && StrUtil.isNotBlank(report.getSourceEventId())
+                && sourceTime != null && deviceEvents.isEmpty()) {
+            // 原事件时钟由集成方提供。登记依据取服务端建账时刻，即使两个时刻恰好相同也可核对。
+            LocalDateTime registeredAt = parse(report.getRegisteredAt());
+            if (registeredAt == null || registeredAt.isAfter(observedAt)) {
+                event.setTimeGap("缺少可核实的 MES 建账时刻，无法按集成方时间核算交期");
+            } else {
+                event.setReportTime(time(registeredAt)).setTimeBasis("REPORT_REGISTERED")
+                        .setTimeGap("按 MES 登记时间回评，来源系统声明的发生时刻单独留存")
+                        .setFactFingerprint(hash(JSONUtil.toJsonStr(Arrays.asList(
+                                event.getFactFingerprint(), "REPORT_REGISTERED", time(registeredAt)))));
+            }
         } else if (StrUtil.isNotBlank(report.getSourceEventId()) || report.getSourceEventTime() != null) {
-            if ("AUTO".equals(report.getReportType()) && deviceTime != null && deviceTime.equals(reportTime)
-                    && StrUtil.isNotBlank(report.getSourceEventId()) && !deviceTime.isAfter(observedAt)
+            if ("AUTO".equals(report.getReportType()) && sourceTime != null && sourceTime.equals(reportTime)
+                    && StrUtil.isNotBlank(report.getSourceEventId()) && !sourceTime.isAfter(observedAt)
                     && deviceEvents.size() == 1 && verifiedDevice(deviceEvents.get(0), report)) {
                 var source = deviceEvents.get(0);
                 event.setTimeBasis("DEVICE_EVENT").setFactFingerprint(hash(JSONUtil.toJsonStr(Arrays.asList(

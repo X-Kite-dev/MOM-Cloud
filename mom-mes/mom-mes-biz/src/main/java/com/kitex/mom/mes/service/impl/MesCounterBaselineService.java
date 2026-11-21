@@ -60,6 +60,9 @@ public class MesCounterBaselineService {
         result.put("arranges", arranges.selectList(new LambdaQueryWrapper<MesTaskArrangeEntity>()
                 .eq(MesTaskArrangeEntity::getTenantId, tenant()).eq(MesTaskArrangeEntity::getFactoryCode, factory)
                 .eq(MesTaskArrangeEntity::getPlannedDeviceCode, rule.getDeviceCode()).eq(MesTaskArrangeEntity::getStatus, "PRODUCT")
+                .eq(StrUtil.isNotBlank(rule.getRouteCode()), MesTaskArrangeEntity::getRouteCode, rule.getRouteCode())
+                .eq(StrUtil.isNotBlank(rule.getWorksiteCode()), MesTaskArrangeEntity::getActualWorksiteCode, rule.getWorksiteCode())
+                .apply("mom_mes.mom_actual_worksite_auto(worksite_codes, worksite_types, actual_worksite_code)")
                 .orderByAsc(MesTaskArrangeEntity::getId).last("LIMIT 101")));
         result.put("notice", "须先停用累计规则。选取真实事件计数与唯一在产派工，人工核对未记产量处置；批准只建立边界，不补记或冲销产量，之后仍须显式启用规则。");
         return result;
@@ -185,12 +188,12 @@ public class MesCounterBaselineService {
                 .eq(MesTaskArrangeEntity::getCode, command.getArrangeCode().trim());
         if (lock) query.last("FOR SHARE");
         var arrange = arranges.selectOne(query);
-        require(arrange != null && "PRODUCT".equals(arrange.getStatus()) && MesWorksiteTriggerProjection.forExecution(null, arrange) == com.kitex.mom.mes.enums.WorksiteTypeEnum.AUTO
+        require(arrange != null && "PRODUCT".equals(arrange.getStatus())
                 && Objects.equals(rule.getDeviceCode(), arrange.getPlannedDeviceCode()), "新基线须绑定同厂设备的生产中自动派工");
         require(arrange.getStartTime() != null && !event.getSourceEventTime().isBefore(arrange.getStartTime()), "基线事件不得早于目标派工实际开工；开工时间缺失须先治理，不能猜测计数归属");
         require(StrUtil.isBlank(event.getRequestedArrangeCode()) || arrange.getCode().equals(event.getRequestedArrangeCode()), "事件指定的派工与校准目标不一致");
-        require(StrUtil.isBlank(rule.getRouteCode()) || Objects.equals(rule.getRouteCode(), arrange.getRouteCode()), "派工不在规则限定工序");
-        require(StrUtil.isBlank(rule.getWorksiteCode()) || Arrays.asList(Objects.toString(arrange.getWorksiteCodes(), "").split(",")).stream().map(String::trim).anyMatch(rule.getWorksiteCode()::equals), "派工不在规则限定工位");
+        require(MesWorksiteTriggerProjection.allowsDeviceRule(arrange, rule),
+                "基线派工的实际开工工位须允许自动报工且符合规则的工序、工位限定");
         // 不冻结会被异步处理改变的事件状态/重试次数；原始设备事实由数据库禁止覆盖。
         var fact = Arrays.asList(event.getId(), event.getSourceEventId(), event.getDeviceCode(), event.getEventIdentifier(), event.getSourceEventTime(), event.getRawValue(), event.getRequestedArrangeCode(), event.getFactoryCode(), event.getTenantId());
         String json = JSONUtil.toJsonStr(Arrays.asList("MES_COUNTER_BASELINE_V1", rule, fact, arrange));

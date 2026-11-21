@@ -2,7 +2,9 @@ package com.kitex.mom.mes.service.impl;
 
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -244,6 +246,19 @@ public class MesIdentifierBindingServiceImpl
                 .eq(MesIdentifierBindingEntity::getId, bindingId));
         require(binding != null, "当前租户工厂未找到该占用实例");
         return binding;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public IPage<MesIdentifierBindingEntity> occupations(String identifier, long current, long size) {
+        String factory = factoryAccess.require("read");
+        String code = identifier(identifier, "外码或内部 SN");
+        require(current >= 1 && current <= 1_000_000 && size >= 1 && size <= 100, "外码占用查询分页范围无效");
+        // 同一码可能经历多次释放、重绑或冲销。保留每个原实例，由操作员按工单和 SN 选择。
+        return baseMapper.selectPage(new Page<>(current, size), scope(factory)
+                .and(query -> query.eq(MesIdentifierBindingEntity::getExternalCode, code)
+                        .or().eq(MesIdentifierBindingEntity::getCanonicalIdentifier, code))
+                .orderByDesc(MesIdentifierBindingEntity::getBindTime, MesIdentifierBindingEntity::getId));
     }
 
     @Override

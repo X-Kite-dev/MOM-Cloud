@@ -1,5 +1,6 @@
 package com.kitex.mom.plan.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -33,6 +34,9 @@ public class PlanMrpShortageLineDTO {
     private String inventoryPeggingStatus;
     private String inventoryPeggingFingerprint;
     private BigDecimal shortageNum;
+    /** MRP 原行记录的剩余需求量，单位同 materialUnit。来料核对需要区分原值为空与旧分析口径的零。 */
+    @JsonIgnore
+    private BigDecimal recordedRemainingDemandNum;
     private String readinessStatus;
     private String substituteStatus;
     private String substituteSuggestion;

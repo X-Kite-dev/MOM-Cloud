@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
+import com.kitex.mom.mes.dto.MesDispatchedOrderProgressDTO;
 import com.kitex.mom.mes.dto.MesPlanExecutionEvidenceDTO;
 import com.kitex.mom.mes.dto.MesReportSourceAssignmentDTO;
 import com.kitex.mom.mes.entity.MesApsBatchAllocationEntity;
@@ -48,6 +49,71 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
     private final MesReportSourceAssignmentService reportSourceService;
     private final MesPlanProductionEventReader productionEventReader;
 
+    /** {@inheritDoc} */
+    @Override
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public MesDispatchedOrderProgressDTO.View orderProgress(MesDispatchedOrderProgressDTO.Query query) {
+        String factory = factoryAccess.require("read");
+        Long tenant = TenantContextHolder.getTenantId();
+        require(tenant != null && tenant > 0 && query != null && query.taskId() != null && query.taskId() > 0
+                        && Objects.equals(factory, query.factoryCode()) && StrUtil.isNotBlank(query.taskCode())
+                        && query.requestId() != null && query.requestId().matches("PLAN_(ISSUE|APS_BATCH):[1-9][0-9]{0,18}"),
+                "请从当前工厂的 MES 接单回执核对原工单");
+        var task = baseMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
+                .eq(MesTaskEntity::getId, query.taskId()).eq(MesTaskEntity::getCode, query.taskCode())
+                .eq(MesTaskEntity::getSourceRequestId, query.requestId()));
+        require(task != null, "当前工厂未找到与原接单回执一致的工单");
+        boolean batchOrder = query.requestId().startsWith("PLAN_APS_BATCH:");
+        // 合批单也保存主计划号。必须由原接单协议和 MES 批次身份共同确认，才可解释其来源。
+        if (batchOrder) {
+            require(task.getApsBatchId() != null && StrUtil.isNotBlank(task.getApsBatchNo())
+                            && query.requestId().equals("PLAN_APS_BATCH:" + task.getApsBatchId()),
+                    "原接单请求与 MES 工单的执行批次不一致");
+        } else {
+            require(task.getApsBatchId() == null && StrUtil.isBlank(task.getApsBatchNo()),
+                    "普通计划回执与 MES 工单的执行批次不一致");
+        }
+
+        // 批量取证入口同时核工单编码在本组织唯一，防止同码工序串到另一张工单。
+        var proof = reportSourceService.taskEvidenceBatch(List.of(task.getId())).get(task.getId());
+        require(proof != null && Objects.equals(proof.getTenantId(), tenant.toString())
+                        && Objects.equals(proof.getFactoryCode(), factory) && Objects.equals(proof.getTaskCode(), task.getCode())
+                        && Objects.equals(proof.getTaskId(), task.getId().toString()),
+                "末序报工证据与原工单身份不一致");
+        List<MesProduceTaskEntity> operations = operationMapper.selectList(new LambdaQueryWrapper<MesProduceTaskEntity>()
+                .eq(MesProduceTaskEntity::getTenantId, tenant).eq(MesProduceTaskEntity::getFactoryCode, factory)
+                .eq(MesProduceTaskEntity::getTaskCode, task.getCode())
+                .orderByAsc(MesProduceTaskEntity::getRouteOrder).orderByAsc(MesProduceTaskEntity::getId));
+        List<MesDispatchedOrderProgressDTO.Operation> rows = operations.stream().map(op ->
+                new MesDispatchedOrderProgressDTO.Operation(op.getId().toString(), op.getCode(), op.getRouteOrder(),
+                        op.getRouteCode(), op.getRouteName(), op.getSourceRouteNodeCode(), op.getStatus(),
+                        decimal(op.getNoticeNum()), decimal(op.getCompleteNum()), decimal(op.getQualityReleasedNum())))
+                .toList();
+        List<String> gaps = new ArrayList<>(proof.getGaps());
+        boolean complete = Boolean.TRUE.equals(proof.getSourceComplete());
+        if (!complete && gaps.isEmpty()) {
+            gaps.add("末序报工尚未全部核定到来源计划");
+        }
+        List<MesDispatchedOrderProgressDTO.Source> sources = new ArrayList<>();
+        for (var source : proof.getSources()) {
+            // 未完整核定时，已分配部分只是下界，不能当作该来源的最终报工量。
+            sources.add(new MesDispatchedOrderProgressDTO.Source(source.getIssueNo(), source.getAllocatedQuantity(),
+                    complete ? source.getAssignedQuantity() : null));
+        }
+        if (sources.isEmpty() && !batchOrder) {
+            if (StrUtil.isNotBlank(task.getPlanNo())) {
+                sources.add(new MesDispatchedOrderProgressDTO.Source(task.getPlanNo(), decimal(task.getNoticeNum()),
+                        complete ? proof.getLiveReportedQuantity() : null));
+            } else {
+                gaps.add("普通接单工单缺少来源计划号");
+            }
+        }
+        return new MesDispatchedOrderProgressDTO.View(tenant.toString(), factory, task.getId().toString(),
+                task.getCode(), task.getSourceRequestId(), task.getApsBatchNo(), task.getStatus(),
+                proof.getLiveReportedQuantity(), decimal(task.getInStockNum()), time(LocalDateTime.now()), sources, rows, gaps);
+    }
+
     @Override
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public MesPlanExecutionEvidenceDTO.Evidence query(MesPlanExecutionEvidenceDTO.Query query) {
@@ -60,15 +126,19 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
         Long tenant = TenantContextHolder.getTenantId();
         // 使用MES自己的查询起点作为补录边界；结束时刻会把查询期间正常提交误当作旧补录。
         LocalDateTime snapshotStartedAt = LocalDateTime.now();
+        Long candidate = query.getSchedulingTaskId();
+        require(candidate == null || candidate > 0, "APS 候选任务主键无效");
         List<MesApsBatchAllocationEntity> requested = allocationMapper.selectList(new LambdaQueryWrapper<MesApsBatchAllocationEntity>()
                 .eq(MesApsBatchAllocationEntity::getTenantId, tenant).eq(MesApsBatchAllocationEntity::getFactoryCode, factory)
-                .in(MesApsBatchAllocationEntity::getIssueNo, query.getPlanNos())
+                .eq(candidate != null, MesApsBatchAllocationEntity::getApsTaskId, candidate)
+                .in(candidate == null, MesApsBatchAllocationEntity::getIssueNo, query.getPlanNos())
                 .orderByAsc(MesApsBatchAllocationEntity::getId).last("LIMIT 5001"));
         within(requested.size(), 5000, "来源分配");
         List<Long> ids = requested.stream().map(MesApsBatchAllocationEntity::getMesTaskId).filter(Objects::nonNull).distinct().toList();
         List<MesTaskEntity> tasks = baseMapper.selectList(new LambdaQueryWrapper<MesTaskEntity>()
                 .eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
-                .and(part -> {
+                .eq(candidate != null, MesTaskEntity::getApsTaskId, candidate)
+                .and(candidate == null, part -> {
                     part.in(MesTaskEntity::getPlanNo, query.getPlanNos());
                     if (!ids.isEmpty()) {
                         part.or().in(MesTaskEntity::getId, ids);
@@ -107,6 +177,7 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
         Map<String, List<MesTaskArrangeEntity>> arrangementsByOperation = arrangements.stream()
                 .collect(Collectors.groupingBy(MesTaskArrangeEntity::getProduceTaskCode));
         Map<String, MesPlanExecutionEvidenceDTO.Plan> plans = new LinkedHashMap<>();
+        List<MesPlanExecutionEvidenceDTO.BatchOrder> batchOrders = new ArrayList<>();
         query.getPlanNos().forEach(no -> plans.put(no, new MesPlanExecutionEvidenceDTO.Plan()
                 .setPlanNo(no).setLinks(new ArrayList<>()).setGaps(new ArrayList<>())));
         LocalDateTime observedAt = LocalDateTime.now();
@@ -118,6 +189,23 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
             List<String> gaps = validateTask(task, taskAllocations, taskOperations);
             var sourceProof = reportSourceEvidence.get(task.getId());
             require(sourceProof != null, "末序报工来源证据未完整返回");
+            if (candidate != null) {
+                if (task.getFinishTime() != null && taskOperations.stream().anyMatch(op -> op.getFinishTime() == null
+                        || op.getFinishTime().isAfter(task.getFinishTime()))) {
+                    gaps.add("工单 " + task.getCode() + " 的完工时刻未覆盖全部实际工序");
+                }
+                require(task.getApsBatchId() != null && StrUtil.isNotBlank(task.getApsBatchNo())
+                                && Objects.equals(task.getSourceRequestId(), "PLAN_APS_BATCH:" + task.getApsBatchId())
+                                && taskAllocations.stream().allMatch(row -> Objects.equals(candidate, row.getApsTaskId())
+                                && Objects.equals(task.getApsBatchId(), row.getApsBatchId())
+                                && Objects.equals(task.getApsBatchNo(), row.getApsBatchNo())
+                                && plans.containsKey(row.getIssueNo())),
+                        "批次工单的原接单号、来源或 APS 批次身份与候选范围不一致");
+                batchOrders.add(new MesPlanExecutionEvidenceDTO.BatchOrder(task.getApsBatchId().toString(),
+                        task.getApsBatchNo(), task.getSourceRequestId(), task.getId().toString(), task.getCode(),
+                        task.getPlanNo(), task.getMatCode(), decimal(task.getNoticeNum()), sourceProof.getFingerprint(),
+                        MesApsScheduleSyncServiceImpl.operationStates(taskOperations, taskArrangements)));
+            }
             gaps.addAll(sourceProof.getGaps());
             if (taskArrangements.stream().anyMatch(row -> row.getStatus() == null || !STATUSES.contains(row.getStatus())
                     || row.getCompleteNum() == null || row.getCompleteNum().signum() < 0
@@ -132,7 +220,7 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
                 MesPlanExecutionEvidenceDTO.Plan plan = plans.get(task.getPlanNo());
                 if (plan != null) {
                     plan.getGaps().addAll(gaps);
-                    var sourceLink = link(task, null, taskOperations, taskArrangements, sourceProof);
+                    var sourceLink = link(task, null, taskOperations, taskArrangements, sourceProof, candidate == null || includeEvents);
                     if (includeEvents) sourceLink.setProductionSnapshotStartedAt(snapshotStartedAt.toString())
                             .setProductionObservedAt(observedAt.toString());
                     if (includeEvents)
@@ -144,7 +232,7 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
                     MesPlanExecutionEvidenceDTO.Plan plan = plans.get(allocation.getIssueNo());
                     if (plan != null) {
                         plan.getGaps().addAll(gaps);
-                        var sourceLink = link(task, allocation, taskOperations, taskArrangements, sourceProof);
+                        var sourceLink = link(task, allocation, taskOperations, taskArrangements, sourceProof, candidate == null || includeEvents);
                         if (includeEvents) sourceLink.setProductionSnapshotStartedAt(snapshotStartedAt.toString())
                                 .setProductionObservedAt(observedAt.toString());
                         if (includeEvents)
@@ -160,10 +248,13 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
         }
         for (MesApsBatchAllocationEntity allocation : requested) {
             if (!taskIds.contains(allocation.getMesTaskId())) {
+                require(plans.containsKey(allocation.getIssueNo()), "候选中存在跨来源或失去原工单的分配行");
                 plans.get(allocation.getIssueNo()).getGaps().add("分配" + allocation.getId() + "缺少当前组织有效工单");
             }
         }
         return new MesPlanExecutionEvidenceDTO.Evidence().setTenantId(tenant).setFactoryCode(factory)
+                .setSchedulingTaskId(candidate == null ? null : candidate.toString())
+                .setBatchOrders(candidate == null ? null : batchOrders)
                 .setObservedAt(observedAt.toString()).setPlans(new ArrayList<>(plans.values()));
     }
 
@@ -230,7 +321,7 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
 
     private MesPlanExecutionEvidenceDTO.Link link(MesTaskEntity task, MesApsBatchAllocationEntity allocation,
                                                   List<MesProduceTaskEntity> operations, List<MesTaskArrangeEntity> arrangements,
-                                                  MesReportSourceAssignmentDTO.Preview sourceProof) {
+                                                  MesReportSourceAssignmentDTO.Preview sourceProof, boolean includeFullSnapshot) {
         boolean started = task.getStartTime() != null || task.getFinishTime() != null || positive(task.getCompleteNum())
                 || positive(task.getInStockNum())
                 || Set.of("PRODUCT", "PAUSE", "FINISH", "CLOSE").contains(StrUtil.blankToDefault(task.getStatus(), "UNKNOWN"))
@@ -255,18 +346,6 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
         if (arrangeStart != null && (start == null || arrangeStart.isBefore(start))) {
             start = arrangeStart;
         }
-        Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("task", Arrays.asList(task.getId(), task.getCode(), task.getMatCode(), task.getPlanNo(),
-                task.getApsBatchNo(), task.getStatus(), decimal(task.getNoticeNum()), decimal(task.getCompleteNum()),
-                time(task.getStartTime()), time(task.getFinishTime()), decimal(task.getInStockNum())));
-        snapshot.put("allocation", allocation == null ? null : Arrays.asList(allocation.getId(), allocation.getIssueId(),
-                allocation.getIssueNo(), decimal(allocation.getAllocatedQuantity()), decimal(allocation.getCompletedQuantity()),
-                decimal(allocation.getInStockQuantity())));
-        snapshot.put("operations", operations.stream().map(row -> Arrays.asList(row.getId(), row.getCode(), row.getRouteCode(),
-                row.getRouteOrder(), row.getStatus(), decimal(row.getCompleteNum()), time(row.getStartTime()), time(row.getFinishTime()))).toList());
-        snapshot.put("arrangements", arrangements.stream().map(row -> Arrays.asList(row.getId(), row.getCode(), row.getStatus(),
-                decimal(row.getCompleteNum()), time(row.getStartTime()), time(row.getFinishTime()))).toList());
-        snapshot.put("reportSourceEvidence", sourceProof);
         String completed = allocation == null ? sourceProof.getLiveReportedQuantity() : null;
         if (allocation != null && Boolean.TRUE.equals(sourceProof.getSourceComplete())) {
             var source = sourceProof.getSources().stream()
@@ -289,7 +368,27 @@ public class MesPlanExecutionEvidenceServiceImpl extends ServiceImpl<MesTaskMapp
                 .setStarted(started).setOperationCount(operations.size())
                 .setPausedOperationCount(operations.stream().filter(row -> "PAUSE".equals(row.getStatus())
                         || pausedOperations.contains(row.getCode())).count())
-                .setAllOperationsMovable(movable).setExecutionSnapshot(JSONUtil.toJsonStr(snapshot));
+                .setAllOperationsMovable(movable).setExecutionSnapshot(includeFullSnapshot
+                        ? executionSnapshot(task, allocation, operations, arrangements, sourceProof) : null);
+    }
+
+    /** MPS 原契约按份额保存完整依据。批次回评另存每张工单的指纹与原始编号，避免合批重复传输整份报工履历。 */
+    private String executionSnapshot(MesTaskEntity task, MesApsBatchAllocationEntity allocation,
+                                     List<MesProduceTaskEntity> operations, List<MesTaskArrangeEntity> arrangements,
+                                     MesReportSourceAssignmentDTO.Preview sourceProof) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("task", Arrays.asList(task.getId(), task.getCode(), task.getMatCode(), task.getPlanNo(),
+                task.getApsBatchNo(), task.getStatus(), decimal(task.getNoticeNum()), decimal(task.getCompleteNum()),
+                time(task.getStartTime()), time(task.getFinishTime()), decimal(task.getInStockNum())));
+        snapshot.put("allocation", allocation == null ? null : Arrays.asList(allocation.getId(), allocation.getIssueId(),
+                allocation.getIssueNo(), decimal(allocation.getAllocatedQuantity()), decimal(allocation.getCompletedQuantity()),
+                decimal(allocation.getInStockQuantity())));
+        snapshot.put("operations", operations.stream().map(row -> Arrays.asList(row.getId(), row.getCode(), row.getRouteCode(),
+                row.getRouteOrder(), row.getStatus(), decimal(row.getCompleteNum()), time(row.getStartTime()), time(row.getFinishTime()))).toList());
+        snapshot.put("arrangements", arrangements.stream().map(row -> Arrays.asList(row.getId(), row.getCode(), row.getStatus(),
+                decimal(row.getCompleteNum()), time(row.getStartTime()), time(row.getFinishTime()))).toList());
+        snapshot.put("reportSourceEvidence", sourceProof);
+        return JSONUtil.toJsonStr(snapshot);
     }
 
     private BigDecimal sum(List<MesApsBatchAllocationEntity> rows, boolean completed) {

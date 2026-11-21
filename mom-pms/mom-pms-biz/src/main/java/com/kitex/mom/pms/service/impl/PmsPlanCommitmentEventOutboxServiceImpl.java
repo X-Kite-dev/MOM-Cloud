@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.data.tenant.TenantBroker;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
@@ -305,8 +306,7 @@ public class PmsPlanCommitmentEventOutboxServiceImpl implements PmsPlanCommitmen
         List<PmsOrderDetailEntity> openDetails = details.stream()
                 .filter(row -> orders.containsKey(row.getPmsOrderId())
                         && OPEN_ORDER_STATUSES.contains(orders.get(row.getPmsOrderId()).getStatus())).toList();
-        BigDecimal openOrdered = openDetails.stream().map(row -> decimal(row.getOrderNum())
-                        .subtract(decimal(row.getArrivalNum())).max(BigDecimal.ZERO))
+        BigDecimal openOrdered = openDetails.stream().map(this::remainingOrderQuantity)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         Map<Long, PmsOrderDetailEntity> byId = openDetails.stream()
                 .collect(Collectors.toMap(PmsOrderDetailEntity::getId, value -> value));
@@ -324,14 +324,26 @@ public class PmsPlanCommitmentEventOutboxServiceImpl implements PmsPlanCommitmen
         List<TimedQuantity> openCommitments = new ArrayList<>();
         for (PmsDeliveryCommitmentEntity commitment : commitments) {
             PmsOrderDetailEntity detail = byId.get(commitment.getOrderDetailId());
-            BigDecimal consumed = decimal(detail == null ? null : detail.getArrivalNum())
+            BigDecimal consumed = decimal(detail.getArrivalNum())
                     .subtract(value(commitment.getArrivalNumBaseline())).max(BigDecimal.ZERO);
-            for (PmsDeliveryCommitmentItemEntity item : items.getOrDefault(commitment.getId(), List.of())) {
+            List<TimedQuantity> lineSchedule = new ArrayList<>();
+            List<PmsDeliveryCommitmentItemEntity> schedule = items.getOrDefault(commitment.getId(), List.of())
+                    .stream().sorted(Comparator.comparing(this::deliveryTime)
+                            .thenComparing(PmsDeliveryCommitmentItemEntity::getSequenceNo)
+                            .thenComparing(PmsDeliveryCommitmentItemEntity::getId)).toList();
+            for (PmsDeliveryCommitmentItemEntity item : schedule) {
                 BigDecimal quantity = value(item.getCommittedNum());
                 BigDecimal used = consumed.min(quantity);
                 consumed = consumed.subtract(used);
                 BigDecimal open = quantity.subtract(used);
-                if (open.signum() > 0) openCommitments.add(new TimedQuantity(deliveryTime(item), open));
+                if (open.signum() > 0) {
+                    lineSchedule.add(new TimedQuantity(deliveryTime(item), open));
+                }
+            }
+            // 撤回后旧版分批承诺可能超出本行余量，无法确定保留哪批；不用于推算其他行的齐套日。
+            BigDecimal promised = lineSchedule.stream().map(TimedQuantity::quantity).reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (promised.compareTo(remainingOrderQuantity(detail)) <= 0) {
+                openCommitments.addAll(lineSchedule);
             }
         }
         openCommitments.sort(Comparator.comparing(TimedQuantity::time));
@@ -353,11 +365,26 @@ public class PmsPlanCommitmentEventOutboxServiceImpl implements PmsPlanCommitmen
         return new AggregateEvidence(openOrdered, confirmed, coverage, fullTime);
     }
 
+    /** 同一采购行仍可履约的数量，单位沿用订单行，与供应商承诺和采购风险查询一致。 */
+    private BigDecimal remainingOrderQuantity(PmsOrderDetailEntity line) {
+        return decimal(line.getOrderNum()).subtract(decimal(line.getArrivalNum()))
+                .subtract(decimal(line.getCancelledNum())).max(BigDecimal.ZERO);
+    }
+
     @Override
     public Page<PmsPlanCommitmentEventOutboxEntity> page(SearchPage page, PmsPlanCommitmentEventDTO.Query query) {
         PmsPlanCommitmentEventDTO.Query q = query == null ? new PmsPlanCommitmentEventDTO.Query() : query;
+        boolean focused = q.getPmsOrderId() != null || q.getOrderDetailId() != null || q.getOutboxId() != null;
+        String factory = FactoryContextHolder.getFactoryCode();
+        Long tenant = TenantContextHolder.getTenantId();
+        require(!focused || q.getPmsOrderId() != null && tenant != null && StrUtil.isNotBlank(factory),
+                "查询采购单联动记录须指定原采购单和当前工厂");
         return outboxMapper.selectPage(page.toMpPage(), new LambdaQueryWrapper<PmsPlanCommitmentEventOutboxEntity>()
+                .eq(q.getOutboxId() != null, PmsPlanCommitmentEventOutboxEntity::getId, q.getOutboxId())
                 .eq(q.getPmsOrderId() != null, PmsPlanCommitmentEventOutboxEntity::getPmsOrderId, q.getPmsOrderId())
+                .eq(q.getOrderDetailId() != null, PmsPlanCommitmentEventOutboxEntity::getOrderDetailId, q.getOrderDetailId())
+                .eq(focused, PmsPlanCommitmentEventOutboxEntity::getFactoryCode, factory)
+                .eq(focused, PmsPlanCommitmentEventOutboxEntity::getTenantId, tenant)
                 .like(StrUtil.isNotBlank(q.getPmsPlanNo()), PmsPlanCommitmentEventOutboxEntity::getPmsPlanNo, q.getPmsPlanNo())
                 .like(StrUtil.isNotBlank(q.getPlanDemandNo()), PmsPlanCommitmentEventOutboxEntity::getPlanDemandNo, q.getPlanDemandNo())
                 .like(StrUtil.isNotBlank(q.getMaterialCode()), PmsPlanCommitmentEventOutboxEntity::getMaterialCode, q.getMaterialCode())

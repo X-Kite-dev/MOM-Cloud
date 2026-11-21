@@ -42,70 +42,50 @@
         <result column="shortage_quantity" property="shortageQuantity"/>
     </resultMap>
 
-    <!-- 根据用料清单ID查询明细列表 -->
+    <!-- 返工批准量按累计已领封顶，退回不恢复该批准的领料额度。 -->
+    <sql id="remainingForOrder">
+        d.required_quantity - d.picked_quantity
+        + CASE WHEN t.rework_material_plan_id IS NULL THEN d.returned_quantity ELSE 0 END
+    </sql>
+
+    <!-- 同组织线边账面结存。只比较冻结单位，非零混合单位或未知余额保留待核。 -->
+    <sql id="materialDetailBalances">
+        SELECT d.*, <include refid="remainingForOrder"/> AS remaining_quantity,
+               CASE d.pick_status WHEN 'PENDING' THEN '待领料' WHEN 'PICKING' THEN '领料中'
+                    WHEN 'PICKED' THEN '已领料' WHEN 'COMPLETED' THEN '完成' ELSE d.pick_status END AS pick_status_name,
+               s.balance AS stock_quantity,
+               s.balance &lt; (<include refid="remainingForOrder"/>) AS is_stock_shortage,
+               CASE WHEN s.balance IS NOT NULL AND d.required_quantity IS NOT NULL
+                         AND d.picked_quantity IS NOT NULL AND d.returned_quantity IS NOT NULL
+                    THEN greatest(0, <include refid="remainingForOrder"/> - s.balance)
+               END AS shortage_quantity
+        FROM mes_material_list_detail d
+        JOIN mes_material_list h ON h.id = d.material_list_id AND h.task_id = d.task_id
+            AND h.tenant_id = d.tenant_id AND h.factory_code = d.factory_code AND h.del_flag = '0'
+        JOIN mes_task t ON t.id = h.task_id AND t.tenant_id = h.tenant_id
+            AND t.factory_code = h.factory_code AND t.del_flag = '0'
+        LEFT JOIN LATERAL (
+            SELECT CASE WHEN nullif(btrim(d.unit), '') IS NULL
+                              OR bool_or(stock.num IS NULL OR stock.num &lt; 0
+                                  OR (stock.num &lt;> 0 AND stock.mat_unit IS DISTINCT FROM d.unit))
+                        THEN NULL ELSE coalesce(sum(stock.num), 0) END AS balance
+            FROM mes_warehouse_live_stock stock
+            WHERE stock.tenant_id = d.tenant_id AND stock.factory_code = d.factory_code
+                AND stock.mat_code = d.material_code AND stock.del_flag = '0'
+        ) s ON true
+        WHERE d.del_flag = '0' AND d.tenant_id = #{tenantId} AND d.factory_code = #{factoryCode}
+    </sql>
+
     <select id="selectDetailsByMaterialListId" resultMap="DTOResultMap">
-        SELECT mld.*,
-               (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) as remaining_quantity,
-               CASE mld.pick_status
-                   WHEN 'PENDING' THEN '待领料'
-                   WHEN 'PICKING' THEN '领料中'
-                   WHEN 'PICKED' THEN '已领料'
-                   WHEN 'COMPLETED' THEN '完成'
-                   ELSE mld.pick_status
-                   END                                                               as pick_status_name,
-               COALESCE(stock.stock_quantity, 0)                                     as stock_quantity,
-               CASE
-                   WHEN COALESCE(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) THEN 1
-                   ELSE 0
-                   END                                                               as is_stock_shortage,
-               CASE
-                   WHEN COALESCE(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity)
-                       THEN (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) -
-                            COALESCE(stock.stock_quantity, 0)
-                   ELSE 0
-                   END                                                               as shortage_quantity
-        FROM mes_material_list_detail mld
-                 LEFT JOIN (SELECT material_code,
-                                   SUM(stock_quantity) as stock_quantity
-                            FROM mes_warehouse_live_stock
-                            WHERE del_flag = '0'
-                            GROUP BY material_code) stock ON mld.material_code = stock.material_code
-        WHERE mld.del_flag = '0'
-          AND mld.material_list_id = #{materialListId}
-        ORDER BY mld.create_time ASC
+        <include refid="materialDetailBalances"/>
+        AND d.material_list_id = #{materialListId}
+        ORDER BY d.create_time, d.id
     </select>
 
-    <!-- 根据工单ID查询明细列表 -->
     <select id="selectDetailsByTaskId" resultMap="DTOResultMap">
-        SELECT mld.*,
-               (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) as remaining_quantity,
-               CASE mld.pick_status
-                   WHEN 'PENDING' THEN '待领料'
-                   WHEN 'PICKING' THEN '领料中'
-                   WHEN 'PICKED' THEN '已领料'
-                   WHEN 'COMPLETED' THEN '完成'
-                   ELSE mld.pick_status
-                   END                                                               as pick_status_name,
-               COALESCE(stock.stock_quantity, 0)                                     as stock_quantity,
-               CASE
-                   WHEN COALESCE(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) THEN 1
-                   ELSE 0
-                   END                                                               as is_stock_shortage,
-               CASE
-                   WHEN COALESCE(stock.stock_quantity, 0) <![CDATA[ < ]]> (mld.required_quantity - mld.picked_quantity + mld.returned_quantity)
-                       THEN (mld.required_quantity - mld.picked_quantity + mld.returned_quantity) -
-                            COALESCE(stock.stock_quantity, 0)
-                   ELSE 0
-                   END                                                               as shortage_quantity
-        FROM mes_material_list_detail mld
-                 LEFT JOIN (SELECT material_code,
-                                   SUM(stock_quantity) as stock_quantity
-                            FROM mes_warehouse_live_stock
-                            WHERE del_flag = '0'
-                            GROUP BY material_code) stock ON mld.material_code = stock.material_code
-        WHERE mld.del_flag = '0'
-          AND mld.task_id = #{taskId}
-        ORDER BY mld.create_time ASC
+        <include refid="materialDetailBalances"/>
+        AND d.task_id = #{taskId}
+        ORDER BY d.create_time, d.id
     </select>
 
     <!-- 批量更新物料领料数量 -->

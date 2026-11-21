@@ -67,6 +67,7 @@ public final class QmsWorkOrderQualityDTO {
         private Long emergencyReleaseTaskCount;
         private Long concessionReceiveTaskCount;
         private Long canceledTaskCount;
+        /** 已判定合格与不合格任务中的合格百分比，无样本时为空。 */
         private BigDecimal strictTaskQualificationRate;
     }
 

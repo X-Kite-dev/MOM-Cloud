@@ -77,6 +77,8 @@ public final class PmsIncomingAvailabilityDTO {
     public static class BatchLine {
         /** 原采购收料批次主键。 */
         private String receiptBatchId;
+        /** 由本批次订单行反查，并与收料单供应商、单号及工厂核对的采购订单主键。历史快照可空。 */
+        private String purchaseOrderId;
         /** 原采购订单行主键，可空。 */
         private String purchaseOrderDetailId;
         /** 原订单行采购计划号，可空。 */

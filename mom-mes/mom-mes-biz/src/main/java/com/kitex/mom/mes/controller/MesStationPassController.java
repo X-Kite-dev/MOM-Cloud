@@ -52,6 +52,15 @@ public class MesStationPassController {
         return R.ok(queryService.preview(transferCode));
     }
 
+    /** 固定工站在当前派工下预览流转卡可报量，最终数量在实际报工事务内复核。 */
+    @Operation(summary = "按当前工站派工核流转卡可报量")
+    @GetMapping("/traveler-quantity")
+    @PreAuthorize("@pms.hasPermission('mesTaskReport:report')")
+    public R<Map<String, String>> travelerQuantity(@RequestParam("arrangeCode") String arrangeCode,
+            @RequestParam("transferCode") String transferCode) {
+        return R.ok(queryService.stationTravelerQuantity(arrangeCode, transferCode));
+    }
+
     @Operation(summary = "APP执行过站报工", description = "兼容现有APP地址；实际进入统一报工、防错、库存和质量事务")
     @PostMapping("/reportManage")
     @PreAuthorize("@pms.hasPermission('mesStationPass:report')")

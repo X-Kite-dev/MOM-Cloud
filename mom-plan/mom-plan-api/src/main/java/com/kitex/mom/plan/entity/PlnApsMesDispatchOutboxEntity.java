@@ -1,6 +1,7 @@
 package com.kitex.mom.plan.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -54,16 +55,21 @@ public class PlnApsMesDispatchOutboxEntity extends BaseEntity<PlnApsMesDispatchO
     @Schema(description = "已经执行的发送次数")
     private Integer attemptCount;
 
+    /** 更新源为持锁读取的完整记录，结束发送或转人工时清空退避和租约。 */
     @Schema(description = "网络或服务异常后的下次重试时间")
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private LocalDateTime nextRetryTime;
 
     @Schema(description = "工作器租约令牌")
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String leaseToken;
 
     @Schema(description = "工作器租约到期时间")
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private LocalDateTime leaseUntil;
 
     @Schema(description = "最近一次失败原因")
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String lastError;
 
     @JsonIgnore

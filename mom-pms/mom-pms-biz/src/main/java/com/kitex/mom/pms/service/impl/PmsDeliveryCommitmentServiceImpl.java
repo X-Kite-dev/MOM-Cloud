@@ -6,6 +6,8 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.pms.dto.PmsDeliveryCommitmentCancelDTO;
@@ -43,10 +45,17 @@ public class PmsDeliveryCommitmentServiceImpl implements PmsDeliveryCommitmentSe
     private final PmsPlanCommitmentEventOutboxService planCommitmentEventOutboxService;
 
     @Override
-    public List<PmsDeliveryCommitmentEntity> listByOrder(Long orderId) {
+    public List<PmsDeliveryCommitmentEntity> listByOrder(Long orderId, Long orderDetailId) {
         if (orderId == null) return List.of();
+        boolean focused = orderDetailId != null;
+        String factory = FactoryContextHolder.getFactoryCode();
+        Long tenant = TenantContextHolder.getTenantId();
+        require(!focused || tenant != null && StrUtil.isNotBlank(factory), "请先选择采购行所属工厂");
         return hydrate(commitmentMapper.selectList(new LambdaQueryWrapper<PmsDeliveryCommitmentEntity>()
                 .eq(PmsDeliveryCommitmentEntity::getPmsOrderId, orderId)
+                .eq(focused, PmsDeliveryCommitmentEntity::getOrderDetailId, orderDetailId)
+                .eq(focused, PmsDeliveryCommitmentEntity::getTenantId, tenant)
+                .eq(focused, PmsDeliveryCommitmentEntity::getFactoryCode, factory)
                 .orderByAsc(PmsDeliveryCommitmentEntity::getOrderDetailId)
                 .orderByDesc(PmsDeliveryCommitmentEntity::getVersionNo)));
     }
@@ -91,7 +100,8 @@ public class PmsDeliveryCommitmentServiceImpl implements PmsDeliveryCommitmentSe
 
         BigDecimal orderNum = decimal(detail.getOrderNum());
         BigDecimal arrivalNum = decimal(detail.getArrivalNum());
-        BigDecimal outstanding = orderNum.subtract(arrivalNum).max(BigDecimal.ZERO);
+        // 受控撤回的数量已退出供应范围，不能再次占用供应商承诺。
+        BigDecimal outstanding = orderNum.subtract(arrivalNum).subtract(decimal(detail.getCancelledNum())).max(BigDecimal.ZERO);
         require(outstanding.compareTo(BigDecimal.ZERO) > 0, "采购订单行已无未到货数量");
         List<PmsDeliveryCommitmentItemDTO> normalized = normalize(command.getItems());
         BigDecimal total = normalized.stream().map(PmsDeliveryCommitmentItemDTO::getCommittedNum)

@@ -1,5 +1,6 @@
 package com.kitex.mom.mes.service;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.dto.MesIdentifierBindingPreviewDTO;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
@@ -40,6 +41,9 @@ public interface MesIdentifierBindingService extends IService<MesIdentifierBindi
      * 精确实例证据查询，包含已释放历史，不以外码猜测旧实例。
      */
     MesIdentifierBindingEntity evidence(Long bindingId);
+
+    /** 在当前租户和授权工厂按完整外码或内部 SN 分页查历次占用，同码复用按实例分别返回。 */
+    IPage<MesIdentifierBindingEntity> occupations(String identifier, long current, long size);
 
     /**
      * 普通扫码候选入口须先阻断全部外码生命周期，不能在释放后退回静态别名/新SN。

@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -42,6 +43,7 @@ public class MesMaterialListController {
      */
     @Operation(summary = "分页查询用料清单")
     @GetMapping("/page")
+    @PreAuthorize("@pms.hasPermission('mesTask:show')")
     public R<Page<MesMaterialListDTO>> getMaterialListPage(
             @RequestParam(value = "current", defaultValue = "1") Long current,
             @RequestParam(value = "size", defaultValue = "10") Long size,
@@ -57,6 +59,7 @@ public class MesMaterialListController {
      */
     @Operation(summary = "根据工单ID获取用料清单详情")
     @GetMapping("/task/{taskId}")
+    @PreAuthorize("@pms.hasPermission('mesTask:show')")
     public R<MesMaterialListDTO> getMaterialListByTaskId(@PathVariable Long taskId) {
         return R.ok(materialListService.getMaterialListByTaskId(taskId));
     }
@@ -69,6 +72,7 @@ public class MesMaterialListController {
      */
     @Operation(summary = "根据工单创建用料清单")
     @PostMapping("/createByTask/{taskId}")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
     @SysLog("根据工单创建用料清单")
     public R<Boolean> createMaterialListByTask(@PathVariable Long taskId) {
         return R.ok(materialListService.createMaterialListByTask(taskId));
@@ -83,6 +87,7 @@ public class MesMaterialListController {
      */
     @Operation(summary = "更新用料清单状态")
     @PutMapping("/{id}/status/{status}")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
     @SysLog("更新用料清单状态")
     public R<Boolean> updateMaterialListStatus(@PathVariable Long id, @PathVariable String status) {
         return R.ok(materialListService.updateMaterialListStatus(id, status));
@@ -96,6 +101,7 @@ public class MesMaterialListController {
      */
     @Operation(summary = "重新生成用料清单")
     @PostMapping("/{id}/regenerate")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
     @SysLog("重新生成用料清单")
     public R<Boolean> regenerateMaterialList(@PathVariable Long id) {
         return R.ok(materialListService.regenerateMaterialList(id));
@@ -109,6 +115,7 @@ public class MesMaterialListController {
      */
     @Operation(summary = "检查用料清单是否完成")
     @GetMapping("/{id}/checkCompleted")
+    @PreAuthorize("@pms.hasPermission('mesTask:show')")
     public R<Boolean> checkMaterialListCompleted(@PathVariable Long id) {
         return R.ok(materialListService.checkMaterialListCompleted(id));
     }
@@ -121,6 +128,7 @@ public class MesMaterialListController {
      */
     @Operation(summary = "批量创建用料清单")
     @PostMapping("/batchCreateByTasks")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
     @SysLog("批量创建用料清单")
     public R<Boolean> batchCreateMaterialListByTasks(@RequestBody List<Long> taskIds) {
         return R.ok(materialListService.batchCreateMaterialListByTasks(taskIds));

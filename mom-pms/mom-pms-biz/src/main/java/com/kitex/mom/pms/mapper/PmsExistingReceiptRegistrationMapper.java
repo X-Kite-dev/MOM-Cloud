@@ -58,7 +58,7 @@ public interface PmsExistingReceiptRegistrationMapper {
 	/**
 	 * 原单锁后锁定精确原行；旧客户端仅在物料匹配唯一时可省略明细ID。
 	 */
-	@Select("<script>SELECT d.id,d.bill_id AS billId,d.order_detail_id AS orderDetailId,d.mat_code AS matCode,"
+	@Select("<script>SELECT d.id,d.bill_id AS billId,d.order_detail_id AS orderDetailId,d.mat_code AS matCode,d.mat_unit AS matUnit,"
 			+ "d.should_num AS shouldQuantity,d.actual_num AS actualQuantity,d.mat_batch AS matBatch,"
 			+ "d.mat_produce_date AS produceDate,d.price,d.wms_status AS wmsStatus "
 			+ "FROM mom_pms.wms_purchase_receipt_detail d WHERE d.tenant_id=#{tenant} "
@@ -126,6 +126,9 @@ public interface PmsExistingReceiptRegistrationMapper {
 		 * 原物料编码。
 		 */
 		private String matCode;
+
+		/** 原收料行的采购计量单位，用于对照被锁定的原订单明细。 */
+		private String matUnit;
 		/**
 		 * 原应收量，物料基本单位，numeric(24,6)。
 		 */

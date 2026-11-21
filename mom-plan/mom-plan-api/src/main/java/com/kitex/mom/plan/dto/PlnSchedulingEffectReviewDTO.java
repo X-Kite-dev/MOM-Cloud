@@ -50,6 +50,16 @@ public final class PlnSchedulingEffectReviewDTO {
     @Data
     @Accessors(chain = true)
     public static class OperationEvidence {
+        /** 原执行批次主键文本，拆合批观察按该主键和路线节点匹配。 */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        @Schema(description = "冻结排程批次主键")
+        private String schedulingBatchId;
+
+        /** 原执行批号，普通计划及历史观察可空。 */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        @Schema(description = "冻结排程批号")
+        private String schedulingBatchNo;
+
         private Long issueId;
         private String issueNo;
         private String productCode;

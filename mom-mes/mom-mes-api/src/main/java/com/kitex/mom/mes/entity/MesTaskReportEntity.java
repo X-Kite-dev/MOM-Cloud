@@ -220,13 +220,13 @@ public class MesTaskReportEntity extends BaseEntity<MesTaskReportEntity> {
     /**
      * 类型 手动 自动
      */
-    @Schema(description = "类型 手动 自动")
+    @Schema(description = "报工渠道，MANUAL 人工、AUTO 设备、API 集成")
     private String type;
 
-    @Schema(description = "自动报工来源事件号；人工报工为空")
+    @Schema(description = "设备或集成方的来源事件号；人工报工为空")
     private String sourceEventId;
 
-    @Schema(description = "设备事件发生时间；人工报工为空")
+    @Schema(description = "来源系统的事件发生时刻；人工报工为空")
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime sourceEventTime;
 

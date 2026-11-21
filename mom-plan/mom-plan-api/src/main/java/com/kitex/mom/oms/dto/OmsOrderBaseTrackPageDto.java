@@ -30,6 +30,10 @@ public class OmsOrderBaseTrackPageDto extends BaseEntity<OmsOrderBaseTrackPageDt
     @Schema(description = "订单号")
     private String orderCode;
 
+    /** 项目生产调查下钻时按当前工厂的正式订单号精确读取全部交付行。 */
+    @Schema(description = "项目调查原订单号，指定时精确匹配")
+    private String projectOrderCode;
+
     /**
      * 评审单号
      */

@@ -43,6 +43,11 @@ public class WmsOutBillDetailEntity extends BaseEntity<WmsOutBillDetailEntity> {
     @Schema(description = "受控出库锁定的实时库存行ID")
     private Long sourceStockId;
 
+    /** 供 MES 签收回读的实物管理方式，按原出库流水核验。空值表示旧来源缺少可核验的单件标记。 */
+    @TableField(exist = false)
+    @Schema(description = "原出库实物是否按单件管理；空值表示历史依据不足", accessMode = Schema.AccessMode.READ_ONLY)
+    private Boolean issuedAsSerial;
+
     /**
      * 单据id
      */

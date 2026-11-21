@@ -21,7 +21,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 
-import java.util.Arrays;
 import java.util.Objects;
 
 /**
@@ -57,7 +56,7 @@ public class MesAutoReportCaptureServiceImpl extends ServiceImpl<MesAutoReportEv
         var policy = contract.getIdentifierNodePolicy();
         nodeReadiness.assertReady(nodeReadiness.execution(arrange, contract, com.kitex.mom.mes.enums.MesReportChannelEnum.DEVICE));
         require(!"NONE".equals(policy.getAction()) && "ONE_CODE".equals(contract.getReportMode())
-                        && contract.getAllowedTriggers().contains("AUTO_EVENT") && MesWorksiteTriggerProjection.forExecution(null, arrange) == com.kitex.mom.mes.enums.WorksiteTypeEnum.AUTO
+                        && contract.getAllowedTriggers().contains("AUTO_EVENT")
                         && "PRODUCT".equals(arrange.getStatus()) && Objects.equals(event.getDeviceCode(), arrange.getPlannedDeviceCode()),
                 "V2动态采集须为允许设备触发的生产中单件原节点及锁定设备");
         var preview = bindings.preview(arrange.getCode(), event.getTransferCode(), input.getExternalIdentifier());
@@ -80,10 +79,8 @@ public class MesAutoReportCaptureServiceImpl extends ServiceImpl<MesAutoReportEv
                 .eq(MesAutoReportRuleEntity::getEnabled, true).last("LIMIT 2"));
         require(ruleMatches.size() == 1, "动态原事件须唯一命中已启用单件规则，不冻结模糊规则");
         var rule = ruleMatches.get(0);
-        require((rule.getRouteCode() == null || rule.getRouteCode().isBlank() || Objects.equals(rule.getRouteCode(), arrange.getRouteCode()))
-                && (rule.getWorksiteCode() == null || rule.getWorksiteCode().isBlank()
-                || (arrange.getWorksiteCodes() != null && Arrays.stream(arrange.getWorksiteCodes().split(","))
-                .map(String::trim).anyMatch(rule.getWorksiteCode()::equals))), "原采集派工不在单件规则范围内");
+        require(MesWorksiteTriggerProjection.allowsDeviceRule(arrange, rule),
+                "原采集派工的实际开工工位须允许自动报工且符合规则的工序、工位限定");
         MesAutoReportCaptureEvidence.singleQuantity(input, rule);
         var actor = SecurityUtils.getUser();
         require(actor.getUsername() != null && !actor.getUsername().isBlank() && actor.getUsername().length() <= 100,

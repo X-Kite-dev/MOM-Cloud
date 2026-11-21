@@ -638,7 +638,8 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
             JsonNode snapshot = objectMapper.readTree(observation.getActualSnapshot());
             if (!snapshot.has("identityContractVersion")) return null;
             String version = snapshot.path("identityContractVersion").asText();
-            require("FROZEN_NODE_V2".equals(version), "效果观察身份协议不受支持");
+            require("FROZEN_NODE_V2".equals(version) || PlnBatchEffectScope.VERSION.equals(version),
+                    "效果观察身份协议不受支持");
             return version;
         } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
             throw new CheckedException("效果观察身份协议无法解析");
@@ -708,6 +709,12 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
                     ? "工序已经完工，历史执行事实不可通过重排改写"
                     : "工序已经开工，当前工序不可通过重排改写";
             workflow = "进入偏差根因复盘；只允许评估尚未开工的后继工序";
+        } else if (pendingDelay > 0 && Boolean.TRUE.equals(item.getMovable()) && item.getSchedulingBatchId() != null) {
+            // 单计划重排命令只携带根计划，不能用它移动另一个批次的同名节点。
+            type = "OBSERVE";
+            severity = "WARNING";
+            reason = "批次 " + item.getSchedulingBatchNo() + " 的工序逾期未开工";
+            workflow = "在正式批次方案中核对该工单的资源与后续交期";
         } else if (pendingDelay > 0 && Boolean.TRUE.equals(item.getMovable())) {
             type = "LOCAL_REPLAN_CANDIDATE";
             severity = "CRITICAL";
@@ -1074,17 +1081,20 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
         return details.stream().map(detail -> {
                     List<PlnSchedulingOperationEntity> rows = operationsByIssue
                             .getOrDefault(detail.getIssueId(), List.of());
-                    LocalDateTime startTime = detail.getOperationStartTime() != null
-                            ? detail.getOperationStartTime() : firstStart(rows);
-                    LocalDateTime endTime = detail.getOperationEndTime() != null
-                            ? detail.getOperationEndTime() : lastEnd(rows);
-                    long lateDays = detail.getDemandTime() == null || endTime == null ? 0L
+                    // 优先采用候选计划已记录的边界，明细缺行或缺时刻时不能用局部极值补齐整单。
+                    boolean allRows = !rows.isEmpty() && (detail.getOperationCount() == null || detail.getOperationCount() == rows.size());
+                    LocalDateTime startTime = detail.getOperationStartTime();
+                    if (startTime == null && allRows && rows.stream().allMatch(row -> row.getScheduledStartTime() != null)) {
+                        startTime = firstStart(rows);
+                    }
+                    LocalDateTime endTime = detail.getOperationEndTime();
+                    if (endTime == null && allRows && rows.stream().allMatch(row -> row.getScheduledEndTime() != null)) {
+                        endTime = lastEnd(rows);
+                    }
+                    // 缺少需求日或末工序日期时无法评价交期，零天仅用于已能核实的按期计划。
+                    Long lateDays = detail.getDemandTime() == null || endTime == null ? null
                             : Math.max(0L, ChronoUnit.DAYS.between(detail.getDemandTime(), endTime.toLocalDate()));
-                    long activeMinutes = rows.stream().map(PlnSchedulingOperationEntity::getActiveMinutes)
-                            .filter(Objects::nonNull).mapToLong(Long::longValue).sum();
-                    long spanMinutes = startTime == null || endTime == null ? 0L
-                            : Math.max(0L, Duration.between(startTime, endTime).toMinutes());
-                    long waitingMinutes = Math.max(0L, spanMinutes - activeMinutes);
+                    Long waitingMinutes = allRows ? planWaitingMinutes(rows, startTime, endTime) : null;
                     boolean hardBlocked = Boolean.TRUE.equals(detail.getMaterialHardBlocked())
                             || Boolean.TRUE.equals(detail.getOperationHardBlocked())
                             || rows.stream().anyMatch(item -> Boolean.TRUE.equals(item.getHardBlocked()));
@@ -1130,8 +1140,19 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
                 .filter(Objects::nonNull).max(LocalDateTime::compareTo).orElse(null);
     }
 
-    private String planRiskSummary(PlnSchedulingTaskDetailEntity detail, long lateDays,
-                                   long waitingMinutes, boolean hardBlocked) {
+    /** 从完整的候选工序工时核算计划内等待分钟；原时段或工时缺失时保留未知。 */
+    private Long planWaitingMinutes(List<PlnSchedulingOperationEntity> rows,
+                                    LocalDateTime startTime, LocalDateTime endTime) {
+        if (startTime == null || endTime == null || endTime.isBefore(startTime)
+                || rows.stream().anyMatch(row -> row.getActiveMinutes() == null || row.getActiveMinutes() < 0)) {
+            return null;
+        }
+        long activeMinutes = rows.stream().mapToLong(PlnSchedulingOperationEntity::getActiveMinutes).sum();
+        return Math.max(0L, Duration.between(startTime, endTime).toMinutes() - activeMinutes);
+    }
+
+    private String planRiskSummary(PlnSchedulingTaskDetailEntity detail, Long lateDays,
+                                   Long waitingMinutes, boolean hardBlocked) {
         List<String> reasons = new ArrayList<>();
         if (Boolean.TRUE.equals(detail.getMaterialHardBlocked())) {
             reasons.add(StrUtil.blankToDefault(detail.getMaterialConstraintSummary(), "物料约束硬阻断"));
@@ -1139,14 +1160,21 @@ public class PlnSchedulingAgentServiceImpl implements PlnSchedulingAgentService 
         if (Boolean.TRUE.equals(detail.getOperationHardBlocked())) {
             reasons.add(StrUtil.blankToDefault(detail.getOperationScheduleSummary(), "工序排程硬阻断"));
         }
-        if (lateDays > 0) {
+        if (lateDays == null) {
+            reasons.add("交期待核");
+        } else if (lateDays > 0) {
             reasons.add("预计延期" + lateDays + "天");
         }
-        if (waitingMinutes > 0) {
+        if (waitingMinutes == null) {
+            reasons.add("工序等待待核");
+        } else if (waitingMinutes > 0) {
             reasons.add("工序等待" + waitingMinutes + "分钟");
         }
+        if (hardBlocked && !Boolean.TRUE.equals(detail.getMaterialHardBlocked()) && !Boolean.TRUE.equals(detail.getOperationHardBlocked())) {
+            reasons.add("存在工序级硬阻断");
+        }
         if (reasons.isEmpty()) {
-            return hardBlocked ? "存在工序级硬阻断，需下钻工序证据" : "预计按期完成，未发现硬阻断";
+            return "预计按期完成，未发现硬阻断";
         }
         return String.join("；", reasons);
     }

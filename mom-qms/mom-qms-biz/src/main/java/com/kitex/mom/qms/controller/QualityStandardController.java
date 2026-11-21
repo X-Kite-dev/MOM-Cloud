@@ -4,14 +4,20 @@ import cn.hutool.core.io.IoUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.kitex.common.core.constant.CommonConstants;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.query.enums.CommonQuery;
+import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.qms.dto.req.QualityStandardQueryReq;
 import com.kitex.mom.qms.dto.req.QualityStandardReq;
 import com.kitex.mom.qms.dto.req.QualityStandardStatusReq;
 import com.kitex.mom.qms.dto.resp.QmsQualityStandardDTO;
 import com.kitex.mom.qms.entity.QmsQualityStandardEntity;
 import com.kitex.mom.qms.entity.QmsQualityStandardItemEntity;
+import com.kitex.mom.qms.enums.InspectionTaskTypeEnum;
 import com.kitex.mom.qms.service.QualityStandardItemService;
 import com.kitex.mom.qms.service.QualityStandardService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -84,6 +90,29 @@ public class QualityStandardController {
                 .eq(QmsQualityStandardEntity::getMatCode, query.getMatCode())
                 .eq(QmsQualityStandardEntity::getPublished, 1)
                 .last(" limit 1")));
+    }
+
+    @Inner
+    @GetMapping("/internal/patrol-standard")
+    public R<QmsQualityStandardEntity> getPatrolStandard(
+            @RequestHeader(CommonConstants.TENANT_ID) Long tenant,
+            @RequestHeader(CommonConstants.FACTORY_CODE) String factory,
+            @RequestParam("matCode") String matCode) {
+        if (tenant == null || tenant <= 0 || !tenant.equals(TenantContextHolder.getTenantId())
+                || TenantContextHolder.getTenantSkip() || StrUtil.isBlank(factory)
+                || !factory.equals(FactoryContextHolder.getFactoryCode())
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())
+                || StrUtil.isBlank(matCode)) {
+            throw new CheckedException("中检标准查询须指定实际租户、工厂和物料");
+        }
+        return R.ok(service.getOne(new LambdaQueryWrapper<QmsQualityStandardEntity>()
+                .eq(QmsQualityStandardEntity::getTenantId, tenant)
+                .eq(QmsQualityStandardEntity::getFactoryCode, factory)
+                .eq(QmsQualityStandardEntity::getInspectionType, InspectionTaskTypeEnum.PROCEDURE.name())
+                .eq(QmsQualityStandardEntity::getMatCode, matCode)
+                .eq(QmsQualityStandardEntity::getPublished, 1)
+                .orderByDesc(QmsQualityStandardEntity::getId)
+                .last("LIMIT 1")));
     }
 
 

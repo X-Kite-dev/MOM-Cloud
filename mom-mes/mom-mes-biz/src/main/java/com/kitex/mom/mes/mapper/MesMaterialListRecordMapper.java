@@ -26,7 +26,8 @@ public interface MesMaterialListRecordMapper extends BaseMapper<MesMaterialListR
      * @param materialListDetailId 用料清单明细ID
      * @return 记录列表
      */
-    List<MesMaterialListRecordDTO> selectRecordsByDetailId(@Param("materialListDetailId") Long materialListDetailId);
+    List<MesMaterialListRecordDTO> selectRecordsByDetailId(@Param("materialListDetailId") Long materialListDetailId,
+            @Param("tenantId") Long tenantId, @Param("factoryCode") String factoryCode);
 
     /**
      * 根据工单ID查询领退料记录
@@ -34,7 +35,8 @@ public interface MesMaterialListRecordMapper extends BaseMapper<MesMaterialListR
      * @param taskId 工单ID
      * @return 记录列表
      */
-    List<MesMaterialListRecordDTO> selectRecordsByTaskId(@Param("taskId") Long taskId);
+    List<MesMaterialListRecordDTO> selectRecordsByTaskId(@Param("taskId") Long taskId,
+            @Param("tenantId") Long tenantId, @Param("factoryCode") String factoryCode);
 
     /**
      * 根据物料编码查询领退料记录
@@ -51,5 +53,6 @@ public interface MesMaterialListRecordMapper extends BaseMapper<MesMaterialListR
      * @param taskId 工单ID
      * @return 汇总信息
      */
-    List<Map<String, Object>> selectPickReturnSummaryByTaskId(@Param("taskId") Long taskId);
+    List<Map<String, Object>> selectPickReturnSummaryByTaskId(@Param("taskId") Long taskId,
+            @Param("tenantId") Long tenantId, @Param("factoryCode") String factoryCode);
 }

@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -128,10 +129,14 @@ public class MesProcessTimingGuard {
         if (observed.lateRules().isEmpty()) return observed;
         require(context != null && context.requestId() != null, "超时报工缺少真实原请求上下文");
         if (permit != null) {
+            if (observed.limitUntil() != null && observed.acceptedAt().isAfter(observed.limitUntil())) {
+                throw new CheckedException("报工已超过工艺允许的最晚时刻 " + observed.limitUntil()
+                        + "，无法延期。报工原号 " + context.requestId());
+            }
             require("APPROVED".equals(permit.getStatus()) && permit.getApprovedUntil() != null
                             && !observed.acceptedAt().isAfter(permit.getApprovedUntil())
                             && observed.limitUntil() != null && !permit.getApprovedUntil().isAfter(observed.limitUntil()),
-                    "时间规则已超时；原请求尚无有效例外批准或批准窗口已结束，请到超时例外工作台核对原号");
+                    "时间规则已超时，当前没有有效延期批准。请在报工超时处理中查询原号 " + context.requestId());
             try {
                 var evidence = new ObjectMapper().readTree(observed.evidenceJson());
                 var root = (com.fasterxml.jackson.databind.node.ObjectNode) evidence;
@@ -175,8 +180,11 @@ public class MesProcessTimingGuard {
                 }
             }
         });
+        String nextStep = observed.limitUntil() != null && observed.acceptedAt().isBefore(observed.limitUntil())
+                ? "可在工艺上限 " + observed.limitUntil() + " 前申请延期"
+                : "已到工艺时限，本次无法再申请延期";
         throw new CheckedException("时间规则【" + String.join("、", observed.lateRules())
-                + "】已超时，未记产；请到超时例外工作台按原报工号 " + context.requestId() + " 查询，不要另号重投");
+                + "】已超时，未记产。" + nextStep + "。请在报工超时处理中查询原号 " + context.requestId());
     }
 
     /**
@@ -312,9 +320,7 @@ public class MesProcessTimingGuard {
                         .gt(MesTaskReportEntity::getEffectiveReportNum, 0)
                         .in(MesTaskReportEntity::getReportMode, sourceModes);
                 if (visitRules) {
-                    sourceVisitEvidence = reports.timingVisitSource(tenant, arrange.getFactoryCode(), arrange.getTaskCode(),
-                            identifier, source.getCode(), mode.name(),
-                            rule.sourceVisit() == null ? "ORIGINAL" : rule.sourceVisit(), visitContext);
+                    sourceVisitEvidence = visitSource(arrange, identifier, source, mode, rule, visitContext);
                     var proof = readEvidence(sourceVisitEvidence, prefix(rule) + "来源轮次证据缺失");
                     require(proof.path("reportId").isTextual(), prefix(rule) + "来源报告身份不是精确文本");
                     query.eq(MesTaskReportEntity::getId, Long.valueOf(proof.path("reportId").asText()));
@@ -403,6 +409,30 @@ public class MesProcessTimingGuard {
         if (nodeRules) addNodeContract(dependency, target);
         return new Decision(accepted, MdmProcessTimingPolicy.encodeEvidence(evidence),
                 MdmProcessTimingPolicy.encodeEvidence(dependency), limitUntil, List.copyOf(lateRules));
+    }
+
+    /** 数据库按实际批准轮次唯一取来源。零笔和多笔均是业务阻断，其他数据库错误交回上层处理。 */
+    private String visitSource(MesTaskArrangeEntity arrange, String identifier, MesProduceTaskEntity source,
+                               ReportModeEnum mode, MdmProcessTimingPolicy.Rule rule, String context) {
+        try {
+            return reports.timingVisitSource(arrange.getTenantId(), arrange.getFactoryCode(), arrange.getTaskCode(),
+                    identifier, source.getCode(), mode.name(),
+                    rule.sourceVisit() == null ? "ORIGINAL" : rule.sourceVisit(), context);
+        } catch (RuntimeException failure) {
+            for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+                if (cause instanceof SQLException sql) {
+                    String location = prefix(rule) + "来源工序任务 " + source.getCode() + " 中，标识 "
+                            + identifier + " 在选定轮次";
+                    if ("P0002".equals(sql.getSQLState())) {
+                        throw new CheckedException(location + "没有有效合格报工，请核对原工序和标识");
+                    }
+                    if ("P0003".equals(sql.getSQLState())) {
+                        throw new CheckedException(location + "有多笔有效合格报工，请核对来源记录");
+                    }
+                }
+            }
+            throw failure;
+        }
     }
 
     /**

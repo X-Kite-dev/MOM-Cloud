@@ -2,6 +2,7 @@ package com.kitex.mom.mes.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -19,6 +20,7 @@ import com.kitex.mom.mes.dto.MesLiveStockQueryDTO;
 import com.kitex.mom.mes.dto.MesWarehouseFeedDTO;
 import com.kitex.mom.mes.dto.MesWarehouseLiveStockInoutDTO;
 import com.kitex.mom.mes.dto.MesWarehouseStockOutReceiptDTO;
+import com.kitex.mom.mes.entity.MesMaterialReceiptEntity;
 import com.kitex.mom.mes.entity.MesWarehouseInoutEntity;
 import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
 import com.kitex.mom.mes.enums.*;
@@ -413,8 +415,16 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
 				.thenComparing(MesWarehouseLiveStockEntity::getInTime, Comparator.nullsLast(Comparator.naturalOrder()))
 				.thenComparing(MesWarehouseLiveStockEntity::getId));
 		var actualRows = new ArrayList<MesWarehouseStockOutReceiptDTO.Line>();
+		Set<Long> receiptIds = list.stream().map(MesWarehouseLiveStockEntity::getMaterialReceiptId)
+				.filter(Objects::nonNull).collect(Collectors.toSet());
+		Map<Long, MesMaterialReceiptEntity> receipts = receiptIds.isEmpty() ? Map.of()
+				: baseMapper.receiptSources(TenantContextHolder.getTenantId(), factory, receiptIds).stream()
+						.collect(Collectors.toMap(MesMaterialReceiptEntity::getId, receipt -> receipt));
 		for (MesWarehouseLiveStockEntity stock : list) {
 			BigDecimal deductNum = stock.getNum().min(outNum);
+			if (stock.getMaterialReceiptId() != null) {
+				verifyIssuedPiece(stock, receipts.get(stock.getMaterialReceiptId()), liveStock, deductNum);
+			}
 			BigDecimal after = stock.getNum().subtract(deductNum);
 			if (nativeReceipt) {
 				proofCodec.quantity(proofCodec.amount(stock.getNum()), false, "源库存操作前量");
@@ -508,6 +518,36 @@ public class MesWarehouseLiveStockServiceImpl extends ServiceImpl<MesWarehouseLi
 			throw new CheckedException("库存业务缺少实际租户/工厂上下文或请求跨厂");
 		}
 		return factory;
+	}
+
+	/**
+	 * 原签收确认的单件在离开线边库存时必须整件流转。手工投料还须核对本次选择的条码，
+	 * 避免同批不同 SN 的实物按 FIFO 替代。旧签收保留原有规则，不能按条码外观补判历史。
+	 */
+	private void verifyIssuedPiece(MesWarehouseLiveStockEntity stock, MesMaterialReceiptEntity receipt,
+	                               MesWarehouseLiveStockInoutDTO request, BigDecimal deduction) {
+		if (receipt == null || !JSONUtil.isTypeJSONObject(receipt.getSourceSnapshot())) {
+			throw new CheckedException("线边库存 " + stock.getId() + " 的原签收快照缺失，请核对收料记录");
+		}
+		var snapshot = JSONUtil.parseObj(receipt.getSourceSnapshot());
+		Object serial = snapshot.get("issuedAsSerial");
+		if (serial == null || Boolean.FALSE.equals(serial)) {
+			return;
+		}
+		if (!Boolean.TRUE.equals(serial) || receipt.getNoticeId() == null || receipt.getWmsOutDetailId() == null
+				|| !receipt.getNoticeId().toString().equals(snapshot.getStr("id"))
+				|| !receipt.getWmsOutDetailId().toString().equals(snapshot.getStr("wmsOutDetailId"))
+				|| !Objects.equals(snapshot.getStr("matCode"), stock.getMatCode())
+				|| !Objects.equals(snapshot.getStr("matUnit"), stock.getMatUnit())
+				|| !Objects.equals(snapshot.getStr("matBatch"), stock.getMatBatch())
+				|| StrUtil.isBlank(stock.getMatBarcode()) || !stock.getMatBarcode().equals(snapshot.getStr("matBarcode"))
+				|| stock.getNum().compareTo(BigDecimal.ONE) != 0 || deduction.compareTo(BigDecimal.ONE) != 0) {
+			throw new CheckedException("出库单件与原签收实物不一致或数量被拆分，请核对原序列号");
+		}
+		if (WarehouseOutBizTypeEnum.FEEDING.getCode().equals(request.getBizType())
+				&& !stock.getMatBarcode().equals(request.getMatBarcode())) {
+			throw new CheckedException("单件原料投料须选择或扫描原签收条码");
+		}
 	}
 
 	private String resolveFifoField(boolean fifo, String configured) {

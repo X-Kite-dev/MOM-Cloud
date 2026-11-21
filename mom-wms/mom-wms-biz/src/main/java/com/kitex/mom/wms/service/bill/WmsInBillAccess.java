@@ -316,6 +316,24 @@ public class WmsInBillAccess {
 		return new Scope(TenantContextHolder.getTenantId(), FactoryContextHolder.getFactoryCode());
 	}
 
+	/** 为原工单的收货查询核实当前用户、租户和工厂读权限。 */
+	Scope receiptReadScope() {
+		return scope(false);
+	}
+
+	/** 按关联通知的真实仓库核成品入库查看权限，覆盖已发通知但还没有入库单的仓。 */
+	List<String> readableProductWarehouses(Scope scope, List<String> warehouses) {
+		preload(scope, Family.PRODUCT, warehouses, List.of(Action.VIEW));
+		return warehouses.stream()
+				.filter(warehouse -> validWarehouse(warehouse) && allowed(scope, Family.PRODUCT, Action.VIEW, warehouse))
+				.toList();
+	}
+
+	/** 红冲案件号码沿成品实收纠错查询权限显示。只有原仓单据权限时仍可核本仓反向流水。 */
+	boolean canReadCorrectionNumber() {
+		return permissions.hasPermission("wms_bill_view_in_product");
+	}
+
 	private List<Long> identifiers(Collection<Long> supplied) {
 		require(supplied != null && !supplied.isEmpty() && supplied.size() <= MAX_IDS,
 				"请选择1至1000张实际入库单");

@@ -1,5 +1,6 @@
 package com.kitex.mom.mes.controller;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.kitex.common.core.util.R;
 import com.kitex.mom.mes.dto.MesIdentifierBindingPreviewDTO;
 import com.kitex.mom.mes.entity.MesIdentifierBindingEntity;
@@ -42,6 +43,16 @@ public class MesIdentifierBindingController {
     @PreAuthorize("@pms.hasPermission('mesTaskReport:show')")
     public R<MesIdentifierBindingEntity> evidence(@RequestParam Long bindingId) {
         return R.ok(bindings.evidence(bindingId));
+    }
+
+    /** 从现场条码进入历次占用，再按选中的实例查看其独立操作链。 */
+    @GetMapping("/occupations")
+    @Operation(summary = "按外码或内部 SN 查询历次占用")
+    @PreAuthorize("@pms.hasPermission('mesTaskReport:show')")
+    public R<IPage<MesIdentifierBindingEntity>> occupations(@RequestParam String identifier,
+                                                            @RequestParam(defaultValue = "1") long current,
+                                                            @RequestParam(defaultValue = "20") long size) {
+        return R.ok(bindings.occupations(identifier, current, size));
     }
 
     @GetMapping("/operations")

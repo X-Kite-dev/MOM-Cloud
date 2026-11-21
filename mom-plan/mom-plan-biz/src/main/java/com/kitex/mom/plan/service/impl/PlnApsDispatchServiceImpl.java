@@ -216,32 +216,65 @@ public class PlnApsDispatchServiceImpl
     @Override
     public PlnApsMesDispatchDTO.DispatchView detail(Long caseId) {
         PlnApsCaseDTO apsCase = caseService.detail(caseId);
-        PlnApsMesDispatchOutboxEntity row = baseMapper.selectOne(
-                new LambdaQueryWrapper<PlnApsMesDispatchOutboxEntity>()
-                        .eq(PlnApsMesDispatchOutboxEntity::getCaseId, caseId)
-                        .eq(PlnApsMesDispatchOutboxEntity::getFactoryCode, apsCase.getFactoryCode())
-                        .orderByDesc(PlnApsMesDispatchOutboxEntity::getId).last("LIMIT 1"));
-        require(row != null, "APS案件尚未生成MES下达队列");
-        return toView(row);
+        return toView(currentDispatch(apsCase, false, false));
+    }
+
+    /** 原接口按案件办理，仅在真实下达记录唯一时兼容旧客户端。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public PlnApsMesDispatchDTO.DispatchView retry(Long caseId, String reason) {
+        PlnApsCaseDTO apsCase = caseService.detail(caseId);
+        return requeue(currentDispatch(apsCase, true, true), reason);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public PlnApsMesDispatchDTO.DispatchView retry(Long caseId, String reason) {
+    public PlnApsMesDispatchDTO.DispatchView retryConfirmed(Long caseId, Long outboxId,
+            PlnApsMesDispatchDTO.ConfirmedRetryCommand command) {
+        PlnApsCaseDTO apsCase = caseService.detail(caseId);
+        PlnApsMesDispatchOutboxEntity row = currentDispatch(apsCase, true, false);
+        require(command != null && Objects.equals(row.getId(), outboxId)
+                        && StrUtil.isNotBlank(command.getRequestId())
+                        && Objects.equals(row.getRequestId(), command.getRequestId()),
+                "当前下达单与已确认的原单不一致，请刷新后重新核对");
+        require(command.getAttemptCount() != null
+                        && Objects.equals(row.getAttemptCount(), command.getAttemptCount())
+                        && Objects.equals(row.getStatus(), command.getStatus()),
+                "MES下达状态或发送轮次已变化，请核对最新回执");
+        return requeue(row, command.getReason());
+    }
+
+    /** 读与写核对同一正式候选。写入时持行锁，旧客户端未提供单号时检查歧义。 */
+    private PlnApsMesDispatchOutboxEntity currentDispatch(PlnApsCaseDTO apsCase, boolean lock, boolean unique) {
+        Long tenantId = TenantContextHolder.getTenantId();
+        require(tenantId != null && tenantId > 0, "读取MES下达账缺少租户上下文");
+        var query = new LambdaQueryWrapper<PlnApsMesDispatchOutboxEntity>()
+                .eq(PlnApsMesDispatchOutboxEntity::getTenantId, tenantId)
+                .eq(PlnApsMesDispatchOutboxEntity::getFactoryCode, apsCase.getFactoryCode())
+                .eq(PlnApsMesDispatchOutboxEntity::getCaseId, parseId(apsCase.getId(), "案件主键"))
+                .orderByDesc(PlnApsMesDispatchOutboxEntity::getId);
+        String limit = unique ? "LIMIT 2" : "LIMIT 1";
+        var rows = baseMapper.selectList(query.last(lock ? limit + " FOR UPDATE" : limit));
+        require(!rows.isEmpty(), "APS案件尚未生成MES下达队列");
+        require(rows.size() == 1, "该案件存在多次下达，请在执行跟踪中确认具体下达单");
+        var row = rows.get(0);
+        require(row.getScenarioId() != null && row.getSelectedTaskId() != null
+                        && Objects.equals(text(row.getScenarioId()), apsCase.getScenarioId())
+                        && Objects.equals(text(row.getSelectedTaskId()), apsCase.getSelectedTaskId()),
+                "下达单与案件的正式情景或候选不一致，请核对发布记录");
+        return row;
+    }
+
+    /** 原单已锁定，重新入队保留所有逐项回执，工作器只续办未成功的单元。 */
+    private PlnApsMesDispatchDTO.DispatchView requeue(PlnApsMesDispatchOutboxEntity row, String reason) {
         require(StrUtil.isNotBlank(reason) && reason.trim().length() <= 500,
                 "MES下达重试原因不能为空且不能超过500个字符");
-        PlnApsCaseDTO apsCase = caseService.detail(caseId);
-        PlnApsMesDispatchOutboxEntity row = baseMapper.selectOne(
-                new LambdaQueryWrapper<PlnApsMesDispatchOutboxEntity>()
-                        .eq(PlnApsMesDispatchOutboxEntity::getCaseId, caseId)
-                        .eq(PlnApsMesDispatchOutboxEntity::getFactoryCode, apsCase.getFactoryCode())
-                        .orderByDesc(PlnApsMesDispatchOutboxEntity::getId).last("FOR UPDATE"));
-        require(row != null && List.of("PARTIAL", "RETRY_WAIT", "MANUAL_REVIEW", "DEAD_LETTER")
-                .contains(row.getStatus()), "当前MES下达状态不允许人工重试");
+        require(List.of("PARTIAL", "RETRY_WAIT", "MANUAL_REVIEW", "DEAD_LETTER").contains(row.getStatus()),
+                "当前MES下达状态不允许人工重试");
         row.setStatus("PENDING").setNextRetryTime(LocalDateTime.now()).setLeaseToken(null).setLeaseUntil(null)
                 .setLastError("人工重试：" + reason.trim()).setUpdateBy(SecurityUtils.getUser().getUsername());
         require(baseMapper.updateById(row) == 1, "MES下达重试入队失败");
-        caseService.recordDispatchStatus(caseId, "DISPATCHING",
+        caseService.recordDispatchStatus(row.getCaseId(), "DISPATCHING",
                 "APS-MES-REQUEUE:" + row.getId() + ':' + (Objects.requireNonNullElse(row.getAttemptCount(), 0) + 1),
                 "有权限人员确认后重新排队MES下达：" + reason.trim());
         return toView(row);
@@ -257,9 +290,10 @@ public class PlnApsDispatchServiceImpl
                 .distinct().sorted().toList();
         String factoryCode = com.kitex.common.data.orgFilter.FactoryContextHolder.getFactoryCode();
         require(StrUtil.isNotBlank(factoryCode), "MES下达证据复核缺少工厂上下文");
+        // 下达稍后还需写回这些计划，按主键顺序直接持写锁，避免两个发送者同时升级共享锁。
         List<PlnIssueEntity> sourceIssues = issueMapper.selectList(new LambdaQueryWrapper<PlnIssueEntity>()
                 .in(PlnIssueEntity::getId, issueIds).eq(PlnIssueEntity::getFactoryCode, factoryCode)
-                .orderByAsc(PlnIssueEntity::getId).last("FOR SHARE"));
+                .orderByAsc(PlnIssueEntity::getId).last("FOR UPDATE"));
         List<PlnSchedulingTaskDetailEntity> details = taskDetailMapper.selectList(
                 new LambdaQueryWrapper<PlnSchedulingTaskDetailEntity>()
                         .eq(PlnSchedulingTaskDetailEntity::getTaskId, selectedTaskId)
@@ -290,16 +324,41 @@ public class PlnApsDispatchServiceImpl
                 "APS发布后的计划、批次或工序证据已变化，禁止按旧Outbox下达MES");
     }
 
-    private PlnApsMesDispatchDTO.DispatchView toView(PlnApsMesDispatchOutboxEntity row) {
-        List<PlnApsMesDispatchDTO.ItemReceipt> receipts = List.of();
-        if (StrUtil.isNotBlank(row.getResponseSnapshot())) {
-            try {
-                receipts = objectMapper.readValue(row.getResponseSnapshot(), new TypeReference<>() {
-                });
-            } catch (Exception ignored) {
-                receipts = List.of();
+    @Override
+    public List<PlnApsMesDispatchDTO.ItemReceipt> readReceipts(PlnApsMesDispatchOutboxEntity row) {
+        String snapshot = row.getResponseSnapshot();
+        String fingerprint = row.getResponseFingerprint();
+        if (snapshot == null) {
+            require(fingerprint == null && Objects.equals(row.getDispatchedCount(), 0),
+                    "MES下达逐项回执缺失，请核对原单的成功记录");
+            return List.of();
+        }
+        // 有已保存指纹时必须逐字核对。历史无指纹记录仍按原回执及成功数校验。
+        require(fingerprint == null || Objects.equals(fingerprint, sha256(snapshot)),
+                "MES下达回执与落账指纹不一致，请核对原始回执");
+        List<PlnApsMesDispatchDTO.ItemReceipt> receipts;
+        try {
+            receipts = objectMapper.readValue(snapshot, new TypeReference<>() {});
+        } catch (java.io.IOException ex) {
+            throw new CheckedException("MES下达逐项回执无法读取，请核对原始记录");
+        }
+        require(receipts != null, "MES下达回执清单缺失");
+        Set<String> keys = new HashSet<>();
+        int succeeded = 0;
+        for (var receipt : receipts) {
+            require(receipt != null && StrUtil.isNotBlank(receipt.getDispatchKey())
+                            && keys.add(receipt.getDispatchKey()) && StrUtil.isNotBlank(receipt.getStatus()),
+                    "MES下达回执缺少单元、状态或重复登记，请核对原单");
+            if ("SUCCEEDED".equals(receipt.getStatus())) {
+                succeeded++;
             }
         }
+        require(Objects.equals(row.getDispatchedCount(), succeeded), "MES下达已确认数量与逐项回执不一致");
+        return receipts;
+    }
+
+    private PlnApsMesDispatchDTO.DispatchView toView(PlnApsMesDispatchOutboxEntity row) {
+        var receipts = readReceipts(row);
         return new PlnApsMesDispatchDTO.DispatchView().setOutboxId(text(row.getId()))
                 .setCaseId(text(row.getCaseId())).setScenarioId(text(row.getScenarioId()))
                 .setSelectedTaskId(text(row.getSelectedTaskId())).setRequestId(row.getRequestId())

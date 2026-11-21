@@ -19,6 +19,7 @@ import com.kitex.mom.mes.service.MesDeviceGateService;
 import com.kitex.mom.mes.service.impl.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
@@ -52,21 +53,50 @@ public class MesStartPreparationQueryService {
     private final MesMaterialStartGateService materials;
     private final MesStartContractGuard startContractGuard;
 
+    // 同一派工重采后，只按本人的最近快照筛选。计数、分页和页内摘要共享一次数据库读视图。
+    private static final String LAST_CHECK_FILTER = """
+            COALESCE((
+                SELECT CASE WHEN sc.arrange_code = mes_task_arrange.code AND sc.task_code = mes_task_arrange.task_code
+                            THEN sc.status END
+                FROM mom_mes.mes_start_preparation_check sc
+                WHERE sc.arrange_id = mes_task_arrange.id AND sc.tenant_id = mes_task_arrange.tenant_id
+                  AND sc.factory_code = mes_task_arrange.factory_code AND sc.operator_id = {0} AND sc.del_flag = '0'
+                ORDER BY sc.observed_at DESC, sc.id DESC LIMIT 1
+            ), 'UNCHECKED') = {1}
+            """;
+
     /**
-     * 专用派工选择器：真实派工主键与工单关系来自本租户/工厂，不将报工记录ID冒充派工ID。
+     * 查询本厂派工。工单入口精确限定工单；最近核验筛选按本人保存的观察执行。
+     * 只有显式请求摘要的准备工作台才批量读取本页快照，其他派工选择器沿用原投影。
      */
-    public Map<String, Object> candidates(long current, long size, String keyword) {
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public Map<String, Object> candidates(long current, long size, String keyword, String taskCode,
+                                          String dispatchStatus, String lastStatus, boolean includeLastCheck) {
         String factory = FactoryContextHolder.getFactoryCode();
         authorize(factory);
         require(current >= 1 && current <= 100000 && size >= 1 && size <= 100, "派工分页参数无效");
         String search = Objects.toString(keyword, "").trim();
         require(search.length() <= 100, "派工搜索条件最长100字符");
+        require(taskCode == null || (!taskCode.isBlank() && taskCode.length() <= 100), "工单编号无效");
+        require(dispatchStatus == null || Set.of("WAIT", "UN_RECEIVE", "RECEIVE", "PRODUCT", "PAUSE", "FINISH", "CLOSE")
+                .contains(dispatchStatus), "派工状态无效");
+        require(lastStatus == null || Set.of("READY", "BLOCKED", "UNKNOWN", "UNCHECKED").contains(lastStatus), "核验状态无效");
         var query = new LambdaQueryWrapper<MesTaskArrangeEntity>()
+                .apply(lastStatus != null, LAST_CHECK_FILTER, actor(), lastStatus)
+                .eq(taskCode != null, MesTaskArrangeEntity::getTaskCode, taskCode)
+                .eq(dispatchStatus != null, MesTaskArrangeEntity::getStatus, dispatchStatus)
                 .eq(MesTaskArrangeEntity::getTenantId, tenant()).eq(MesTaskArrangeEntity::getFactoryCode, factory)
                 .and(!search.isEmpty(), group -> group.like(MesTaskArrangeEntity::getCode, search)
                         .or().like(MesTaskArrangeEntity::getTaskCode, search))
                 .orderByDesc(MesTaskArrangeEntity::getId);
         var page = arranges.selectPage(Page.of(current, size), query);
+        Map<Long, MesStartPreparationCheck> latest = new HashMap<>();
+        if (includeLastCheck && !page.getRecords().isEmpty()) {
+            List<Long> ids = page.getRecords().stream().map(MesTaskArrangeEntity::getId).toList();
+            for (var check : snapshots.latestForPage(tenant(), factory, actor(), ids)) {
+                latest.put(check.getArrangeId(), check);
+            }
+        }
         List<Map<String, Object>> records = page.getRecords().stream().map(row -> {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("id", row.getId().toString());
@@ -76,10 +106,21 @@ public class MesStartPreparationQueryService {
             item.put("routeName", row.getRouteName());
             item.put("workerName", row.getWorkerName());
             item.put("matName", row.getMatName());
+            if (includeLastCheck) {
+                var last = latest.get(row.getId());
+                boolean sameDispatch = last != null && Objects.equals(last.getArrangeCode(), row.getCode())
+                        && Objects.equals(last.getTaskCode(), row.getTaskCode());
+                item.put("lastCheck", sameDispatch ? Map.of("id", last.getId().toString(), "requestId", last.getRequestId(),
+                        "status", last.getStatus(), "observedAt", last.getObservedAt().toString()) : null);
+            }
             return item;
         }).toList();
-        return Map.of("records", records, "total", page.getTotal(), "current", current, "size", size,
-                "tenantId", tenant().toString(), "factoryCode", factory);
+        Map<String, Object> result = new LinkedHashMap<>(Map.of("records", records, "total", page.getTotal(),
+                "current", current, "size", size, "tenantId", tenant().toString(), "factoryCode", factory));
+        if (includeLastCheck) {
+            result.put("lastCheckOperatorId", actor().toString());
+        }
+        return result;
     }
 
     /**

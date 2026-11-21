@@ -3,9 +3,9 @@ package com.kitex.mom.mes.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.kitex.mom.mdm.feign.RemoteBomService;
+import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.mes.dto.MesMaterialListDTO;
-import com.kitex.mom.mes.dto.MesMaterialListDetailDTO;
 import com.kitex.mom.mes.entity.MesMaterialListEntity;
 import com.kitex.mom.mes.entity.MesTaskEntity;
 import com.kitex.mom.mes.enums.MesMaterialListStatusEnum;
@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * <p>
@@ -36,18 +37,26 @@ public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMappe
     private final MesReworkMaterialPlanService reworkMaterialPlans;
 
     private final MesTaskMapper mesTaskMapper;
-    private final RemoteBomService remoteBomService;
+    private final MesActualFactoryAccessService factoryAccess;
     private final MesMaterialListDetailService materialListDetailService;
 
     @Override
     public Page<MesMaterialListDTO> getMaterialListPage(Long current, Long size, MesMaterialListQueryVO queryVO) {
+        queryVO.setFactoryCode(factoryAccess.require("read"));
         Page<MesMaterialListDTO> page = new Page<>(current, size);
-        return baseMapper.selectMaterialListPage(page, queryVO);
+        return baseMapper.selectMaterialListPage(page, queryVO, TenantContextHolder.getTenantId());
     }
 
     @Override
     public MesMaterialListDTO getMaterialListByTaskId(Long taskId) {
-        MesMaterialListDTO dto = baseMapper.selectMaterialListByTaskId(taskId);
+        String factory = factoryAccess.require("read");
+        Long tenant = TenantContextHolder.getTenantId();
+        MesMaterialListDTO dto = baseMapper.selectMaterialListByTaskId(taskId, tenant, factory);
+        if (dto == null && !mesTaskMapper.exists(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getId, taskId).eq(MesTaskEntity::getTenantId, tenant)
+                .eq(MesTaskEntity::getFactoryCode, factory))) {
+            throw new CheckedException("当前工厂未找到原工单");
+        }
         if (dto != null) {
             dto.setMaterialDetails(materialListDetailService.getDetailsByMaterialListId(dto.getId()));
         }
@@ -57,161 +66,134 @@ public class MesMaterialListServiceImpl extends ServiceImpl<MesMaterialListMappe
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean createMaterialListByTask(Long taskId) {
-        try {
-            MesTaskEntity task = mesTaskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>().eq(MesTaskEntity::getId, taskId).last("FOR UPDATE"));
-            if (task == null) {
-                log.error("工单不存在，taskId: {}", taskId);
-                return false;
-            }
-            reworkMaterialPlans.assertReady(task);
-
-            MesMaterialListEntity existingList = this.getOne(
-                    new LambdaQueryWrapper<MesMaterialListEntity>()
-                            .eq(MesMaterialListEntity::getTaskId, taskId)
-                            .eq(MesMaterialListEntity::getDelFlag, "0")
-            );
-
-            if (existingList != null) {
-                log.warn("该工单已存在用料清单，taskId: {}", taskId);
-                return true;
-            }
-
-            MesMaterialListEntity materialList = new MesMaterialListEntity();
-            materialList.setTenantId(task.getTenantId());
-            materialList.setFactoryCode(task.getFactoryCode());
-            materialList.setTaskId(taskId);
-            materialList.setTaskCode(task.getCode());
-            materialList.setProductCode(task.getMatCode());
-            materialList.setProductName(task.getMatName());
-            materialList.setProductSpec(task.getMatSpec());
-            materialList.setBomId(task.getBomId());
-            materialList.setBomVersion(task.getBomVersion());
-            materialList.setBomSnapshot(task.getBomSnapshot());
-            materialList.setPlanQuantity(task.getNoticeNum());
-            materialList.setStatus(reworkMaterialPlans.approvedWithoutMaterials(task)
-                    ? MesMaterialListStatusEnum.COMPLETED.getCode() : MesMaterialListStatusEnum.NEW.getCode());
-
-            boolean saveResult = this.save(materialList);
-            if (!saveResult) {
-                log.error("保存用料清单失败，taskId: {}", taskId);
-                return false;
-            }
-
-            boolean createDetailsResult = materialListDetailService.createMaterialDetailsByBom(
-                    materialList.getId(), taskId, task.getBomId(), task.getBomVersion(), task.getNoticeNum()
-            );
-
-            if (!createDetailsResult) {
-                log.error("创建用料清单明细失败，taskId: {}", taskId);
-                return false;
-            }
-
-            log.info("成功创建用料清单，taskId: {}, materialListId: {}", taskId, materialList.getId());
-            return true;
-
-        } catch (Exception e) {
-            log.error("创建用料清单异常，taskId: {}", taskId, e);
-            throw e;
+        var task = lockTask(taskId, factoryAccess.require("write"));
+        reworkMaterialPlans.assertReady(task);
+        var head = getOne(new LambdaQueryWrapper<MesMaterialListEntity>()
+                .eq(MesMaterialListEntity::getTaskId, taskId)
+                .eq(MesMaterialListEntity::getTenantId, task.getTenantId())
+                .eq(MesMaterialListEntity::getFactoryCode, task.getFactoryCode()).last("FOR UPDATE"));
+        if (head != null) {
+            return synchronizeFrozenList(head, task);
         }
+
+        head = new MesMaterialListEntity();
+        head.setTenantId(task.getTenantId());
+        head.setFactoryCode(task.getFactoryCode());
+        head.setTaskId(taskId);
+        head.setTaskCode(task.getCode());
+        head.setProductCode(task.getMatCode());
+        head.setProductName(task.getMatName());
+        head.setProductSpec(task.getMatSpec());
+        head.setBomId(task.getBomId());
+        head.setBomVersion(task.getBomVersion());
+        head.setBomSnapshot(task.getBomSnapshot());
+        head.setPlanQuantity(task.getNoticeNum());
+        head.setStatus(reworkMaterialPlans.approvedWithoutMaterials(task)
+                ? MesMaterialListStatusEnum.COMPLETED.getCode() : MesMaterialListStatusEnum.NEW.getCode());
+        if (!save(head)) {
+            throw new CheckedException("用料清单主单保存失败");
+        }
+        return synchronizeFrozenList(head, task);
+    }
+
+    /** 先锁工单，再读取或创建清单，避免两个请求同时生成不同的明细身份。 */
+    private MesTaskEntity lockTask(Long taskId, String factory) {
+        var task = mesTaskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getId, taskId).eq(MesTaskEntity::getFactoryCode, factory)
+                .eq(MesTaskEntity::getTenantId, TenantContextHolder.getTenantId()).last("FOR UPDATE"));
+        if (task == null) {
+            throw new CheckedException("当前工厂未找到原生产工单");
+        }
+        return task;
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public boolean updateMaterialListStatus(Long id, String status) {
-        MesMaterialListEntity entity = new MesMaterialListEntity();
-        entity.setId(id);
-        entity.setStatus(status);
-        return this.updateById(entity);
+        var locked = lockList(id);
+        materialListDetailService.applyHeadStatus(locked.head(), locked.task(), status);
+        return true;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean regenerateMaterialList(Long id) {
-        try {
-            MesMaterialListEntity materialList = this.getById(id);
-            if (materialList == null) {
-                log.error("用料清单不存在，id: {}", id);
-                return false;
-            }
+        var locked = lockList(id);
+        reworkMaterialPlans.assertReady(locked.task());
+        return synchronizeFrozenList(locked.head(), locked.task());
+    }
 
-            MesTaskEntity task = mesTaskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>().eq(MesTaskEntity::getId, materialList.getTaskId()).last("FOR UPDATE"));
-            if (task == null) {
-                log.error("关联工单不存在，taskId: {}", materialList.getTaskId());
-                return false;
-            }
-            reworkMaterialPlans.assertReady(task);
+    private record LockedList(MesMaterialListEntity head, MesTaskEntity task) {
+    }
 
-            materialList.setBomId(task.getBomId());
-            materialList.setBomVersion(task.getBomVersion());
-            materialList.setBomSnapshot(task.getBomSnapshot());
-            materialList.setPlanQuantity(task.getNoticeNum());
-            if (reworkMaterialPlans.approvedWithoutMaterials(task)) {
-                materialList.setStatus(MesMaterialListStatusEnum.COMPLETED.getCode());
-            } else if (!"REWORK".equals(task.getResourceType())) {
-                materialList.setStatus(MesMaterialListStatusEnum.NEW.getCode());
-            }
-
-            boolean updateResult = this.updateById(materialList);
-            if (!updateResult) {
-                log.error("更新用料清单失败，id: {}", id);
-                return false;
-            }
-
-            boolean createDetailsResult = materialListDetailService.createMaterialDetailsByBom(
-                    id, materialList.getTaskId(), task.getBomId(), task.getBomVersion(), task.getNoticeNum()
-            );
-
-            if (!createDetailsResult) {
-                log.error("重新创建用料清单明细失败，id: {}", id);
-                return false;
-            }
-
-            log.info("成功重新生成用料清单，id: {}", id);
-            return true;
-
-        } catch (Exception e) {
-            log.error("重新生成用料清单异常，id: {}", id, e);
-            throw e;
+    /** 根据清单身份定位工单，按工单、清单的顺序加锁后再次核对归属。 */
+    private LockedList lockList(Long id) {
+        String factory = factoryAccess.require("write");
+        var query = new LambdaQueryWrapper<MesMaterialListEntity>()
+                .eq(MesMaterialListEntity::getId, id).eq(MesMaterialListEntity::getFactoryCode, factory)
+                .eq(MesMaterialListEntity::getTenantId, TenantContextHolder.getTenantId());
+        var head = getOne(query);
+        if (head == null) {
+            throw new CheckedException("当前工厂未找到用料清单");
         }
+        var task = lockTask(head.getTaskId(), factory);
+        head = getOne(query.last("FOR UPDATE"));
+        if (head == null || !Objects.equals(head.getTaskId(), task.getId())) {
+            throw new CheckedException("用料清单归属已变化，请刷新原工单");
+        }
+        return new LockedList(head, task);
+    }
+
+    /** 先核明细。相同快照下保留头单的领料进度和历史，任何必要写入失败整单回滚。 */
+    private boolean synchronizeFrozenList(MesMaterialListEntity head, MesTaskEntity task) {
+        if (!materialListDetailService.createMaterialDetailsByBom(head.getId(), task.getId(),
+                task.getBomId(), task.getBomVersion(), task.getNoticeNum())) {
+            throw new CheckedException("工单 " + task.getCode() + " 的用料清单明细未全部保存");
+        }
+        if (!Objects.equals(head.getBomId(), task.getBomId())
+                || !Objects.equals(head.getBomVersion(), task.getBomVersion())
+                || !Objects.equals(head.getBomSnapshot(), task.getBomSnapshot())
+                || head.getPlanQuantity() == null || head.getPlanQuantity().compareTo(task.getNoticeNum()) != 0) {
+            head.setBomId(task.getBomId());
+            head.setBomVersion(task.getBomVersion());
+            head.setBomSnapshot(task.getBomSnapshot());
+            head.setPlanQuantity(task.getNoticeNum());
+            if (!updateById(head)) {
+                throw new CheckedException("更新冻结用料清单主单失败");
+            }
+        }
+        materialListDetailService.applyHeadStatus(head, task, null);
+        return true;
     }
 
     @Override
     public boolean checkMaterialListCompleted(Long id) {
-        List<MesMaterialListDetailDTO> details = materialListDetailService.getDetailsByMaterialListId(id);
-        if (details.isEmpty()) {
-            var list = getById(id);
-            if (list != null && reworkMaterialPlans.approvedWithoutMaterials(mesTaskMapper.selectById(list.getTaskId()))) {
-                return updateMaterialListStatus(id, MesMaterialListStatusEnum.COMPLETED.getCode());
-            }
+        String factory = factoryAccess.require("read");
+        var head = getOne(new LambdaQueryWrapper<MesMaterialListEntity>()
+                .eq(MesMaterialListEntity::getId, id).eq(MesMaterialListEntity::getFactoryCode, factory)
+                .eq(MesMaterialListEntity::getTenantId, TenantContextHolder.getTenantId()));
+        if (head == null) {
             return false;
         }
-
-        boolean allCompleted = details.stream()
-                .allMatch(detail -> "COMPLETED".equals(detail.getPickStatus()) ||
-                        (detail.getPickedQuantity().compareTo(detail.getRequiredQuantity()) >= 0));
-
-        if (allCompleted) {
-            updateMaterialListStatus(id, MesMaterialListStatusEnum.COMPLETED.getCode());
-            return true;
+        var details = materialListDetailService.getDetailsByMaterialListId(id);
+        if (details.isEmpty()) {
+            var task = mesTaskMapper.selectOne(new LambdaQueryWrapper<MesTaskEntity>()
+                    .eq(MesTaskEntity::getId, head.getTaskId()).eq(MesTaskEntity::getFactoryCode, factory)
+                    .eq(MesTaskEntity::getTenantId, head.getTenantId()));
+            return reworkMaterialPlans.approvedWithoutMaterials(task);
         }
-
-        return false;
+        return details.stream().allMatch(row -> row.getRemainingQuantity() != null && row.getRemainingQuantity().signum() <= 0);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean batchCreateMaterialListByTasks(List<Long> taskIds) {
-        int successCount = 0;
-        for (Long taskId : taskIds) {
-            try {
-                if (createMaterialListByTask(taskId)) {
-                    successCount++;
-                }
-            } catch (Exception e) {
-                log.error("批量创建用料清单失败，taskId: {}", taskId, e);
-            }
+        if (taskIds == null || taskIds.isEmpty() || taskIds.stream().anyMatch(Objects::isNull)) {
+            throw new CheckedException("请选择要生成用料清单的生产工单");
         }
-
-        log.info("批量创建用料清单完成，总数: {}, 成功: {}", taskIds.size(), successCount);
-        return successCount == taskIds.size();
+        for (Long taskId : taskIds.stream().distinct().sorted().toList()) {
+            createMaterialListByTask(taskId);
+        }
+        return true;
     }
 }

@@ -847,6 +847,7 @@ public class WmsLiveStockServiceImpl extends ServiceImpl<WmsLiveStockMapper, Wms
                         .eq("warehouse_code", liveStock.getWarehouseCode())
                         .eq("mat_code", liveStock.getMatCode())
                         .eq(StrUtil.isNotBlank(liveStock.getMatBatch()), "mat_batch", liveStock.getMatBatch())
+                        .eq(StrUtil.isNotBlank(liveStock.getMatBarcode()), "mat_barcode", liveStock.getMatBarcode())
                         .eq("site_code", liveStock.getSiteCode())
                         .eq(StrUtil.isNotBlank(liveStock.getSupplierCode()), "supplier_code",
                                 liveStock.getSupplierCode())

@@ -21,6 +21,40 @@ public final class MesPackagingDTO {
 	private MesPackagingDTO() {
 	}
 
+	/** 查询原始封箱凭证中的内容或当前仍在箱内的内容。 */
+	public enum ContentView { INITIAL, CURRENT }
+
+	/**
+	 * 箱内一条实物明细。
+	 * @param recordId 当前视图对应的原装箱记录主键，十进制文本
+	 * @param identifier 报工时的规范单件码或容器码
+	 * @param quantity 该明细的报工基本单位数量，十进制原文
+	 */
+	@Schema(description = "单条包装内容")
+	public record BoxItem(String recordId, String identifier, String quantity) {}
+
+	/**
+	 * 实际工厂下指定箱码的核对结果，数量均按报工基本单位。历史箱缺少的依据返回空值。
+	 * @param factoryCode 实际工厂编码
+	 * @param wrapCode 查询命中的完整箱码
+	 * @param taskCode 原工单编码
+	 * @param arrangeCode 所属派工编码
+	 * @param capacity 初封时冻结的容量，历史无初封凭证时取箱档容量
+	 * @param sealMode 原封箱方式，缺初封凭证时为空
+	 * @param sealedQuantity 初封凭证数量，缺凭证时为空
+	 * @param currentStatus 当前箱档状态
+	 * @param currentQuantity 当前箱档数量
+	 * @param view 本页所查的初封或当前内容
+	 * @param identifier 精确筛选的单件或容器码，空表示所有内容
+	 * @param page 当前页码，从一开始
+	 * @param total 当前范围内匹配的明细条数
+	 * @param items 本页内容，以持久记录顺序排列
+	 */
+	@Schema(description = "生产包装核对")
+	public record BoxContents(String factoryCode, String wrapCode, String taskCode, String arrangeCode,
+			Integer capacity, String sealMode, String sealedQuantity, String currentStatus, String currentQuantity,
+			ContentView view, String identifier, int page, long total, List<BoxItem> items) {}
+
 	/** 历史派工显式采用命令，不改原派工和历史报工。 */
 	@Data
 	@Accessors(chain = true)
@@ -174,13 +208,29 @@ public final class MesPackagingDTO {
 		@Schema(description = "真实GOOD报工主键十进制原文")
 		private String reportId;
 
-		/** 原规范单件标识。 */
-		@Schema(description = "原规范单件标识")
+		/** 逐件包装的规范单件码或数量包装的原外部容器码。 */
+		@Schema(description = "单件码或外部容器码")
 		private String transferCode;
 
 		/** 当前该待装成员数量，单位为原报工基本单位。 */
 		@Schema(description = "当前该待装成员数量，单位为原报工基本单位")
 		private BigDecimal quantity;
+
+		/** 原报工记录的数量单位，旧来源未记录时为空。 */
+		@Schema(description = "原报工单位")
+		private String reportUnit;
+
+		/** 原报工累计质量放行数量，按报工基本单位，无可核来源时为空。 */
+		@Schema(description = "累计放行数量，十进制文本")
+		private String releasedQuantity;
+
+		/** 原报工尚待质量判定的数量，按报工基本单位。 */
+		@Schema(description = "待判数量，十进制文本")
+		private String pendingQuantity;
+
+		/** 原报工已判退数量，按报工基本单位。 */
+		@Schema(description = "判退数量，十进制文本")
+		private String rejectedQuantity;
 
 		/** 原待装内容生成时刻。 */
 		@Schema(description = "原待装内容生成时刻")
@@ -194,6 +244,17 @@ public final class MesPackagingDTO {
 		@Schema(description = "当前受限原因，可封时为空")
 		private String holdReason;
 
+	}
+
+	/**
+	 * 按实物码查到的数量包装待封来源。
+	 * @param factoryCode 已核权的实际工厂
+	 * @param arrangeCode 原报工所属派工
+	 * @param capacity 派工采用的每箱容量
+	 * @param member 原容器、待封数量及质量分量
+	 */
+	@Schema(description = "数量包装待封容器")
+	public record PendingContainer(String factoryCode, String arrangeCode, Integer capacity, Pending member) {
 	}
 
 	/** 原封箱命令及结果，当前包装状态独立列示。 */

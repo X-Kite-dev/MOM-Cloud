@@ -22,6 +22,10 @@ public final class MesPlanExecutionEvidenceDTO {
         private List<String> planNos;
         @Schema(description = "显式请求完整逐报工来源事件；不请求时不把空列表冒充完整事件")
         private Boolean includeProductionEvents;
+
+        /** 执行回评选中的 APS 候选任务主键，仅取该正式候选出生的工单。 */
+        @Schema(description = "精确 APS 候选任务 ID，留空时沿用来源计划查询")
+        private Long schedulingTaskId;
     }
 
     @Data
@@ -35,6 +39,34 @@ public final class MesPlanExecutionEvidenceDTO {
         private String observedAt;
         @Schema(description = "全部被请求计划的证据，一条计划一个元素，不截断")
         private List<Plan> plans;
+
+        /** 按候选查询时逐物理工单返回。同一合批工单只出现一次。 */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        @Schema(description = "候选批次实际工单和冻结工序")
+        private List<BatchOrder> batchOrders;
+
+        /** 实际查询的候选身份，即使尚未接单也必须回显。 */
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+        @Schema(description = "实际查询的 APS 候选任务主键文本")
+        private String schedulingTaskId;
+    }
+
+    /**
+     * @param batchId MES 建单时记录的 APS 批次主键文本
+     * @param batchNo 首次接单的执行批号
+     * @param requestId 原计划下达的永久请求号
+     * @param taskId MES 工单主键文本
+     * @param taskCode MES 工单编码
+     * @param planNo 本批以其建单的主生产计划号
+     * @param productCode 工单物料编码
+     * @param quantity 物料基本单位的工单应产量，十进制文本
+     * @param reportFingerprint 末序有效报工及来源核定快照指纹，用于区分数量相同的不同原始记录
+     * @param operations 同一工单实际工序和可移动状态，与来源份额取自同一数据库快照
+     */
+    @Schema(description = "已发布候选下的一张物理工单")
+    public record BatchOrder(String batchId, String batchNo, String requestId, String taskId, String taskCode,
+                             String planNo, String productCode, String quantity, String reportFingerprint,
+                             List<MesApsLocalScheduleDTO.OperationState> operations) {
     }
 
     @Data
@@ -125,11 +157,11 @@ public final class MesPlanExecutionEvidenceDTO {
         private String reportMode;
         @Schema(description = "原报工冻结单位")
         private String reportUnit;
-        @Schema(description = "原报工记录时间ISO文本，设备报工可能等于设备事件时间")
+        @Schema(description = "回评使用的报工时刻 ISO 文本；带来源事件的集成报工取 MES 实际建账时刻")
         private String reportTime;
-        @Schema(description = "设备事件原时间ISO文本，保持亚秒精度")
+        @Schema(description = "设备或集成来源事件原时间 ISO 文本，保持原精度")
         private String sourceEventTime;
-        @Schema(description = "设备事件原号")
+        @Schema(description = "设备或集成来源事件原号")
         private String sourceEventId;
         @Schema(description = "弱网客户端记录时刻，只作为未独立核实的客户端证据")
         private String offlineCapturedAt;

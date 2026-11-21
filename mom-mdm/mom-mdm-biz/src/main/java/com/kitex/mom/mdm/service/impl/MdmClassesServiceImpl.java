@@ -17,11 +17,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.BindingResult;
 
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -243,59 +244,49 @@ public class MdmClassesServiceImpl extends ServiceImpl<MdmClassesMapper, MdmClas
     }
 
     /**
-     * 根据班次获取后几个班次信息
+     * 从带日期的班次编码起，查询包含该班次的连续序列。
      *
-     * @param classCode 班次
-     * @param number    获取当前班次接下来的几个班次
-     * @return R 对象列表
+     * @param classCode 班次开始日和配置编码
+     * @param number    包含起始班次的序列长度
+     * @return 对应的有效班次序列
      */
     @Override
     public List<MdmClassesEntity> getClassesByCode(String classCode, Integer number) {
-        // 使用正则提取日期和班次编码
-        String dateStr = classCode.replaceAll("[^0-9]", "");
-        String shiftCode = classCode.replaceAll("\\d", "");
-
-        // 查询班次信息
-        MdmClassesEntity mdmClasses = this.getOne(new LambdaQueryWrapper<MdmClassesEntity>()
-                .eq(MdmClassesEntity::getShiftCode, shiftCode), false);
-
-        if (mdmClasses == null) {
+        if (classCode == null || number == null || number < 1) {
             return Collections.emptyList();
         }
-
-        // 将两位年份的日期字符串转换为LocalDate
-        LocalDate date;
-        if (dateStr.length() == 6) { // 处理250422这种格式
-            // 获取当前年份的前两位
-            String currentYearPrefix = String.valueOf(LocalDate.now().getYear()).substring(0, 2);
-            // 组合成完整年份
-            String fullDateStr = currentYearPrefix + dateStr;
-            date = LocalDate.parse(fullDateStr, DateTimeFormatter.ofPattern("yyyyMMdd"));
-        } else {
-            date = LocalDate.parse(dateStr, DateTimeFormatter.ofPattern("yyyyMMdd"));
+        List<MdmClassesEntity> active = list(new LambdaQueryWrapper<MdmClassesEntity>()
+                .eq(MdmClassesEntity::getStatus, true));
+        // 日期只取前缀，班次编码可以包含数字。先匹配系统生成的六位日期，再兼容八位日期。
+        for (String pattern : List.of("uuMMdd", "uuuuMMdd")) {
+            int length = pattern.length();
+            if (classCode.length() <= length) {
+                continue;
+            }
+            LocalDate date;
+            try {
+                date = LocalDate.parse(classCode.substring(0, length),
+                        DateTimeFormatter.ofPattern(pattern).withResolverStyle(ResolverStyle.STRICT));
+            } catch (DateTimeParseException invalid) {
+                continue;
+            }
+            String shiftCode = classCode.substring(length);
+            var matching = active.stream().filter(shift -> shiftCode.equals(shift.getShiftCode())).toList();
+            if (matching.isEmpty()) {
+                continue;
+            }
+            if (matching.size() != 1 || matching.get(0).getStartTime() == null) {
+                throw new CheckedException("班次配置重复或缺少开始时间");
+            }
+            // 日期属于班次开始日。跨午夜班次也从实际开始时刻查询后续序列。
+            var shifts = getClassesBydate(date.atTime(matching.get(0).getStartTime()), number);
+            String canonical = date.format(DateTimeFormatter.ofPattern("yyMMdd")) + shiftCode;
+            if (shifts.isEmpty() || !canonical.equals(shifts.get(0).getShiftCode())) {
+                return Collections.emptyList();
+            }
+            return shifts;
         }
-
-        // 获取班次的开始时间和结束时间
-        LocalTime startTime = mdmClasses.getStartTime();
-        LocalTime endTime = mdmClasses.getEndTime();
-
-        // 计算班次的中间时间
-        LocalTime middleTime;
-        if (startTime.isAfter(endTime)) {
-            // 处理跨天的情况：计算从startTime到24:00的时间差，加上从00:00到endTime的时间差
-            Duration duration = Duration.between(startTime, LocalTime.MAX)
-                    .plus(Duration.between(LocalTime.MIN, endTime))
-                    .plusMinutes(1); // 加上1分钟，确保包含endTime
-            middleTime = startTime.plus(duration.dividedBy(2));
-        } else {
-            Duration duration = Duration.between(startTime, endTime);
-            middleTime = startTime.plus(duration.dividedBy(2));
-        }
-
-        // 组合成完整的LocalDateTime
-        LocalDateTime dateTime = LocalDateTime.of(date, middleTime);
-
-        return this.getClassesBydate(dateTime, number);
+        return Collections.emptyList();
     }
 
     private void validateTimeRanges(List<MdmClassesEntity> list, LocalTime startTime, LocalTime endTime) {

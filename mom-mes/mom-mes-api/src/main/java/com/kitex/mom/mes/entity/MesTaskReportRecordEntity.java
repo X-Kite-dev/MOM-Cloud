@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.util.TenantTable;
+import com.kitex.common.query.annotation.QueryColumn;
+import com.kitex.common.query.enums.QueryRuleEnum;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -146,13 +148,17 @@ public class MesTaskReportRecordEntity extends BaseEntity<MesTaskReportRecordEnt
     @Schema(description = "操作类型")
     private String type;
 
-    @Schema(description = "报工触发方式：MANUAL人工、AUTO设备自动")
+    /** 报工实际采用的触发方式，由报工事务写入操作履历。 */
+    @Schema(description = "MANUAL 人工、AUTO 设备、API 集成")
     private String triggerType;
 
-    @Schema(description = "自动报工来源事件号")
+    /** 设备或集成方的原事件号。对账时按完整文本匹配，包括下划线等编码字符。 */
+    @QueryColumn(type = QueryRuleEnum.EQ)
+    @Schema(description = "设备或集成来源事件号")
     private String sourceEventId;
 
-    @Schema(description = "设备事件发生时间")
+    /** 来源系统声明的发生时刻，与 MES 登记时间分开。 */
+    @Schema(description = "来源事件发生时间")
     private LocalDateTime sourceEventTime;
 
     @Schema(description = "自动工位人工接管原因")

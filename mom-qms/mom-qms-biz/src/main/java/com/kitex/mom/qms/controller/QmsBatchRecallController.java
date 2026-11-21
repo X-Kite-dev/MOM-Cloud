@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.mom.qms.agent.service.QmsAgentFactoryAccessService;
 import com.kitex.mom.qms.dto.QmsBatchRecallDTO;
 import com.kitex.mom.qms.entity.QmsBatchRecallEntity;
 import com.kitex.mom.qms.service.QmsBatchRecallService;
@@ -23,20 +24,30 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/qmsBatchRecall")
 public class QmsBatchRecallController {
     private final QmsBatchRecallService service;
+    private final QmsAgentFactoryAccessService factoryAccess;
 
+    /**
+     * 台账保留模糊查询；批次调查下钻按原物料和批次精确分页，避免相近批号混入办理范围。
+     */
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('batchRecall:show')")
     public R<IPage<QmsBatchRecallEntity>> page(Page<QmsBatchRecallEntity> page,
                                                @RequestParam(required = false) String recallNo,
                                                @RequestParam(required = false) String materialCode,
                                                @RequestParam(required = false) String batchNo,
-                                               @RequestParam(required = false) String status) {
-        String factory = requireFactory();
+                                               @RequestParam(required = false) String status,
+                                               @RequestParam(defaultValue = "false") boolean exactBatch) {
+        String factory = factoryAccess.requireRead(requireFactory());
+        if (exactBatch && (StrUtil.isBlank(materialCode) || StrUtil.isBlank(batchNo))) {
+            throw new CheckedException("精确查询必须同时提供物料编码和批次号");
+        }
         LambdaQueryWrapper<QmsBatchRecallEntity> wrapper = new LambdaQueryWrapper<QmsBatchRecallEntity>()
                 .eq(QmsBatchRecallEntity::getFactoryCode, factory)
                 .like(StrUtil.isNotBlank(recallNo), QmsBatchRecallEntity::getRecallNo, recallNo)
-                .like(StrUtil.isNotBlank(materialCode), QmsBatchRecallEntity::getMaterialCode, materialCode)
-                .like(StrUtil.isNotBlank(batchNo), QmsBatchRecallEntity::getBatchNo, batchNo)
+                .eq(exactBatch, QmsBatchRecallEntity::getMaterialCode, materialCode)
+                .eq(exactBatch, QmsBatchRecallEntity::getBatchNo, batchNo)
+                .like(!exactBatch && StrUtil.isNotBlank(materialCode), QmsBatchRecallEntity::getMaterialCode, materialCode)
+                .like(!exactBatch && StrUtil.isNotBlank(batchNo), QmsBatchRecallEntity::getBatchNo, batchNo)
                 .eq(StrUtil.isNotBlank(status), QmsBatchRecallEntity::getStatus, status)
                 .orderByDesc(QmsBatchRecallEntity::getCreateTime)
                 .orderByDesc(QmsBatchRecallEntity::getId);

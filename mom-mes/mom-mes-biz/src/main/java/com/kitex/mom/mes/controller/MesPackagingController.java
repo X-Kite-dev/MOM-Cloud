@@ -35,6 +35,24 @@ public class MesPackagingController {
 		return R.ok(service.progress(arrangeCode));
 	}
 
+	/** 从原外部容器码核本厂待封数量、质量进度和原派工。 */
+	@GetMapping("/pending-container")
+	@PreAuthorize("@pms.hasPermission('mesTaskReport:report','mesWrap:show')")
+	@Operation(summary = "核对数量包装的待封容器")
+	public R<MesPackagingDTO.PendingContainer> pendingContainer(@RequestParam String containerCode) {
+		return R.ok(service.pendingContainer(containerCode));
+	}
+
+	/** 按箱码和可选的精确成员码核当前或初封内容，每页三十条。 */
+	@GetMapping("/box")
+	@PreAuthorize("@pms.hasPermission('mesTaskReport:report','mesWrap:show')")
+	@Operation(summary = "按箱核对原封箱与当前成员")
+	public R<MesPackagingDTO.BoxContents> box(@RequestParam String wrapCode,
+			@RequestParam(defaultValue = "CURRENT") MesPackagingDTO.ContentView view,
+			@RequestParam(defaultValue = "") String identifier, @RequestParam(defaultValue = "1") int page) {
+		return R.ok(service.boxContents(wrapCode, view, identifier, page));
+	}
+
 	/**
 	 * @return 当前工厂本人永久原封箱结果；未查到返回null不证明未执行，仍须原号原文续投或正式封存。
 	 */

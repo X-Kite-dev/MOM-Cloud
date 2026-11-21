@@ -14,6 +14,9 @@ import java.util.List;
  */
 public interface MesWarehouseFeedService extends IService<MesWarehouseFeedEntity> {
 
+    /** 按准确工单号读取当前租户、工厂的投料批次，保留实际物料、单位及原投料主键。 */
+    IPage<MesWarehouseFeedEntity> pageForWorkOrder(Page<MesWarehouseFeedEntity> page, String taskCode);
+
     /**
      * pad投料接口
      */

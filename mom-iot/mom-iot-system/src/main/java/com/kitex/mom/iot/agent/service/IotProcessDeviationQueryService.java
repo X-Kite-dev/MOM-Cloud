@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.HashSet;
+import java.util.TreeSet;
 
 /** 以 MES 实际运行段和冻结标准为边界，逐点计算 IoT 工艺参数异常。 */
 @Service
@@ -76,6 +77,12 @@ public class IotProcessDeviationQueryService {
         }
         MesProcessDeviationScopeDTO.Evidence scope = response.getData();
         verifyScope(scope, factory, identifier, deviceCode, alarmTime);
+        if ("MES_TASK".equals(query.getSourceType())
+                && (!Objects.equals(query.getTaskCode(), scope.getTaskCode())
+                || (StringUtils.hasText(query.getRouteNodeCode())
+                && !query.getRouteNodeCode().equals(scope.getRouteNodeCode())))) {
+            throw new CheckedException("返回的工单或工序节点与本次取证范围不一致");
+        }
         List<IotDeviceEntity> devices = deviceMapper.selectList(new LambdaQueryWrapper<IotDeviceEntity>()
                 .eq(IotDeviceEntity::getTenantId, tenantId).eq(IotDeviceEntity::getFactoryCode, factory)
                 .eq(IotDeviceEntity::getDeviceCode, scope.getDeviceCode()).last("LIMIT 2"));
@@ -250,7 +257,9 @@ public class IotProcessDeviationQueryService {
                         active = new IotProcessDeviationDTO.DeviationEpisode()
                                 .setStartTime(previous.getCollectTime()).setFirstPropertyId(previous.getPropertyId())
                                 .setDurationSeconds(0L).setArea(BigDecimal.ZERO).setSampleCount(1);
+                        recordPeak(active, previous, lower, upper);
                     }
+                    recordPeak(active, sample, lower, upper);
                     BigDecimal segmentArea = excess(previous.getNumericValue(), lower, upper)
                             .add(excess(value, lower, upper))
                             .multiply(BigDecimal.valueOf(seconds))
@@ -364,13 +373,59 @@ public class IotProcessDeviationQueryService {
                 .divide(denominator, 6, RoundingMode.HALF_UP);
     }
 
-    private List<IotProcessDeviationDTO.Sample> thin(List<IotProcessDeviationDTO.Sample> samples) {
-        if (samples.size() <= MAX_TREND_POINTS) return samples;
-        List<IotProcessDeviationDTO.Sample> result = new ArrayList<>();
-        for (int i = 0; i < MAX_TREND_POINTS; i++) {
-            result.add(samples.get((int) ((long) i * (samples.size() - 1) / (MAX_TREND_POINTS - 1))));
+    /** 逐点更新区段最大越界，偏差相同时保留最早的实测时间。 */
+    private void recordPeak(IotProcessDeviationDTO.DeviationEpisode episode,
+                            IotProcessDeviationDTO.Sample sample, BigDecimal lower, BigDecimal upper) {
+        BigDecimal value = sample.getNumericValue();
+        BigDecimal distance = excess(value, lower, upper);
+        if (episode.getPeakExcess() == null || distance.compareTo(episode.getPeakExcess()) > 0) {
+            episode.setPeakValue(value)
+                    .setPeakTime(sample.getCollectTime())
+                    .setPeakExcess(distance)
+                    .setPeakSide(lower != null && value.compareTo(lower) < 0 ? "LOW" : "HIGH");
         }
-        return result;
+    }
+
+    /** 趋势摘要保留首尾及每组的最低、最高和一个无效点。指标与区段明细始终用分组前的采样计算。 */
+    private List<IotProcessDeviationDTO.Sample> thin(List<IotProcessDeviationDTO.Sample> samples) {
+        int size = samples.size();
+        if (size <= MAX_TREND_POINTS) {
+            return samples;
+        }
+        int groups = (MAX_TREND_POINTS - 2) / 3;
+        Set<Integer> selected = new TreeSet<>();
+        selected.add(0);
+        selected.add(size - 1);
+        for (int group = 0; group < groups; group++) {
+            int start = group * size / groups;
+            int end = (group + 1) * size / groups;
+            int lowest = -1;
+            int highest = -1;
+            int invalid = -1;
+            for (int i = start; i < end; i++) {
+                BigDecimal value = samples.get(i).getNumericValue();
+                if (value == null) {
+                    if (invalid < 0) {
+                        invalid = i;
+                    }
+                    continue;
+                }
+                if (lowest < 0 || value.compareTo(samples.get(lowest).getNumericValue()) < 0) {
+                    lowest = i;
+                }
+                if (highest < 0 || value.compareTo(samples.get(highest).getNumericValue()) >= 0) {
+                    highest = i;
+                }
+            }
+            if (lowest >= 0) {
+                selected.add(lowest);
+                selected.add(highest);
+            }
+            if (invalid >= 0) {
+                selected.add(invalid);
+            }
+        }
+        return selected.stream().map(samples::get).toList();
     }
 
     private String fingerprint(String scopeFingerprint, IotAlarmEpisode alarm,

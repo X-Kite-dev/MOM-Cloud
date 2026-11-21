@@ -4,7 +4,6 @@ package com.kitex.mom.mes.service.impl;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.collection.CollectionUtil;
-import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.util.ObjUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
@@ -25,7 +24,6 @@ import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
-import com.kitex.mom.mdm.entity.MdmClassesEntity;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteBomService;
 import com.kitex.mom.mdm.feign.RemoteClassesService;
@@ -36,6 +34,7 @@ import com.kitex.mom.mes.entity.*;
 import com.kitex.mom.mes.enums.*;
 import com.kitex.mom.mes.mapper.*;
 import com.kitex.mom.mes.service.*;
+import com.kitex.mom.mes.support.MesPatrolInterval;
 import com.kitex.mom.mes.vo.MesTaskReportOmsVO;
 import com.kitex.mom.oms.dto.OmsOrderLifeCycleDTO;
 import com.kitex.mom.oms.enums.OrderLongStateEnum;
@@ -1637,6 +1636,9 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
 				? JSONUtil.toList(mesTask.getProcessRouteSnapshot(), MdmProcessRouteWorkingDTO.class)
 				: engineeringPackages.executionRoutes(engineering);
 		normalizeRouteGraph(routeList);
+		if (engineering != null) {
+			verifyInspectionConfiguration(mesTask, routeList);
+		}
 		// 新正式返工在QMS派发时已经用原实际工序锁定稳定节点，可冻结单节点执行合同；
 		// 升级前没有节点身份的历史返工继续沿原合同，不能在下达时借当前MDM补造节点。
 		boolean freezeExecutionGraph = !"REWORK".equals(mesTask.getResourceType())
@@ -1786,6 +1788,8 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
 				saveTask.setWrapCode(mesTask.getWrapCode());
 				saveTask.setReportType(mesTask.getType());
 				saveTask.setIsInspection(route.getIsInspection());
+				// 首检登记在同一事务读取此对象。SQL 注入的 tenant_id 不会回填实体。
+				saveTask.setTenantId(mesTask.getTenantId());
 				saveTask.setFactoryCode(mesTask.getFactoryCode());
 				saveTaskList.add(saveTask);
 			});
@@ -1816,12 +1820,11 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
 		}
 		mesTask.setStatus(MesTaskStatusEnum.ISSUE.name());
 
+		// 先保存质量排程，再向计划回执下达，避免本地排程失败时计划已推进。
+		genInspectionTask(saveTaskList, mesTask.getMatCode());
 		if (StrUtil.isNotEmpty(mesTask.getPlanNo())) {
 			planMesStatusUpdate(mesTask);
 		}
-
-		// 生成质检任务
-		genInspectionTask(saveTaskList, mesTask.getMatCode());
 	}
 
     /**
@@ -2007,14 +2010,88 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
     }
 
     /**
+     * 在正式工单产生工序和计划回执前，核对需检节点能在当前组织取得规则和已发布标准。
+     * 这里只验证下达条件，实际检验依据仍由 QMS 按原请求建立。
+     *
+     * @param task 已锁定的草稿工单
+     * @param routes 从该工单绑定的工程原版提取的路线节点
+     */
+    private void verifyInspectionConfiguration(MesTaskEntity task, List<MdmProcessRouteWorkingDTO> routes) {
+        if (routes.stream().noneMatch(route -> "1".equals(route.getIsInspection()))) {
+            return;
+        }
+        MesQualityGateSourceEvidence.scope();
+        MesInspectionRuleEntity rule = inspectionRuleService.getRuleByMatCode(task.getMatCode());
+        if (rule == null || !Objects.equals(rule.getTenantId(), task.getTenantId())
+                || !Objects.equals(rule.getFactoryCode(), task.getFactoryCode())
+                || !"1".equals(rule.getStatus()) || StrUtil.isBlank(rule.getCode())
+                || StrUtil.isBlank(rule.getGateMode()) || StrUtil.isBlank(rule.getInspectionTypes())) {
+            throw new CheckedException("产品【" + task.getMatCode() + "】有需检工序，请先在当前工厂配置并启用质检任务生成规则");
+        }
+        QualityGateModeEnum.fromCode(rule.getGateMode());
+        if (Arrays.stream(rule.getInspectionTypes().split(",", -1)).map(String::trim)
+                .anyMatch(stage -> Arrays.stream(ProcedureLabelTypeEnum.values())
+                        .noneMatch(type -> matchesInspectionType(stage, type)))) {
+            throw new CheckedException("产品【" + task.getMatCode() + "】的质检规则包含无效检验阶段，请核对后再下达");
+        }
+        if (containsInspectionType(rule, ProcedureLabelTypeEnum.MIDDLE)) {
+            if (!containsInspectionType(rule, ProcedureLabelTypeEnum.FIRST)) {
+                throw new CheckedException("产品【" + task.getMatCode() + "】的中检需要首检，请核对质检规则");
+            }
+            MesPatrolInterval.validate(rule);
+        }
+        R<QmsQualityStandardEntity> response;
+        try {
+            response = remoteQualityStandardService.getRandomStandard(new QmsQualityStandardEntity()
+                    .setMatCode(task.getMatCode()).setInspectionType(InspectionTaskTypeEnum.PROCEDURE.name()));
+        } catch (RuntimeException failure) {
+            throw new CheckedException("暂时无法核对 QMS 工序质检标准，请稍后重试下达", failure);
+        }
+        if (response == null || response.getCode() != 0) {
+            throw new CheckedException("暂时无法核对 QMS 工序质检标准，请稍后重试下达");
+        }
+        QmsQualityStandardEntity standard = response.getData();
+        if (standard == null || standard.getId() == null || standard.getId() <= 0
+                || !Integer.valueOf(1).equals(standard.getPublished())
+                || !Objects.equals(standard.getTenantId(), task.getTenantId())
+                || !Objects.equals(standard.getFactoryCode(), task.getFactoryCode())
+                || !Objects.equals(standard.getMatCode(), task.getMatCode())
+                || !InspectionTaskTypeEnum.PROCEDURE.name().equals(standard.getInspectionType())) {
+            throw new CheckedException("产品【" + task.getMatCode() + "】缺少当前工厂已发布的工序质检标准，请先在 QMS 发布");
+        }
+    }
+
+    /**
      * 生成质检任务
      *
      * @param saveTaskList 生产任务列表
      * @param matCode      物料编码
      */
     private void genInspectionTask(List<MesProduceTaskEntity> saveTaskList, String matCode) {
-        // 根据物料查询质检任务生成规则
+        if (saveTaskList.stream().noneMatch(task -> "1".equals(task.getIsInspection()))) {
+            return;
+        }
         MesInspectionRuleEntity inspectionRule = inspectionRuleService.getRuleByMatCode(matCode);
+        LocalDateTime generatedAt = LocalDateTime.now();
+        // 同张工单的需检节点使用同一排程基准，并在登记任何首检原命令前核对班次。
+        boolean patrol = containsInspectionType(inspectionRule, ProcedureLabelTypeEnum.FIRST)
+                && containsInspectionType(inspectionRule, ProcedureLabelTypeEnum.MIDDLE);
+        LocalDateTime nextPatrolTime = null;
+        String nextPatrolShift = null;
+        if (patrol) {
+            MesPatrolInterval.validate(inspectionRule);
+            if ("HOUR".equals(inspectionRule.getMethod())) {
+                nextPatrolTime = MesPatrolInterval.nextTime(generatedAt, inspectionRule.getNum());
+            } else {
+                int count = MesPatrolInterval.shiftCount(inspectionRule.getNum());
+                var shift = MesPatrolInterval.nextShift(remoteClassesService.getClassesBydate(
+                        RemoteClassesService.RULE_DATE_TIME_FORMAT.format(generatedAt), count), count, null);
+                nextPatrolShift = shift.code();
+                nextPatrolTime = shift.startsAt();
+            }
+        }
+        LocalDateTime scheduledTime = nextPatrolTime;
+        String scheduledShift = nextPatrolShift;
         List<MesInspectionGenRecordEntity> recordList = new ArrayList<>();
         List<MesInspectionGenRecordEntity> delivery = new ArrayList<>();
         // 生成质检任务
@@ -2028,7 +2105,8 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                                         inspectionRule, ProcedureLabelTypeEnum.FIRST)) {
                             String sourceRequestId = "MES_QMS_V2:" + task.getCode() + ":FIRST";
                             boolean prepared = false;
-                            String msg = "等待工单提交后生成首检";
+                            String remark = "等待工单提交后生成首检";
+                            String syncMessage = remark;
                             try {
                                 QmsQualityStandardEntity standard =
                                         remoteQualityStandardService
@@ -2058,7 +2136,8 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                                 qmsInspectionCommands.register(createParam, task.getFactoryCode());
                                 prepared = true;
                             } catch (Exception exception) {
-                                msg = "生成质检任务失败：" + rootMessage(exception);
+                                remark = "首检任务准备失败，请核对原号和质检配置";
+                                syncMessage = rootMessage(exception);
                             }
                             MesInspectionGenRecordEntity record =
                                     new MesInspectionGenRecordEntity();
@@ -2069,45 +2148,25 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
                             record.setRuleName(inspectionRule.getName());
                             record.setInspectionType(ProcedureLabelTypeEnum.FIRST.name());
                             record.setGenFlag("0");
-                            record.setGenRemark(msg);
+                            record.setGenRemark(remark);
                             record.setGateStatus(
                                     prepared
                                             ? QualityGateStatusEnum.PENDING.name()
                                             : QualityGateStatusEnum.ERROR.name());
-                            record.setSyncMessage(msg);
+                            record.setSyncMessage(syncMessage);
                             record.setBlockedCount(0);
-                            record.setGenTime(LocalDateTime.now());
+                            record.setGenTime(generatedAt);
                             try {
                                 record.setGenShiftCode(
                                         remoteClassesService
-                                                .getRuleBanci(LocalDateTime.now())
+                                                .getRuleBanci(generatedAt)
                                                 .getData());
                             } catch (Exception exception) {
-                                record.setSyncMessage(msg + "；班次读取失败：" + rootMessage(exception));
+                                record.setSyncMessage(StrUtil.subPre(
+                                        syncMessage + "；班次读取失败：" + rootMessage(exception), 1000));
                             }
-                            if (containsInspectionType(
-                                    inspectionRule, ProcedureLabelTypeEnum.MIDDLE)) {
-                                if ("HOUR".equals(inspectionRule.getMethod())) {
-                                    record.setGenTime(LocalDateTime.now());
-                                    record.setNextTime(
-                                            calculateNextTime(
-                                                    LocalDateTime.now(), inspectionRule.getNum()));
-                                } else {
-                                    // 获取下一班次
-                                    List<MdmClassesEntity> banciList =
-                                            remoteClassesService
-                                                    .getClassesBydate(
-                                                            DateUtil.formatDateTime(new Date()), 2)
-                                                    .getData();
-                                    if (CollUtil.isEmpty(banciList) || banciList.size() < 2) {
-                                        record.setGenFlag("0");
-                                        record.setGateStatus(QualityGateStatusEnum.ERROR.name());
-                                        record.setGenRemark("中检班次计划生成失败：未找到下一班次");
-                                    } else {
-                                        record.setNextShift(banciList.get(1).getShiftCode());
-                                    }
-                                }
-                            }
+                            record.setNextTime(scheduledTime);
+                            record.setNextShift(scheduledShift);
                             record.setFactoryCode(task.getFactoryCode());
                             record.setTenantId(task.getTenantId());
                             record.setDelFlag("0");
@@ -2145,20 +2204,6 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         if (statusUpdate == null || !statusUpdate) {
             throw new CheckedException(String.format("%s的工单推送生产计划模块失败", mesTask.getCode()));
         }
-    }
-
-    /**
-     * 计算下次生成时间
-     *
-     * @param currentTime   当前时间
-     * @param intervalHours 间隔小时数
-     * @return 下次生成时间
-     */
-    private LocalDateTime calculateNextTime(LocalDateTime currentTime, BigDecimal intervalHours) {
-        if (currentTime == null || intervalHours == null) {
-            return currentTime;
-        }
-        return currentTime.plusHours(intervalHours.longValue());
     }
 
 	/**
@@ -2415,11 +2460,13 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
             throw new CheckedException("预览入库数量大于工单待入库数量");
         }
         List<InboundReportAllocation> allocations = allocateInboundReports(task, command.getInWmsNum(), false);
+        String reportUnit = inboundReportUnit(task, allocations);
         List<MesTaskInWmsSourceDTO.Line> lines = allocations.stream()
                 .map(this::toInWmsSourceLine).toList();
         String evidence = inWmsAllocationFingerprint(task, command.getInWmsNum(), allocations);
         return new MesTaskInWmsSourceDTO().setTaskId(task.getId()).setTaskCode(task.getCode())
-                .setRequestQuantity(command.getInWmsNum()).setCurrentInStockQuantity(task.getInStockNum())
+                .setRequestQuantity(command.getInWmsNum()).setReportUnit(reportUnit)
+                .setCurrentInStockQuantity(task.getInStockNum())
                 .setCurrentTrackedQuantity(Objects.requireNonNullElse(task.getInStockNum(), BigDecimal.ZERO))
                 .setEvidenceFingerprint(evidence).setLines(lines);
     }
@@ -2498,6 +2545,37 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         return result;
     }
 
+    /**
+     * 核对本次实际分配的末序报工单位，预览与发送入库通知使用同一判定。
+     * 原报工缺单位、混用单位或与当前工厂库存记账单位冲突时，保留原数量并要求核实。
+     */
+    private String inboundReportUnit(MesTaskEntity task, List<InboundReportAllocation> allocations) {
+        String unit = null;
+        for (InboundReportAllocation allocation : allocations) {
+            MesTaskReportEntity report = allocation.report();
+            if (StrUtil.isNotBlank(report.getMatCode()) && !Objects.equals(task.getMatCode(), report.getMatCode())) {
+                throw new CheckedException("末序报工 " + report.getId() + " 的产出物料与工单不一致，请核对原报工");
+            }
+            if (StrUtil.isBlank(report.getReportUnit())
+                    || (unit != null && !unit.equals(report.getReportUnit()))) {
+                throw new CheckedException("末序报工 " + report.getId() + " 缺少单位或与本次其他来源单位不一致，请核对原报工");
+            }
+            unit = report.getReportUnit();
+        }
+        var response = matService.getDetails(task.getMatCode());
+        MdmMaterialEntity material = response == null ? null : response.getData();
+        if (response == null || !response.isOk() || material == null
+                || !Objects.equals(task.getTenantId(), material.getTenantId())
+                || !Objects.equals(task.getFactoryCode(), material.getFactoryCode())
+                || !Objects.equals(task.getMatCode(), material.getMaterialCode())) {
+            throw new CheckedException("未取得工单所属工厂的产出物料，请核对物料档案");
+        }
+        if (unit == null || !unit.equals(material.getBasicUnit())) {
+            throw new CheckedException("工单 " + task.getCode() + " 的原报工单位与物料基本单位不一致，请核实后入库");
+        }
+        return unit;
+    }
+
     private String inWmsReportSourceFingerprint(MesTaskReportEntity report) {
         return sha256(String.join("|", String.valueOf(report.getId()), Objects.toString(report.getRequestId(), ""),
                 Objects.toString(report.getStatus(), ""), Objects.toString(report.getTaskCode(), ""),
@@ -2569,9 +2647,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
      */
     private void wmsProductInNotice(MesTaskEntity task, MesTaskInWmsDTO mesTaskInWmsDTO,
                                     List<InboundReportAllocation> reportAllocations) {
-        // 查询主数据物料信息
-        MdmMaterialEntity mat = Optional.ofNullable(matService.getDetails(task.getMatCode()).getData())
-                .orElseThrow(() -> new CheckedException("物料信息查询失败"));
+        String reportUnit = inboundReportUnit(task, reportAllocations);
         // 主表处理逻辑
         double inNum = exactWmsInboundQuantity(mesTaskInWmsDTO.getInWmsNum());
         WmsInNoticeEntity inNotice = new WmsInNoticeEntity();
@@ -2595,7 +2671,7 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
         inNoticeDetail.setMatCode(task.getMatCode());
         inNoticeDetail.setMatName(task.getMatName());
         inNoticeDetail.setMatSpec(task.getMatSpec());
-        inNoticeDetail.setMatUnit(mat.getBasicUnit());
+        inNoticeDetail.setMatUnit(reportUnit);
         inNoticeDetail.setWarehouseCode(mesTaskInWmsDTO.getWarehouseCode());
         inNoticeDetail.setWarehouseName(mesTaskInWmsDTO.getWarehouseName());
         inNoticeDetail.setNoticeInNum(inNum);
@@ -2883,8 +2959,12 @@ public class MesTaskServiceImpl extends ServiceImpl<MesTaskMapper, MesTaskEntity
             return false;
         }
         return Arrays.stream(rule.getInspectionTypes().split(","))
-                .map(String::trim).anyMatch(value -> type.name().equalsIgnoreCase(value)
-                        || type.getName().equals(value));
+                .map(String::trim).anyMatch(value -> matchesInspectionType(value, type));
+    }
+
+    /** 兼容按枚举码和按中文阶段名称存储的质检规则。 */
+    private boolean matchesInspectionType(String value, ProcedureLabelTypeEnum type) {
+        return type.name().equalsIgnoreCase(value) || type.getName().equals(value);
     }
 
     private String rootMessage(Exception exception) {

@@ -1,5 +1,7 @@
 package com.kitex.mom.pms.agent.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -83,8 +85,15 @@ public final class PmsProcurementRiskDTO {
     @Data
     @Accessors(chain = true)
     public static class RiskLine {
+        /** 所属采购订单主键，跨端精确定位原单。 */
+        @JsonSerialize(using = ToStringSerializer.class)
         private Long orderId;
+        /** 原采购订单行主键。同物料重复下单时分别办理承诺。 */
+        @JsonSerialize(using = ToStringSerializer.class)
         private Long orderDetailId;
+        /** 原订单行上的采购计划号。未关联计划的采购行仍可按行主键办理。 */
+        @Schema(description = "原采购计划号")
+        private String purchasePlanNo;
         private String orderNo;
         private String orderStatus;
         private String supplierCode;

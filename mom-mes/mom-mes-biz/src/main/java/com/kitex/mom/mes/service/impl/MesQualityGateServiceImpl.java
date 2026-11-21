@@ -21,6 +21,7 @@ import com.kitex.mom.mes.mapper.MesChangePointHandleMapper;
 import com.kitex.mom.mes.service.MesInspectionGenRecordService;
 import com.kitex.mom.mes.service.MesInspectionRuleService;
 import com.kitex.mom.mes.service.MesQualityGateService;
+import com.kitex.mom.mes.support.MesPatrolInterval;
 import com.kitex.mom.qms.api.feign.RemoteProcedureService;
 import com.kitex.mom.qms.api.feign.RemoteQualityStandardService;
 import com.kitex.mom.qms.dto.inspection.InspectionProcedureCreateParam;
@@ -571,6 +572,14 @@ public class MesQualityGateServiceImpl implements MesQualityGateService {
             if (requiredTypes.contains("LAST")) problems.add("末检任务未生成");
             decision.getItems().add(missingEvidence(produceTask, "LAST", "末检任务未生成"));
         }
+        if (requiredTypes.contains(ProcedureLabelTypeEnum.MIDDLE.name())) {
+            String waiting = pendingPatrol(involved, LocalDateTime.now(), context.localOnly());
+            if (waiting != null) {
+                evidenceProblems.add(waiting);
+                problems.add(waiting);
+                decision.getItems().add(missingEvidence(produceTask, ProcedureLabelTypeEnum.MIDDLE.name(), waiting));
+            }
+        }
 
         Map<Long, QmsInspectionProcedureTaskEntity> qmsTasks =
                 loadQmsTasks(involved, evidenceProblems, context);
@@ -608,6 +617,46 @@ public class MesQualityGateServiceImpl implements MesQualityGateService {
         if (!problems.isEmpty() && mode == QualityGateModeEnum.WARN)
             message = "质量门预警（不阻断）：" + String.join("；", problems);
         return decision.setAllowed(allowed).setPassed(passed).setMessage(message);
+    }
+
+    /**
+     * 到期排程在生成记录落库前也属于待检。正式事件处理只使用已保存的时刻，
+     * 只有班次编码的旧排程在无法离线核对当天开始时间时暂缓放行。
+     */
+    private String pendingPatrol(List<MesInspectionGenRecordEntity> records, LocalDateTime observedAt, boolean localOnly) {
+        var generated = records.stream()
+                .filter(record -> ProcedureLabelTypeEnum.MIDDLE.name().equals(normalizeType(record.getInspectionType())))
+                .map(MesInspectionGenRecordEntity::getSourceRequestId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        for (var record : records) {
+            var due = record.getNextTime();
+            String shift = record.getNextShift();
+            if ((due == null && StrUtil.isBlank(shift)) || generated.contains(MesPatrolInterval.requestId(record))) {
+                continue;
+            }
+            if (due == null) {
+                try {
+                    var day = MesPatrolInterval.shiftDate(shift);
+                    if (day.isAfter(observedAt.toLocalDate())) {
+                        continue;
+                    }
+                    if (day.isBefore(observedAt.toLocalDate())) {
+                        return "中检已到期，等待生成检验任务";
+                    }
+                    if (localOnly) {
+                        return "原中检班次开始时刻待核对";
+                    }
+                    due = MesPatrolInterval.originalShift(remoteClassesService.getClassesByCode(shift, 1), shift).startsAt();
+                } catch (RuntimeException failure) {
+                    return "中检排程暂无法核对";
+                }
+            }
+            if (!due.isAfter(observedAt)) {
+                return "中检已到期，等待生成检验任务";
+            }
+        }
+        return null;
     }
 
     private Map<Long, QmsInspectionProcedureTaskEntity> loadQmsTasks(
@@ -968,8 +1017,9 @@ public class MesQualityGateServiceImpl implements MesQualityGateService {
                     labelType,
                     exception);
             String message = rootMessage(exception);
+            // 生成备注限 255 字符。远端异常摘要保存在独立同步字段和永久命令账。
             record.setGenFlag("0")
-                    .setGenRemark(typeLabel(labelType) + "任务生成失败：" + message)
+                    .setGenRemark(typeLabel(labelType) + "任务生成失败，请沿原号核对")
                     .setGateStatus(QualityGateStatusEnum.ERROR.name())
                     .setSyncMessage(message);
         }

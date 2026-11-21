@@ -141,9 +141,11 @@ public class MesTaskReportVO {
     @Schema(description = "自动工位人工接管原因；手工报工自动工位时必填", maxLength = 500)
     private String manualOverrideReason;
 
+    /** 原系统事件号。人工入口只读，设备处理器从已接收事件赋值。 */
     @Schema(hidden = true)
     private String sourceEventId;
 
+    /** 原系统记录的发生时刻。人工入口只读，与 MES 登记时刻分别留存。 */
     @Schema(hidden = true)
     private LocalDateTime sourceEventTime;
 

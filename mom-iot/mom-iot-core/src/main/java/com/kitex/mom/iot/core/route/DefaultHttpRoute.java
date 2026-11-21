@@ -77,7 +77,7 @@ class DefaultHttpRoute implements HttpRoute {
         }
 
         public String toString() {
-            return "DefaultHttpRoute.DefaultHttpRouteBuilder(group=" + this.group + ", method=" + java.util.Arrays.deepToString(this.method) + ", contentType=" + java.util.Arrays.deepToString(this.contentType) + ", address=" + this.address + ", description=" + this.description + ", example=" + this.example + ")";
+            return "DefaultHttpRoute.DefaultHttpRouteBuilder(group=" + this.group + ", method=" + java.util.Arrays.deepToString(this.method) + ", contentType=" + java.util.Arrays.deepToString(this.contentType) + ", address="service.example.invalid", description=" + this.description + ", example=" + this.example + ")";
         }
     }
 }

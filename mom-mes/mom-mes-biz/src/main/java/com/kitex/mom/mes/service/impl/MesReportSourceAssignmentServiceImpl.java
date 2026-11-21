@@ -328,6 +328,11 @@ public class MesReportSourceAssignmentServiceImpl
                                     ? null : report.getSourceEventTime().toString()))))
                     .setOriginalQuantity(decimal(report.getReportNum())).setEffectiveQuantity(decimal(effective(report)))
                     .setStatus(report.getStatus()).setAllocations(List.of());
+            // 仅带原事件的集成报工需要额外时钟依据，保留其他来源已发出的核定预览正文。
+            if ("API".equals(report.getType()) && StrUtil.isNotBlank(report.getSourceEventId())
+                    && report.getCreateTime() != null) {
+                current.setRegisteredAt(report.getCreateTime().toString());
+            }
             view.getReports().add(current);
             if ("REVERSED".equals(report.getStatus())) {
                 current.setAssignmentState("REVERSED");

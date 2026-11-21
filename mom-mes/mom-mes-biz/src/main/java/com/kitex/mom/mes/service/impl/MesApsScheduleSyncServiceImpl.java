@@ -316,10 +316,18 @@ public class MesApsScheduleSyncServiceImpl implements MesApsScheduleSyncService 
     }
 
     private MesApsLocalScheduleDTO.StateBundle toBundle(Facts facts) {
-        Map<String, List<MesTaskArrangeEntity>> byProduce = facts.arrangements.stream()
+        return new MesApsLocalScheduleDTO.StateBundle().setPlanNo(facts.planNo).setFactoryCode(facts.factoryCode)
+                .setMesTaskPresent(!facts.tasks.isEmpty()).setOperations(operationStates(facts.produceTasks, facts.arrangements))
+                .setExecutionFingerprint(fingerprint(facts));
+    }
+
+    /** 局部重排和正式回评共用原工序与派工状态，两份输入都由调用方限定到实际工单。 */
+    static List<MesApsLocalScheduleDTO.OperationState> operationStates(List<MesProduceTaskEntity> operations,
+                                                                      List<MesTaskArrangeEntity> arrangements) {
+        Map<String, List<MesTaskArrangeEntity>> byProduce = arrangements.stream()
                 .filter(item -> StrUtil.isNotBlank(item.getProduceTaskCode()))
                 .collect(Collectors.groupingBy(MesTaskArrangeEntity::getProduceTaskCode));
-        List<MesApsLocalScheduleDTO.OperationState> states = facts.produceTasks.stream().map(item -> {
+        return operations.stream().map(item -> {
             String reason = blockedReason(item, byProduce.getOrDefault(item.getCode(), List.of()));
             return new MesApsLocalScheduleDTO.OperationState().setProduceTaskId(item.getId())
                     .setProduceTaskCode(item.getCode()).setTaskCode(item.getTaskCode())
@@ -331,20 +339,20 @@ public class MesApsScheduleSyncServiceImpl implements MesApsScheduleSyncService 
                     .setCompleteQuantity(item.getCompleteNum()).setPlannedStartTime(item.getPlannedStartTime())
                     .setPlannedEndTime(item.getPlannedEndTime()).setMovable(reason == null).setBlockedReason(reason);
         }).toList();
-        return new MesApsLocalScheduleDTO.StateBundle().setPlanNo(facts.planNo).setFactoryCode(facts.factoryCode)
-                .setMesTaskPresent(!facts.tasks.isEmpty()).setOperations(states)
-                .setExecutionFingerprint(fingerprint(facts));
     }
 
-    private String blockedReason(MesProduceTaskEntity produce, List<MesTaskArrangeEntity> arrangements) {
-        if (!MOVABLE_STATUSES.contains(produce.getStatus()))
+    private static String blockedReason(MesProduceTaskEntity produce, List<MesTaskArrangeEntity> arrangements) {
+        if (produce.getStatus() == null || !MOVABLE_STATUSES.contains(produce.getStatus())) {
             return "状态为" + produce.getStatus() + "，已进入执行链路，禁止重排";
-        if (produce.getStartTime() != null || produce.getFinishTime() != null || positive(produce.getCompleteNum()))
+        }
+        if (produce.getStartTime() != null || produce.getFinishTime() != null || positive(produce.getCompleteNum())) {
             return "已有实际开完工或报工数量，禁止重排";
+        }
         for (MesTaskArrangeEntity item : arrangements) {
-            if (!MOVABLE_STATUSES.contains(item.getStatus()) || item.getStartTime() != null
-                    || item.getFinishTime() != null || positive(item.getCompleteNum()))
+            if (item.getStatus() == null || !MOVABLE_STATUSES.contains(item.getStatus()) || item.getStartTime() != null
+                    || item.getFinishTime() != null || positive(item.getCompleteNum())) {
                 return "已有派工被接收、开工或报工，禁止重排";
+            }
         }
         return null;
     }
@@ -456,7 +464,7 @@ public class MesApsScheduleSyncServiceImpl implements MesApsScheduleSyncService 
                 .setAfterExecutionFingerprint(entity.getAfterExecutionFingerprint()).setAppliedTime(entity.getAppliedTime());
     }
 
-    private boolean positive(BigDecimal value) {
+    private static boolean positive(BigDecimal value) {
         return value != null && value.compareTo(BigDecimal.ZERO) > 0;
     }
 

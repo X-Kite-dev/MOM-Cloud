@@ -115,7 +115,9 @@ public abstract class AbstractProcessOperation implements ProcessOperation {
 				.setDeviceGateStateName(vo.getDeviceGateStateName())
 				.setDeviceGateMessage(vo.getDeviceGateMessage())
 				.setDeviceGateCheckTime(vo.getDeviceGateCheckTime())
-				.setReportTime(vo.getSourceEventTime() == null ? LocalDateTime.now() : vo.getSourceEventTime())
+				// 设备走已核原事件时刻；集成方声明的发生时刻单独留存，登记时刻由 MES 给出。
+				.setReportTime("AUTO".equals(vo.getType()) && vo.getSourceEventTime() != null
+						? vo.getSourceEventTime() : LocalDateTime.now())
 				.setWorkerCode(workerCode)
 				.setWorkerName(workerName)
 				.setDeviceCode(vo.getDeviceCode())

@@ -77,6 +77,9 @@ public final class MesReportSourceAssignmentDTO {
         private String reportId;
         @Schema(description = "原报工记录时间ISO文本，设备时刻与服务端登记时刻需另核对通道")
         private String reportTime;
+        /** MES 写入报工主记录的审计时刻，供核对集成报工的实际登记时间。 */
+        @Schema(description = "MES 服务端建账时刻的 ISO 文本，旧记录可能为空")
+        private String registeredAt;
         @Schema(description = "原报工永久请求号，供同一只读快照核对弱网受理账")
         private String requestId;
         @Schema(description = "原报工冻结的MANUAL/AUTO/API通道")
@@ -87,9 +90,9 @@ public final class MesReportSourceAssignmentDTO {
         private String reportMode;
         @Schema(description = "原报工冻结单位，不从物料名称猜测")
         private String reportUnit;
-        @Schema(description = "设备事件原编号；不以报工接收号冒充设备事实")
+        @Schema(description = "设备或集成来源系统的原事件号")
         private String sourceEventId;
-        @Schema(description = "设备事件原时刻ISO文本，保留数据库亚秒精度")
+        @Schema(description = "来源系统记录的事件时刻 ISO 文本，设备与集成通道分别核验")
         private String sourceEventTime;
         @Schema(description = "原来源核定使用的报工事实指纹；保持旧持久化算法兼容")
         private String reportFingerprint;

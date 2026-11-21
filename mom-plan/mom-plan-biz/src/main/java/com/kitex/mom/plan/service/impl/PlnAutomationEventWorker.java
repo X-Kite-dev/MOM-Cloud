@@ -132,7 +132,7 @@ public class PlnAutomationEventWorker {
                 "PROCESSING",
                 "SUCCEEDED",
                 attempt,
-                result.summary);
+                result.operationContent);
         return true;
     }
 
@@ -509,15 +509,12 @@ public class PlnAutomationEventWorker {
                     "当前受影响MPS需求桶尚无正式锁定排程，承诺事实已收件但无需生成局部重排候选");
         }
         PlanShortageLocalReplanDTO.Scenario first = proposals.get(0);
-        String caseNos = proposals.stream().map(item -> item.getScenario().getScenarioNo())
-                .filter(Objects::nonNull).limit(20).collect(Collectors.joining(","));
-        return new HandlerResult(
-                proposals.size() == 1
-                        ? "SHORTAGE_REPLAN_SCENARIO"
-                        : "SHORTAGE_REPLAN_SCENARIO_BATCH",
-                first.getScenario().getId(),
-                first.getScenario().getScenarioNo(),
-                "已按PLAN当前MRP生成" + proposals.size() + "个缺料情景、每个3个候选（" + caseNos + "），需先选择再A3发布");
+        List<Long> ids = proposals.stream().map(item -> item.getScenario().getId()).toList();
+        String summary = "已生成" + proposals.size() + "组缺料重排候选，等待计划员比较方案";
+        // 收件头保存首组，成功履历在同一事务保存其余组的确切主键。最多 49 个附加主键。
+        return new HandlerResult(ids.size() == 1 ? "SHORTAGE_REPLAN_SCENARIO" : "SHORTAGE_REPLAN_SCENARIO_BATCH",
+                ids.get(0), first.getScenario().getScenarioNo(), summary,
+                ids.size() == 1 ? summary : PurchaseReplanTargets.encode(ids));
     }
 
     /**
@@ -653,9 +650,12 @@ public class PlnAutomationEventWorker {
         }
     }
 
+    /** PMS 共用序列化器使用空格，其他生产者可发送 ISO 时间；保留精度并严格校验日期和时分。 */
     private LocalDateTime parseDateTime(String value, String field) {
         try {
-            return LocalDateTime.parse(value);
+            String iso = value.length() > 10 && value.charAt(10) == ' '
+                    ? value.substring(0, 10) + 'T' + value.substring(11) : value;
+            return LocalDateTime.parse(iso);
         } catch (Exception ex) {
             throw new NonRetryableEventException("事件时间格式不合法：" + field);
         }
@@ -708,7 +708,11 @@ public class PlnAutomationEventWorker {
                 "事件执行履历保存失败");
     }
 
-    private record HandlerResult(String targetType, Long targetId, String targetNo, String summary) {
+    private record HandlerResult(String targetType, Long targetId, String targetNo, String summary,
+                                 String operationContent) {
+        private HandlerResult(String type, Long id, String no, String summary) {
+            this(type, id, no, summary, summary);
+        }
     }
 
     public static class NonRetryableEventException extends RuntimeException {

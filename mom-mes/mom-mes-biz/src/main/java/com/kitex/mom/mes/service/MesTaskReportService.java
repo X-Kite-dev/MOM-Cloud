@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.kitex.mom.mes.dto.MesTaskReportFeedVO;
 import com.kitex.mom.mes.dto.MesTaskReportUnqualifiedVO;
 import com.kitex.mom.mes.dto.MesTaskReportVO;
+import com.kitex.mom.mes.entity.MesAutoReportRuleEntity;
 import com.kitex.mom.mes.entity.MesTaskReportEntity;
 
 /**
@@ -35,6 +36,14 @@ public interface MesTaskReportService extends IService<MesTaskReportEntity> {
      * 仅供受控设备事件处理器调用，不能由普通前端伪造AUTO类型。
      */
     void reportAuto(MesTaskReportVO params);
+
+    /**
+     * 在派工行锁内重验实际工位和设备规则，避免事件选单到记产之间发生工位变更。
+     *
+     * @param params 按原事件冻结的报工命令
+     * @param rule 事件处理器在同一事务中锁定的设备规则
+     */
+    void reportAuto(MesTaskReportVO params, MesAutoReportRuleEntity rule);
 
     /**
      * 生产报工-不合格品填报

@@ -27,10 +27,14 @@ public class MesMaterialListDTO extends MesMaterialListEntity {
     private List<MesMaterialListDetailDTO> materialDetails;
 
     /**
-     * 工单状态名称
+     * 用料清单状态名称
      */
-    @Schema(description = "工单状态名称")
+    @Schema(description = "用料清单状态名称")
     private String taskStatusName;
+
+    /** 原生产工单的执行状态，完成和关闭后的清单仅供查阅。 */
+    @Schema(description = "原生产工单执行状态")
+    private String productionStatus;
 
     /**
      * 工单计划开始时间

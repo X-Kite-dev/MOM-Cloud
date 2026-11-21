@@ -22,8 +22,10 @@ import com.kitex.mom.common.barcode.dto.req.PreviewObj;
 import com.kitex.mom.common.barcode.dto.req.PrintReq;
 import com.kitex.mom.mdm.dto.MdmMaterialMeasureDTO;
 import com.kitex.mom.mdm.dto.MdmMaterialWarningConfigDTO;
+import com.kitex.mom.mdm.entity.MdmMatUnitConversionEntity;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.entity.MdmMaterialGroupEntity;
+import com.kitex.mom.mdm.mapper.MdmMatUnitConversionMapper;
 import com.kitex.mom.mdm.mapper.MdmMaterialMapper;
 import com.kitex.mom.mdm.service.MdmMaterialGroupService;
 import com.kitex.mom.mdm.service.MdmMaterialMaintenanceValidator;
@@ -31,6 +33,7 @@ import com.kitex.mom.mdm.service.MdmMaterialService;
 import com.kitex.mom.mdm.util.FileUrlUtil;
 import com.kitex.mom.mdm.vo.excel.MdmMaterialExcelVO;
 import lombok.AllArgsConstructor;
+import org.postgresql.util.PSQLException;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.BeanWrapperImpl;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -39,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.BindingResult;
 
 import java.util.*;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
 
 /**
@@ -62,6 +66,10 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
 
     private final JdbcTemplate maintenanceJdbc;
 
+    private final MdmUnitMaintenanceLock unitLock;
+
+    private final MdmMatUnitConversionMapper conversions;
+
     /** {@inheritDoc} */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -77,7 +85,7 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
                 .eq(MdmMaterialEntity::getTenantId, material.getTenantId())
                 .eq(MdmMaterialEntity::getFactoryCode, material.getFactoryCode())
                 .eq(MdmMaterialEntity::getMaterialCode, material.getMaterialCode())) == 0, "当前工厂已存在该物料编码");
-        requireMaterial(super.save(material), "物料未保存");
+        requireMaterialWrite(() -> super.save(material), "物料未保存");
         return true;
     }
 
@@ -97,6 +105,10 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
         if (material.getGroupCode() != null && !Objects.equals(original.getGroupCode(), material.getGroupCode())) {
             validateMaintenanceGroup(material);
         }
+        if (material.getBasicUnit() != null && !Objects.equals(original.getBasicUnit(), material.getBasicUnit())) {
+            unitLock.acquire();
+            requireCompatibleConversions(original, material.getBasicUnit());
+        }
         // MyBatis既有更新忽略null；先合并原值，避免部分更新绕过库存上下限等关联校验。
         var incoming = new BeanWrapperImpl(material);
         String[] nullFields = Arrays.stream(incoming.getPropertyDescriptors())
@@ -106,8 +118,51 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
         requireMaterial(StrUtil.isNotBlank(original.getMaterialName()) && StrUtil.isNotBlank(original.getBasicUnit()),
                 "物料名称及基本单位不能为空");
         MdmMaterialMaintenanceValidator.validate(original);
-        requireMaterial(super.updateById(material), "物料未更新，请刷新后核对");
+        requireMaterialWrite(() -> super.updateById(material), "物料未更新，请刷新后核对");
         return true;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean deleteMaintained(List<Long> ids) {
+        requireMaterial(ids != null && !ids.isEmpty() && ids.stream().noneMatch(Objects::isNull),
+                "请选择要删除的物料");
+        lockMaintenanceScope();
+        unitLock.acquire();
+        List<Long> selected = ids.stream().distinct().sorted().toList();
+        var scope = new LambdaQueryWrapper<MdmMaterialEntity>()
+                .eq(MdmMaterialEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MdmMaterialEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
+                .in(MdmMaterialEntity::getId, selected);
+        List<MdmMaterialEntity> rows = list(scope.orderByAsc(MdmMaterialEntity::getId).last("FOR UPDATE"));
+        requireMaterial(rows.size() == selected.size(), "部分物料已删除或不属于当前工厂，请刷新列表");
+        for (MdmMaterialEntity row : rows) {
+            requireCompatibleConversions(row, null);
+        }
+        // 归属已经在本事务锁定，使用实体逻辑删除并沿用审计填充。
+        for (MdmMaterialEntity row : rows) {
+            requireMaterialWrite(() -> baseMapper.deleteById(row) == 1, "物料删除行数不一致，请刷新列表");
+        }
+        return true;
+    }
+
+    /**
+     * 更改基本单位时每条现有换算都必须仍指向新单位。删除时传 null，任一有效换算即阻止操作。
+     * 调用方持有组织换算锁，可在保留已有比例的情况下修正历史主档的错误单位。
+     */
+    private void requireCompatibleConversions(MdmMaterialEntity material, String newUnit) {
+        var query = new LambdaQueryWrapper<MdmMatUnitConversionEntity>()
+                .eq(MdmMatUnitConversionEntity::getTenantId, material.getTenantId())
+                .eq(MdmMatUnitConversionEntity::getFactoryCode, material.getFactoryCode())
+                .eq(MdmMatUnitConversionEntity::getMatCode, material.getMaterialCode());
+        if (newUnit != null) {
+            query.and(rule -> rule.ne(MdmMatUnitConversionEntity::getStandardUnit, newUnit)
+                    .or().isNull(MdmMatUnitConversionEntity::getStandardUnit)
+                    .or().eq(MdmMatUnitConversionEntity::getNonStandardUnit, newUnit));
+        }
+        requireMaterial(conversions.selectCount(query) == 0, "物料 " + material.getMaterialCode()
+                + (newUnit == null ? " 已有单位换算，不能删除" : " 的现有换算与新基本单位冲突，请核对单位换算"));
     }
 
     /** 新物料及变更分组须匹配当前工厂唯一启用分组，名称由真实来源还原。 */
@@ -140,6 +195,32 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
                 && (material.getFactoryCode() == null || factory.equals(material.getFactoryCode())), "物料组织与当前上下文不一致");
         material.setTenantId(tenant);
         material.setFactoryCode(factory);
+    }
+
+    /**
+     * 将计量和实物追溯守卫的拒绝原因返回物料维护端。保留原工单或库存行标识供核对，
+     * 同一批次的其他修改随事务回滚；其余数据库错误沿原异常处理链上报。
+     */
+    private static void requireMaterialWrite(BooleanSupplier write, String failureMessage) {
+        try {
+            requireMaterial(write.getAsBoolean(), failureMessage);
+        } catch (RuntimeException failure) {
+            for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+                if (cause instanceof PSQLException postgres) {
+                    var detail = postgres.getServerErrorMessage();
+                    if (detail != null && "23514".equals(postgres.getSQLState())
+                            && ("ck_mdm_material_unit_use_419".equals(detail.getConstraint())
+                                || "ck_mdm_material_trace_422".equals(detail.getConstraint()))) {
+                        throw new CheckedException(detail.getMessage(), failure);
+                    }
+                    if (detail != null && ("23503".equals(postgres.getSQLState()) || "23001".equals(postgres.getSQLState()))
+                            && "fk_mdm_material_trace_422".equals(detail.getConstraint())) {
+                        throw new CheckedException("已有拣货库存或待办入库单引用原物料版本，请刷新后核对", failure);
+                    }
+                }
+            }
+            throw failure;
+        }
     }
 
     private static void requireMaterial(boolean valid, String message) {
@@ -310,7 +391,7 @@ public class MdmMaterialServiceImpl extends ServiceImpl<MdmMaterialMapper, MdmMa
             return R.failed(errorMessageList);
         }
         requireMaterial(!insertList.isEmpty(), "导入内容不能为空");
-        requireMaterial(this.saveBatch(insertList), "物料导入未全部保存");
+        requireMaterialWrite(() -> this.saveBatch(insertList), "物料导入未全部保存");
         return R.ok(null, "物料导入成功");
     }
 

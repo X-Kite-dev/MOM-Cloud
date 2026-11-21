@@ -73,7 +73,8 @@ public class PlnApsA3ApprovalServiceImpl extends ServiceImpl<PlnApsA3ApprovalMap
         PlnApsCaseDTO apsCase = lockCase(caseId);
         PlnApsA3ApprovalEntity previous = latest(apsCase);
         if (previous != null && Objects.equals(previous.getSubmitRequestId(), command.getRequestId().trim())) {
-            require(Objects.equals(previous.getCaseFingerprint(), command.getExpectedCaseFingerprint())
+            require(Objects.equals(previous.getApplicantCode(), operator())
+                            && Objects.equals(previous.getCaseFingerprint(), command.getExpectedCaseFingerprint())
                             && Objects.equals(previous.getScenarioFingerprint(), command.getExpectedScenarioFingerprint())
                             && Objects.equals(previous.getSelectionFingerprint(), command.getExpectedSelectionFingerprint())
                             && Objects.equals(previous.getSubmitReason(), command.getReason().trim()),
@@ -93,12 +94,16 @@ public class PlnApsA3ApprovalServiceImpl extends ServiceImpl<PlnApsA3ApprovalMap
                         && Objects.equals(operator(), scenario.getSelectedBy()),
                 "A3送审必须由实际A2选案人发起");
         if (previous != null && ("PENDING".equals(previous.getStatus()) || "APPROVED".equals(previous.getStatus()))) {
-            require(!frozenChanged(previous, apsCase, evidence), "同一方案已有待审或已通过记录，请勿重复送审");
+            // 原请求号在上方幂等返回；只有冻结依据确实变化才可替换在审或已通过的记录。
+            require(frozenChanged(previous, apsCase, evidence), "同一方案已有待审或已通过记录，请勿重复送审");
             previous.setStatus("INVALIDATED");
-            previous.setDecisionReason("案件或候选证据变化后重新送审");
+            // 已批准的旧记录保留实际审核意见；待审失效时记录原因。
+            if (previous.getDecidedTime() == null) {
+                previous.setDecisionReason("案件或候选证据变化后重新送审");
+            }
             previous.setUpdateBy(operator());
             previous.setUpdateTime(LocalDateTime.now());
-            updateById(previous);
+            require(updateById(previous), "原A3审批失效留痕失败");
         }
         long id = IdUtil.getSnowflakeNextId();
         String applicant = operator();
@@ -137,7 +142,8 @@ public class PlnApsA3ApprovalServiceImpl extends ServiceImpl<PlnApsA3ApprovalMap
         require(approval != null && Objects.equals(String.valueOf(approval.getId()), command.getApprovalId()),
                 "A3审批记录已变化，请刷新工作台");
         if (Objects.equals(approval.getDecisionRequestId(), command.getRequestId().trim())) {
-            require(Objects.equals(approval.getStatus(), Boolean.TRUE.equals(command.getApproved()) ? "APPROVED" : "REJECTED")
+            require(Objects.equals(approval.getApproverCode(), operator())
+                            && Objects.equals(approval.getStatus(), Boolean.TRUE.equals(command.getApproved()) ? "APPROVED" : "REJECTED")
                             && Objects.equals(approval.getDecisionReason(), command.getReason().trim()),
                     "同一A3审核请求号已对应不同决定");
             return summary(approval);

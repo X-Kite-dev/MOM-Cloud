@@ -49,4 +49,14 @@ public class PlnApsDispatchController {
             @PathVariable Long caseId, @RequestBody PlnApsMesDispatchDTO.RetryCommand command) {
         return R.ok(dispatchService.retry(caseId, command == null ? null : command.getReason()));
     }
+
+    /** 按计划员确认的原单和轮次办理，工作器已推进时由服务端拒绝旧确认。 */
+    @PostMapping("/case/{caseId}/outbox/{outboxId}/retry")
+    @Operation(summary = "按原下达单和已核对的失败轮次重新入队")
+    @SysLog("按原单重试智能APS下达MES")
+    @PreAuthorize("@pms.hasPermission('plan_apsDispatch_retry')")
+    public R<PlnApsMesDispatchDTO.DispatchView> retryConfirmed(@PathVariable Long caseId,
+            @PathVariable Long outboxId, @RequestBody PlnApsMesDispatchDTO.ConfirmedRetryCommand command) {
+        return R.ok(dispatchService.retryConfirmed(caseId, outboxId, command));
+    }
 }

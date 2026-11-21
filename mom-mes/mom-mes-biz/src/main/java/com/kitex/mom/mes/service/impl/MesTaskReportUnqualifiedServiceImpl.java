@@ -52,6 +52,7 @@ public class MesTaskReportUnqualifiedServiceImpl
     private final MesProductionNgCaptureMapper inventoryCaptures;
     private final MesProcessTimingGuard processTimingGuard;
     private final MesReportNodeGate reportNodeGate;
+    private final MesTravelerQuantityService travelerQuantities;
 
     private static String searchValue(String value) {
         if (value == null || value.isBlank()) return null;
@@ -74,7 +75,11 @@ public class MesTaskReportUnqualifiedServiceImpl
                 && Objects.equals(factory, arrange.getFactoryCode())
                 && Objects.equals(TenantContextHolder.getTenantId(), arrange.getTenantId()), "只能采集当前工厂真实新不良来源");
         // 不良也是实际生产事实：不能借NG入口跳过原节点或逐标识前序；原号恢复在调用前处理。
-        reportNodeGate.validate(arrange, mode, report.getTransferCode(), false);
+        var node = reportNodeGate.validate(arrange, mode, report.getTransferCode(), false);
+        if (mode == ReportModeEnum.TRANSFER_CARD) {
+            travelerQuantities.requireAvailable(arrange, node.predecessors(), report.getTransferCode(),
+                    report.getUnqualifiedNum());
+        }
         // 仅新事实读取一次物料；历史回放和查询绝不从当前主数据补单位。
         var response = materials.productionMeasure(arrange.getMatCode());
         require(response != null && response.getData() != null, "无法获取真实物料基本单位，未登记不良原来源");

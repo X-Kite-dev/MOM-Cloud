@@ -196,6 +196,8 @@ public class PmsExistingReceiptRegistrationService {
 				.eq(PmsOrderDetailEntity::getPmsOrderId, order.getId())
 				.eq(PmsOrderDetailEntity::getMatCode, line.getMatCode()));
 		require(original != null, "原收料行不属于当前采购订单物料行");
+		require(StrUtil.isNotBlank(original.getMatUnit()) && Objects.equals(original.getMatUnit(), line.getMatUnit()),
+				"原收料行单位与采购订单行不一致，请核对原单");
 		return line.getPrice() != null ? line.getPrice() : original.getPrice();
 	}
 

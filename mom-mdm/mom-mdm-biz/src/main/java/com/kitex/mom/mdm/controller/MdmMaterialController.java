@@ -360,7 +360,7 @@ public class MdmMaterialController {
     @DeleteMapping
     @PreAuthorize("@pms.hasPermission('mdm_mdmMaterial_del')")
     public R<Boolean> removeById(@RequestBody Long[] ids) {
-        return R.ok(mdmMaterialService.removeBatchByIds(CollUtil.toList(ids)));
+        return R.ok(mdmMaterialService.deleteMaintained(CollUtil.toList(ids)));
     }
 
     /**

@@ -148,7 +148,7 @@ public class MqttClientNetworkProvider implements NetworkProvider<MqttClientConf
     @Override
     public ConfigMetadata getConfigMetadata() {
         return new DefaultConfigMetadata()
-                .add("brokerUrl", "服务器地址", "MQTT Broker的地址，格式为: tcp://host:port")
+                .add("brokerUrl", "服务器地址", "MQTT Broker的地址，格式为: tcp://service.example.invalid")
                 .add("clientId", "客户端ID", "MQTT客户端ID，不指定时将自动生成")
                 .add("username", "用户名", "连接MQTT Broker的用户名")
                 .add("password", "密码", "连接MQTT Broker的密码")

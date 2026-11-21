@@ -321,9 +321,10 @@ public class QmsWorkOrderQualityQueryService {
         return all.stream().mapToLong(item -> item.statuses().getOrDefault(status, 0L)).sum();
     }
 
+    /** 严格任务合格率以判定为合格或不合格的任务为分母，尚无此类任务时保留空值。 */
     private BigDecimal rate(long numerator, long denominator) {
         if (denominator == 0) {
-            return BigDecimal.ZERO;
+            return null;
         }
         return BigDecimal.valueOf(numerator).multiply(BigDecimal.valueOf(100))
                 .divide(BigDecimal.valueOf(denominator), 2, RoundingMode.HALF_UP);

@@ -58,6 +58,11 @@ public class MesWrapRecordEntity extends BaseEntity<MesWrapRecordEntity> {
     @Schema(description = "报工条码")
     private String transferCode;
 
+    /** 原报工的包装模式，按组织和生产来源回读。历史未能核实时为空，仅用于重组界面。 */
+    @TableField(exist = false)
+    @Schema(description = "原报工模式，PACKAGE_QUANTITY 可拆量，逐件只能整件移动")
+    private String sourceReportMode;
+
     @Schema(description = "本包装内容数量")
     private BigDecimal quantity;
 

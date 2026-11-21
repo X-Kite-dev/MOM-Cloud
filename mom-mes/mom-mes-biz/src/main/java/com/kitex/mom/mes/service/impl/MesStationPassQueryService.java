@@ -38,6 +38,7 @@ public class MesStationPassQueryService {
     private final MesActualFactoryAccessService factoryAccess;
     private final MesIdentifierBindingService identifierBindings;
     private final MesExecutionNodeReader executionNodes;
+    private final MesTravelerQuantityService travelerQuantities;
 
     public Map<String, Object> preview(String transferCode) {
         return preview(transferCode, true, true);
@@ -130,6 +131,7 @@ public class MesStationPassQueryService {
         Map<String, MesTaskEntity> orderByCode = orders.stream().collect(Collectors.toMap(
                 MesTaskEntity::getCode, item -> item, (left, right) -> left, LinkedHashMap::new));
 
+        List<MesTaskReportUnqualifiedEntity> cardDefects = null;
         List<Map<String, Object>> processList = new ArrayList<>();
         for (MesTaskArrangeEntity arrange : arrangements.stream().sorted(Comparator.comparing(item ->
                 Objects.requireNonNullElse(item.getRouteOrder(), Integer.MAX_VALUE))).toList()) {
@@ -211,6 +213,26 @@ public class MesStationPassQueryService {
                     .map(this::nodeLabel).toList();
             boolean predecessorsPassed = nodeBlockReason == null && (routeReturn
                     ? routeReturnBlockReason == null : identifierAllowed && missingPredecessors.isEmpty());
+            BigDecimal cardAvailable = null;
+            String cardBlockReason = null;
+            if (reportMode == ReportModeEnum.TRANSFER_CARD && !routeReturn && identifierAllowed && predecessorsPassed) {
+                try {
+                    if (cardDefects == null && !predecessors.isEmpty()) {
+                        cardDefects = travelerQuantities.defects(TenantContextHolder.getTenantId(), factory, canonicalCandidates);
+                    }
+                    cardAvailable = travelerQuantities.available(arrange, predecessors, canonicalIdentifier,
+                            travelers, reports, cardDefects == null ? List.of() : cardDefects);
+                    if (cardAvailable != null && cardAvailable.signum() == 0) {
+                        cardBlockReason = "本卡在当前工序已无可报量";
+                    } else if (cardAvailable != null && !Boolean.TRUE.equals(contract.getPartialReportAllowed())
+                            && contract.getRemainingQuantity() != null
+                            && cardAvailable.compareTo(contract.getRemainingQuantity()) < 0) {
+                        cardBlockReason = "本卡可报量不足以一次报完当前派工";
+                    }
+                } catch (CheckedException exception) {
+                    cardBlockReason = exception.getMessage();
+                }
+            }
             boolean producing = routeReturn
                     ? Set.of(MesProduceTaskStatusEnum.PRODUCT.name(), MesProduceTaskStatusEnum.FINISH.name())
                     .contains(arrange.getStatus())
@@ -247,12 +269,15 @@ public class MesStationPassQueryService {
             row.put("noticeNum", arrange.getNoticeNum());
             row.put("completeNum", arrange.getCompleteNum());
             row.put("passNum", defaultQuantity(arrange));
+            if (cardAvailable != null) {
+                row.put("travelerAvailableQuantity", cardAvailable.stripTrailingZeros().toPlainString());
+            }
             row.put("worksiteCodes", arrange.getWorksiteCodes());
             row.put("worksiteCode", arrange.getActualWorksiteCode());
             row.put("isFinish", passed != null);
             row.put("reportTime", passed == null ? null : passed.getReportTime());
             boolean canReport = passed == null && predecessorsPassed && (!requireAssigned || assigned) && producing
-                    && manualAllowed && identifierAllowed && routeReturnBlockReason == null;
+                    && manualAllowed && identifierAllowed && routeReturnBlockReason == null && cardBlockReason == null;
             row.put("canReport", canReport);
             row.put("blockReason", nodeBlockReason != null ? nodeBlockReason
                     : identifierBlockReason != null ? identifierBlockReason
@@ -260,7 +285,7 @@ public class MesStationPassQueryService {
                     : !predecessorsPassed ? "等待实际前序节点：" + String.join("、", blockingPredecessorNodes)
                     : requireAssigned && !assigned ? "非本人派工" : !producing ? "任务未在生产中"
                     : !manualAllowed ? "执行模板未开放移动端人工报工"
-                    : identifierBlockReason);
+                    : cardBlockReason);
             if (canReport && issueOfflinePermit) {
                 // 在线预览时同时下发短时最小范围授权；断网后只能暂存这次已确认的候选工序。
                 row.put("offlinePermit", offlineReportPermitService.issue(arrange, identifier, contract));
@@ -283,6 +308,67 @@ public class MesStationPassQueryService {
         result.put("allProcessList", processList);
         result.put("hekeArrangeList", List.of());
         result.put("message", processList.isEmpty() ? "未找到当前人员可执行的首工序或该标识的历史工序" : null);
+        return result;
+    }
+
+    /**
+     * 固定工站按本人所选派工核对普通流转卡额度。保留工站权限及标识解析规则，预览不签发离线凭证。
+     * 返回数值以原十进制文本表示，首次绑卡或已批准的退回轮次没有普通前序限额。
+     */
+    public Map<String, String> stationTravelerQuantity(String arrangeCode, String submitted) {
+        String factory = factoryAccess.require("read");
+        Long tenant = TenantContextHolder.getTenantId();
+        MomUser actor = SecurityUtils.getUser();
+        if (actor == null || StrUtil.isBlank(actor.getUsername()) || StrUtil.isBlank(submitted)
+                || StrUtil.isBlank(arrangeCode)) {
+            throw new CheckedException("请选择本人派工并扫描流转卡");
+        }
+        var arrange = arrangeService.getOne(new LambdaQueryWrapper<MesTaskArrangeEntity>()
+                .eq(MesTaskArrangeEntity::getTenantId, tenant).eq(MesTaskArrangeEntity::getFactoryCode, factory)
+                .eq(MesTaskArrangeEntity::getCode, arrangeCode));
+        if (arrange == null || !split(arrange.getWorkerCode()).contains(actor.getUsername())
+                || ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType()) != ReportModeEnum.TRANSFER_CARD) {
+            throw new CheckedException("当前工厂未找到本人流转卡派工");
+        }
+        var task = taskService.getOne(new LambdaQueryWrapper<MesTaskEntity>()
+                .eq(MesTaskEntity::getTenantId, tenant).eq(MesTaskEntity::getFactoryCode, factory)
+                .eq(MesTaskEntity::getCode, arrange.getTaskCode()));
+        if (task == null) {
+            throw new CheckedException("流转卡派工所属工单不存在");
+        }
+        var contract = executionTemplateService.contract(arrange);
+        if (!Boolean.TRUE.equals(contract.getStationAllowed()) || !contract.getAllowedTriggers().contains("MANUAL")) {
+            throw new CheckedException("该派工未开放工站人工报工");
+        }
+        if (!"NONE".equals(contract.getIdentifierNodePolicy().getAction())) {
+            throw new CheckedException("动态换码工序请在对应派工的双码实例入口核对");
+        }
+        String scanned = submitted.trim();
+        identifierBindings.assertOrdinaryScanAllowed(scanned);
+        var input = new MesTaskReportVO();
+        input.setTransferCode(scanned);
+        identifierMappingService.resolve(arrange, task, ReportModeEnum.TRANSFER_CARD, input);
+        routeReturnCoordinator.previewExecution(input, arrange, task, ReportModeEnum.TRANSFER_CARD);
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("arrangeCode", arrange.getCode());
+        result.put("submittedIdentifier", scanned);
+        result.put("executionKind", input.getExecutionKind());
+        if (!MesIdentifierRouteReturnCoordinator.ROUTE_RETURN.equals(input.getExecutionKind())) {
+            var existing = reportService.list(new LambdaQueryWrapper<MesTaskReportEntity>()
+                    .eq(MesTaskReportEntity::getTenantId, tenant).eq(MesTaskReportEntity::getFactoryCode, factory)
+                    .eq(MesTaskReportEntity::getTaskCode, task.getCode())
+                    .eq(MesTaskReportEntity::getProduceTaskCode, arrange.getProduceTaskCode())
+                    .eq(MesTaskReportEntity::getTransferCode, input.getTransferCode())
+                    .isNull(MesTaskReportEntity::getRouteReturnId));
+            if (existing.stream().anyMatch(MesPredecessorPassEvidence::effective)) {
+                throw new CheckedException("该卡已通过当前工序，请核对原报工记录");
+            }
+            var context = executionNodes.read(arrange);
+            BigDecimal available = travelerQuantities.available(arrange, context.predecessors(), input.getTransferCode());
+            if (available != null) {
+                result.put("travelerAvailableQuantity", available.stripTrailingZeros().toPlainString());
+            }
+        }
         return result;
     }
 

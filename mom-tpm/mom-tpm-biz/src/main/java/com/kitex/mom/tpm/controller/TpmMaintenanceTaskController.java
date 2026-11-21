@@ -7,7 +7,10 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.entity.BaseCore;
 import com.kitex.common.core.entity.SearchPage;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.mom.tpm.agent.service.TpmAgentFactoryAccessService;
 import com.kitex.mom.tpm.entity.TpmMaintenanceTaskEntity;
 import com.kitex.mom.tpm.service.TpmMaintenanceTaskService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -37,18 +40,33 @@ import java.util.stream.Collectors;
 public class TpmMaintenanceTaskController {
 
     private final TpmMaintenanceTaskService tpmMaintenanceTaskService;
+    private final TpmAgentFactoryAccessService factoryAccess;
 
     /**
      * 分页查询
      *
      * @param page               分页对象
      * @param tpmMaintenanceTask 保养任务表
+     * @param agentTaskId 设备调查下钻的原任务主键，普通列表不传
      * @return
      */
     @Operation(summary = "保养任务分页查询", description = "分页查询保养任务列表")
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('tpm_tpmMaintenanceTask_view')")
-    public R<Page<TpmMaintenanceTaskEntity>> getTpmMaintenanceTaskPage(@ParameterObject SearchPage page, @ParameterObject TpmMaintenanceTaskEntity tpmMaintenanceTask) {
+    public R<Page<TpmMaintenanceTaskEntity>> getTpmMaintenanceTaskPage(@ParameterObject SearchPage page, @ParameterObject TpmMaintenanceTaskEntity tpmMaintenanceTask,
+            @RequestParam(required = false) Long agentTaskId) {
+        if (agentTaskId != null) {
+            if (agentTaskId <= 0 || StrUtil.isBlank(tpmMaintenanceTask.getTaskCode()) || StrUtil.isBlank(tpmMaintenanceTask.getDeviceCode())) {
+                throw new CheckedException("设备调查定位需要原任务主键、任务号和设备编码");
+            }
+            // 台账精确定位以实名工厂和原任务身份为准，不走普通模糊筛选。
+            String factory = factoryAccess.requireRead(FactoryContextHolder.getFactoryCode());
+            return R.ok(tpmMaintenanceTaskService.page(page.toMpPage(), Wrappers.<TpmMaintenanceTaskEntity>lambdaQuery()
+                    .eq(TpmMaintenanceTaskEntity::getId, agentTaskId)
+                    .eq(TpmMaintenanceTaskEntity::getFactoryCode, factory)
+                    .eq(TpmMaintenanceTaskEntity::getTaskCode, tpmMaintenanceTask.getTaskCode())
+                    .eq(TpmMaintenanceTaskEntity::getDeviceCode, tpmMaintenanceTask.getDeviceCode())));
+        }
         LambdaQueryWrapper<TpmMaintenanceTaskEntity> wrapper = Wrappers.lambdaQuery();
         wrapper.eq(StrUtil.isNotBlank(tpmMaintenanceTask.getDeviceCode()), TpmMaintenanceTaskEntity::getDeviceCode, tpmMaintenanceTask.getDeviceCode());
         wrapper.like(StrUtil.isNotBlank(tpmMaintenanceTask.getDeviceName()), TpmMaintenanceTaskEntity::getDeviceName, tpmMaintenanceTask.getDeviceName());

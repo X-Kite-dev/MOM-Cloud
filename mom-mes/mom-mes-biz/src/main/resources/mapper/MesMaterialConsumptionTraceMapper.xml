@@ -286,13 +286,59 @@
 				AND r.feed_id=#{feedId} ORDER BY r.id
 			</when>
 			<when test="kind == 'GOOD_BACKFLUSH'">
-				SELECT i.* FROM mom_mes.mes_warehouse_inout i
-				JOIN mom_mes.mes_task_report r ON r.id=i.bill_id AND r.tenant_id=i.tenant_id AND r.factory_code=i.factory_code
-				AND r.arrange_code=i.bill_no AND r.reverse_request_id=i.resource_no
-				WHERE i.tenant_id=#{tenant} AND i.factory_code=#{factory} AND i.bill_id=#{rootId}
-				AND i.bill_no=#{arrange} AND r.task_code=#{task}
-				AND i.biz_type='report_reverse_material_in' AND i.operate_type='in'
-				AND i.source_stock_id=#{stockId} AND i.mat_code=#{material} ORDER BY i.id
+				<!-- 恢复入库会产生新库存行。先在整份原报工内核对同次纠正的出入流水，再选本行；
+				     同批次、同量的多笔出入无法区分时，不把同一张入库凭证分给多条原耗料。 -->
+				SELECT receipt.*
+				FROM (
+					SELECT outgoing.id AS original_id, incoming.id AS receipt_id,
+						count(*) OVER (PARTITION BY outgoing.id, incoming.resource_no) AS receipt_count,
+						count(*) OVER (PARTITION BY incoming.id) AS original_count
+					FROM mom_mes.mes_task_report report
+					JOIN mom_mes.mes_warehouse_inout outgoing
+						ON outgoing.tenant_id = report.tenant_id AND outgoing.factory_code = report.factory_code
+						AND outgoing.bill_id = report.id AND outgoing.bill_no = report.arrange_code
+						AND outgoing.resource_no = report.request_id
+						AND outgoing.biz_type = 'back_flush_out' AND outgoing.operate_type = 'out'
+					JOIN mom_mes.mes_warehouse_inout incoming
+						ON incoming.tenant_id = outgoing.tenant_id AND incoming.factory_code = outgoing.factory_code
+						AND incoming.bill_id = outgoing.bill_id AND incoming.bill_no = outgoing.bill_no
+						AND incoming.mat_code = outgoing.mat_code AND incoming.mat_unit = outgoing.mat_unit
+						AND incoming.mat_batch IS NOT DISTINCT FROM outgoing.mat_batch
+						AND incoming.mat_barcode IS NOT DISTINCT FROM outgoing.mat_barcode
+						AND incoming.requirement_mat_code IS NOT DISTINCT FROM outgoing.requirement_mat_code
+						AND incoming.produce_task_code IS NOT DISTINCT FROM outgoing.produce_task_code
+						AND incoming.operate_type = 'in'
+						AND incoming.source_stock_id IS NOT NULL
+						AND ((incoming.biz_type = 'report_correction_material_in'
+							AND incoming.resource_no IS DISTINCT FROM report.reverse_request_id)
+							OR (incoming.biz_type = 'report_reverse_material_in'
+								AND incoming.resource_no = report.reverse_request_id))
+					LEFT JOIN mom_mes.mes_report_quantity_correction_line line
+						ON line.tenant_id = outgoing.tenant_id AND line.factory_code = outgoing.factory_code
+						AND line.report_id = outgoing.bill_id AND line.source_id = outgoing.id
+						AND line.allocation_type = 'MATERIAL_FLOW' AND line.operation_request_id = incoming.resource_no
+					WHERE report.tenant_id = #{tenant} AND report.factory_code = #{factory}
+						AND report.id = #{rootId} AND report.task_code = #{task}
+						AND report.arrange_code = #{arrange} AND report.produce_task_code = #{produce}
+						AND report.request_id = #{request} AND outgoing.mat_code = #{material}
+						AND (
+							line.correction_quantity = incoming.operate_num
+							OR (line.id IS NULL AND incoming.biz_type = 'report_reverse_material_in'
+								AND incoming.resource_no = report.reverse_request_id
+								AND incoming.source_stock_id = outgoing.source_stock_id
+								AND incoming.operate_num = outgoing.operate_num
+								AND NOT EXISTS (
+									SELECT 1 FROM mom_mes.mes_report_quantity_correction_line other
+									WHERE other.tenant_id = report.tenant_id AND other.factory_code = report.factory_code
+										AND other.report_id = report.id AND other.allocation_type = 'MATERIAL_FLOW'
+										AND other.operation_request_id = incoming.resource_no
+								))
+						)
+				) matched
+				JOIN mom_mes.mes_warehouse_inout receipt ON receipt.id = matched.receipt_id
+					AND receipt.tenant_id = #{tenant} AND receipt.factory_code = #{factory}
+				WHERE matched.original_id = #{id} AND matched.receipt_count = 1 AND matched.original_count = 1
+				ORDER BY receipt.id
 			</when>
 			<otherwise>
 				SELECT c.* FROM mom_mes.mes_report_material_consume c

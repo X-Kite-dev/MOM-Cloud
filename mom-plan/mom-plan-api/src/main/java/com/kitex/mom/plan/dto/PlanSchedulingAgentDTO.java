@@ -282,9 +282,9 @@ public final class PlanSchedulingAgentDTO {
         private LocalDateTime scheduledStartTime;
         @Schema(description = "候选末道工序结束时间")
         private LocalDateTime scheduledEndTime;
-        @Schema(description = "相对需求日期的延期天数")
+        @Schema(description = "相对需求日期的延期天数，需求日或排定完工时间缺失时为空")
         private Long lateDays;
-        @Schema(description = "计划内工序等待分钟")
+        @Schema(description = "计划内工序等待分钟，缺少完整时段或工时明细时为空")
         private Long waitingMinutes;
         @Schema(description = "排产工序数")
         private Integer operationCount;

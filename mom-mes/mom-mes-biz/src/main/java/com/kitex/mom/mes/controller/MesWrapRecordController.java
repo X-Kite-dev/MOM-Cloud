@@ -8,6 +8,8 @@ import com.kitex.common.log.annotation.SysLog;
 import com.kitex.common.query.utils.QueryGenerator;
 import com.kitex.mom.mes.entity.MesWrapRecordEntity;
 import com.kitex.mom.mes.service.MesWrapRecordService;
+import com.kitex.mom.mes.service.impl.MesActualFactoryAccessService;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -33,6 +35,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class MesWrapRecordController {
 
     private final MesWrapRecordService service;
+    private final MesActualFactoryAccessService access;
 
     /**
      * 分页查询
@@ -71,10 +74,15 @@ public class MesWrapRecordController {
     public R<IPage<MesWrapRecordEntity>> availablePage(Page<MesWrapRecordEntity> pageParam,
                                                        MesWrapRecordEntity query) {
         QueryWrapper<MesWrapRecordEntity> wrapper = QueryGenerator.initQueryWrapper(query);
-        wrapper.in("packing_status", "UNPACKED", "PARTIAL")
+        String factory = access.require("read");
+        wrapper.eq("tenant_id", TenantContextHolder.getTenantId())
+                .eq("factory_code", factory)
+                .in("packing_status", "UNPACKED", "PARTIAL")
                 .gt("available_quantity", 0)
                 .orderByDesc("create_time");
-        return R.ok(service.page(pageParam, wrapper));
+        IPage<MesWrapRecordEntity> result = service.page(pageParam, wrapper);
+        service.loadRepackModes(result.getRecords(), factory);
+        return R.ok(result);
     }
 
 

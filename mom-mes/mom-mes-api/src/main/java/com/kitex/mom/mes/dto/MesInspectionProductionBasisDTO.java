@@ -1,5 +1,8 @@
 package com.kitex.mom.mes.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.deser.std.StringDeserializer;
+
 import java.util.List;
 
 /** Immutable evidence for inspection birth; no per-piece first-pass certification. */
@@ -8,10 +11,11 @@ public final class MesInspectionProductionBasisDTO {
 
     public static final String SCHEMA = "MES_INSPECTION_PRODUCTION_BASIS@1";
 
+    /** 内部核对请求。命令原文仅用于精确比对和摘要校验，从不作为页面文本返回。 */
     public record Query(
             String requestId,
             String operationCode,
-            String commandSnapshot,
+            @JsonDeserialize(using = StringDeserializer.class) String commandSnapshot,
             String commandFingerprint) {}
 
     public record Evidence(

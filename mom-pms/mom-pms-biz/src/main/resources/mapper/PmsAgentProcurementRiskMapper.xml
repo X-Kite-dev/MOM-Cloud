@@ -9,7 +9,7 @@
     <sql id="procurementRiskCte">
         WITH open_line AS (
             SELECT o.id AS order_id, d.id AS order_detail_id, o.pms_order_no AS order_no,
-                   o.status AS order_status, o.supplier_code, o.supplier_name,
+                   o.status AS order_status, o.supplier_code, o.supplier_name, d.pms_plan_no AS purchase_plan_no,
                    d.mat_code AS material_code, d.mat_name AS material_name,
                    d.mat_unit AS material_unit, d.delivery_time AS internal_delivery_date,
                    COALESCE(d.order_num, 0)::numeric AS order_num,
@@ -108,7 +108,7 @@
     <select id="selectRiskLines"
             resultType="com.kitex.mom.pms.agent.model.PmsProcurementRiskRow$RiskLine">
         <include refid="procurementRiskCte"/>
-        SELECT order_id, order_detail_id, order_no, order_status, supplier_code, supplier_name,
+        SELECT order_id, order_detail_id, order_no, order_status, supplier_code, supplier_name, purchase_plan_no,
                material_code, material_name, material_unit, order_num, arrival_num, cancelled_num,
                outstanding_num, committed_remaining_num, overdue_commitment_num,
                due_soon_commitment_num, uncommitted_gap_num, internal_delivery_date,

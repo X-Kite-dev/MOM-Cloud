@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -42,6 +43,7 @@ public class MesMaterialListDetailController {
      */
     @Operation(summary = "根据用料清单ID获取明细列表")
     @GetMapping("/list/{materialListId}")
+    @PreAuthorize("@pms.hasPermission('mesTask:show')")
     public R<List<MesMaterialListDetailDTO>> getDetailsByMaterialListId(@PathVariable Long materialListId) {
         return R.ok(materialListDetailService.getDetailsByMaterialListId(materialListId));
     }
@@ -54,6 +56,7 @@ public class MesMaterialListDetailController {
      */
     @Operation(summary = "根据工单ID获取明细列表")
     @GetMapping("/task/{taskId}")
+    @PreAuthorize("@pms.hasPermission('mesTask:show')")
     public R<List<MesMaterialListDetailDTO>> getDetailsByTaskId(@PathVariable Long taskId) {
         return R.ok(materialListDetailService.getDetailsByTaskId(taskId));
     }
@@ -66,6 +69,7 @@ public class MesMaterialListDetailController {
      */
     @Operation(summary = "物料领料操作")
     @PostMapping("/pick")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
     @SysLog("物料领料操作")
     public R<Boolean> pickMaterial(@RequestBody @Validated MesMaterialListPickVO pickVO) {
         return R.ok(materialListDetailService.pickMaterial(pickVO));
@@ -79,6 +83,7 @@ public class MesMaterialListDetailController {
      */
     @Operation(summary = "物料退料操作")
     @PostMapping("/return")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
     @SysLog("物料退料操作")
     public R<Boolean> returnMaterial(@RequestBody @Validated MesMaterialListReturnVO returnVO) {
         return R.ok(materialListDetailService.returnMaterial(returnVO));
@@ -92,6 +97,7 @@ public class MesMaterialListDetailController {
      */
     @Operation(summary = "批量领料操作")
     @PostMapping("/batchPick")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
     @SysLog("批量领料操作")
     public R<Boolean> batchPickMaterial(@RequestBody @Validated List<MesMaterialListPickVO> pickVOList) {
         return R.ok(materialListDetailService.batchPickMaterial(pickVOList));
@@ -106,6 +112,7 @@ public class MesMaterialListDetailController {
      */
     @Operation(summary = "更新明细的领料状态")
     @PutMapping("/{id}/pickStatus/{pickStatus}")
+    @PreAuthorize("@pms.hasPermission('mesTask:update')")
     @SysLog("更新明细的领料状态")
     public R<Boolean> updatePickStatus(@PathVariable Long id, @PathVariable String pickStatus) {
         return R.ok(materialListDetailService.updatePickStatus(id, pickStatus));
@@ -120,6 +127,7 @@ public class MesMaterialListDetailController {
      */
     @Operation(summary = "检查物料库存是否充足")
     @GetMapping("/checkStock/{materialCode}")
+    @PreAuthorize("@pms.hasPermission('mesTask:show')")
     public R<Boolean> checkMaterialStock(@PathVariable String materialCode,
                                          @RequestParam BigDecimal requiredQuantity) {
         return R.ok(materialListDetailService.checkMaterialStock(materialCode, requiredQuantity));

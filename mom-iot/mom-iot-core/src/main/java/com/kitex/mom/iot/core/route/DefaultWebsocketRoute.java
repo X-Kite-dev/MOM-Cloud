@@ -58,7 +58,7 @@ class DefaultWebsocketRoute implements WebsocketRoute {
         }
 
         public String toString() {
-            return "DefaultWebsocketRoute.DefaultWebsocketRouteBuilder(group=" + this.group + ", address=" + this.address + ", description=" + this.description + ", example=" + this.example + ")";
+            return "DefaultWebsocketRoute.DefaultWebsocketRouteBuilder(group=" + this.group + ", address="service.example.invalid", description=" + this.description + ", example=" + this.example + ")";
         }
     }
 }

@@ -27,6 +27,7 @@
 
     <!-- DTO ResultMap -->
     <resultMap id="DTOResultMap" type="com.kitex.mom.mes.dto.MesMaterialListDTO" extends="BaseResultMap">
+        <result column="production_status" property="productionStatus"/>
         <result column="task_status_name" property="taskStatusName"/>
         <result column="plan_start_date" property="planStartDate"/>
         <result column="plan_end_date" property="planEndDate"/>
@@ -45,25 +46,25 @@
         WHEN 'COMPLETED' THEN '完成'
         ELSE ml.status
         END as task_status_name,
-        mt.plan_start_date,
+        mt.status AS production_status, mt.plan_start_date,
         mt.plan_end_date,
         COALESCE(detail_stats.material_count, 0) as material_count,
         COALESCE(detail_stats.picked_material_count, 0) as picked_material_count,
         COALESCE(detail_stats.pending_material_count, 0) as pending_material_count
         FROM mes_material_list ml
-        LEFT JOIN mes_task mt ON ml.task_id = mt.id
+        JOIN mes_task mt ON ml.task_id = mt.id AND mt.tenant_id = ml.tenant_id AND mt.factory_code = ml.factory_code AND mt.del_flag = '0'
         LEFT JOIN (
         SELECT
-        material_list_id,
+        material_list_id, tenant_id, factory_code,
         COUNT(*) as material_count,
         SUM(CASE WHEN pick_status IN ('PICKED', 'COMPLETED') THEN 1 ELSE 0 END) as picked_material_count,
         SUM(CASE WHEN pick_status = 'PENDING' THEN 1 ELSE 0 END) as pending_material_count
         FROM mes_material_list_detail
         WHERE del_flag = '0'
-        GROUP BY material_list_id
-        ) detail_stats ON ml.id = detail_stats.material_list_id
+        GROUP BY material_list_id, tenant_id, factory_code
+        ) detail_stats ON ml.id = detail_stats.material_list_id AND detail_stats.tenant_id = ml.tenant_id AND detail_stats.factory_code = ml.factory_code
         <where>
-            ml.del_flag = '0'
+            ml.del_flag = '0' AND ml.tenant_id = #{tenantId} AND ml.factory_code = #{query.factoryCode}
             <if test="query.taskCode != null and query.taskCode != ''">
                 AND ml.task_code LIKE CONCAT('%', #{query.taskCode}, '%')
             </if>
@@ -82,11 +83,8 @@
             <if test="query.createTimeEnd != null and query.createTimeEnd != ''">
                 AND ml.create_time &lt;= #{query.createTimeEnd}
             </if>
-            <if test="query.factoryCode != null and query.factoryCode != ''">
-                AND ml.factory_code = #{query.factoryCode}
-            </if>
         </where>
-        ORDER BY ml.create_time DESC
+        ORDER BY ml.create_time DESC, ml.id DESC
     </select>
 
     <!-- 根据工单ID查询用料清单详情 -->
@@ -98,22 +96,22 @@
                    WHEN 'COMPLETED' THEN '完成'
                    ELSE ml.status
                    END                                          as task_status_name,
-               mt.plan_start_date,
+               mt.status AS production_status, mt.plan_start_date,
                mt.plan_end_date,
                COALESCE(detail_stats.material_count, 0)         as material_count,
                COALESCE(detail_stats.picked_material_count, 0)  as picked_material_count,
                COALESCE(detail_stats.pending_material_count, 0) as pending_material_count
         FROM mes_material_list ml
-                 LEFT JOIN mes_task mt ON ml.task_id = mt.id
-                 LEFT JOIN (SELECT material_list_id,
+                 JOIN mes_task mt ON ml.task_id = mt.id AND mt.tenant_id = ml.tenant_id AND mt.factory_code = ml.factory_code AND mt.del_flag = '0'
+                 LEFT JOIN (SELECT material_list_id, tenant_id, factory_code,
                                    COUNT(*)                                                                as material_count,
                                    SUM(CASE WHEN pick_status IN ('PICKED', 'COMPLETED') THEN 1 ELSE 0 END) as picked_material_count,
                                    SUM(CASE WHEN pick_status = 'PENDING' THEN 1 ELSE 0 END)                as pending_material_count
                             FROM mes_material_list_detail
                             WHERE del_flag = '0'
-                            GROUP BY material_list_id) detail_stats ON ml.id = detail_stats.material_list_id
+                            GROUP BY material_list_id, tenant_id, factory_code) detail_stats ON ml.id = detail_stats.material_list_id AND detail_stats.tenant_id = ml.tenant_id AND detail_stats.factory_code = ml.factory_code
         WHERE ml.del_flag = '0'
-          AND ml.task_id = #{taskId}
+          AND ml.task_id = #{taskId} AND ml.tenant_id = #{tenantId} AND ml.factory_code = #{factoryCode}
     </select>
 
     <!-- 根据工单ID列表查询用料清单 -->

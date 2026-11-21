@@ -5,11 +5,15 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.data.datascope.MomBaseMapper;
 import com.kitex.mom.mes.dto.MesLiveStockQueryDTO;
 import com.kitex.mom.mes.dto.MesWarehouseFeedDTO;
+import com.kitex.mom.mes.entity.MesMaterialReceiptEntity;
 import com.kitex.mom.mes.entity.MesWarehouseLiveStockEntity;
 import com.kitex.mom.mes.vo.MesWarehouseLiveStockVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+
+import java.util.List;
+import java.util.Set;
 
 @Mapper
 public interface MesWarehouseLiveStockMapper extends MomBaseMapper<MesWarehouseLiveStockEntity> {
@@ -23,6 +27,19 @@ public interface MesWarehouseLiveStockMapper extends MomBaseMapper<MesWarehouseL
     MesWarehouseLiveStockEntity selectOutProof(@Param("stockId") Long stockId,
                                                @Param("tenantId") Long tenantId,
                                                @Param("factoryCode") String factoryCode);
+
+    /** 读取已锁库存关联的原始签收快照。同批不同件按各自签收 ID 解析，避免逐库存远程查询。 */
+    @Select("""
+            <script>
+            SELECT id, notice_id, wms_out_detail_id, source_snapshot
+            FROM mom_mes.mes_material_receipt
+            WHERE tenant_id = #{tenant} AND factory_code = #{factory}
+              AND operation_type = 'RECEIVE' AND del_flag = '0' AND id IN
+              <foreach collection="ids" item="id" open="(" close=")" separator=",">#{id}</foreach>
+            </script>
+            """)
+    List<MesMaterialReceiptEntity> receiptSources(@Param("tenant") Long tenant, @Param("factory") String factory,
+                                                 @Param("ids") Set<Long> receiptIds);
 
     IPage<MesWarehouseFeedDTO> getPageFeedBack(Page<MesWarehouseFeedDTO> pageParam, @Param("query") MesWarehouseFeedDTO query);
 

@@ -71,5 +71,26 @@ public final class PlanIncomingAvailabilityImpactDTO {
         private Integer supplyEvidenceGapCount;
         private String shortageFactFingerprint;
         private List<PlanMrpShortageLineDTO> shortageLines;
+        /** 与本次收料同物料的 MRP 行以及其他缺料或数量待核的行数，截取明细前计数。 */
+        private Integer materialBalanceCount;
+        /** 当前需求的物料余额，优先列出本次收料涉及的物料，最多返回 100 行。 */
+        private List<MaterialBalance> materialBalances;
+    }
+
+    /**
+     * 已核对产品需求下的一条 MRP 记录。所有数量以原单位传递十进制文本，空值表示未记录。
+     * @param mrpId MRP 原行主键
+     * @param receiptMaterial 该需求经反查的收料物料与本行编码相同，仅用于定位
+     * @param materialCode 物料编码
+     * @param materialName 物料名称
+     * @param materialUnit 原需求计量单位
+     * @param warehouseCode 需求仓编码
+     * @param grossDemandNum 毛需求量
+     * @param allocatedNum 本轮 MRP 已分配库存量
+     * @param remainingDemandNum 原行剩余需求量
+     */
+    public record MaterialBalance(String mrpId, boolean receiptMaterial, String materialCode,
+                                  String materialName, String materialUnit, String warehouseCode,
+                                  String grossDemandNum, String allocatedNum, String remainingDemandNum) {
     }
 }

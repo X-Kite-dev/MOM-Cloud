@@ -80,6 +80,27 @@ public class MesWarehouseFeedServiceImpl extends ServiceImpl<MesWarehouseFeedMap
 	private final MesPieceMaterialSelectionService pieceMaterials;
 	private final MesMaterialExecutionGuard materialExecution;
 
+	/** {@inheritDoc} */
+	@Override
+	@Transactional(readOnly = true)
+	public IPage<MesWarehouseFeedEntity> pageForWorkOrder(Page<MesWarehouseFeedEntity> page, String taskCode) {
+		String factory = factoryAccess.require("read");
+		if (StrUtil.isBlank(taskCode)) {
+			throw new CheckedException("请提供投料记录所属的完整生产工单号");
+		}
+		page.setSize(Math.min(100, Math.max(1, page.getSize())));
+		page.setCurrent(Math.max(1, page.getCurrent()));
+		return page(page, new LambdaQueryWrapper<MesWarehouseFeedEntity>()
+				.select(MesWarehouseFeedEntity::getId, MesWarehouseFeedEntity::getTenantId, MesWarehouseFeedEntity::getFactoryCode,
+						MesWarehouseFeedEntity::getTaskCode, MesWarehouseFeedEntity::getArrangeCode, MesWarehouseFeedEntity::getProduceTaskCode,
+						MesWarehouseFeedEntity::getRequirementMatCode, MesWarehouseFeedEntity::getMatCode, MesWarehouseFeedEntity::getMatUnit,
+						MesWarehouseFeedEntity::getMatBatch, MesWarehouseFeedEntity::getMatBarcode, MesWarehouseFeedEntity::getFeedNum,
+						MesWarehouseFeedEntity::getUsedNum, MesWarehouseFeedEntity::getFeedTime)
+				.eq(MesWarehouseFeedEntity::getTenantId, TenantContextHolder.getTenantId())
+				.eq(MesWarehouseFeedEntity::getFactoryCode, factory)
+				.eq(MesWarehouseFeedEntity::getTaskCode, taskCode)
+				.orderByDesc(MesWarehouseFeedEntity::getId));
+	}
 
 	/**
 	 * 实际新投料：原工单/派工锁内核BOM，保存一份新feed并真实领出库存。

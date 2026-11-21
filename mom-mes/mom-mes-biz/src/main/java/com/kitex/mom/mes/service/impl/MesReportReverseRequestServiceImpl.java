@@ -141,8 +141,13 @@ public class MesReportReverseRequestServiceImpl
         MesReportReverseRequestEntity replay = getOne(new LambdaQueryWrapper<MesReportReverseRequestEntity>()
                 .eq(MesReportReverseRequestEntity::getSubmitRequestId, commandId), false);
         if (replay != null) {
-            require(Objects.equals(replay.getSubmitFingerprint(), commandFingerprint),
-                    "冲销提交请求号已被不同命令使用");
+            // 重试仍按原工厂和实名账号回读。旧版指纹只包含登录名，不能单独证明操作者身份。
+            require(Objects.equals(replay.getFactoryCode(), factory)
+                            && Objects.equals(replay.getTenantId(), TenantContextHolder.getTenantId())
+                            && Objects.equals(replay.getApplicantId(), user.getId())
+                            && Objects.equals(replay.getApplicantCode(), user.getUsername())
+                            && Objects.equals(replay.getSubmitFingerprint(), commandFingerprint),
+                    "当前工厂、申请人或提交内容与原请求不符");
             return replay;
         }
         MesTaskReportEntity ownership = taskLock.report(command.getReportId());
@@ -210,9 +215,7 @@ public class MesReportReverseRequestServiceImpl
                 new LambdaQueryWrapper<MesReportReverseOperationEntity>()
                         .eq(MesReportReverseOperationEntity::getRequestId, commandId), false);
         if (replay != null) {
-            require(Objects.equals(replay.getRequestFingerprint(), commandFingerprint),
-                    "冲销审批请求号已被不同命令使用");
-            return getById(replay.getReverseRequestId());
+            return replayOperation(replay, command.getRequestId(), commandFingerprint, factory, user);
         }
         MesReportReverseRequestEntity owner = request(command.getRequestId(), factory, false);
         bindingGroups.lockDispatchTask(owner.getTaskCode());
@@ -346,9 +349,7 @@ public class MesReportReverseRequestServiceImpl
                 new LambdaQueryWrapper<MesReportReverseOperationEntity>()
                         .eq(MesReportReverseOperationEntity::getRequestId, commandId), false);
         if (replay != null) {
-            require(Objects.equals(replay.getRequestFingerprint(), commandFingerprint),
-                    "冲销撤回请求号已被不同命令使用");
-            return getById(replay.getReverseRequestId());
+            return replayOperation(replay, command.getRequestId(), commandFingerprint, factory, user);
         }
         MesReportReverseRequestEntity owner = request(command.getRequestId(), factory, false);
         bindingGroups.lockDispatchTask(owner.getTaskCode());
@@ -406,9 +407,7 @@ public class MesReportReverseRequestServiceImpl
                         .eq(MesReportMaterialConsumeEntity::getFactoryCode, factory)
                         .orderByAsc(MesReportMaterialConsumeEntity::getId)
                         .last(lock ? "LIMIT 1001 FOR UPDATE" : "LIMIT 1001"));
-        List<MesWrapRecordEntity> wraps = wrapRecordService.list(new LambdaQueryWrapper<MesWrapRecordEntity>()
-                .eq(MesWrapRecordEntity::getReportId, reportId)
-                .orderByAsc(MesWrapRecordEntity::getId)
+        List<MesWrapRecordEntity> wraps = wrapRecordService.list(MesReportPackagingCorrection.contents(report)
                 .last(lock ? "LIMIT 1001 FOR UPDATE" : "LIMIT 1001"));
         List<String> blockers = new ArrayList<>();
         if (dynamic != null) blockers.addAll(dynamic.blockers());
@@ -483,7 +482,7 @@ public class MesReportReverseRequestServiceImpl
         // 仅真实动态分支扩展取证。旧NONE JSON和摘要字节不变，不能追加空字段使待审申请失效。
         if (dynamic != null) facts.put("identifierBindingReverse", dynamic.facts());
         String json = JSONUtil.toJsonStr(facts);
-        return new EvidenceSnapshot(report, blockers, hash(json), json, dynamic);
+        return new EvidenceSnapshot(report, blockers, hash(json), json, dynamic, wraps);
     }
 
     /**
@@ -524,7 +523,7 @@ public class MesReportReverseRequestServiceImpl
                         + "笔有效下游报工，单笔纠正会破坏工序链；须先纠正真实下游范围");
             }
             if ("PARTIAL_QUANTITY".equals(mode)) {
-                appendPartialCorrectionBlockers(anchor.report(), plan.anchor().arrange(), blockers, lock);
+                appendPartialCorrectionBlockers(anchor, plan.anchor().arrange(), blockers);
             }
         }
         blockers.addAll(plan.blockers());
@@ -591,8 +590,10 @@ public class MesReportReverseRequestServiceImpl
         return new CorrectionEvidence(anchor, mode, List.copyOf(steps), List.copyOf(blockers), hash(json), json);
     }
 
-    private void appendPartialCorrectionBlockers(MesTaskReportEntity report, MesTaskArrangeEntity arrange,
-                                                 List<String> blockers, boolean lock) {
+    /** 按本次取证读取的同一组箱内明细核对有效量，预览和批准不再另查一份可能变化的明细。 */
+    private void appendPartialCorrectionBlockers(EvidenceSnapshot evidence, MesTaskArrangeEntity arrange,
+                                                 List<String> blockers) {
+        MesTaskReportEntity report = evidence.report();
         if (report.getEffectiveReportNum() == null || report.getCorrectedReportNum() == null) {
             blockers.add("历史报工未冻结有效数量和累计纠正谱系，禁止按输入数量猜测部分冲减");
             return;
@@ -602,7 +603,7 @@ public class MesReportReverseRequestServiceImpl
         }
         ReportModeEnum mode;
         try {
-            mode = ReportModeEnum.fromCodes(report.getReportMode(), arrange.getRouteType());
+            mode = MesReportPackagingCorrection.mode(report, arrange);
         } catch (IllegalArgumentException exception) {
             blockers.add("原报工模式不可识别，不能启用聚合数量部分纠正");
             return;
@@ -611,15 +612,9 @@ public class MesReportReverseRequestServiceImpl
             blockers.add("部分数量纠正仅支持数量报工和包装数量报工；逐件/流转卡请按标识撤回");
         }
         if (mode == ReportModeEnum.PACKAGE_QUANTITY) {
-            List<MesWrapRecordEntity> records = wrapRecordService.list(new LambdaQueryWrapper<MesWrapRecordEntity>()
-                    .eq(MesWrapRecordEntity::getReportId, report.getId()).orderByAsc(MesWrapRecordEntity::getId)
-                    .last(lock ? "FOR UPDATE" : ""));
-            if (records.size() != 1) {
-                blockers.add("包装数量报工缺少唯一原始包装内容行");
-            } else if ("PACKED".equals(records.get(0).getPackingStatus())) {
-                blockers.add("包装仍处于封箱状态，须先拆箱核对实物");
-            } else if (!Set.of("UNPACKED", "PARTIAL").contains(records.get(0).getPackingStatus())) {
-                blockers.add("包装内容已移动、重组或失效，不能在原包装报工上部分纠正");
+            String blocker = MesReportPackagingCorrection.partialBlocker(report, evidence.wraps());
+            if (blocker != null) {
+                blockers.add(blocker);
             }
         }
     }
@@ -703,7 +698,7 @@ public class MesReportReverseRequestServiceImpl
 
         ReportModeEnum reportMode = null;
         try {
-            reportMode = ReportModeEnum.fromCodes(anchorReport.getReportMode(), anchorArrange.getRouteType());
+            reportMode = MesReportPackagingCorrection.mode(anchorReport, anchorArrange);
         } catch (IllegalArgumentException ignored) {
             blockers.add("原报工缺少可识别的冻结报工模式，不能证明逐标识影响范围");
         }
@@ -901,8 +896,7 @@ public class MesReportReverseRequestServiceImpl
         MesTaskReportEntity report = selected.anchor().report();
         boolean supported = report.getEffectiveReportNum() != null && report.getCorrectedReportNum() != null;
         try {
-            ReportModeEnum mode = ReportModeEnum.fromCodes(report.getReportMode(),
-                    selected.steps().get(0).arrange().getRouteType());
+            ReportModeEnum mode = MesReportPackagingCorrection.mode(report, selected.steps().get(0).arrange());
             supported = supported && (mode == ReportModeEnum.QUANTITY || mode == ReportModeEnum.PACKAGE_QUANTITY);
         } catch (Exception exception) {
             supported = false;
@@ -928,10 +922,25 @@ public class MesReportReverseRequestServiceImpl
                         : "当前记录不是带有效数量谱系的数量/包装数量报工");
     }
 
+    /**
+     * 已处理的审批或撤回只向原操作者返回同一申请。命令摘要沿用原协议，以兼容历史回执。
+     */
+    private MesReportReverseRequestEntity replayOperation(MesReportReverseOperationEntity operation,
+            Long requestId, String fingerprint, String factory, MomUser user) {
+        require(Objects.equals(operation.getReverseRequestId(), requestId)
+                        && Objects.equals(operation.getFactoryCode(), factory)
+                        && Objects.equals(operation.getOperatorId(), user.getId())
+                        && Objects.equals(operation.getOperatorCode(), user.getUsername())
+                        && Objects.equals(operation.getRequestFingerprint(), fingerprint),
+                "当前工厂、操作者或操作内容与原请求不符");
+        return request(requestId, factory, false);
+    }
+
     private MesReportReverseRequestEntity request(Long id, String factory, boolean lock) {
         require(id != null, "请选择冲销申请");
         MesReportReverseRequestEntity request = getOne(new LambdaQueryWrapper<MesReportReverseRequestEntity>()
                 .eq(MesReportReverseRequestEntity::getId, id)
+                .eq(MesReportReverseRequestEntity::getTenantId, TenantContextHolder.getTenantId())
                 .eq(MesReportReverseRequestEntity::getFactoryCode, factory)
                 .last(lock ? "FOR UPDATE" : ""), false);
         require(request != null, "当前租户和工厂下不存在该冲销申请");
@@ -1031,7 +1040,7 @@ public class MesReportReverseRequestServiceImpl
 
     private record EvidenceSnapshot(MesTaskReportEntity report, List<String> blockers,
                                     String fingerprint, String json,
-                                    MesIdentifierBindingInverseCoordinator.Evidence dynamic) {
+                                    MesIdentifierBindingInverseCoordinator.Evidence dynamic, List<MesWrapRecordEntity> wraps) {
     }
 
     private record ChainCandidate(MesTaskReportEntity report, MesTaskArrangeEntity arrange, int depth) {

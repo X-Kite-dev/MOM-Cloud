@@ -31,6 +31,10 @@ public interface MesWarehouseStockFeedJudgeService extends IService<MesWarehouse
     IPage<MesWarehouseStockFeedJudgeEntity> pageRequests(Page<MesWarehouseStockFeedJudgeEntity> page,
                                                          MesWarehouseStockFeedJudgeEntity query);
 
+    /** 按当前租户、实际工厂及完整工单号精确分页。缺工单号时拒绝扩大查询范围。 */
+    IPage<MesWarehouseStockFeedJudgeEntity> pageForWorkOrder(Page<MesWarehouseStockFeedJudgeEntity> page,
+                                                             MesWarehouseStockFeedJudgeEntity query);
+
     /**
      * 预览精确库存组的可退数量、阻断原因和证据指纹。
      */

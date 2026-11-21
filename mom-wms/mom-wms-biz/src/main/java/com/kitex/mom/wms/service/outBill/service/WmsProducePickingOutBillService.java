@@ -16,6 +16,7 @@ import com.kitex.mom.wms.service.WmsPickingAreaService;
 import com.kitex.mom.wms.service.impl.WmsLineDeliveryService;
 import com.kitex.mom.wms.service.impl.WmsMesIssueOutboxService;
 import com.kitex.mom.wms.service.outBill.AbstractWmsOutBillHandler;
+import com.kitex.mom.wms.util.WmsSerialStockGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,13 +64,16 @@ public class WmsProducePickingOutBillService extends AbstractWmsOutBillHandler {
 			throw new CheckedException("同一出库明细的源质量结论不一致，请按质量结论拆分发料");
 		}
 		String quality = qualities.get(0);
+		freezeSourceIdentity(detail, stockOuted);
 		requireCompatiblePickingQuality(outBill, detail, quality);
 		int updated = wmsOutBillDetailMapper.update(null, new LambdaUpdateWrapper<WmsOutBillDetailEntity>()
 				.eq(WmsOutBillDetailEntity::getId, detail.getId())
 				.eq(WmsOutBillDetailEntity::getBillId, outBill.getId())
 				.eq(WmsOutBillDetailEntity::getTenantId, TenantContextHolder.getTenantId())
 				.eq(WmsOutBillDetailEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
-				.set(WmsOutBillDetailEntity::getQualityResult, quality));
+				.set(WmsOutBillDetailEntity::getQualityResult, quality)
+				.set(WmsOutBillDetailEntity::getMatBatch, detail.getMatBatch())
+				.set(WmsOutBillDetailEntity::getMatBarcode, detail.getMatBarcode()));
 		if (updated != 1) {
 			throw new CheckedException("生产发料源质量快照保存未确认，出库整体回滚");
 		}
@@ -77,6 +81,38 @@ public class WmsProducePickingOutBillService extends AbstractWmsOutBillHandler {
 		// MyBatis不自动脏写返回实体；仅规范本次扣减事实供新流水/新拣配落证，禁止update原库存或补旧记录。
 		// 显式免检的0标记不会复制进PickingArea，须在本次事实中冻结NOT_REQUIRED以免后续丢失依据。
 		stockOuted.forEach(stock -> stock.setQualityResult(quality));
+	}
+
+	/**
+	 * MES 以一条出库明细建立一张待签收通知。核对锁内实际扣减的各行，逐件发料只允许一个来源。
+	 * 同批散料可共用一条明细，实物条码及批次须一致。空草稿属性取实际值，已指定的属性必须匹配。
+	 */
+	private void freezeSourceIdentity(WmsOutBillDetailEntity detail, List<WmsLiveStockEntity> stocks) {
+		WmsLiveStockEntity first = stocks.get(0);
+		for (WmsLiveStockEntity stock : stocks) {
+			if (!Objects.equals(detail.getMatCode(), stock.getMatCode())
+					|| !Objects.equals(detail.getMatUnit(), stock.getMatUnit())
+					|| !sameIdentity(first.getMatBatch(), stock.getMatBatch())
+					|| !sameIdentity(first.getMatBarcode(), stock.getMatBarcode())
+					|| (StrUtil.isNotBlank(detail.getMatBatch()) && !sameIdentity(detail.getMatBatch(), stock.getMatBatch()))
+					|| (StrUtil.isNotBlank(detail.getMatBarcode()) && !sameIdentity(detail.getMatBarcode(), stock.getMatBarcode()))) {
+				throw new CheckedException("生产发料明细与实际物料、单位、批次或条码不一致，请按实物分别选行");
+			}
+			if (Boolean.TRUE.equals(stock.getSerialManaged())) {
+				if (stocks.size() != 1 || (StrUtil.isBlank(detail.getMatBarcode())
+						&& (detail.getSourceStockId() == null || !Objects.equals(detail.getSourceStockId(), stock.getId())))) {
+					throw new CheckedException("单件生产发料须逐件扫描序列号或选择原库存，每件对应一条出库明细");
+				}
+				WmsSerialStockGuard.requireWhole(stock, BigDecimal.ONE);
+			}
+		}
+		detail.setMatBatch(first.getMatBatch());
+		detail.setMatBarcode(first.getMatBarcode());
+	}
+
+	/** 数据库空值和空文本均表示未登记，其余标识保留原文。 */
+	private static boolean sameIdentity(String left, String right) {
+		return Objects.equals(StrUtil.emptyToNull(left), StrUtil.emptyToNull(right));
 	}
 
 	/**

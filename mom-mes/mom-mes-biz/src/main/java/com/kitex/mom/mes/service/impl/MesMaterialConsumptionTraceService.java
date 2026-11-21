@@ -136,10 +136,21 @@ public class MesMaterialConsumptionTraceService {
 		if ("GOOD_FEED".equals(kind) || "GOOD_BACKFLUSH".equals(kind)) {
 			var corrections = facts("mes_report_quantity_correction_line", mapper.corrections(scope));
 			if (!corrections.isEmpty()) {
+				// 分配账证明恢复了哪条原耗料，仓库 IN 还须能唯一对应本次操作。
+				if ("GOOD_BACKFLUSH".equals(kind)) {
+					Set<String> receiptRequests = new HashSet<>();
+					for (Fact receipt : result.getRestores()) {
+						receiptRequests.add(receipt.getFields().get("resource_no"));
+					}
+					long unmatched = corrections.stream()
+							.filter(line -> !receiptRequests.contains(line.getFields().get("operation_request_id")))
+							.count();
+					if (unmatched > 0) {
+						result.getDataGaps().add(unmatched + " 笔倒冲恢复的入库流水缺失或无法唯一对应，请按纠正操作号核对。");
+					}
+				}
 				result.getRelatedSources().addAll(result.getRestores());
 				result.setRestores(corrections);
-				result.getDataGaps()
-						.add("纠正分配行的quantity_unit沿原报工单位保存；材料实际单位读取原实耗行，不跨单位合计。");
 				if (result.getReversals().isEmpty()) {
 					result.getDataGaps().add("原恢复分配存在，但未找到精确关联的纠正申请主账。");
 				}

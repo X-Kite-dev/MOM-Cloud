@@ -1096,9 +1096,9 @@ public abstract class AbstractWmsOutBillHandler implements WmsOutBillHandler<Wms
 							&& StrUtil.isNotBlank(outBill.getBillNo()),
 					"原出库单的通知、组织、仓库或业务类型不符");
 			// 新精确执行逐次保留明细，供预留消费和拣配使用独立事实号；原请求防重由永久回执处理。
-			// 未提供通知明细ID的历史调用继续沿用聚合规则。
+			// 生产发料还要逐行交给 MES 签收。旧 PDA 即使没有通知明细 ID，也必须将不同次扫描分别记行。
 			List<WmsOutBillDetailEntity> billDetails = List.of();
-			if (params.getNoticeDetailId() == null) {
+			if (params.getNoticeDetailId() == null && !OutBillTypeEnum.PRODUCE_OUT.getCode().equals(outBill.getBillType())) {
 				billDetails = wmsOutBillDetailMapper
 						.selectList(new LambdaQueryWrapper<WmsOutBillDetailEntity>()
 								.eq(WmsOutBillDetailEntity::getBillId, outBill.getId())

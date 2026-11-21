@@ -14,6 +14,9 @@ import com.kitex.common.core.entity.BaseCore;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.security.service.MomUser;
+import com.kitex.common.data.tenant.TenantContextHolder;
+import com.kitex.mom.plan.agent.mapper.OmsProductionScopeOwnershipMapper;
+import com.kitex.mom.plan.agent.service.PlanAgentActualScopeAccess;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
 import com.kitex.mom.mdm.entity.MdmCustomerEntity;
@@ -48,6 +51,7 @@ import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -110,13 +114,30 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
     private final OmsOrderChangeLedgerService changeLedger;
     private final OmsDeliveryWithdrawalMapper deliveryWithdrawalMapper;
     private final OmsDeliveryIssueMapper deliveryIssueMapper;
+    private final PlanAgentActualScopeAccess projectFactoryAccess;
+    private final OmsProductionScopeOwnershipMapper projectOrderOwnership;
+
+    /** 项目精确入口沿原跟踪分页及岗位权限，另核无租户列的历史交付行归属。 */
+    private void checkProjectOrder(OmsOrderBaseTrackPageDto query) {
+        if (query.getProjectOrderCode() == null) {
+            return;
+        }
+        String code = query.getProjectOrderCode();
+        projectFactoryAccess.require(query.getFactoryCode(), "read");
+        if (code.isBlank() || code.length() > 100 || projectOrderOwnership.countSafeOwner(
+                TenantContextHolder.getTenantId(), query.getFactoryCode(), code) != 1) {
+            throw new CheckedException("原订单未唯一归属当前工厂，请从项目调查重新选择");
+        }
+    }
 
 
     /**
      * 订单跟踪表分页查询
      */
     @Override
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Page<OmsOrderBaseTrackPageDto> getOmsOrderBaseTrackPage(Page page, OmsOrderBaseTrackPageDto omsOrderBaseTrack) {
+        checkProjectOrder(omsOrderBaseTrack);
         Page<OmsOrderBaseTrackPageDto> orderBaseTrackPage = this.baseMapper.getOmsOrderBaseTrackPage(page, omsOrderBaseTrack);
 
         if (CollUtil.isNotEmpty(orderBaseTrackPage.getRecords())) {
@@ -1023,7 +1044,9 @@ public class OmsOrderBaseTrackServiceImpl extends ServiceImpl<OmsOrderBaseTrackM
      * @return
      */
     @Override
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Map<String, Long> getCount(OmsOrderBaseTrackPageDto omsOrderBaseTrack) {
+        checkProjectOrder(omsOrderBaseTrack);
         List<String> orderBaseTrackCount = this.baseMapper.getOmsOrderBaseTrackCount(omsOrderBaseTrack);
         return orderBaseTrackCount.stream().collect(Collectors.groupingBy(item -> item, Collectors.counting()));
     }

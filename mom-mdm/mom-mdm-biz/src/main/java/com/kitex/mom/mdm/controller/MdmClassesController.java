@@ -8,11 +8,16 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.kitex.common.core.constant.CommonConstants;
 import com.kitex.common.core.entity.SearchPage;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.excel.annotation.RequestExcel;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.common.log.annotation.SysLog;
+import com.kitex.common.security.annotation.Inner;
 import com.kitex.mom.mdm.entity.MdmClassesEntity;
 import com.kitex.mom.mdm.service.MdmClassesService;
 import com.kitex.mom.mdm.vo.excel.MdmClassesExcelVO;
@@ -21,6 +26,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.BindingResult;
@@ -250,6 +256,36 @@ public class MdmClassesController {
     public R<List<MdmClassesEntity>> getClassesByCode(@RequestParam("classCode") String classCode,
                                                       @RequestParam(value = "number", required = false, defaultValue = "1") Integer number) {
         return R.ok(mdmClassesService.getClassesByCode(classCode, number));
+    }
+
+    @Inner
+    @GetMapping("/internal/patrol-sequence")
+    public R<List<MdmClassesEntity>> getPatrolSequence(
+            @RequestHeader(CommonConstants.TENANT_ID) Long tenant,
+            @RequestHeader(CommonConstants.FACTORY_CODE) String factory,
+            @RequestParam("classCode") String classCode,
+            @RequestParam("number") int number) {
+        requirePatrolScope(tenant, factory);
+        return R.ok(mdmClassesService.getClassesByCode(classCode, number));
+    }
+
+    @Inner
+    @GetMapping("/internal/patrol-shift")
+    public R<String> getPatrolShift(
+            @RequestHeader(CommonConstants.TENANT_ID) Long tenant,
+            @RequestHeader(CommonConstants.FACTORY_CODE) String factory,
+            @RequestParam("dateTime") @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime dateTime) {
+        requirePatrolScope(tenant, factory);
+        return R.ok(mdmClassesService.getClassesRule(dateTime), null);
+    }
+
+    private void requirePatrolScope(Long tenant, String factory) {
+        if (tenant == null || tenant <= 0 || !tenant.equals(TenantContextHolder.getTenantId())
+                || TenantContextHolder.getTenantSkip() || StrUtil.isBlank(factory)
+                || !factory.equals(FactoryContextHolder.getFactoryCode())
+                || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())) {
+            throw new CheckedException("中检班次查询须指定实际租户和工厂");
+        }
     }
 
     /**

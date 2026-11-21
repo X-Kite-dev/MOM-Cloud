@@ -1,6 +1,9 @@
 package com.kitex.mom.mes.service.impl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.kitex.common.data.tenant.TenantContextHolder;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mes.dto.MesMaterialListRecordDTO;
 import com.kitex.mom.mes.entity.MesMaterialListRecordEntity;
 import com.kitex.mom.mes.enums.MesMaterialOperationTypeEnum;
@@ -28,14 +31,16 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class MesMaterialListRecordServiceImpl extends ServiceImpl<MesMaterialListRecordMapper, MesMaterialListRecordEntity> implements MesMaterialListRecordService {
 
+    private final MesActualFactoryAccessService factoryAccess;
+
     @Override
     public List<MesMaterialListRecordDTO> getRecordsByDetailId(Long materialListDetailId) {
-        return baseMapper.selectRecordsByDetailId(materialListDetailId);
+        return baseMapper.selectRecordsByDetailId(materialListDetailId, TenantContextHolder.getTenantId(), factoryAccess.require("read"));
     }
 
     @Override
     public List<MesMaterialListRecordDTO> getRecordsByTaskId(Long taskId) {
-        return baseMapper.selectRecordsByTaskId(taskId);
+        return baseMapper.selectRecordsByTaskId(taskId, TenantContextHolder.getTenantId(), factoryAccess.require("read"));
     }
 
     @Override
@@ -44,6 +49,9 @@ public class MesMaterialListRecordServiceImpl extends ServiceImpl<MesMaterialLis
                                     String batchNo, String referenceBillNo, String remark) {
         try {
             MesMaterialListRecordEntity record = new MesMaterialListRecordEntity();
+            record.setTenantId(TenantContextHolder.getTenantId());
+            record.setFactoryCode(FactoryContextHolder.getFactoryCode());
+            record.setOperator(SecurityUtils.getUser().getUsername());
             record.setMaterialListDetailId(materialListDetailId);
             record.setTaskId(taskId);
             record.setMaterialCode(materialCode);
@@ -77,6 +85,9 @@ public class MesMaterialListRecordServiceImpl extends ServiceImpl<MesMaterialLis
                                       String batchNo, String referenceBillNo, String remark) {
         try {
             MesMaterialListRecordEntity record = new MesMaterialListRecordEntity();
+            record.setTenantId(TenantContextHolder.getTenantId());
+            record.setFactoryCode(FactoryContextHolder.getFactoryCode());
+            record.setOperator(SecurityUtils.getUser().getUsername());
             record.setMaterialListDetailId(materialListDetailId);
             record.setTaskId(taskId);
             record.setMaterialCode(materialCode);
@@ -106,6 +117,6 @@ public class MesMaterialListRecordServiceImpl extends ServiceImpl<MesMaterialLis
 
     @Override
     public List<Map<String, Object>> getPickReturnSummaryByTaskId(Long taskId) {
-        return baseMapper.selectPickReturnSummaryByTaskId(taskId);
+        return baseMapper.selectPickReturnSummaryByTaskId(taskId, TenantContextHolder.getTenantId(), factoryAccess.require("read"));
     }
 }

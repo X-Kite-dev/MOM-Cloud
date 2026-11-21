@@ -31,6 +31,9 @@ public class MesTaskInWmsSourceDTO {
      */
     private BigDecimal requestQuantity;
 
+    /** 本次分配的末序报工共同冻结的基本单位编码。 */
+    private String reportUnit;
+
     /**
      * 预览时工单累计已入库数量。
      */

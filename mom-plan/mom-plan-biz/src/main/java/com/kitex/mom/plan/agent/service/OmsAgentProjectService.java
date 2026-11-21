@@ -196,22 +196,27 @@ public class OmsAgentProjectService {
             result.put("versionNo", project.getVersionNo());
             result.put("scopeFingerprint", project.getScopeFingerprint());
             List<OmsAgentProjectOrderEntity> rows = rows(project.getId());
+            // 归属版本的正式成员数与本次成功取证数分别记录，单笔订单不可读时仍能看见覆盖缺口。
+            result.put("memberOrderCount", rows.size());
+            List<String> unavailableOrders = new ArrayList<>();
             for (OmsAgentProjectOrderEntity row : rows) {
                 try {
                     require("ACTIVE".equals(row.getStatus()) && Objects.equals(order(row.getOrderCode()).getId(),
                             row.getOrderId()), "项目精确订单归属已失效");
                     OmsProductionScopeDTO.Evidence item = production.query(new OmsProductionScopeDTO.Query()
                             .setFactoryCode(factory()).setOrderCode(row.getOrderCode()));
-                    evidence.add(item);
                     if (!Boolean.TRUE.equals(item.getScopeComplete()) || Boolean.TRUE.equals(item.getTruncated()))
                         gaps.add("订单" + row.getOrderCode() + "生产范围不完整");
                     for (OmsProductionScopeDTO.Line line : item.getLines())
                         if (!"COMPLETE".equals(line.getQuantityAttributionStatus()))
                             gaps.add("订单" + row.getOrderCode() + "明细" + line.getLineId() + "数量归属未知");
+                    evidence.add(item);
                 } catch (RuntimeException failure) {
-                    gaps.add("订单" + row.getOrderCode() + "权威来源不可用：" + failure.getMessage());
+                    unavailableOrders.add(row.getOrderCode());
+                    gaps.add("订单" + row.getOrderCode() + "生产来源读取失败，请核对订单归属并重新取证");
                 }
             }
+            result.put("unavailableOrderCodes", unavailableOrders);
         }
         result.put("scopeStatus", gaps.isEmpty() ? "COMPLETE" : "UNKNOWN");
         result.put("orders", evidence);

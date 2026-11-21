@@ -114,7 +114,9 @@ public class MesAutoReportRuleServiceImpl extends ServiceImpl<MesAutoReportRuleM
             ensureNoActiveConflict(rule);
         }
         rule.setEnabled(enabled);
-        updateById(rule);
+        if (!updateById(rule)) {
+            throw new CheckedException("设备规则启停未保存，请按原规则核对状态");
+        }
         return getById(id);
     }
 

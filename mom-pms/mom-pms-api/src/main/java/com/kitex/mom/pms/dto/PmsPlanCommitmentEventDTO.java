@@ -14,7 +14,11 @@ public final class PmsPlanCommitmentEventDTO {
 
     @Data
     public static class Query {
+        /** 从 APS 回到原调查时，限定在原采购单内查询本次改期投递主键。 */
+        private Long outboxId;
         private Long pmsOrderId;
+        /** 从履约调查打开承诺台账时，按原采购订单行筛选排程投递记录。 */
+        private Long orderDetailId;
         private String pmsPlanNo;
         private String planDemandNo;
         private String materialCode;

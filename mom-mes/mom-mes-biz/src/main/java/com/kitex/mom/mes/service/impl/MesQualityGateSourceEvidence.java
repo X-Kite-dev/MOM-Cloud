@@ -292,7 +292,8 @@ public class MesQualityGateSourceEvidence {
         return new Proof(original.get("orderId") != null);
     }
 
-    InspectionProcedureCreateParam replay(
+    /** 恢复已有质检命令原文，并校验其属于同一工序、工单及检验阶段。 */
+    public InspectionProcedureCreateParam replay(
             MesInspectionGenRecordEntity record,
             MesProduceTaskEntity process,
             MesTaskEntity owner,

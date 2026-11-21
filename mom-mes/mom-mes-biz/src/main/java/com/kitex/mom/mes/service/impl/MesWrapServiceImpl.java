@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.common.barcode.api.feign.RemoteBarcodeService;
@@ -20,6 +21,8 @@ import com.kitex.mom.mes.entity.MesWrapRuleEntity;
 import com.kitex.mom.mes.enums.MesWrapOperationTypeEnum;
 import com.kitex.mom.mes.enums.MesWrapRecordStatusEnum;
 import com.kitex.mom.mes.enums.MesWrapStatusEnum;
+import com.kitex.mom.mes.enums.ReportModeEnum;
+import com.kitex.mom.mes.service.MesWrapRecordService;
 import com.kitex.mom.mes.mapper.MesWrapMapper;
 import com.kitex.mom.mes.mapper.MesWrapOperationMapper;
 import com.kitex.mom.mes.mapper.MesWrapRecordMapper;
@@ -49,6 +52,8 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
     private final RemoteSeqConfigService seqConfigService;
     private final MesWrapRecordMapper wrapRecordMapper;
     private final MesWrapOperationMapper wrapOperationMapper;
+    private final MesWrapRecordService recordService;
+    private final MesActualFactoryAccessService access;
 
     /**
      * 生成箱码
@@ -112,10 +117,11 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void unpack(MesWrapUnpackCommand command) {
+        String factory = access.require("write");
         command.setRequestId(command.getRequestId().trim());
         command.setWrapCode(command.getWrapCode().trim());
         command.setReason(command.getReason().trim());
-        MesWrapOperationEntity existing = findOperation(command.getRequestId());
+        MesWrapOperationEntity existing = findOperation(command.getRequestId(), factory);
         if (existing != null) {
             if (!MesWrapOperationTypeEnum.UNPACK.name().equals(existing.getOperationType())
                     || !command.getWrapCode().equals(existing.getSourceWrapCodes())) {
@@ -125,8 +131,8 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
         }
 
         MesWrapEntity wrap = lockWrap(command.getWrapCode());
-        if (wrap == null) {
-            throw new IllegalStateException("箱码不存在：" + command.getWrapCode());
+        if (wrap == null || !Objects.equals(factory, wrap.getFactoryCode())) {
+            throw new IllegalStateException("本工厂箱码不存在：" + command.getWrapCode());
         }
         if (MesWrapStatusEnum.UNPACKED.name().equals(wrap.getStatus())) {
             throw new IllegalStateException("该箱码已拆箱，请勿重复操作");
@@ -137,6 +143,8 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
 
         List<MesWrapRecordEntity> packedRecords = wrapRecordMapper.selectList(
                 new LambdaQueryWrapper<MesWrapRecordEntity>()
+                        .eq(MesWrapRecordEntity::getTenantId, TenantContextHolder.getTenantId())
+                        .eq(MesWrapRecordEntity::getFactoryCode, factory)
                         .eq(MesWrapRecordEntity::getWrapCode, command.getWrapCode())
                         .eq(MesWrapRecordEntity::getPackingStatus, MesWrapRecordStatusEnum.PACKED.name())
                         .orderByAsc(MesWrapRecordEntity::getId)
@@ -152,27 +160,32 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
             record.setPackingStatus(MesWrapRecordStatusEnum.UNPACKED.name());
             record.setAvailableQuantity(quantity);
             record.setOperationRequestId(command.getRequestId());
-            wrapRecordMapper.updateById(record);
+            if (wrapRecordMapper.updateById(record) != 1) {
+                throw new IllegalStateException("拆出的原装箱内容未更新，操作已回滚");
+            }
         }
         wrap.setStatus(MesWrapStatusEnum.UNPACKED.name());
         wrap.setCurrentQuantity(BigDecimal.ZERO);
         wrap.setUnpackTime(LocalDateTime.now());
-        updateById(wrap);
+        if (!updateById(wrap)) {
+            throw new IllegalStateException("原箱状态未更新，操作已回滚");
+        }
 
-        saveOperation(command.getRequestId(), MesWrapOperationTypeEnum.UNPACK.name(),
+        saveOperation(factory, command.getRequestId(), MesWrapOperationTypeEnum.UNPACK.name(),
                 command.getWrapCode(), null, unpackQuantity, command.getReason(), packedRecords);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String repack(MesWrapRepackCommand command) {
+        String factory = access.require("write");
         command.setRequestId(command.getRequestId().trim());
         command.setTargetWrapCode(StrUtil.trim(command.getTargetWrapCode()));
         command.setReason(command.getReason().trim());
         command.setAllocations(command.getAllocations().stream()
                 .sorted(Comparator.comparing(MesWrapRepackCommand.Allocation::getRecordId))
                 .toList());
-        MesWrapOperationEntity existing = findOperation(command.getRequestId());
+        MesWrapOperationEntity existing = findOperation(command.getRequestId(), factory);
         if (existing != null) {
             boolean targetConflict = StrUtil.isNotBlank(command.getTargetWrapCode())
                     && !command.getTargetWrapCode().equals(existing.getTargetWrapCode());
@@ -195,6 +208,8 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
             }
             MesWrapRecordEntity source = wrapRecordMapper.selectOne(
                     new LambdaQueryWrapper<MesWrapRecordEntity>()
+                            .eq(MesWrapRecordEntity::getTenantId, TenantContextHolder.getTenantId())
+                            .eq(MesWrapRecordEntity::getFactoryCode, factory)
                             .eq(MesWrapRecordEntity::getId, allocation.getRecordId())
                             .last("FOR UPDATE"));
             if (source == null) {
@@ -224,7 +239,14 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
             throw new IllegalStateException("重组数量必须大于零");
         }
 
+        recordService.loadRepackModes(sources, factory);
+        for (int i = 0; i < sources.size(); i++) {
+            checkRepackQuantity(sources.get(i), command.getAllocations().get(i).getQuantity());
+        }
         MesWrapEntity target = resolveTarget(command.getTargetWrapCode(), template);
+        if (!Objects.equals(target.getFactoryCode(), factory)) {
+            throw new IllegalStateException("目标箱码不属于本工厂");
+        }
         BigDecimal current = positive(target.getCurrentQuantity());
         if (target.getWrapCapacity() == null || target.getWrapCapacity() <= 0) {
             throw new IllegalStateException("目标包装容量无效，不能执行重组");
@@ -246,7 +268,9 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
             source.setPackingStatus(remaining.signum() == 0
                     ? MesWrapRecordStatusEnum.MOVED.name() : MesWrapRecordStatusEnum.PARTIAL.name());
             source.setOperationRequestId(command.getRequestId());
-            wrapRecordMapper.updateById(source);
+            if (wrapRecordMapper.updateById(source) != 1) {
+                throw new IllegalStateException("重组来源可用数量未更新，操作已回滚");
+            }
 
             MesWrapRecordEntity child = new MesWrapRecordEntity()
                     .setReportId(source.getReportId())
@@ -261,7 +285,9 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
                     .setSourceRecordId(source.getId())
                     .setOperationRequestId(command.getRequestId())
                     .setFactoryCode(source.getFactoryCode());
-            wrapRecordMapper.insert(child);
+            if (wrapRecordMapper.insert(child) != 1) {
+                throw new IllegalStateException("重组后的箱内明细未保存，操作已回滚");
+            }
         }
 
         BigDecimal targetQuantity = current.add(total);
@@ -270,9 +296,11 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
                 ? MesWrapStatusEnum.SEALED.name() : MesWrapStatusEnum.OPEN.name());
         target.setSourceMode("REPACK");
         target.setRepackTime(LocalDateTime.now());
-        updateById(target);
+        if (!updateById(target)) {
+            throw new IllegalStateException("重组目标箱数量未更新，操作已回滚");
+        }
 
-        saveOperation(command.getRequestId(), MesWrapOperationTypeEnum.REPACK.name(),
+        saveOperation(factory, command.getRequestId(), MesWrapOperationTypeEnum.REPACK.name(),
                 String.join(",", sourceWrapCodes), target.getWrapCode(), total, command.getReason(), command.getAllocations());
         return target.getWrapCode();
     }
@@ -319,10 +347,27 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
         }
     }
 
-    private MesWrapOperationEntity findOperation(String requestId) {
-        return wrapOperationMapper.selectOne(new LambdaQueryWrapper<MesWrapOperationEntity>()
-                .eq(MesWrapOperationEntity::getRequestId, requestId)
-                .last("limit 1"));
+    /** 旧履历缺少工厂时沿操作原箱核归属，不能凭另一个工厂的请求号回放。 */
+    private MesWrapOperationEntity findOperation(String requestId, String factory) {
+        MesWrapOperationEntity operation = wrapOperationMapper.selectOne(new LambdaQueryWrapper<MesWrapOperationEntity>()
+                .eq(MesWrapOperationEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(MesWrapOperationEntity::getRequestId, requestId));
+        if (operation == null) {
+            return null;
+        }
+        String owner = operation.getFactoryCode();
+        if (StrUtil.isBlank(owner)) {
+            String boxCode = MesWrapOperationTypeEnum.UNPACK.name().equals(operation.getOperationType())
+                    ? operation.getSourceWrapCodes() : operation.getTargetWrapCode();
+            MesWrapEntity box = baseMapper.selectOne(new LambdaQueryWrapper<MesWrapEntity>()
+                    .eq(MesWrapEntity::getTenantId, TenantContextHolder.getTenantId())
+                    .eq(MesWrapEntity::getWrapCode, boxCode));
+            owner = box == null ? null : box.getFactoryCode();
+        }
+        if (!Objects.equals(owner, factory)) {
+            throw new IllegalStateException("当前工厂无法核实该包装操作原号");
+        }
+        return operation;
     }
 
     private MesWrapEntity lockWrap(String wrapCode) {
@@ -344,7 +389,8 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
             return target;
         }
         MesWrapEntity sourceWrap = lockWrap(template.getWrapCode());
-        if (sourceWrap == null || StrUtil.isBlank(sourceWrap.getRuleCode())) {
+        if (sourceWrap == null || !Objects.equals(sourceWrap.getFactoryCode(), template.getFactoryCode())
+                || StrUtil.isBlank(sourceWrap.getRuleCode())) {
             throw new IllegalStateException("来源包装缺少有效包装规则，无法自动生成目标箱码");
         }
         MesWrapEntity target = new MesWrapEntity()
@@ -359,10 +405,11 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
         return target;
     }
 
-    private void saveOperation(String requestId, String operationType, String sourceWrapCodes,
+    private void saveOperation(String factory, String requestId, String operationType, String sourceWrapCodes,
                                String targetWrapCode, BigDecimal quantity, String reason, Object snapshot) {
         MomUser user = SecurityUtils.getUser();
         MesWrapOperationEntity operation = new MesWrapOperationEntity()
+                .setFactoryCode(factory)
                 .setRequestId(requestId)
                 .setOperationType(operationType)
                 .setSourceWrapCodes(sourceWrapCodes)
@@ -373,7 +420,29 @@ public class MesWrapServiceImpl extends ServiceImpl<MesWrapMapper, MesWrapEntity
                 .setOperatorCode(user == null ? "SYSTEM" : user.getUsername())
                 .setOperatorName(user == null ? "系统" : user.getName())
                 .setOperationTime(LocalDateTime.now());
-        wrapOperationMapper.insert(operation);
+        if (wrapOperationMapper.insert(operation) != 1) {
+            throw new IllegalStateException("包装操作履历未保存，操作已回滚");
+        }
+    }
+
+    /**
+     * 保持单件码的实物完整性。只有能追到数量包装原报工的来源可以部分分配；
+     * 老箱缺原报工模式时仍可按原可用余额整行转移。
+     */
+    private void checkRepackQuantity(MesWrapRecordEntity source, BigDecimal moved) {
+        if (moved.signum() <= 0) {
+            throw new IllegalStateException("重组数量必须大于零");
+        }
+        if (ReportModeEnum.PACKAGE_ONE_CODE.name().equals(source.getSourceReportMode())) {
+            if (BigDecimal.ONE.compareTo(positive(source.getQuantity())) != 0
+                    || BigDecimal.ONE.compareTo(positive(source.getAvailableQuantity())) != 0
+                    || BigDecimal.ONE.compareTo(moved) != 0) {
+                throw new IllegalStateException("单件码只能整件重组，请核对来源：" + source.getTransferCode());
+            }
+        } else if (!ReportModeEnum.PACKAGE_QUANTITY.name().equals(source.getSourceReportMode())
+                && moved.compareTo(source.getAvailableQuantity()) != 0) {
+            throw new IllegalStateException("来源未核实为数量包装，仅可整行移入：" + source.getId());
+        }
     }
 
     private BigDecimal positive(BigDecimal quantity) {

@@ -37,7 +37,8 @@ public class PlnApsReplanAdapterImpl implements PlnApsReplanAdapter {
         return java.util.Arrays.stream(values).allMatch(StrUtil::isNotBlank);
     }
 
-    private static String version(LocalDateTime updateTime, LocalDateTime createTime, String state) {
+    /** 取证和启动案件共用同一业务版本，保留完整时间精度及状态。 */
+    static String version(LocalDateTime updateTime, LocalDateTime createTime, String state) {
         LocalDateTime time = updateTime == null ? createTime : updateTime;
         require(time != null, "局部重排来源缺少可核验的更新时间");
         return time + ":" + StrUtil.blankToDefault(state, "NA");

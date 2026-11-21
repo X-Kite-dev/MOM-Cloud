@@ -31,6 +31,23 @@ public interface MesPackagingSealMapper extends BaseMapper<MesPackagingSealEntit
 	@Select("SELECT * FROM mom_mes.mes_packaging_seal WHERE tenant_id=#{tenant} AND request_id=#{request}")
 	MesPackagingSealEntity permanent(@Param("tenant") Long tenant, @Param("request") String request);
 
+	/** 精确查本厂数量报工的待装容器，最多取两条以识别历史身份冲突。 */
+	@InterceptorIgnore(tenantLine = "true", dataPermission = "true")
+	@Select("""
+			SELECT w.*
+			FROM mom_mes.mes_wrap_record w
+			JOIN mom_mes.mes_task_report p
+			  ON p.id = w.report_id AND p.tenant_id = w.tenant_id AND p.factory_code = w.factory_code
+			 AND p.task_code = w.task_code AND p.produce_task_code = w.procedure_task_code
+			 AND p.arrange_code = w.arrange_code AND p.transfer_code = w.transfer_code
+			WHERE w.tenant_id = #{tenant} AND w.factory_code = #{factory} AND w.transfer_code = #{container}
+			  AND w.del_flag = '0' AND w.packing_status = 'STAGED' AND w.wrap_code IS NULL
+			  AND w.source_record_id IS NULL AND p.del_flag = '0' AND p.report_mode = 'PACKAGE_QUANTITY'
+			ORDER BY w.id LIMIT 2
+			""")
+	List<MesWrapRecordEntity> pendingContainer(@Param("tenant") Long tenant, @Param("factory") String factory,
+			@Param("container") String container);
+
 	/**
 	 * 逐件自动满箱只观察最早的足量真实可封内容；锁内仍须重读报告及成员。
 	 * 在SQL内过滤质量未放行和转换占用，避免每次扫码加载整条历史队列并逐行跨层查询。

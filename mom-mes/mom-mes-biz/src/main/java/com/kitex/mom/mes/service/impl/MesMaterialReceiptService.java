@@ -226,6 +226,24 @@ public class MesMaterialReceiptService {
         return evidence;
     }
 
+    /**
+     * 线上签收、旧端签收与整单签收共用。单件沿原出库流水一次记一件，
+     * 普通批料沿原余额分收。历史来源未记管理方式时，只能一次接收剩余量。
+     */
+    private void requireReceivableQuantity(WmsOutBillEntity bill, MesWarehouseMaterialInBillEntity notice,
+                                           BigDecimal received, BigDecimal requested) {
+        Boolean serial = bill.getDetails().get(0).getIssuedAsSerial();
+        if (Boolean.TRUE.equals(serial)) {
+            require(StrUtil.isNotBlank(notice.getMatBarcode()) && received.signum() == 0
+                            && notice.getNoticeInNum().compareTo(BigDecimal.ONE) == 0
+                            && requested.compareTo(BigDecimal.ONE) == 0,
+                    "单件发料须按原序列号一次签收 1 件，请核对出库明细和原签收记录");
+        } else if (serial == null) {
+            require(received.add(requested).compareTo(notice.getNoticeInNum()) == 0,
+                    "原出库行缺少可核验的实物管理方式，分批签收须先核对原流水");
+        }
+    }
+
     public List<MesWarehouseMaterialInBillEntity> notices(Long pickingId) {
         MesWarehousePickingBillEntity picking = pickingMapper.selectById(pickingId);
         require(picking != null, "生产领料单不存在");
@@ -299,6 +317,7 @@ public class MesMaterialReceiptService {
         require(notice.getWmsOutDetailId() != null && StrUtil.isNotBlank(notice.getResourceNo()),
                 "缺少精确WMS出库来源，历史通知须先完成来源对账，不得凭手填物料入库");
         WmsOutBillEntity sourceBill = verifyWmsSource(notice);
+        requireReceivableQuantity(sourceBill, notice, before, command.getQuantity());
         String targetSite = null;
         if (Boolean.TRUE.equals(sourceBill.getLineDeliveryRequired())) {
             WmsLineDeliveryEvidenceDTO delivery = lineDeliveryEvidence(notice, sourceBill);
@@ -317,6 +336,13 @@ public class MesMaterialReceiptService {
         MdmFactoryModelTreeVO site = uniqueSite(notice, command.getSiteCode(), targetSite);
         MesMaterialReceiptEntity receipt = operation(command, notice, user, "RECEIVE", before,
                 before.add(command.getQuantity())).setSiteCode(site.getCode()).setSiteName(site.getName());
+        Boolean serial = sourceBill.getDetails().get(0).getIssuedAsSerial();
+        if (serial != null) {
+            // 与原签收一同冻结。此后即使物料配置变更，线边投料仍按出库时的实物身份办理。
+            var snapshot = JSONUtil.parseObj(receipt.getSourceSnapshot());
+            snapshot.set("issuedAsSerial", serial);
+            receipt.setSourceSnapshot(snapshot.toString());
+        }
         require(receiptMapper.insert(receipt) == 1, "签收履历保存失败");
 
         MesWarehouseLiveStockInoutDTO stock = new MesWarehouseLiveStockInoutDTO();

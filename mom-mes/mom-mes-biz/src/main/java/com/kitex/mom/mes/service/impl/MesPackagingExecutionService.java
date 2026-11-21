@@ -5,7 +5,9 @@ import cn.hutool.json.JSONConfig;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.component.PermissionService;
@@ -308,12 +310,10 @@ public class MesPackagingExecutionService {
 		Map<Long, MesTaskReportEntity> sourceReports = pendingReports(arrange, staged);
 		Set<Long> blockedReports = staged.isEmpty() ? Set.of() : Set.copyOf(seals.blockedPendingReports(tenant(),
 				arrange.getFactoryCode(), arrange.getTaskCode(), arrange.getProduceTaskCode(), arrange.getCode(), arrange.getId().toString()));
-		List<MesPackagingDTO.Pending> pending = staged.stream().map(record -> {
-			String hold = pendingHold(record, sourceReports.get(record.getReportId()), adoption, blockedReports);
-			return new MesPackagingDTO.Pending().setRecordId(record.getId().toString()).setReportId(record.getReportId().toString())
-					.setTransferCode(record.getTransferCode()).setQuantity(record.getQuantity()).setCreatedAt(record.getCreateTime())
-					.setSealAllowed(hold == null).setHoldReason(hold);
-		}).toList();
+		List<MesPackagingDTO.Pending> pending = staged.stream()
+				.map(record -> pendingView(record, sourceReports.get(record.getReportId()), adoption,
+						blockedReports.contains(record.getReportId())))
+				.toList();
 		MesPackagingSealEntity latest = seals.selectOne(new LambdaQueryWrapper<MesPackagingSealEntity>()
 				.eq(MesPackagingSealEntity::getTenantId, tenant()).eq(MesPackagingSealEntity::getFactoryCode, factory)
 				.eq(MesPackagingSealEntity::getArrangeId, arrange.getId())
@@ -323,6 +323,79 @@ public class MesPackagingExecutionService {
 				.setAdoption(adoption == null ? null : adoptionView(adoption)).setStagedRecords(pending)
 				.setStagedQuantity(staged.stream().map(MesWrapRecordEntity::getQuantity).reduce(BigDecimal.ZERO, BigDecimal::add))
 				.setLatestSeal(latest == null ? null : receiptView(latest, Objects.equals(latest.getActorId(), actorId())));
+	}
+
+	/**
+	 * 按完整箱码在同一数据库快照中读取箱档和一页内容。普通作业员仅可查看本人派工的箱。
+	 * INITIAL 沿永久初封成员读取，CURRENT 只含现仍 PACKED 的记录，拆出件不再命中。
+	 */
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+	public MesPackagingDTO.BoxContents boxContents(String wrapCode, MesPackagingDTO.ContentView view,
+			String identifier, int page) {
+		String factory = access.require("read");
+		String boxCode = code(wrapCode, "包装箱码");
+		String filter = StrUtil.trimToEmpty(identifier);
+		require(view != null && page >= 1 && filter.length() <= 200, "箱内查询条件无效");
+		installed();
+		var wrap = wraps.selectOne(new LambdaQueryWrapper<MesWrapEntity>()
+				.eq(MesWrapEntity::getTenantId, tenant()).eq(MesWrapEntity::getFactoryCode, factory)
+				.eq(MesWrapEntity::getWrapCode, boxCode));
+		require(wrap != null, "当前工厂未找到该生产箱码");
+		if (!permissions.hasPermission("mesWrap:show")) {
+			var owner = arrange(code(wrap.getArrangeCode(), "箱档所属派工"), factory, false);
+			assertAssigned(owner);
+			require(Objects.equals(owner.getTaskCode(), wrap.getTaskCode())
+					&& Objects.equals(owner.getProduceTaskCode(), wrap.getProcedureTaskCode()), "箱档归属待核对");
+			// 重组后箱内可能有其他派工内容，普通作业员不能经此查询他人来源。
+			require(records.selectCount(packedContents(factory, boxCode).and(other -> other
+					.isNull(MesWrapRecordEntity::getArrangeCode)
+					.or().ne(MesWrapRecordEntity::getArrangeCode, owner.getCode())
+					.or().isNull(MesWrapRecordEntity::getTaskCode)
+					.or().ne(MesWrapRecordEntity::getTaskCode, owner.getTaskCode())
+					.or().isNull(MesWrapRecordEntity::getProcedureTaskCode)
+					.or().ne(MesWrapRecordEntity::getProcedureTaskCode, owner.getProduceTaskCode()))) == 0,
+					"箱内含其他派工的来源，请由有包装查看权限的人员核对");
+		}
+		var seal = seals.selectOne(new LambdaQueryWrapper<MesPackagingSealEntity>()
+				.eq(MesPackagingSealEntity::getTenantId, tenant()).eq(MesPackagingSealEntity::getFactoryCode, factory)
+				.eq(MesPackagingSealEntity::getWrapId, wrap.getId()).eq(MesPackagingSealEntity::getWrapCode, boxCode)
+				.eq(MesPackagingSealEntity::getAcceptedStatus, "ACCEPTED"));
+		if (seal != null) {
+			require(Objects.equals(seal.getArrangeCode(), wrap.getArrangeCode())
+					&& Objects.equals(seal.getTaskCode(), wrap.getTaskCode())
+					&& Objects.equals(seal.getProduceTaskCode(), wrap.getProcedureTaskCode()), "原封箱凭证与箱档所属任务不一致");
+		}
+		IPage<MesPackagingDTO.BoxItem> lines;
+		if (view == MesPackagingDTO.ContentView.INITIAL) {
+			require(seal != null, "该箱没有标准初封凭证，可查看当前内容");
+			lines = members.selectPage(new Page<>(page, 30), new LambdaQueryWrapper<MesPackagingSealMemberEntity>()
+					.eq(MesPackagingSealMemberEntity::getTenantId, tenant()).eq(MesPackagingSealMemberEntity::getFactoryCode, factory)
+					.eq(MesPackagingSealMemberEntity::getSealId, seal.getId())
+					.eq(!filter.isEmpty(), MesPackagingSealMemberEntity::getTransferCode, filter)
+					.orderByAsc(MesPackagingSealMemberEntity::getMemberOrdinal)).convert(row ->
+							new MesPackagingDTO.BoxItem(row.getRecordId().toString(), row.getTransferCode(), decimal(row.getQuantity())));
+		} else {
+			lines = records.selectPage(new Page<>(page, 30), packedContents(factory, boxCode)
+					.eq(!filter.isEmpty(), MesWrapRecordEntity::getTransferCode, filter)
+					.orderByAsc(MesWrapRecordEntity::getId)).convert(row ->
+							new MesPackagingDTO.BoxItem(row.getId().toString(), row.getTransferCode(), decimal(row.getQuantity())));
+		}
+		return new MesPackagingDTO.BoxContents(factory, boxCode, wrap.getTaskCode(), wrap.getArrangeCode(),
+				seal == null ? wrap.getWrapCapacity() : seal.getCapacity(), seal == null ? null : seal.getSealMode(),
+				seal == null ? null : decimal(seal.getQuantity()), wrap.getStatus(), decimal(wrap.getCurrentQuantity()),
+				view, filter, page, lines.getTotal(), lines.getRecords());
+	}
+
+	/** 当前箱内实物与历史已拆出的来源共享箱码，只有 PACKED 行参与核物。 */
+	private LambdaQueryWrapper<MesWrapRecordEntity> packedContents(String factory, String boxCode) {
+		return new LambdaQueryWrapper<MesWrapRecordEntity>()
+				.eq(MesWrapRecordEntity::getTenantId, tenant()).eq(MesWrapRecordEntity::getFactoryCode, factory)
+				.eq(MesWrapRecordEntity::getWrapCode, boxCode).eq(MesWrapRecordEntity::getPackingStatus, "PACKED");
+	}
+
+	/** 历史箱档数量可未知，已记录的数量以十进制原文返回给各终端。 */
+	private String decimal(BigDecimal quantity) {
+		return quantity == null ? null : quantity.stripTrailingZeros().toPlainString();
 	}
 
 	/** 批量只读源报告，当前行级限制只作交互提示，不替代提交时根锁及行锁核验。 */
@@ -338,18 +411,64 @@ public class MesPackagingExecutionService {
 				.in(MesTaskReportEntity::getId, ids)).stream().collect(Collectors.toMap(MesTaskReportEntity::getId, report -> report));
 	}
 
+	/**
+	 * 按原外部容器码读取未封箱的数量报工。核实际组织与派工执行人，封箱后可改查箱单。
+	 * 同码存在多个待装来源时拒绝，防止选错实物。
+	 */
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+	public MesPackagingDTO.PendingContainer pendingContainer(String containerCode) {
+		String factory = access.require("read");
+		installed();
+		List<MesWrapRecordEntity> matches = seals.pendingContainer(tenant(), factory, code(containerCode, "原容器码"));
+		require(matches.size() == 1, "未找到唯一待封容器，请核对箱码或查看当前箱内");
+		var record = matches.get(0);
+		var owner = arrange(record.getArrangeCode(), factory, false);
+		if (!permissions.hasPermission("mesWrap:show")) {
+			assertAssigned(owner);
+		}
+		require(mode(owner) == ReportModeEnum.PACKAGE_QUANTITY
+				&& Objects.equals(owner.getTaskCode(), record.getTaskCode())
+				&& Objects.equals(owner.getProduceTaskCode(), record.getProcedureTaskCode()), "待封容器与原派工归属不符");
+		var adoption = requireAdoption(owner);
+		var report = report(record.getReportId(), owner, false);
+		return new MesPackagingDTO.PendingContainer(factory, owner.getCode(), adoption.getCapacity(),
+				pendingView(record, report, adoption, occupied(owner, report)));
+	}
+
+	/** 工站列表与移动扫码沿同一条原报工展示质量分量，缺少来源时保留未知。 */
+	private MesPackagingDTO.Pending pendingView(MesWrapRecordEntity record, MesTaskReportEntity report,
+			MesPackagingAdoptionEntity adoption, boolean blocked) {
+		String hold = pendingHold(record, report, adoption, blocked);
+		var pending = new MesPackagingDTO.Pending()
+				.setRecordId(record.getId().toString()).setReportId(record.getReportId().toString())
+				.setTransferCode(record.getTransferCode()).setQuantity(record.getQuantity())
+				.setCreatedAt(record.getCreateTime()).setSealAllowed(hold == null).setHoldReason(hold);
+		if (report != null) {
+			pending.setReportUnit(report.getReportUnit())
+					.setReleasedQuantity(decimal(report.getQualityReleasedNum()))
+					.setPendingQuantity(decimal(report.getQualityPendingNum()))
+					.setRejectedQuantity(decimal(report.getQualityRejectedNum()));
+		}
+		return pending;
+	}
+
 	private String pendingHold(MesWrapRecordEntity record, MesTaskReportEntity report,
-			MesPackagingAdoptionEntity adoption, Set<Long> blockedReports) {
+			MesPackagingAdoptionEntity adoption, boolean blocked) {
 		if (adoption == null) {
 			return "尚未采用包装依据";
 		}
 		if (report == null || !"EFFECTIVE".equals(report.getStatus())) {
 			return "原报工不可用或已经冲销";
 		}
-		if (!released(report, record.getQuantity())) {
-			return "待质量放行或原报工数量已变更";
+		BigDecimal requested = record.getQuantity();
+		if (!positive(requested) || report.getReportNum() == null || report.getEffectiveReportNum() == null
+				|| requested.compareTo(report.getReportNum()) != 0 || requested.compareTo(report.getEffectiveReportNum()) != 0) {
+			return "原报工数量已变化，请核对报工记录";
 		}
-		if (blockedReports.contains(record.getReportId())) {
+		if (!released(report, requested)) {
+			return positive(report.getQualityRejectedNum()) ? "含判退数量，请核对原质检处置" : "等待原报工足量放行";
+		}
+		if (blocked) {
 			return "来源已被实物转换占用或消耗";
 		}
 		if (record.getSourceRecordId() != null || !Objects.equals(record.getTransferCode(), report.getTransferCode())

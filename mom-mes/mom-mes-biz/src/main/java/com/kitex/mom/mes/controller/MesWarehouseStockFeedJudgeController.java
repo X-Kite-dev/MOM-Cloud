@@ -76,6 +76,15 @@ public class MesWarehouseStockFeedJudgeController {
         return R.ok(service.pageRequests(page, query));
     }
 
+    /** 从已确认的生产工单核对退料及仓库实收，分页总数只包含同一工单。 */
+    @Operation(summary = "按准确生产工单分页查询退料原单")
+    @GetMapping("/work-order/page")
+    @PreAuthorize("@pms.hasPermission('stockFeedJudge:show') && @pms.hasPermission('mesTask:show')")
+    public R<IPage<MesWarehouseStockFeedJudgeEntity>> workOrderPage(
+            Page<MesWarehouseStockFeedJudgeEntity> page, MesWarehouseStockFeedJudgeEntity query) {
+        return R.ok(service.pageForWorkOrder(page, query));
+    }
+
     @Operation(summary = "预览精确线边库存的退料资格")
     @PostMapping("/preview")
     @PreAuthorize("@pms.hasPermission('stockFeedJudge:submit')")

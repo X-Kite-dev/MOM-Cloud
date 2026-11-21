@@ -26,10 +26,12 @@ public interface MesMaterialListMapper extends BaseMapper<MesMaterialListEntity>
      * 分页查询用料清单（包含统计信息）
      *
      * @param page    分页参数
-     * @param queryVO 查询条件
+     * @param queryVO 查询条件，工厂由服务端授权上下文填充
+     * @param tenantId 当前认证租户
      * @return 用料清单分页数据
      */
-    Page<MesMaterialListDTO> selectMaterialListPage(Page<MesMaterialListDTO> page, @Param("query") MesMaterialListQueryVO queryVO);
+    Page<MesMaterialListDTO> selectMaterialListPage(Page<MesMaterialListDTO> page,
+            @Param("query") MesMaterialListQueryVO queryVO, @Param("tenantId") Long tenantId);
 
     /**
      * 根据工单ID查询用料清单详情
@@ -37,7 +39,8 @@ public interface MesMaterialListMapper extends BaseMapper<MesMaterialListEntity>
      * @param taskId 工单ID
      * @return 用料清单详情
      */
-    MesMaterialListDTO selectMaterialListByTaskId(@Param("taskId") Long taskId);
+    MesMaterialListDTO selectMaterialListByTaskId(@Param("taskId") Long taskId,
+            @Param("tenantId") Long tenantId, @Param("factoryCode") String factoryCode);
 
     /**
      * 根据工单ID列表查询用料清单

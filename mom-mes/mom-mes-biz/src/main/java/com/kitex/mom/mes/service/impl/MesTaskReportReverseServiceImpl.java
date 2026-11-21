@@ -106,7 +106,10 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
         MesTaskEntity task = requireTask(report.getTaskCode());
         ensureNoCompletedGoodsInbound(report, task);
         ensureNoDownstreamReport(report, arrange);
-        preparePackagingReverse(report, arrange);
+        List<MesWrapRecordEntity> contents = lockPackagingContents(report, MesReportPackagingCorrection.mode(report, arrange));
+        if (!contents.isEmpty()) {
+            preparePackagingReverse(report, contents);
+        }
 
         BigDecimal reverseQuantity = effectiveQuantity(report);
         requirePositive(reverseQuantity, "原报工当前有效数量");
@@ -114,7 +117,7 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
                 command.getReverseRequestBusinessId(), command.getEvidenceFingerprint());
         reverseMaterialConsumption(report, reverseRequestId, reverseQuantity,
                 command.getReverseRequestBusinessId(), command.getEvidenceFingerprint());
-        reverseUnsealedPackaging(report, arrange, reverseRequestId, reverseQuantity,
+        reverseUnsealedPackaging(report, contents, reverseRequestId, reverseQuantity,
                 command.getReverseRequestBusinessId(), command.getEvidenceFingerprint());
         decreaseBusinessQuantities(report, arrange, produceTask, task, reverseQuantity);
         bindingInverse.complete(bindingCompensation);
@@ -155,7 +158,7 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
         }
         MesTaskArrangeEntity arrange = requireArrange(report.getArrangeCode());
         terminalExecutionGuard.assertUnoccupied(arrange);
-        ReportModeEnum mode = ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType());
+        ReportModeEnum mode = MesReportPackagingCorrection.mode(report, arrange);
         if (mode != ReportModeEnum.QUANTITY && mode != ReportModeEnum.PACKAGE_QUANTITY) {
             throw new CheckedException("部分数量纠正只适用于数量报工和包装数量报工");
         }
@@ -164,11 +167,17 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
         ensureNoCompletedGoodsInbound(report, task);
         ensureNoDownstreamReport(report, arrange);
         ensureNoIndependentPhysicalCase(report);
-        preparePartialPackaging(report, arrange, correction);
+        List<MesWrapRecordEntity> contents = lockPackagingContents(report, mode);
+        if (mode == ReportModeEnum.PACKAGE_QUANTITY) {
+            String blocker = MesReportPackagingCorrection.partialBlocker(report, contents);
+            if (blocker != null) {
+                throw new CheckedException(blocker);
+            }
+        }
 
         reverseProductOutput(report, operationRequestId, correction, reverseRequestId, evidenceFingerprint);
         reverseMaterialConsumption(report, operationRequestId, correction, reverseRequestId, evidenceFingerprint);
-        reversePartialPackaging(report, arrange, operationRequestId, correction,
+        reverseUnsealedPackaging(report, contents, operationRequestId, correction,
                 reverseRequestId, evidenceFingerprint);
         decreaseBusinessQuantities(report, arrange, produceTask, task, correction);
         markPartiallyCorrected(report, command.getReason().trim(), operationRequestId,
@@ -356,7 +365,7 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
         if (depths.isEmpty()) return;
         List<MesProduceTaskEntity> downstreamTasks = processTasks.stream()
                 .filter(item -> depths.containsKey(item.getCode())).toList();
-        ReportModeEnum mode = ReportModeEnum.fromCodes(report.getReportMode(), arrange.getRouteType());
+        ReportModeEnum mode = MesReportPackagingCorrection.mode(report, arrange);
         boolean aggregate = mode == ReportModeEnum.QUANTITY || mode == ReportModeEnum.PACKAGE_QUANTITY;
         // 数量报工没有逐件谱系；保留原任一下游实际任务已开工/完成即阻断的口径。
         // 包装数量虽有包装码，也不能据此证明后续聚合工序不含箱内产品。
@@ -420,18 +429,24 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
         return Arrays.stream(value.split(",")).map(String::trim).filter(StrUtil::isNotBlank).distinct().toList();
     }
 
-    private void preparePackagingReverse(MesTaskReportEntity report, MesTaskArrangeEntity arrange) {
-        ReportModeEnum mode = ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType());
-        if (mode != ReportModeEnum.PACKAGE_ONE_CODE && mode != ReportModeEnum.PACKAGE_QUANTITY) {
-            return;
+    /** 按报工原模式锁定本次涉及的箱内行，库存和包装分配在同一事务内使用这些行。 */
+    private List<MesWrapRecordEntity> lockPackagingContents(MesTaskReportEntity report, ReportModeEnum mode) {
+        if (!mode.isPackaging()) {
+            return List.of();
         }
-        List<MesWrapRecordEntity> records = wrapRecordService.list(new LambdaQueryWrapper<MesWrapRecordEntity>()
-                .eq(MesWrapRecordEntity::getReportId, report.getId())
-                .orderByAsc(MesWrapRecordEntity::getId)
-                .last("FOR UPDATE"));
+        List<MesWrapRecordEntity> records = wrapRecordService.list(
+                MesReportPackagingCorrection.contents(report).last("FOR UPDATE"));
         if (records.isEmpty()) {
-            throw new CheckedException("包装报工缺少装箱明细关联，不能自动冲销");
+            throw new CheckedException("本厂包装报工缺少装箱明细，不能自动纠正");
         }
+        if (records.stream().anyMatch(row -> !MesReportPackagingCorrection.matchesProduction(report, row))) {
+            throw new CheckedException("包装内容与原报工的工单、工序、派工或标识不一致");
+        }
+        return records;
+    }
+
+    /** 完整冲销只接受尚未封装或已经完整拆出的包装数量。 */
+    private void preparePackagingReverse(MesTaskReportEntity report, List<MesWrapRecordEntity> records) {
         boolean hasPacked = records.stream().anyMatch(item ->
                 MesWrapRecordStatusEnum.PACKED.name().equals(item.getPackingStatus()));
         if (hasPacked) {
@@ -622,75 +637,48 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
         }
     }
 
-    private void reverseUnsealedPackaging(MesTaskReportEntity report, MesTaskArrangeEntity arrange,
+    /** 在原箱内容行上扣减，保留初封数量，通过纠正分配行记录本次扣减及剩余量。 */
+    private void reverseUnsealedPackaging(MesTaskReportEntity report, List<MesWrapRecordEntity> records,
                                           String operationRequestId, BigDecimal correctionQuantity,
                                           Long reverseRequestId, String evidenceFingerprint) {
-        ReportModeEnum mode = ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType());
-        if (mode == ReportModeEnum.PACKAGE_ONE_CODE || mode == ReportModeEnum.PACKAGE_QUANTITY) {
-            List<MesWrapRecordEntity> records = wrapRecordService.list(new LambdaQueryWrapper<MesWrapRecordEntity>()
-                    .eq(MesWrapRecordEntity::getReportId, report.getId()).orderByAsc(MesWrapRecordEntity::getId)
-                    .last("FOR UPDATE"));
-            BigDecimal remaining = correctionQuantity;
-            for (MesWrapRecordEntity record : records) {
-                if (remaining.signum() == 0 || MesWrapRecordStatusEnum.REVERSED.name().equals(record.getPackingStatus())) {
-                    continue;
-                }
-                BigDecimal correctedBefore = correctedFor(report.getId(), "PACKAGE_CONTENT", record.getId());
-                BigDecimal sourceRemaining = record.getQuantity().subtract(correctedBefore);
-                boolean staged = MesWrapRecordStatusEnum.STAGED.name().equals(record.getPackingStatus());
-                BigDecimal storedAvailable = Objects.requireNonNullElse(record.getAvailableQuantity(), BigDecimal.ZERO);
-                BigDecimal current = staged ? sourceRemaining : storedAvailable;
-                BigDecimal take = remaining.min(sourceRemaining).min(current);
-                if (take.signum() <= 0) continue;
-                BigDecimal after = current.subtract(take);
-                boolean updated = wrapRecordService.update(new LambdaUpdateWrapper<MesWrapRecordEntity>()
-                        .eq(MesWrapRecordEntity::getId, record.getId())
-                        .eq(MesWrapRecordEntity::getAvailableQuantity, storedAvailable)
-                        .set(MesWrapRecordEntity::getAvailableQuantity, after)
-                        .set(MesWrapRecordEntity::getPackingStatus, after.signum() == 0
-                                ? MesWrapRecordStatusEnum.REVERSED.name() : MesWrapRecordStatusEnum.PARTIAL.name())
-                        .set(MesWrapRecordEntity::getOperationRequestId, operationRequestId));
-                if (!updated) throw new CheckedException("包装内容已被其他业务更新，请刷新后重试");
-                saveCorrectionLine(reverseRequestId, operationRequestId, report, "PACKAGE_CONTENT", record.getId(),
-                        record.getWrapCode(), record.getQuantity(), correctedBefore, take, evidenceFingerprint);
-                remaining = remaining.subtract(take);
+        if (records.isEmpty()) {
+            return;
+        }
+        BigDecimal remaining = correctionQuantity;
+        for (MesWrapRecordEntity record : records) {
+            if (remaining.signum() == 0 || MesWrapRecordStatusEnum.REVERSED.name().equals(record.getPackingStatus())) {
+                continue;
             }
-            if (remaining.signum() > 0) {
-                throw new CheckedException("可纠正包装内容小于本次纠正数量，请先完成拆箱或撤回重组");
+            BigDecimal correctedBefore = correctedFor(report.getId(), "PACKAGE_CONTENT", record.getId());
+            BigDecimal sourceRemaining = record.getQuantity().subtract(correctedBefore);
+            boolean staged = MesWrapRecordStatusEnum.STAGED.name().equals(record.getPackingStatus());
+            BigDecimal storedAvailable = Objects.requireNonNullElse(record.getAvailableQuantity(), BigDecimal.ZERO);
+            BigDecimal current = staged ? sourceRemaining : storedAvailable;
+            BigDecimal take = remaining.min(sourceRemaining).min(current);
+            if (take.signum() <= 0) {
+                continue;
             }
+            BigDecimal after = current.subtract(take);
+            boolean updated = wrapRecordService.update(new LambdaUpdateWrapper<MesWrapRecordEntity>()
+                    .eq(MesWrapRecordEntity::getId, record.getId())
+                    .eq(MesWrapRecordEntity::getTenantId, report.getTenantId())
+                    .eq(MesWrapRecordEntity::getFactoryCode, report.getFactoryCode())
+                    .eq(MesWrapRecordEntity::getReportId, report.getId())
+                    .eq(MesWrapRecordEntity::getPackingStatus, record.getPackingStatus())
+                    .eq(MesWrapRecordEntity::getAvailableQuantity, storedAvailable)
+                    .set(MesWrapRecordEntity::getAvailableQuantity, after)
+                    .set(MesWrapRecordEntity::getPackingStatus, after.signum() == 0
+                            ? MesWrapRecordStatusEnum.REVERSED.name() : MesWrapRecordStatusEnum.PARTIAL.name())
+                    .set(MesWrapRecordEntity::getOperationRequestId, operationRequestId));
+            if (!updated) {
+                throw new CheckedException("包装内容已被其他业务更新，请刷新后重试");
+            }
+            saveCorrectionLine(reverseRequestId, operationRequestId, report, "PACKAGE_CONTENT", record.getId(),
+                    record.getWrapCode(), record.getQuantity(), correctedBefore, take, evidenceFingerprint);
+            remaining = remaining.subtract(take);
         }
-    }
-
-    private void preparePartialPackaging(MesTaskReportEntity report, MesTaskArrangeEntity arrange,
-                                         BigDecimal correctionQuantity) {
-        ReportModeEnum mode = ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType());
-        if (mode != ReportModeEnum.PACKAGE_QUANTITY) return;
-        List<MesWrapRecordEntity> records = wrapRecordService.list(new LambdaQueryWrapper<MesWrapRecordEntity>()
-                .eq(MesWrapRecordEntity::getReportId, report.getId()).orderByAsc(MesWrapRecordEntity::getId)
-                .last("FOR UPDATE"));
-        if (records.size() != 1) {
-            throw new CheckedException("包装数量报工缺少唯一原始包装内容行，不能部分纠正");
-        }
-        MesWrapRecordEntity record = records.get(0);
-        if (MesWrapRecordStatusEnum.PACKED.name().equals(record.getPackingStatus())) {
-            throw new CheckedException("包装仍处于封箱状态，请先拆箱确认实物后再做部分纠正");
-        }
-        if (!Set.of(MesWrapRecordStatusEnum.UNPACKED.name(), MesWrapRecordStatusEnum.PARTIAL.name())
-                .contains(record.getPackingStatus())) {
-            throw new CheckedException("包装内容已移动、重组或失效，不能在原包装报工上部分纠正");
-        }
-        BigDecimal available = Objects.requireNonNullElse(record.getAvailableQuantity(), BigDecimal.ZERO);
-        if (available.compareTo(correctionQuantity) < 0) {
-            throw new CheckedException("拆箱后原包装可纠正数量不足");
-        }
-    }
-
-    private void reversePartialPackaging(MesTaskReportEntity report, MesTaskArrangeEntity arrange,
-                                         String operationRequestId, BigDecimal correctionQuantity,
-                                         Long reverseRequestId, String evidenceFingerprint) {
-        if (ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType()) == ReportModeEnum.PACKAGE_QUANTITY) {
-            reverseUnsealedPackaging(report, arrange, operationRequestId, correctionQuantity,
-                    reverseRequestId, evidenceFingerprint);
+        if (remaining.signum() > 0) {
+            throw new CheckedException("可纠正包装内容小于本次纠正数量，请先完成拆箱或撤回重组");
         }
     }
 
@@ -748,7 +736,10 @@ public class MesTaskReportReverseServiceImpl implements MesTaskReportReverseServ
 
         if (Boolean.TRUE.equals(arrange.getLastRoute())) {
             BigDecimal stockBefore = requireEnough(task.getUnInStockNum(), releasedNum, "工单待入库数量");
+            // 工单编码可在不同工厂重复，末序完成量只按已锁定的原工单组织汇总。
             BigDecimal completedAfter = produceTaskService.list(new LambdaQueryWrapper<MesProduceTaskEntity>()
+                            .eq(MesProduceTaskEntity::getTenantId, task.getTenantId())
+                            .eq(MesProduceTaskEntity::getFactoryCode, task.getFactoryCode())
                             .eq(MesProduceTaskEntity::getTaskCode, task.getCode())
                             .eq(MesProduceTaskEntity::getLastRoute, Boolean.TRUE))
                     .stream().map(item -> Objects.requireNonNullElse(item.getCompleteNum(), BigDecimal.ZERO))

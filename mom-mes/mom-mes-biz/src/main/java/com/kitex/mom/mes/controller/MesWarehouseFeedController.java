@@ -52,6 +52,14 @@ public class MesWarehouseFeedController {
     private final MesWarehouseFeedBirthService feedBirths;
     private final MesStartPreparationDrilldownService preparationDrilldown;
 
+    /** 从工单物料页核对投料原件，物料消耗和退库申请分别按各自的原记录查阅。 */
+    @Operation(summary = "按准确生产工单分页读取投料批次")
+    @GetMapping("/work-order/page")
+    @PreAuthorize("@pms.hasPermission('mes_mesWarehouseFeed_view') && @pms.hasPermission('mesTask:show')")
+    public R<IPage<MesWarehouseFeedEntity>> workOrderPage(Page<MesWarehouseFeedEntity> page, @RequestParam String taskCode) {
+        return R.ok(mesWarehouseFeedService.pageForWorkOrder(page, taskCode));
+    }
+
     /**
      * 原来源只读，所有原库存行均返回；不是按批次查询当前库存冒充出生。
      */

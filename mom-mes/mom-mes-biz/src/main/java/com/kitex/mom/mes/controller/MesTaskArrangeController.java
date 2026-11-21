@@ -150,8 +150,9 @@ public class MesTaskArrangeController {
         return R.ok(service.getBomList(code));
     }
 
-    @Operation(summary = "查询详情", description = "查询详情")
+    @Operation(summary = "按原工单查询冻结 BOM 需求、投料与消耗当量")
     @GetMapping("/getBomListByTaskCode")
+    @PreAuthorize("@pms.hasPermission('mesTask:show')")
     public R<List<MdmBomChildListDTO>> getBomListByTaskCode(String code) {
         return R.ok(service.getBomListByTaskCode(code));
     }

@@ -97,6 +97,8 @@ public final class IotProcessDeviationDTO {
     @Data
     @Accessors(chain = true)
     public static class Sample {
+        /** IoT 原始采样记录主键，传到浏览器时保留完整精度。 */
+        @JsonSerialize(using = ToStringSerializer.class)
         private Long propertyId;
         private LocalDateTime collectTime;
         private BigDecimal numericValue;
@@ -113,8 +115,20 @@ public final class IotProcessDeviationDTO {
         private LocalDateTime endTime;
         private Long durationSeconds;
         private BigDecimal area;
+        @JsonSerialize(using = ToStringSerializer.class)
         private Long firstPropertyId;
+        @JsonSerialize(using = ToStringSerializer.class)
         private Long lastPropertyId;
         private Integer sampleCount;
+        /** 区段内距离冻结限值最远的实测值，保留原参数精度。 */
+        @JsonSerialize(using = ToStringSerializer.class)
+        private BigDecimal peakValue;
+        /** 最大越界量，单位与冻结参数一致。 */
+        @JsonSerialize(using = ToStringSerializer.class)
+        private BigDecimal peakExcess;
+        /** 最大越界点触及的限值方向，LOW 为低于下限，HIGH 为高于上限。 */
+        private String peakSide;
+        /** 首次出现该最大越界量的原始采集时间。 */
+        private LocalDateTime peakTime;
     }
 }

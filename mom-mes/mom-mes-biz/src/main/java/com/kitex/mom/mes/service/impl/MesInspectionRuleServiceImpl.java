@@ -15,6 +15,7 @@ import com.kitex.mom.mes.mapper.MesInspectionRuleMapper;
 import com.kitex.mom.mes.service.MesInspectionGenRecordService;
 import com.kitex.mom.mes.service.MesInspectionRuleMatService;
 import com.kitex.mom.mes.service.MesInspectionRuleService;
+import com.kitex.mom.mes.support.MesPatrolInterval;
 import com.kitex.mom.qms.enums.ProcedureLabelTypeEnum;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -54,12 +55,7 @@ public class MesInspectionRuleServiceImpl extends ServiceImpl<MesInspectionRuleM
         rule.setGateMode(QualityGateModeEnum.fromCode(rule.getGateMode()).name());
         rule.setInspectionTypes(normalizeInspectionTypes(rule.getInspectionTypes()));
         if (rule.getInspectionTypes().contains(ProcedureLabelTypeEnum.MIDDLE.name())) {
-            if (!"HOUR".equals(rule.getMethod()) && !"SHIFT".equals(rule.getMethod())) {
-                throw new CheckedException("中检触发方式只能是按小时或按班次");
-            }
-            if (rule.getNum() == null || rule.getNum().signum() <= 0) {
-                throw new CheckedException("中检时间或班次间隔必须大于0");
-            }
+            MesPatrolInterval.validate(rule);
         }
         if (CollUtil.isEmpty(rule.getMatList())) {
             throw new CheckedException("关联产品为空，保存失败");

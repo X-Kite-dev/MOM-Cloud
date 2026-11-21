@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.mom.pms.agent.dto.PmsIncomingAvailabilityDTO;
 import com.kitex.mom.pms.entity.PmsOrderDetailEntity;
+import com.kitex.mom.pms.entity.PmsOrderEntity;
 import com.kitex.mom.pms.entity.PmsPlanEntity;
 import com.kitex.mom.pms.entity.WmsPurchaseReceiptBatchDetailEntity;
 import com.kitex.mom.pms.entity.WmsPurchaseReceiptEntity;
 import com.kitex.mom.pms.mapper.PmsOrderDetailMapper;
+import com.kitex.mom.pms.mapper.PmsOrderMapper;
 import com.kitex.mom.pms.mapper.PmsPlanMapper;
 import com.kitex.mom.pms.mapper.WmsPurchaseReceiptBatchDetailMapper;
 import com.kitex.mom.pms.mapper.WmsPurchaseReceiptMapper;
@@ -41,6 +43,7 @@ public class PmsIncomingAvailabilityQueryService {
     private final WmsPurchaseReceiptMapper receiptMapper;
     private final WmsPurchaseReceiptBatchDetailMapper batchMapper;
     private final PmsOrderDetailMapper orderDetailMapper;
+    private final PmsOrderMapper orderMapper;
     private final PmsPlanMapper planMapper;
     private final ObjectMapper objectMapper;
 
@@ -69,11 +72,22 @@ public class PmsIncomingAvailabilityQueryService {
                         .orderByAsc(WmsPurchaseReceiptBatchDetailEntity::getId));
         List<Long> orderDetailIds = batches.stream().map(WmsPurchaseReceiptBatchDetailEntity::getOrderDetailId)
                 .filter(Objects::nonNull).distinct().toList();
-        Map<Long, PmsOrderDetailEntity> orderDetails = orderDetailIds.isEmpty() ? Map.of()
+        // 同厂存在相同物料或重复单号时，仍须由收料批次的原行、父单和供应商共同定位。
+        List<Long> orderIds = orderDetailIds.isEmpty() || !StringUtils.hasText(receipt.getPmsOrderNo())
+                || !StringUtils.hasText(receipt.getSupplierCode()) ? List.of()
+                : orderMapper.selectList(new LambdaQueryWrapper<PmsOrderEntity>()
+                        .select(PmsOrderEntity::getId)
+                        .eq(PmsOrderEntity::getTenantId, scope.tenantId())
+                        .eq(PmsOrderEntity::getFactoryCode, scope.factoryCode())
+                        .eq(PmsOrderEntity::getPmsOrderNo, receipt.getPmsOrderNo())
+                        .eq(PmsOrderEntity::getSupplierCode, receipt.getSupplierCode())
+                        .eq(PmsOrderEntity::getDelFlag, "0")).stream().map(PmsOrderEntity::getId).toList();
+        Map<Long, PmsOrderDetailEntity> orderDetails = orderIds.isEmpty() ? Map.of()
                 : orderDetailMapper.selectList(new LambdaQueryWrapper<PmsOrderDetailEntity>()
                         .eq(PmsOrderDetailEntity::getTenantId, scope.tenantId())
                         .eq(PmsOrderDetailEntity::getFactoryCode, scope.factoryCode())
                         .eq(PmsOrderDetailEntity::getDelFlag, "0")
+                        .in(PmsOrderDetailEntity::getPmsOrderId, orderIds)
                         .in(PmsOrderDetailEntity::getId, orderDetailIds)).stream()
                 .collect(Collectors.toMap(PmsOrderDetailEntity::getId, Function.identity()));
         List<String> purchasePlanNos = orderDetails.values().stream().map(PmsOrderDetailEntity::getPmsPlanNo)
@@ -88,6 +102,9 @@ public class PmsIncomingAvailabilityQueryService {
         List<PmsIncomingAvailabilityDTO.BatchLine> lines = batches.stream()
                 .map(item -> {
                     PmsOrderDetailEntity detail = orderDetails.get(item.getOrderDetailId());
+                    if (detail != null && !Objects.equals(detail.getMatCode(), item.getMatCode())) {
+                        detail = null;
+                    }
                     List<PmsPlanEntity> candidates = detail == null ? List.of()
                             : plans.getOrDefault(planKey(detail.getPmsPlanNo(), detail.getMatCode()), List.of());
                     return line(item, detail, candidates.size() == 1 ? candidates.get(0) : null);
@@ -120,6 +137,7 @@ public class PmsIncomingAvailabilityQueryService {
                                                        PmsPlanEntity plan) {
         return new PmsIncomingAvailabilityDTO.BatchLine()
                 .setReceiptBatchId(String.valueOf(item.getId()))
+                .setPurchaseOrderId(orderDetail == null ? null : text(orderDetail.getPmsOrderId()))
                 .setPurchaseOrderDetailId(text(item.getOrderDetailId()))
                 .setPurchasePlanNo(orderDetail == null ? null : orderDetail.getPmsPlanNo())
                 .setPlanSourceIssueMonthId(plan == null ? null : text(plan.getSourceIssueMonthId()))

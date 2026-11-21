@@ -12,6 +12,8 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.entity.BaseEntity;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.common.seq.api.feign.RemoteSeqConfigService;
 import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.entity.MdmSupplierEntity;
@@ -85,6 +87,8 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
 
     private final PmsOrderDetailMapper pmsOrderDetailMapper;
 
+    private final PmsOrderReceivableQuantity receiptCapacity;
+
     private final RemoteSupplierService remoteSupplierService;
 
     private final PmsExistingReceiptRegistrationService existingReceiptRegistration;
@@ -94,8 +98,9 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean saveDeep(WmsPurchaseReceiptEntity entity) {
+        PmsOrderEntity order = null;
         if (StrUtil.isNotBlank(entity.getPmsOrderNo())) {
-            PmsOrderEntity order = requireOpenOrder(entity.getPmsOrderNo(), entity.getFactoryCode(), entity.getSupplierCode());
+            order = requireOpenOrder(entity.getPmsOrderNo(), entity.getFactoryCode(), entity.getSupplierCode());
             assertReceiptCapacity(order, Optional.ofNullable(entity.getDetails()).orElse(List.of()), null);
         }
         R<String> billNoR = remoteSeqConfigService.create("wms_purchase_receipt");
@@ -133,8 +138,9 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         }
 
         // 采购订单状态修改
-        pmsOrderService.update(new LambdaUpdateWrapper<PmsOrderEntity>().eq(PmsOrderEntity::getPmsOrderNo, entity.getPmsOrderNo())
-                .set(PmsOrderEntity::getStatus, PmsOrderStatusEnum.RECEIVING.getCode()));
+        if (order != null) {
+            markReceiving(order);
+        }
 
         // 合同状态修改
         pmsContractService.statusUpdate(entity.getPmsOrderNo(), PmsContractStatusEnum.EXECUTION.getCode());
@@ -304,6 +310,9 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
     @Transactional(rollbackFor = Exception.class)
     public Boolean genQualityTask(List<InspectionPurchaseCreateParam> body, Boolean qmsStatus) {
         if (qmsStatus == null) {
+            if (CollUtil.isEmpty(body)) {
+                throw new CheckedException("没有可送检的收料行，免检行请直接办理入库通知");
+            }
             List<QmsQualityStandardEntity> qualityStandardList = remoteQualityStandardService.list(new QmsQualityStandardEntity().setInspectionType(InspectionTaskTypeEnum.PURCHASE.name())).getData();
             if (qualityStandardList.isEmpty()) {
                 throw new RuntimeException("未找到采购质检标准，请先创建采购质检标准");
@@ -336,7 +345,9 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
 
             // 查询采购收料单
             WmsPurchaseReceiptEntity wmsPurchase = this.getOne(new LambdaQueryWrapper<WmsPurchaseReceiptEntity>()
-                    .eq(WmsPurchaseReceiptEntity::getBillNo, body.get(0).getNoticeId()), false);
+                    .eq(WmsPurchaseReceiptEntity::getBillNo, body.get(0).getNoticeId())
+                    .eq(WmsPurchaseReceiptEntity::getFactoryCode, FactoryContextHolder.getFactoryCode())
+                    .eq(WmsPurchaseReceiptEntity::getTenantId, TenantContextHolder.getTenantId()));
             if (wmsPurchase == null) {
                 throw new CheckedException("采购质检任务缺少有效采购收料单");
             }
@@ -344,13 +355,28 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
                     new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
                             .eq(WmsPurchaseReceiptDetailEntity::getBillId, wmsPurchase.getId()));
             for (InspectionPurchaseCreateParam task : body) {
-                if (task.getOrderDetailId() != null) continue;
+                if (!Objects.equals(task.getNoticeId(), wmsPurchase.getBillNo())) {
+                    throw new CheckedException("同一批质检请求必须来自同一张采购收料单");
+                }
                 List<WmsPurchaseReceiptDetailEntity> matches = allReceiptDetails.stream()
-                        .filter(detail -> Objects.equals(detail.getMatCode(), task.getMatCode())).toList();
+                        .filter(detail -> Objects.equals(detail.getMatCode(), task.getMatCode()))
+                        .filter(detail -> task.getOrderDetailId() == null
+                                || Objects.equals(task.getOrderDetailId(), detail.getOrderDetailId()))
+                        .toList();
                 if (matches.size() != 1 || matches.get(0).getOrderDetailId() == null) {
                     throw new CheckedException("采购质检任务必须唯一定位采购订单行，物料：" + task.getMatCode());
                 }
-                task.setOrderDetailId(matches.get(0).getOrderDetailId());
+                var line = matches.get(0);
+                if (Boolean.TRUE.equals(line.getIsQuality()) || line.getActualNum() == null
+                        || !Double.isFinite(line.getActualNum()) || task.getNum() == null || task.getNum() <= 0
+                        || BigDecimal.valueOf(line.getActualNum()).compareTo(BigDecimal.valueOf(task.getNum())) != 0
+                        || StrUtil.isBlank(line.getMatBatch()) || !Objects.equals(line.getMatBatch(), task.getBatchNo())) {
+                    throw new CheckedException("送检数量或批次与实收原行不一致，当前来料检验只接受整件数量");
+                }
+                task.setOrderDetailId(line.getOrderDetailId());
+                task.setSupplierCode(wmsPurchase.getSupplierCode());
+                task.setSupplierName(wmsPurchase.getSupplierName());
+                task.setFactoryCode(wmsPurchase.getFactoryCode());
             }
             // 查询采购收料单明细
             List<WmsPurchaseReceiptDetailEntity> wmsPurchaseReceiptDetailEntities = wmsPurchaseReceiptDetailMapper
@@ -365,6 +391,9 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
                             .eq(WmsPurchaseReceiptDetailEntity::getBillId, wmsPurchase.getId()));
             // 新增收料单收料明细
             wmsPurchaseReceiptDetailEntities.forEach(item -> {
+                if (item.getActualNum() == null || !Double.isFinite(item.getActualNum()) || item.getActualNum() <= 0) {
+                    throw new CheckedException("免检行尚无正数实收，不能按应收数量生成批次");
+                }
                 WmsPurchaseReceiptBatchDetailEntity wmsPurchaseReceiptBatchDetailEntity = new WmsPurchaseReceiptBatchDetailEntity();
                 wmsPurchaseReceiptBatchDetailEntity.setBillId(wmsPurchase.getId());
                 wmsPurchaseReceiptBatchDetailEntity.setOrderDetailId(item.getOrderDetailId());
@@ -373,8 +402,8 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
                 wmsPurchaseReceiptBatchDetailEntity.setMatName(item.getMatName());
                 wmsPurchaseReceiptBatchDetailEntity.setMatUnit(item.getMatUnit());
                 wmsPurchaseReceiptBatchDetailEntity.setMatSpec(item.getMatSpec());
-                wmsPurchaseReceiptBatchDetailEntity.setMatNum(item.getShouldNum());
-                wmsPurchaseReceiptBatchDetailEntity.setQualityNum(item.getShouldNum());
+                wmsPurchaseReceiptBatchDetailEntity.setMatNum(item.getActualNum());
+                wmsPurchaseReceiptBatchDetailEntity.setQualityNum(item.getActualNum());
                 wmsPurchaseReceiptBatchDetailEntity.setState(PurchaseReceiptStateEnum.QUALITY_FINISHED.getCode());
                 wmsPurchaseReceiptBatchDetailEntity.setMatProduceDate(item.getMatProduceDate());
                 wmsPurchaseReceiptBatchDetailEntity.setQualifiedGen(String.valueOf(YesNoEnum.NO.getCode()));
@@ -498,42 +527,54 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean genInNotice(WmsPurchaseReceiptEntity wmsPurchaseReceipt) {
-        WmsInNoticeEntity inNotice = new WmsInNoticeEntity();
-        BeanUtil.copyProperties(wmsPurchaseReceipt, inNotice, "id", "billNo");
+        WmsInNoticeEntity inNotice = prepareWarehouseNotice(wmsPurchaseReceipt);
         double noticeInNum = 0; // 暂存总数量
         List<WmsInNoticeDetailEntity> noticeDetails = new ArrayList<>();
         Map<String, MdmMaterialEntity> matMap = new HashMap<>(); // 暂存物料
 
-        wmsPurchaseReceiptDetailMapper.update(new LambdaUpdateWrapper<WmsPurchaseReceiptDetailEntity>()
-                .set(WmsPurchaseReceiptDetailEntity::getWmsStatus, Boolean.TRUE)
-                .in(WmsPurchaseReceiptDetailEntity::getMatCode, wmsPurchaseReceipt.getBatchDetails()
-                        .stream().map(WmsPurchaseReceiptBatchDetailEntity::getMatCode).collect(Collectors.toList()))
-                .eq(WmsPurchaseReceiptDetailEntity::getBillId, wmsPurchaseReceipt.getId())
-        );
-        for (WmsPurchaseReceiptBatchDetailEntity batchDetail : wmsPurchaseReceipt.getBatchDetails()) {
-            WmsPurchaseReceiptBatchDetailEntity persistedBatch = batchDetail.getId() == null ? null
-                    : batchDetailMapper.selectById(batchDetail.getId());
-            if (persistedBatch == null || !Objects.equals(persistedBatch.getBillId(), wmsPurchaseReceipt.getId())
-                    || persistedBatch.getOrderDetailId() == null) {
-                throw new CheckedException("采购入库通知明细缺少收料批次或采购订单行来源，不能生成不可追溯库存");
+        Set<Long> selected = new HashSet<>();
+        if (CollUtil.isEmpty(wmsPurchaseReceipt.getBatchDetails()) || !Set.of("1", "2").contains(Objects.toString(wmsPurchaseReceipt.getGenType(), ""))) {
+            throw new CheckedException("请选择质检批次及对应的入库类型");
+        }
+        for (var batchDetail : wmsPurchaseReceipt.getBatchDetails()) {
+            if (batchDetail == null || batchDetail.getId() == null || !selected.add(batchDetail.getId())) {
+                throw new CheckedException("所选收料批次缺少原号或重复");
+            }
+            var persistedBatch = batchDetailMapper.selectOne(new LambdaQueryWrapper<WmsPurchaseReceiptBatchDetailEntity>()
+                    .eq(WmsPurchaseReceiptBatchDetailEntity::getId, batchDetail.getId())
+                    .eq(WmsPurchaseReceiptBatchDetailEntity::getBillId, wmsPurchaseReceipt.getId()).last("FOR UPDATE"));
+            if (persistedBatch == null || persistedBatch.getOrderDetailId() == null
+                    || !PurchaseReceiptStateEnum.QUALITY_FINISHED.getCode().equals(persistedBatch.getState())
+                    || persistedBatch.getQualityNum() == null || !Double.isFinite(persistedBatch.getQualityNum())
+                    || persistedBatch.getQualityNum() <= 0) {
+                throw new CheckedException("采购收料批次、质量状态或待通知量无法确认");
+            }
+            boolean failed = InspectionTaskResultEnum.UN_QUALIFIED.name().equals(persistedBatch.getQualityResult());
+            boolean passed = InspectionTaskResultEnum.EXEMPTION.name().equals(persistedBatch.getQualityResult())
+                    || InspectionTaskResultEnum.QUALIFIED.name().equals(persistedBatch.getQualityResult())
+                    || InspectionTaskResultEnum.RELEASE.name().equals(persistedBatch.getQualityResult())
+                    || InspectionTaskResultEnum.RECEIVE.name().equals(persistedBatch.getQualityResult());
+            String generated = failed ? persistedBatch.getUnQualifiedGen() : persistedBatch.getQualifiedGen();
+            if ((!passed && !failed) || failed != "2".equals(wmsPurchaseReceipt.getGenType()) || "1".equals(generated)) {
+                throw new CheckedException("采购批次质检结论与入库类型不符或已有通知，请核对原批次");
+            }
+            var original = wmsPurchaseReceiptDetailMapper.selectOne(new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
+                    .eq(WmsPurchaseReceiptDetailEntity::getBillId, wmsPurchaseReceipt.getId())
+                    .eq(WmsPurchaseReceiptDetailEntity::getOrderDetailId, persistedBatch.getOrderDetailId())
+                    .eq(WmsPurchaseReceiptDetailEntity::getMatCode, persistedBatch.getMatCode()).last("FOR UPDATE"));
+            if (original == null || !Objects.equals(original.getMatUnit(), persistedBatch.getMatUnit())) {
+                throw new CheckedException("采购批次单位与原收料行不一致");
+            }
+            if (!Boolean.TRUE.equals(original.getWmsStatus())) {
+                original.setWmsStatus(true);
+                if (wmsPurchaseReceiptDetailMapper.updateById(original) != 1) {
+                    throw new CheckedException("原采购收料行通知状态未保存");
+                }
             }
             WmsInNoticeDetailEntity noticeDetail = new WmsInNoticeDetailEntity();
             BeanUtil.copyProperties(persistedBatch, noticeDetail, "id");
             setPurchaseSource(noticeDetail, wmsPurchaseReceipt, persistedBatch);
-            // 查找物料信息进行赋值
-            MdmMaterialEntity mat = matMap.get(persistedBatch.getMatCode());
-            if (mat == null) {
-                mat = remoteMaterialService.getDetails(persistedBatch.getMatCode()).getData();
-                matMap.put(persistedBatch.getMatCode(), mat);
-            }
-            if (mat == null) {
-                throw new CheckedException("未查找到物料信息，请维护物料");
-            }
-            noticeDetail.setMatGroup(mat.getGroupCode());
-            noticeDetail.setMatGroupName(mat.getGroupName());
-            noticeDetail.setMatUnit(mat.getBasicUnit());
-            noticeDetail.setOperateUnit(mat.getBasicUnit());
-            noticeDetail.setMatValidPeriod(mat.getExpirationDay());
+            applyNoticeMaterial(noticeDetail, persistedBatch, wmsPurchaseReceipt, matMap);
             if (noticeDetail.getMatProduceDate() != null && noticeDetail.getMatValidPeriod() != null) {
                 noticeDetail.setMatValidEndDate(noticeDetail.getMatProduceDate().plusDays(noticeDetail.getMatValidPeriod()));
             }
@@ -567,17 +608,16 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         exMap.put("genType", wmsPurchaseReceipt.getGenType());
         inNotice.setExpansion(JSONUtil.toJsonStr(exMap)); // 将类别存到扩展字段里，方便回调
 
-        Boolean data = remoteInNoticeService.save(inNotice).getData();
-        if (!data) {
-            throw new CheckedException("生成采购入库通知单失败");
+        // 原批次已逐行锁定。先记本地通知标记，仓库明确拒绝时由事务回滚。
+        int changed = batchDetailMapper.update(new LambdaUpdateWrapper<WmsPurchaseReceiptBatchDetailEntity>()
+                .eq(WmsPurchaseReceiptBatchDetailEntity::getBillId, wmsPurchaseReceipt.getId())
+                .set("1".equals(wmsPurchaseReceipt.getGenType()), WmsPurchaseReceiptBatchDetailEntity::getQualifiedGen, YesNoEnum.YES.getCode())
+                .set("2".equals(wmsPurchaseReceipt.getGenType()), WmsPurchaseReceiptBatchDetailEntity::getUnQualifiedGen, YesNoEnum.YES.getCode())
+                .in(BaseEntity::getId, selected));
+        if (changed != selected.size()) {
+            throw new CheckedException("所选采购批次通知状态未完整保存");
         }
-
-        // 更新收料明细字段 入库通知单作废时也需要将此字段改回来
-        batchDetailMapper.update(new LambdaUpdateWrapper<WmsPurchaseReceiptBatchDetailEntity>()
-                .set(StrUtil.equals("1", wmsPurchaseReceipt.getGenType()), WmsPurchaseReceiptBatchDetailEntity::getQualifiedGen, YesNoEnum.YES.getCode())
-                .set(StrUtil.equals("2", wmsPurchaseReceipt.getGenType()), WmsPurchaseReceiptBatchDetailEntity::getUnQualifiedGen, YesNoEnum.YES.getCode())
-                .in(BaseEntity::getId, wmsPurchaseReceipt.getBatchDetails().stream().map(BaseEntity::getId).toList())
-        );
+        saveWarehouseNotice(inNotice);
 
         return Boolean.TRUE;
     }
@@ -691,7 +731,8 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
             detail.setMatProduceDate(detailDTO.getMatProduceDate());
             Boolean aBoolean = supplierMatMap.get(detail.getMatCode());
             detail.setIsQuality(aBoolean != null ? aBoolean : Boolean.FALSE);
-            detail.setWmsStatus(Boolean.FALSE);
+            // 同次送检会为免检行登记批次，后续从该批次续办。
+            detail.setWmsStatus(Boolean.TRUE.equals(pmsOrderDTO.getQms()) && Boolean.TRUE.equals(detail.getIsQuality()));
             wmsPurchaseReceiptDetailMapper.insert(detail);
 
             detailDTO.setNoticeId(entity.getBillNo());
@@ -705,7 +746,11 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
                 inspectionPurchaseCreateParam.setSupplierCode(pmsOrderDTO.getSupplierCode());
                 inspectionPurchaseCreateParam.setSupplierName(pmsOrderDTO.getSupplierName());
                 inspectionPurchaseCreateParam.setBatchNo(item.getMatBatch());
-                inspectionPurchaseCreateParam.setNum(item.getShouldNum().intValue());
+                try {
+                    inspectionPurchaseCreateParam.setNum(BigDecimal.valueOf(item.getShouldNum()).intValueExact());
+                } catch (ArithmeticException ex) {
+                    throw new CheckedException("来料检验数量超出整件范围，请核对原采购单位及本次送检量");
+                }
                 inspectionPurchaseCreateParam.setFactoryCode(String.valueOf(pmsOrderDTO.getFactoryCode()));
                 return inspectionPurchaseCreateParam;
             }).toList();
@@ -827,14 +872,33 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         pmsContractService.statusUpdate(pmsOrder.getPmsOrderNo(), PmsContractStatusEnum.EXECUTION.getCode());
 
         // 修改采购订单状态
-        return pmsOrderService.update(new LambdaUpdateWrapper<PmsOrderEntity>().set(PmsOrderEntity::getStatus, PmsOrderStatusEnum.RECEIVING.getCode())
-                .eq(PmsOrderEntity::getPmsOrderNo, pmsOrder.getPmsOrderNo()));
+        markReceiving(order);
+        return Boolean.TRUE;
     }
 
+    /** 首次建收料单进入收货中，已部分到货的订单继续保留其原状态。调用方已锁定原订单。 */
+    private void markReceiving(PmsOrderEntity order) {
+        if (PmsOrderStatusEnum.CHECK_SUCCESS.getCode().equals(order.getStatus())
+                && !pmsOrderService.update(new LambdaUpdateWrapper<PmsOrderEntity>()
+                        .eq(PmsOrderEntity::getId, order.getId())
+                        .eq(PmsOrderEntity::getTenantId, order.getTenantId())
+                        .eq(PmsOrderEntity::getFactoryCode, order.getFactoryCode())
+                        .set(PmsOrderEntity::getStatus, PmsOrderStatusEnum.RECEIVING.getCode()))) {
+            throw new CheckedException("原采购单收货状态未保存");
+        }
+    }
+
+    /** 在当前认证组织锁定采购订单，避免跨工厂同号和分批收料并发占用。 */
     private PmsOrderEntity requireOpenOrder(String orderNo, String factoryCode, String supplierCode) {
-        if (StrUtil.isBlank(orderNo)) throw new CheckedException("采购收料必须指定采购订单号");
+        String currentFactory = FactoryContextHolder.getFactoryCode();
+        Long currentTenant = TenantContextHolder.getTenantId();
+        if (StrUtil.isBlank(orderNo) || currentTenant == null || StrUtil.isBlank(currentFactory)) {
+            throw new CheckedException("采购收料须指定原订单并具有当前租户和工厂身份");
+        }
         PmsOrderEntity order = pmsOrderService.getOne(new LambdaQueryWrapper<PmsOrderEntity>()
-                .eq(PmsOrderEntity::getPmsOrderNo, orderNo).last("FOR UPDATE"), false);
+                .eq(PmsOrderEntity::getPmsOrderNo, orderNo)
+                .eq(PmsOrderEntity::getTenantId, currentTenant)
+                .eq(PmsOrderEntity::getFactoryCode, currentFactory).last("FOR UPDATE"));
         if (order == null || !Set.of(PmsOrderStatusEnum.CHECK_SUCCESS.getCode(),
                 PmsOrderStatusEnum.RECEIVING.getCode(), PmsOrderStatusEnum.PART_RECEIVE.getCode()).contains(order.getStatus())) {
             throw new CheckedException("采购订单不存在、未审核通过、已完成或已取消，禁止新建收料事实");
@@ -854,60 +918,56 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
      * 已占用的数量都不可再次收料；这也是行级采购变更不能被 WMS 旁路绕过的最终门禁。
      */
     private void assertReceiptCapacity(PmsOrderEntity order, List<?> submittedLines, Long excludeBillId) {
-        if (submittedLines == null || submittedLines.isEmpty()) throw new CheckedException("采购收料至少包含一条明细");
+        if (submittedLines == null || submittedLines.isEmpty()) {
+            throw new CheckedException("采购收料至少包含一条明细");
+        }
         Map<Long, BigDecimal> requested = new LinkedHashMap<>();
+        List<ReceiptItem> items = new ArrayList<>();
         for (Object value : submittedLines) {
-            Long detailId;
-            Double quantity;
+            ReceiptItem item;
             if (value instanceof WmsPurchaseReceiptDetailEntity detail) {
-                detailId = detail.getOrderDetailId();
-                quantity = detail.getShouldNum();
+                item = new ReceiptItem(detail.getOrderDetailId(), detail.getMatCode(), detail.getMatUnit(), detail.getShouldNum());
             } else if (value instanceof PmsOrderPurchaseReceiptInspectionDetailDTO detail) {
-                detailId = detail.getOrderDetailId();
-                quantity = detail.getShouldNum();
+                item = new ReceiptItem(detail.getOrderDetailId(), detail.getMatCode(), detail.getMatUnit(), detail.getShouldNum());
             } else {
                 throw new CheckedException("不支持的采购收料明细类型");
             }
-            if (detailId == null || quantity == null || quantity <= 0D)
-                throw new CheckedException("采购收料明细必须指定订单行和正数应收数量");
-            requested.merge(detailId, BigDecimal.valueOf(quantity), BigDecimal::add);
+            if (item.id() == null || item.quantity() == null || !Double.isFinite(item.quantity()) || item.quantity() <= 0) {
+                throw new CheckedException("采购收料须指定原订单行和正数应收数量");
+            }
+            if (requested.putIfAbsent(item.id(), BigDecimal.valueOf(item.quantity())) != null) {
+                throw new CheckedException("同一张收料单内原采购行只能出现一次，分批到货请分别登记");
+            }
+            items.add(item);
         }
-        List<PmsOrderDetailEntity> orderLines = pmsOrderDetailMapper.selectList(
-                new LambdaQueryWrapper<PmsOrderDetailEntity>()
-                        .eq(PmsOrderDetailEntity::getPmsOrderId, order.getId())
-                        .in(PmsOrderDetailEntity::getId, requested.keySet())
-                        .orderByAsc(PmsOrderDetailEntity::getId).last("FOR UPDATE"));
-        if (orderLines.size() != requested.size())
+        var lines = pmsOrderDetailMapper.selectList(new LambdaQueryWrapper<PmsOrderDetailEntity>()
+                .eq(PmsOrderDetailEntity::getPmsOrderId, order.getId()).eq(PmsOrderDetailEntity::getTenantId, order.getTenantId())
+                .eq(PmsOrderDetailEntity::getFactoryCode, order.getFactoryCode()).in(PmsOrderDetailEntity::getId, requested.keySet())
+                .orderByAsc(PmsOrderDetailEntity::getId).last("FOR UPDATE"));
+        if (lines.size() != requested.size()) {
             throw new CheckedException("采购收料包含不存在或不属于当前订单的明细");
-
-        List<WmsPurchaseReceiptEntity> activeReceipts = baseMapper.selectList(
-                new LambdaQueryWrapper<WmsPurchaseReceiptEntity>()
-                        .eq(WmsPurchaseReceiptEntity::getPmsOrderNo, order.getPmsOrderNo())
-                        .ne(excludeBillId != null, WmsPurchaseReceiptEntity::getId, excludeBillId)
-                        .and(value -> value.isNull(WmsPurchaseReceiptEntity::getState)
-                                .or().ne(WmsPurchaseReceiptEntity::getState, PurchaseReceiptStateEnum.COMPLETED.getCode())));
-        Map<Long, BigDecimal> occupied = new HashMap<>();
-        if (!activeReceipts.isEmpty()) {
-            wmsPurchaseReceiptDetailMapper.selectList(new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
-                            .in(WmsPurchaseReceiptDetailEntity::getBillId,
-                                    activeReceipts.stream().map(WmsPurchaseReceiptEntity::getId).toList())
-                            .in(WmsPurchaseReceiptDetailEntity::getOrderDetailId, requested.keySet()))
-                    .forEach(value -> occupied.merge(value.getOrderDetailId(),
-                            BigDecimal.valueOf(Optional.ofNullable(value.getShouldNum()).orElse(0D)), BigDecimal::add));
         }
-        for (PmsOrderDetailEntity line : orderLines) {
-            BigDecimal ordered = BigDecimal.valueOf(Optional.ofNullable(line.getOrderNum()).orElse(0D));
-            BigDecimal arrived = BigDecimal.valueOf(Optional.ofNullable(line.getArrivalNum()).orElse(0D));
-            BigDecimal cancelled = BigDecimal.valueOf(Optional.ofNullable(line.getCancelledNum()).orElse(0D));
-            BigDecimal available = ordered.subtract(arrived).subtract(cancelled)
-                    .subtract(occupied.getOrDefault(line.getId(), BigDecimal.ZERO));
-            BigDecimal currentRequest = requested.get(line.getId());
-            if (available.signum() < 0 || currentRequest.compareTo(available) > 0) {
-                throw new CheckedException("采购订单行" + line.getId() + "可收数量仅为"
-                        + available.max(BigDecimal.ZERO).stripTrailingZeros().toPlainString()
-                        + "，已到货、已撤回或活动收料占用数量不得重复收料");
+        var available = receiptCapacity.available(order, lines, excludeBillId);
+        var originals = lines.stream().collect(Collectors.toMap(PmsOrderDetailEntity::getId, Function.identity()));
+        for (int index = 0; index < items.size(); index++) {
+            var item = items.get(index);
+            var original = originals.get(item.id());
+            PmsOrderReceivableQuantity.requireMaterial(original, item.code(), item.unit());
+            // 收料单沿用原采购行单价。客户端仅选择收料数量和现场批次。
+            if (submittedLines.get(index) instanceof WmsPurchaseReceiptDetailEntity detail) {
+                detail.setPrice(original.getPrice());
+            } else if (submittedLines.get(index) instanceof PmsOrderPurchaseReceiptInspectionDetailDTO detail) {
+                detail.setPrice(original.getPrice());
+            }
+            var remaining = available.get(item.id());
+            if (requested.get(item.id()).compareTo(remaining) > 0) {
+                throw new CheckedException("采购订单行 " + item.id() + " 可收数量仅为 " + remaining.stripTrailingZeros().toPlainString());
             }
         }
+    }
+
+    /** 本次收料提交的原行身份、原单位和业务数量。 */
+    private record ReceiptItem(Long id, String code, String unit, Double quantity) {
     }
 
     /**
@@ -942,19 +1002,35 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Boolean qmsGenInNotice(WmsPurchaseReceiptEntity wmsPurchaseReceipt) {
-        WmsInNoticeEntity inNotice = new WmsInNoticeEntity();
-        BeanUtil.copyProperties(wmsPurchaseReceipt, inNotice, "id", "billNo");
+        WmsInNoticeEntity inNotice = prepareWarehouseNotice(wmsPurchaseReceipt);
         double noticeInNum = 0; // 暂存总数量
         List<WmsInNoticeDetailEntity> noticeDetails = new ArrayList<>();
         Map<String, MdmMaterialEntity> matMap = new HashMap<>(); // 暂存物料
 
-        wmsPurchaseReceiptDetailMapper.update(new LambdaUpdateWrapper<WmsPurchaseReceiptDetailEntity>()
-                .set(WmsPurchaseReceiptDetailEntity::getWmsStatus, Boolean.TRUE)
-                .in(WmsPurchaseReceiptDetailEntity::getId, wmsPurchaseReceipt.getDetails()
-                        .stream().map(WmsPurchaseReceiptDetailEntity::getId).collect(Collectors.toList())));
-
-        for (WmsPurchaseReceiptDetailEntity detail : wmsPurchaseReceipt.getDetails()) {
-
+        if (CollUtil.isEmpty(wmsPurchaseReceipt.getDetails()) || !"1".equals(wmsPurchaseReceipt.getGenType())) {
+            throw new CheckedException("请选择要办理合格入库的免检收料行");
+        }
+        for (var selected : wmsPurchaseReceipt.getDetails()) {
+            if (selected == null || selected.getId() == null) {
+                throw new CheckedException("免检通知缺少原收料行");
+            }
+            var detail = wmsPurchaseReceiptDetailMapper.selectOne(new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
+                    .eq(WmsPurchaseReceiptDetailEntity::getId, selected.getId())
+                    .eq(WmsPurchaseReceiptDetailEntity::getBillId, wmsPurchaseReceipt.getId()).last("FOR UPDATE"));
+            if (detail == null || !Boolean.TRUE.equals(detail.getIsQuality()) || !Boolean.FALSE.equals(detail.getWmsStatus())
+                    || detail.getActualNum() == null || !Double.isFinite(detail.getActualNum()) || detail.getActualNum() <= 0) {
+                throw new CheckedException("原收料行已生成通知、未获免检或缺少正数实收量，请重新读取");
+            }
+            // “收料并送检”可能已经登记免检批次，续办时只能从原批次生成通知。
+            if (batchDetailMapper.exists(new LambdaQueryWrapper<WmsPurchaseReceiptBatchDetailEntity>()
+                    .eq(WmsPurchaseReceiptBatchDetailEntity::getBillId, detail.getBillId())
+                    .eq(WmsPurchaseReceiptBatchDetailEntity::getOrderDetailId, detail.getOrderDetailId()))) {
+                throw new CheckedException("原采购行已有收料批次，请从批次生成或核对原通知");
+            }
+            detail.setWmsStatus(true);
+            if (wmsPurchaseReceiptDetailMapper.updateById(detail) != 1) {
+                throw new CheckedException("免检收料行通知状态未保存");
+            }
             // 新增收料单收料明细
             WmsPurchaseReceiptBatchDetailEntity wmsPurchaseReceiptBatchDetailEntity = new WmsPurchaseReceiptBatchDetailEntity();
             wmsPurchaseReceiptBatchDetailEntity.setBillId(wmsPurchaseReceipt.getId());
@@ -975,20 +1051,7 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
             WmsInNoticeDetailEntity noticeDetail = new WmsInNoticeDetailEntity();
             BeanUtil.copyProperties(wmsPurchaseReceiptBatchDetailEntity, noticeDetail, "id");
             setPurchaseSource(noticeDetail, wmsPurchaseReceipt, wmsPurchaseReceiptBatchDetailEntity);
-            // 查找物料信息进行赋值
-            MdmMaterialEntity mat = matMap.get(detail.getMatCode());
-            if (mat == null) {
-                mat = remoteMaterialService.getDetails(wmsPurchaseReceiptBatchDetailEntity.getMatCode()).getData();
-                matMap.put(wmsPurchaseReceiptBatchDetailEntity.getMatCode(), mat);
-            }
-            if (mat == null) {
-                throw new CheckedException("未查找到物料信息，请维护物料");
-            }
-            noticeDetail.setMatGroup(mat.getGroupCode());
-            noticeDetail.setMatGroupName(mat.getGroupName());
-            noticeDetail.setMatUnit(mat.getBasicUnit());
-            noticeDetail.setOperateUnit(mat.getBasicUnit());
-            noticeDetail.setMatValidPeriod(mat.getExpirationDay());
+            applyNoticeMaterial(noticeDetail, wmsPurchaseReceiptBatchDetailEntity, wmsPurchaseReceipt, matMap);
             if (noticeDetail.getMatProduceDate() != null && noticeDetail.getMatValidPeriod() != null) {
                 noticeDetail.setMatValidEndDate(noticeDetail.getMatProduceDate().plusDays(noticeDetail.getMatValidPeriod()));
             }
@@ -1019,21 +1082,74 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         exMap.put("genType", wmsPurchaseReceipt.getGenType());
         inNotice.setExpansion(JSONUtil.toJsonStr(exMap)); // 将类别存到扩展字段里，方便回调
 
-        Boolean data = remoteInNoticeService.save(inNotice).getData();
-        if (!data) {
-            throw new CheckedException("生成采购入库通知单失败");
+        // 全免检单没有 QMS 回调。最后一条免检行已登记批次后，原收料单才能进入待入库回写状态。
+        long pending = wmsPurchaseReceiptDetailMapper.selectCount(new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
+                .eq(WmsPurchaseReceiptDetailEntity::getBillId, wmsPurchaseReceipt.getId())
+                .and(q -> q.isNull(WmsPurchaseReceiptDetailEntity::getIsQuality)
+                        .or().eq(WmsPurchaseReceiptDetailEntity::getIsQuality, false)
+                        .or().isNull(WmsPurchaseReceiptDetailEntity::getWmsStatus)
+                        .or().eq(WmsPurchaseReceiptDetailEntity::getWmsStatus, false)));
+        if (pending == 0 && !this.update(new LambdaUpdateWrapper<WmsPurchaseReceiptEntity>()
+                .eq(WmsPurchaseReceiptEntity::getId, wmsPurchaseReceipt.getId())
+                .set(WmsPurchaseReceiptEntity::getState, PurchaseReceiptStateEnum.QUALITY_FINISHED.getCode()))) {
+            throw new CheckedException("原免检收料单状态未保存");
         }
-
-        Long count = wmsPurchaseReceiptDetailMapper.selectCount(new LambdaQueryWrapper<WmsPurchaseReceiptDetailEntity>()
-                .eq(WmsPurchaseReceiptDetailEntity::getIsQuality, Boolean.TRUE)
-                .eq(WmsPurchaseReceiptDetailEntity::getBillId, wmsPurchaseReceipt.getId()));
-        if (count == 0) {
-            this.update(new LambdaUpdateWrapper<WmsPurchaseReceiptEntity>()
-                    .eq(WmsPurchaseReceiptEntity::getId, wmsPurchaseReceipt.getId())
-                    .set(WmsPurchaseReceiptEntity::getState, PurchaseReceiptStateEnum.QUALITY_FINISHED.getCode()));
-        }
+        saveWarehouseNotice(inNotice);
 
         return Boolean.TRUE;
+    }
+
+    /** 从已锁定的当前组织原单生成通知表头。仓储目的地使用现场选择，供应商与单据身份使用原件。 */
+    private WmsInNoticeEntity prepareWarehouseNotice(WmsPurchaseReceiptEntity selection) {
+        if (selection == null || selection.getId() == null || TenantContextHolder.getTenantId() == null
+                || StrUtil.isBlank(FactoryContextHolder.getFactoryCode())) {
+            throw new CheckedException("采购通知缺少原收料单或当前组织");
+        }
+        var original = getOne(new LambdaQueryWrapper<WmsPurchaseReceiptEntity>()
+                .eq(WmsPurchaseReceiptEntity::getId, selection.getId())
+                .eq(WmsPurchaseReceiptEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(WmsPurchaseReceiptEntity::getFactoryCode, FactoryContextHolder.getFactoryCode()).last("FOR UPDATE"));
+        if (original == null || PurchaseReceiptStateEnum.COMPLETED.getCode().equals(original.getState())
+                || !Objects.equals(original.getFactoryCode(), selection.getFactoryCode())
+                || !Objects.equals(original.getSupplierCode(), selection.getSupplierCode())) {
+            throw new CheckedException("原收料单已完成或与当前工厂、供应商不一致");
+        }
+        var notice = new WmsInNoticeEntity();
+        BeanUtil.copyProperties(original, notice, "id", "billNo");
+        notice.setWarehouseCode(selection.getWarehouseCode());
+        notice.setWarehouseName(selection.getWarehouseName());
+        selection.setSupplierName(original.getSupplierName());
+        return notice;
+    }
+
+    /** 仓库必须明确确认。本地事务无法判断网络中断后远程是否已受理，须按原收料单核对。 */
+    private void saveWarehouseNotice(WmsInNoticeEntity notice) {
+        var reply = remoteInNoticeService.save(notice);
+        if (reply == null || !reply.isOk() || !Boolean.TRUE.equals(reply.getData())) {
+            throw new CheckedException("仓库未确认采购入库通知单，请按原收料单核对");
+        }
+    }
+
+    /**
+     * 仓储通知沿用已核实的采购批次单位。当前物料仅用于核对基本单位和补充仓库所需的分类、效期。
+     */
+    private void applyNoticeMaterial(WmsInNoticeDetailEntity notice, WmsPurchaseReceiptBatchDetailEntity batch,
+                                     WmsPurchaseReceiptEntity receipt, Map<String, MdmMaterialEntity> cache) {
+        var material = cache.computeIfAbsent(batch.getMatCode(), code -> {
+            var response = remoteMaterialService.getDetails(code);
+            return response != null && response.isOk() ? response.getData() : null;
+        });
+        if (material == null || !Objects.equals(material.getMaterialCode(), batch.getMatCode())
+                || !Objects.equals(material.getTenantId(), TenantContextHolder.getTenantId())
+                || !Objects.equals(material.getFactoryCode(), receipt.getFactoryCode())
+                || StrUtil.isBlank(batch.getMatUnit()) || !batch.getMatUnit().equals(material.getBasicUnit())) {
+            throw new CheckedException("采购批次 " + batch.getId() + " 的原单位或物料组织与当前主档不一致");
+        }
+        notice.setMatGroup(material.getGroupCode());
+        notice.setMatGroupName(material.getGroupName());
+        notice.setMatUnit(batch.getMatUnit());
+        notice.setOperateUnit(batch.getMatUnit());
+        notice.setMatValidPeriod(material.getExpirationDay());
     }
 
     /**
@@ -1061,6 +1177,8 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
         if (persistedReceipt.getTenantId() == null || StrUtil.isBlank(persistedReceipt.getPmsOrderNo())
                 || StrUtil.isBlank(persistedReceipt.getFactoryCode()) || StrUtil.isBlank(persistedReceipt.getSupplierCode())
                 || StrUtil.isBlank(batchDetail.getMatCode()) || !Objects.equals(batchDetail.getMatCode(), orderDetail.getMatCode())
+                || !Objects.equals(persistedReceipt.getTenantId(), TenantContextHolder.getTenantId())
+                || !Objects.equals(persistedReceipt.getFactoryCode(), FactoryContextHolder.getFactoryCode())
                 || !Objects.equals(persistedReceipt.getTenantId(), orderDetail.getTenantId())
                 || !Objects.equals(persistedReceipt.getTenantId(), order.getTenantId())
                 || !Objects.equals(persistedReceipt.getPmsOrderNo(), order.getPmsOrderNo())
@@ -1073,6 +1191,7 @@ public class WmsPurchaseReceiptServiceImpl extends ServiceImpl<WmsPurchaseReceip
             throw new CheckedException("采购收料单、收料批次与采购订单行来源不一致，请先修复来源数据");
         }
 
+        PmsOrderReceivableQuantity.requireMaterial(orderDetail, batchDetail.getMatCode(), batchDetail.getMatUnit());
         noticeDetail.setSourceOrderNo(order.getPmsOrderNo());
         noticeDetail.setSourceOrderDetailId(batchDetail.getOrderDetailId());
         noticeDetail.setSourceReceiptId(persistedReceipt.getId());

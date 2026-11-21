@@ -13,7 +13,6 @@ import com.kitex.mom.mdm.entity.MdmMaterialEntity;
 import com.kitex.mom.mdm.feign.RemoteMaterialService;
 import com.kitex.mom.wms.entity.WmsIdentifierPolicyEntity;
 import com.kitex.mom.wms.entity.WmsInBillDetailEntity;
-import com.kitex.mom.wms.entity.WmsLiveStockEntity;
 import com.kitex.mom.wms.enums.InBillTypeEnum;
 import com.kitex.mom.wms.enums.OtherInBillTypeEnum;
 import com.kitex.mom.wms.mapper.WmsBatchCodeSequenceMapper;
@@ -23,6 +22,7 @@ import com.kitex.mom.wms.mapper.WmsSerialCodeSequenceMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.Comparator;
@@ -162,6 +162,7 @@ public class WmsIdentifierPolicyService {
                 .stream().min(Comparator.comparingInt(item -> priority(item, bill, material))).orElse(null);
     }
 
+    /** 按当前工厂物料和入库业务类型核对明细；保存草稿时物料追溯要求受当前事务保护。 */
     public void validateInbound(String billType, WmsInBillDetailEntity detail) {
         validateInbound(billType, detail, false);
     }
@@ -191,6 +192,10 @@ public class WmsIdentifierPolicyService {
         return effective;
     }
 
+    /**
+     * 在实际库存事务中核对批次和条码。返回值写入本次实物的单件标记，供后续拣配和移动使用。
+     * 同工厂同条码的冲突、数量与追溯要求不符均中止本次记账。
+     */
     public boolean validateInboundForPosting(String billType, WmsInBillDetailEntity detail) {
         return validateInbound(billType, detail, true);
     }
@@ -267,6 +272,11 @@ public class WmsIdentifierPolicyService {
         if (detail == null || StrUtil.isBlank(detail.getMatCode())) {
             throw new CheckedException("入库明细缺少物料编码");
         }
+        // 只读预览仍可独立调用；草稿写入及正式记账在业务事务内持锁至提交。
+        if (posting || TransactionSynchronizationManager.isActualTransactionActive()) {
+            Scope scope = scope();
+            serialIdentityLock.lockMaterialPolicy(scope.tenant(), scope.factory(), detail.getMatCode());
+        }
         MdmMaterialEntity material = material(detail.getMatCode());
         WmsIdentifierPolicyEntity policy = resolve(billType, detail.getMatCode());
         String batch = StrUtil.trim(detail.getMatBatch());
@@ -304,17 +314,8 @@ public class WmsIdentifierPolicyService {
             if (posting) {
                 serialIdentityLock.lock(scope.tenant(), scope.factory(), barcode);
             }
-            LambdaQueryWrapper<WmsLiveStockEntity> existingQuery = new LambdaQueryWrapper<WmsLiveStockEntity>()
-                    .eq(WmsLiveStockEntity::getTenantId, scope.tenant())
-                    .eq(WmsLiveStockEntity::getFactoryCode, scope.factory())
-                    .apply("btrim(mat_barcode) = {0}", barcode)
-                    .gt(WmsLiveStockEntity::getMatNum, 0);
-            if (!serialManaged) {
-                existingQuery.eq(WmsLiveStockEntity::getSerialManaged, true);
-            }
-            Long existing = stockMapper.selectCount(existingQuery);
-            if (existing > 0) {
-                throw new CheckedException("条码或序列号[" + barcode + "]已有在库实物");
+            if (stockMapper.hasConflictingBarcode(scope.tenant(), scope.factory(), barcode, serialManaged)) {
+                throw new CheckedException("条码或序列号[" + barcode + "]在仓库或拣货区仍有结存，请核对原件");
             }
         }
         return serialManaged;

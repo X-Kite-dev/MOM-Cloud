@@ -54,7 +54,7 @@ public interface MesMaterialListService extends IService<MesMaterialListEntity> 
     boolean updateMaterialListStatus(Long id, String status);
 
     /**
-     * 重新生成用料清单（基于最新BOM）
+     * 重新生成用料清单（按工单冻结BOM核对原明细）
      *
      * @param id 用料清单ID
      * @return 重新生成结果

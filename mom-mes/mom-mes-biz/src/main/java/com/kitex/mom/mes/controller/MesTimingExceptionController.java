@@ -23,9 +23,11 @@ public class MesTimingExceptionController {
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('mesTimingException:view')")
     public R<IPage<MesTimingExceptionEntity>> page(@RequestParam(defaultValue = "1") long current,
-                                                   @RequestParam(defaultValue = "20") long size, @RequestParam(required = false) String status,
-                                                   @RequestParam(required = false) String taskCode) {
-        return R.ok(service.pageCases(current, size, status, taskCode));
+                                                   @RequestParam(defaultValue = "20") long size,
+                                                   @RequestParam(required = false) String status,
+                                                   @RequestParam(required = false) String taskCode,
+                                                   @RequestParam(required = false) String reportRequestId) {
+        return R.ok(service.pageCases(current, size, status, taskCode, reportRequestId));
     }
 
     @Operation(summary = "超时例外原证据与处置履历")

@@ -94,28 +94,35 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
     @Override
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public void report(MesTaskReportVO params) {
-        reportInternal(params, MesReportChannelEnum.STATION);
+        reportInternal(params, MesReportChannelEnum.STATION, null);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public void reportMobile(MesTaskReportVO params) {
-        reportInternal(params, MesReportChannelEnum.MOBILE);
+        reportInternal(params, MesReportChannelEnum.MOBILE, null);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public void reportIntegration(MesTaskReportVO params) {
-        reportInternal(params, MesReportChannelEnum.INTEGRATION);
+        reportInternal(params, MesReportChannelEnum.INTEGRATION, null);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public void reportAuto(MesTaskReportVO params) {
-        reportInternal(params, MesReportChannelEnum.DEVICE);
+        reportInternal(params, MesReportChannelEnum.DEVICE, null);
     }
 
-    private void reportInternal(MesTaskReportVO params, MesReportChannelEnum channel) {
+    /** {@inheritDoc} */
+    @Override
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
+    public void reportAuto(MesTaskReportVO params, MesAutoReportRuleEntity rule) {
+        reportInternal(params, MesReportChannelEnum.DEVICE, Objects.requireNonNull(rule));
+    }
+
+    private void reportInternal(MesTaskReportVO params, MesReportChannelEnum channel, MesAutoReportRuleEntity deviceRule) {
         boolean automatic = channel.isAutomatic();
         if (params == null || StrUtil.isBlank(params.getArrangeCode())) {
             throw new CheckedException("派工单号不能为空");
@@ -135,6 +142,10 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
             throw new CheckedException("未找到派工任务");
         }
         taskLock.assertArrange(ownership, arrange);
+        // 复核锁定后的派工；规则不进入原命令正文，历史事件仍可按原号读取回执。
+        if (deviceRule != null && !MesWorksiteTriggerProjection.allowsDeviceRule(arrange, deviceRule)) {
+            throw new CheckedException("实际开工工位与设备报工规则不符，请核实原派工");
+        }
         terminalExecutionGuard.assertUnoccupied(arrange);
         MesTaskEntity task = taskService.getOne(new LambdaQueryWrapper<MesTaskEntity>()
                 .eq(MesTaskEntity::getTenantId, TenantContextHolder.getTenantId())
@@ -144,18 +155,7 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
             throw new CheckedException("未找到派工任务对应的生产工单");
         }
 
-        if (automatic) {
-            if (StrUtil.isBlank(params.getSourceEventId()) || StrUtil.isBlank(params.getDeviceCode())) {
-                throw new CheckedException("设备自动报工必须提供来源事件号和设备编码");
-            }
-            MesTaskReportEntity sourceOwner = this.getOne(new LambdaQueryWrapper<MesTaskReportEntity>()
-                    .eq(MesTaskReportEntity::getTenantId, TenantContextHolder.getTenantId())
-                    .eq(MesTaskReportEntity::getFactoryCode, factory)
-                    .eq(MesTaskReportEntity::getSourceEventId, params.getSourceEventId()), false);
-            if (sourceOwner != null && !Objects.equals(sourceOwner.getRequestId(), params.getRequestId())) {
-                throw new CheckedException("设备来源事件已生成其他报工记录，禁止重复记产");
-            }
-        }
+        validateSourceEvent(params, channel, factory);
         ReportModeEnum reportMode = ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType());
         MesReworkIdentifierUsageService.Prepared reworkIdentifier = reworkIdentifiers.prepare(
                 params, arrange, task, reportMode, "GOOD");
@@ -411,6 +411,37 @@ public class MesTaskReportServiceImpl extends ServiceImpl<MesTaskReportMapper, M
     private void prepareRequestId(MesTaskReportVO params) {
         params.setRequestId(normalizeRequestId(params.getRequestId()));
     }
+
+	/**
+	 * 已成功原号由永久回执直接返回。新命令仅能使用尚未记产的原事件，冲销也不释放原事件号。
+	 * 同厂重复给出业务提示，跨派工并发及租户内跨厂碰撞由已有来源唯一索引兜底。
+	 */
+	private void validateSourceEvent(MesTaskReportVO command, MesReportChannelEnum channel, String factory) {
+		String eventId = command.getSourceEventId();
+		if (channel == MesReportChannelEnum.DEVICE) {
+			if (StrUtil.isBlank(eventId) || StrUtil.isBlank(command.getDeviceCode())) {
+				throw new CheckedException("设备自动报工必须提供来源事件号和设备编码");
+			}
+		} else if (channel == MesReportChannelEnum.INTEGRATION) {
+			LocalDateTime eventTime = command.getSourceEventTime();
+			if (eventId == null && eventTime == null) {
+				return;
+			}
+			if (StrUtil.isBlank(eventId) || !eventId.equals(eventId.strip()) || eventId.length() > 100
+					|| eventTime == null || eventTime.getNano() != 0) {
+				throw new CheckedException("集成报工须成对提交原事件号和秒精度发生时刻，事件号最多100位且首尾不能有空白");
+			}
+		} else {
+			return;
+		}
+		boolean recorded = this.exists(new LambdaQueryWrapper<MesTaskReportEntity>()
+				.eq(MesTaskReportEntity::getTenantId, TenantContextHolder.getTenantId())
+				.eq(MesTaskReportEntity::getFactoryCode, factory)
+				.eq(MesTaskReportEntity::getSourceEventId, eventId));
+		if (recorded) {
+			throw new CheckedException("来源事件已生成报工记录，请用原请求号查回执，禁止换号重复记产");
+		}
+	}
 
     /**
      * 受控重报许可只补回已批准纠正释放的数量，不替代正常报工门和库存/质量校验。

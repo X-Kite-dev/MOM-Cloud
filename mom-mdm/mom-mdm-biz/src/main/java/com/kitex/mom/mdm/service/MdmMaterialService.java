@@ -29,6 +29,13 @@ public interface MdmMaterialService extends IService<MdmMaterialEntity> {
     boolean updateMaintained(MdmMaterialEntity material);
 
     /**
+     * 按当前租户、工厂删除所选物料。有有效换算或选中记录不齐时整批拒绝。
+     * @param ids 原物料主键集合
+     * @return 所选物料均删除后返回 true
+     */
+    boolean deleteMaintained(List<Long> ids);
+
+    /**
      * 内部后台任务读取一个明确租户工厂的当前预警参数。
      */
     List<MdmMaterialWarningConfigDTO> warningConfigurations(Long tenantId, String factoryCode);

@@ -23,6 +23,7 @@ import com.github.yulichang.wrapper.MPJLambdaWrapper;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.excel.vo.ErrorMessage;
 import com.kitex.mom.common.barcode.api.feign.RemotePrintService;
 import com.kitex.mom.common.barcode.dto.req.PreviewObj;
@@ -78,6 +79,8 @@ import java.util.stream.Collectors;
 public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEntity> implements PmsOrderService {
 
     private final PmsOrderDetailMapper pmsOrderDetailMapper;
+
+    private final PmsOrderReceivableQuantity receiptCapacity;
 
     private final PmsPlanService pmsPlanService;
 
@@ -257,7 +260,9 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
     public PmsOrderVO getPurchaseInNotice(Long id) {
         PmsOrderVO resultVo = new PmsOrderVO();
         List<PmsOrderNoticeVO> resultList = new ArrayList<>();
-        PmsOrderEntity pmsOrderEntity = this.getById(id);
+        PmsOrderEntity pmsOrderEntity = getOne(new LambdaQueryWrapper<PmsOrderEntity>()
+                .eq(PmsOrderEntity::getId, id).eq(PmsOrderEntity::getTenantId, TenantContextHolder.getTenantId())
+                .eq(PmsOrderEntity::getFactoryCode, FactoryContextHolder.getFactoryCode()));
         if (pmsOrderEntity == null || !Set.of(PmsOrderStatusEnum.CHECK_SUCCESS.getCode(),
                         PmsOrderStatusEnum.RECEIVING.getCode(), PmsOrderStatusEnum.PART_RECEIVE.getCode())
                 .contains(pmsOrderEntity.getStatus())) {
@@ -265,14 +270,19 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
         }
         BeanUtils.copyProperties(pmsOrderEntity, resultVo);
         List<PmsOrderDetailEntity> pmsOrderDetailEntities = pmsOrderDetailMapper.selectList(new LambdaQueryWrapper<PmsOrderDetailEntity>()
-                .eq(PmsOrderDetailEntity::getPmsOrderId, pmsOrderEntity.getId()));
+                .eq(PmsOrderDetailEntity::getPmsOrderId, pmsOrderEntity.getId()).orderByAsc(PmsOrderDetailEntity::getId));
+        var available = receiptCapacity.available(pmsOrderEntity, pmsOrderDetailEntities, null);
         for (PmsOrderDetailEntity pmsOrderDetailEntity : pmsOrderDetailEntities) {
             Double arrivalNum = Optional.ofNullable(pmsOrderDetailEntity.getArrivalNum()).orElse(0.0);
             pmsOrderDetailEntity.setArrivalNum(arrivalNum);
-            double orderNum = pmsOrderDetailEntity.getOrderNum() - arrivalNum;
+            double orderNum = available.get(pmsOrderDetailEntity.getId()).doubleValue();
             if (orderNum > 0) {
                 PmsOrderNoticeVO pmsOrderNoticeVO = new PmsOrderNoticeVO();
                 BeanUtils.copyProperties(pmsOrderDetailEntity, pmsOrderNoticeVO);
+                pmsOrderNoticeVO.setOriginalOrderQuantity(pmsOrderDetailEntity.getOrderNum());
+                pmsOrderNoticeVO.setCancelledNum(Objects.requireNonNullElse(pmsOrderDetailEntity.getCancelledNum(), 0D));
+                pmsOrderNoticeVO.setOccupiedNum(PmsOrderReceivableQuantity.outstanding(pmsOrderDetailEntity)
+                        .subtract(available.get(pmsOrderDetailEntity.getId())));
                 pmsOrderNoticeVO.setOrderNum(orderNum);
                 pmsOrderNoticeVO.setOrderDetailId(pmsOrderDetailEntity.getId());
                 resultList.add(pmsOrderNoticeVO);
@@ -308,15 +318,23 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
             throw new CheckedException("采购到货回写必须指定订单、订单行和正数到货量");
         }
         String factory = FactoryContextHolder.getFactoryCode();
+        Long tenant = TenantContextHolder.getTenantId();
+        if (tenant == null || StrUtil.isBlank(factory)) {
+            throw new CheckedException("采购到货回写缺少已认证租户或工厂");
+        }
         PmsOrderEntity pmsOrderEntity = this.getOne(new LambdaQueryWrapper<PmsOrderEntity>()
                 .eq(PmsOrderEntity::getPmsOrderNo, pmsInNoticeOrderDTO.getPmsOrderNo())
-                .eq(StrUtil.isNotBlank(factory), PmsOrderEntity::getFactoryCode, factory).last("FOR UPDATE"));
+                .eq(PmsOrderEntity::getTenantId, tenant)
+                .eq(PmsOrderEntity::getFactoryCode, factory).last("FOR UPDATE"));
         if (pmsOrderEntity == null || !Set.of(PmsOrderStatusEnum.CHECK_SUCCESS.getCode(), PmsOrderStatusEnum.RECEIVING.getCode(),
                 PmsOrderStatusEnum.PART_RECEIVE.getCode()).contains(pmsOrderEntity.getStatus())) {
             throw new CheckedException("采购订单不存在、未审核通过或已完成收货");
         }
         PmsOrderDetailEntity pmsOrderDetail = pmsOrderDetailMapper.selectOne(new LambdaQueryWrapper<PmsOrderDetailEntity>()
-                .eq(PmsOrderDetailEntity::getId, pmsInNoticeOrderDTO.getOrderDetailId()).last("FOR UPDATE"));
+                .eq(PmsOrderDetailEntity::getId, pmsInNoticeOrderDTO.getOrderDetailId())
+                .eq(PmsOrderDetailEntity::getPmsOrderId, pmsOrderEntity.getId())
+                .eq(PmsOrderDetailEntity::getTenantId, tenant)
+                .eq(PmsOrderDetailEntity::getFactoryCode, factory).last("FOR UPDATE"));
         if (pmsOrderDetail == null || !Objects.equals(pmsOrderEntity.getId(), pmsOrderDetail.getPmsOrderId())
                 || !Objects.equals(pmsOrderEntity.getFactoryCode(), pmsOrderDetail.getFactoryCode())
                 || (StrUtil.isNotBlank(pmsInNoticeOrderDTO.getMatCode())
@@ -324,16 +342,14 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
             throw new CheckedException("采购到货订单行与订单、工厂或物料不一致");
         }
         Double inNum = pmsInNoticeOrderDTO.getNum();
-        Double arrivalNum = Optional.ofNullable(pmsOrderDetail.getArrivalNum()).orElse(0.0);
-        // 标准单位按十进制累计，避免浮点加法误差导致原单回执核验失败。
-        double addNum;
-        if (Double.isFinite(inNum) && Double.isFinite(arrivalNum)) {
-            addNum = BigDecimal.valueOf(arrivalNum).add(BigDecimal.valueOf(inNum)).doubleValue();
-        } else {
-            addNum = inNum + arrivalNum;
+        if (!Double.isFinite(inNum) || BigDecimal.valueOf(inNum).compareTo(PmsOrderReceivableQuantity.outstanding(pmsOrderDetail)) > 0) {
+            throw new CheckedException("本次到货超过原采购行扣除已到货和撤回后的余额");
         }
-        if (addNum - Optional.ofNullable(pmsOrderDetail.getOrderNum()).orElse(0.0) > 0.00000001) {
-            throw new CheckedException("累计到货量不能超过采购订单行订购数量");
+        BigDecimal arrived = BigDecimal.valueOf(Objects.requireNonNullElse(pmsOrderDetail.getArrivalNum(), 0D))
+                .add(BigDecimal.valueOf(inNum));
+        double addNum = arrived.doubleValue();
+        if (!Double.isFinite(addNum) || arrived.compareTo(BigDecimal.valueOf(addNum)) != 0) {
+            throw new CheckedException("到货累计量超过采购订单行可保存的精度");
         }
 
         // 更新采购订单明细数量
@@ -344,8 +360,7 @@ public class PmsOrderServiceImpl extends ServiceImpl<PmsOrderMapper, PmsOrderEnt
 
         boolean fullyReceived = pmsOrderDetailMapper.selectList(new LambdaQueryWrapper<PmsOrderDetailEntity>()
                         .eq(PmsOrderDetailEntity::getPmsOrderId, pmsOrderEntity.getId())).stream()
-                .allMatch(detail -> Optional.ofNullable(detail.getArrivalNum()).orElse(0.0) + 0.00000001
-                        >= Optional.ofNullable(detail.getOrderNum()).orElse(0.0));
+                .allMatch(detail -> PmsOrderReceivableQuantity.outstanding(detail).signum() == 0);
         if (fullyReceived) {
             pmsOrderEntity.setStatus(PmsOrderStatusEnum.COMPLETE.getCode());
 

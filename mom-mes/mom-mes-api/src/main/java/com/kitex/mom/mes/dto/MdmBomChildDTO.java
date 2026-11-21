@@ -40,6 +40,10 @@ public class MdmBomChildDTO {
     @Schema(description = "物料名称")
     private String materialName;
 
+    /** 工单冻结时的子件规格，历史快照缺少规格时可空。 */
+    @Schema(description = "冻结子件规格")
+    private String materialSpec;
+
     /**
      * 单位
      */

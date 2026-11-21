@@ -99,7 +99,11 @@ public final class MesFrozenBomProjection {
 		return roots;
 	}
 
-	private static List<MdmBomChildListDTO> readSnapshot(String snapshot) {
+	/**
+	 * 读取工单冻结的 BOM 树并检查层级结构；调用方按领料层级或展示层级选择节点。
+	 * 无快照或格式错误必须回到原工单核对。
+	 */
+	public static List<MdmBomChildListDTO> readSnapshot(String snapshot) {
 		require(snapshot != null && !snapshot.isBlank(), "生产工单缺少冻结BOM快照");
 		try {
 			JsonNode root = JSON.readTree(snapshot);

@@ -28,6 +28,7 @@ import com.kitex.mom.plan.constant.IssueStatusEnum;
 import com.kitex.mom.plan.constant.ModuleEnum;
 import com.kitex.mom.plan.constant.UpdateTypeEnum;
 import com.kitex.mom.plan.dto.*;
+import com.kitex.mom.plan.dto.PlnApsMesDispatchDTO.MesOrderReceipt;
 import com.kitex.mom.plan.entity.*;
 import com.kitex.mom.plan.mapper.*;
 import com.kitex.mom.plan.service.*;
@@ -883,11 +884,21 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
     @Override
     @Transactional(rollbackFor = Exception.class, propagation = Propagation.REQUIRED)
     public Boolean issueToModule(PlnIssueModuleDTO plnIssueModuleDTO) {
+        return !issueToMesWithReceipts(plnIssueModuleDTO).isEmpty();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    @Transactional(rollbackFor = Exception.class, propagation = Propagation.REQUIRED)
+    public List<MesOrderReceipt> issueToMesWithReceipts(PlnIssueModuleDTO plnIssueModuleDTO) {
         if (plnIssueModuleDTO == null || plnIssueModuleDTO.getIds() == null
                 || plnIssueModuleDTO.getIds().length == 0) {
             throw new CheckedException("请选择需要下达MES的生产计划");
         }
-        List<PlnIssueEntity> plnIssueEntities = plnIssueMapper.selectBatchIds(Arrays.asList(plnIssueModuleDTO.getIds()));
+        // 原状态与本地接单回执须来自同一次锁定读取，避免并发下达覆盖已回写的计划。
+        List<PlnIssueEntity> plnIssueEntities = plnIssueMapper.selectList(new LambdaQueryWrapper<PlnIssueEntity>()
+                .in(PlnIssueEntity::getId, Arrays.asList(plnIssueModuleDTO.getIds()))
+                .orderByAsc(PlnIssueEntity::getId).last("FOR UPDATE"));
         if (plnIssueEntities.size() != Arrays.stream(plnIssueModuleDTO.getIds()).distinct().count()) {
             throw new CheckedException("存在无效生产计划，禁止下达MES");
         }
@@ -914,40 +925,32 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
             return issueApsBatches(plnIssueModuleDTO, plnIssueEntities, selectedBatchLinks, formalResolution);
         }
 
-        List<PlnUpdateLogEntity> updateLogs = plnIssueEntities.stream()
-                .filter(entity -> !"1".equals(entity.getStatus())) // 幂等：已下发的跳过
-                .map(entity -> {
-                    PlnUpdateLogEntity updateLog = createUpdateLog(entity, UpdateTypeEnum.STATUS_UPDATE.getCode(), entity.getStatus(), "1");
-                    entity.setStatus("1");
-                    return updateLog;
-                }).toList();
-
-        if (updateLogs.isEmpty()) {
-            return Boolean.TRUE; // 全部已下发，直接返回
+        for (var issue : plnIssueEntities) {
+            if (!IssueStatusEnum.ISSUED.getCode().equals(issue.getStatus())
+                    && !IssueStatusEnum.UNISSUED.getCode().equals(issue.getStatus())) {
+                throw new CheckedException("计划[" + issue.getIssueNo() + "]当前状态不能下达MES");
+            }
         }
-        plnUpdateLogService.saveUpdateLog(updateLogs);
-
-        // 只处理本次状态变更的计划（status 已被设为 "1"）
-        List<PlnIssueEntity> toIssue = plnIssueEntities.stream()
-                .filter(e -> "1".equals(e.getStatus()))
-                .toList();
-
-        for (PlnIssueEntity plnIssueEntity : toIssue) {
-            plnIssueMapper.updateById(plnIssueEntity);
-        }
-
-        Map<String, List<PlanMatMrpEntity>> demandMrpMap = loadMrpsByIssue(toIssue);
-
-        for (PlnIssueEntity plnIssueEntity : toIssue) {
-            List<PlanMatMrpEntity> issueMrps = demandMrpMap.getOrDefault(plnIssueEntity.getIssueNo(), List.of());
-            PlanMatMrpEntity productMrp = issueMrps.stream()
-                    .filter(row -> Objects.equals(row.getMatCode(), plnIssueEntity.getProductCode()))
+        Map<String, List<PlanMatMrpEntity>> demandMrpMap = loadMrpsByIssue(plnIssueEntities);
+        List<PlnUpdateLogEntity> logs = new ArrayList<>();
+        List<MesOrderReceipt> receipts = new ArrayList<>();
+        for (var issue : plnIssueEntities) {
+            boolean recoverOnly = IssueStatusEnum.ISSUED.getCode().equals(issue.getStatus());
+            if (!recoverOnly) {
+                logs.add(createUpdateLog(issue, UpdateTypeEnum.STATUS_UPDATE.getCode(),
+                        issue.getStatus(), IssueStatusEnum.ISSUED.getCode()));
+                issue.setStatus(IssueStatusEnum.ISSUED.getCode());
+            }
+            var issueMrps = demandMrpMap.getOrDefault(issue.getIssueNo(), List.of());
+            var productMrp = issueMrps.stream().filter(row -> Objects.equals(row.getMatCode(), issue.getProductCode()))
                     .findFirst().orElse(null);
-            saveMesPlan(plnIssueEntity, plnIssueModuleDTO.getWorkshopName(), plnIssueModuleDTO.getWorkshopCode(),
-                    productMrp, issueMrps, formalResolution);
+            receipts.add(saveMesPlan(issue, plnIssueModuleDTO.getWorkshopName(), plnIssueModuleDTO.getWorkshopCode(),
+                    productMrp, issueMrps, formalResolution, recoverOnly));
         }
-
-        return Boolean.TRUE;
+        if (!logs.isEmpty()) {
+            plnUpdateLogService.saveUpdateLog(logs);
+        }
+        return receipts;
     }
 
     private Boolean schedulingTaskOnly(PlnSchedulingRunDTO runDTO) {
@@ -1319,9 +1322,10 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         return updateLog;
     }
 
-    private Boolean issueApsBatches(PlnIssueModuleDTO request, List<PlnIssueEntity> selectedIssues,
-                                    List<PlnSchedulingBatchAllocationEntity> selectedLinks,
-                                    PlnApsFormalContractResolver.Resolution formalResolution) {
+    /** 按锁定的实际执行批次发送，每张批次工单只产生一行接单明细。 */
+    private List<MesOrderReceipt> issueApsBatches(PlnIssueModuleDTO request, List<PlnIssueEntity> selectedIssues,
+                                                  List<PlnSchedulingBatchAllocationEntity> selectedLinks,
+                                                  PlnApsFormalContractResolver.Resolution formalResolution) {
         Set<Long> selectedIssueIds = selectedIssues.stream().map(PlnIssueEntity::getId).collect(Collectors.toSet());
         Set<Long> batchIds = selectedLinks.stream().map(PlnSchedulingBatchAllocationEntity::getBatchId)
                 .filter(Objects::nonNull).collect(Collectors.toCollection(LinkedHashSet::new));
@@ -1364,23 +1368,28 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                 allocateReservationLinksByBatch(selectedIssues, allocations, mrpsByIssueNo, batchById);
         Map<Long, List<PlnSchedulingBatchAllocationEntity>> allocationsByBatch = allocations.stream()
                 .collect(Collectors.groupingBy(PlnSchedulingBatchAllocationEntity::getBatchId));
+        List<MesOrderReceipt> receipts = new ArrayList<>();
         for (PlnSchedulingBatchEntity batch : batches) {
-            saveMesBatch(batch, allocationsByBatch.getOrDefault(batch.getId(), List.of()), issueById,
+            receipts.add(saveMesBatch(batch, allocationsByBatch.getOrDefault(batch.getId(), List.of()), issueById,
                     reservationLinksByBatch.getOrDefault(batch.getId(), List.of()), mrpsByIssueNo,
-                    request.getWorkshopName(), request.getWorkshopCode(), formalResolution);
+                    request.getWorkshopName(), request.getWorkshopCode(), formalResolution));
         }
 
         List<PlnUpdateLogEntity> logs = new ArrayList<>();
         for (PlnIssueEntity issue : selectedIssues) {
-            if ("1".equals(issue.getStatus())) continue;
+            if ("1".equals(issue.getStatus())) {
+                continue;
+            }
             logs.add(createUpdateLog(issue, UpdateTypeEnum.STATUS_UPDATE.getCode(), issue.getStatus(), "1"));
             issue.setStatus("1");
             if (plnIssueMapper.updateById(issue) != 1) {
                 throw new CheckedException("计划[" + issue.getIssueNo() + "]下达状态更新失败");
             }
         }
-        if (!logs.isEmpty()) plnUpdateLogService.saveUpdateLog(logs);
-        return Boolean.TRUE;
+        if (!logs.isEmpty()) {
+            plnUpdateLogService.saveUpdateLog(logs);
+        }
+        return receipts;
     }
 
     /**
@@ -1457,16 +1466,21 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         return result;
     }
 
-    private void saveMesBatch(PlnSchedulingBatchEntity batch,
-                              List<PlnSchedulingBatchAllocationEntity> allocations,
-                              Map<Long, PlnIssueEntity> issueById,
-                              List<WmsMaterialReservationLinkDTO> reservationLinks,
-                              Map<String, List<PlanMatMrpEntity>> mrpsByIssueNo,
-                              String workshopName, String workshopCode,
-                              PlnApsFormalContractResolver.Resolution formalResolution) {
-        if (allocations.isEmpty()) throw new CheckedException("APS批次[" + batch.getBatchNo() + "]缺少来源分配");
+    /** 校验批次的冻结快照并向 MES 下达，按真实回执返回对应工单。 */
+    private MesOrderReceipt saveMesBatch(PlnSchedulingBatchEntity batch,
+                                         List<PlnSchedulingBatchAllocationEntity> allocations,
+                                         Map<Long, PlnIssueEntity> issueById,
+                                         List<WmsMaterialReservationLinkDTO> reservationLinks,
+                                         Map<String, List<PlanMatMrpEntity>> mrpsByIssueNo,
+                                         String workshopName, String workshopCode,
+                                         PlnApsFormalContractResolver.Resolution formalResolution) {
+        if (allocations.isEmpty()) {
+            throw new CheckedException("APS批次[" + batch.getBatchNo() + "]缺少来源分配");
+        }
         PlnIssueEntity primary = issueById.get(batch.getPrimaryIssueId());
-        if (primary == null) throw new CheckedException("APS批次[" + batch.getBatchNo() + "]主计划不存在");
+        if (primary == null) {
+            throw new CheckedException("APS批次[" + batch.getBatchNo() + "]主计划不存在");
+        }
         List<PlnSchedulingOperationEntity> operations = operationSchedulingService
                 .listBatchOperations(batch.getTaskId(), batch.getId());
         if (operations.isEmpty() || operations.stream().anyMatch(operation ->
@@ -1510,14 +1524,10 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         List<PlanMatMrpEntity> primaryMrps = mrpsByIssueNo.getOrDefault(primary.getIssueNo(), List.of());
         receive.setType(primaryMrps.stream().anyMatch(item -> Objects.equals(item.getMatCode(), primary.getProductCode())
                 && !ObjUtil.equal(item.getSubitemBomId(), 0L)) ? "PART" : "PRODUCT");
-        R<MesTaskIssueReceiptDTO> response = sendMesIssueRequest(receive, "PLAN_APS_BATCH:" + batch.getId(), legacyOrderQuantity);
-        if (response == null || !ObjUtil.equals(CommonConstants.SUCCESS, response.getCode())
-                || response.getData() == null
-                || !Objects.equals(receive.getSourceRequestId(), response.getData().getRequestId())
-                || !Objects.equals(receive.getSourceRequestFingerprint(), response.getData().getRequestFingerprint())
-                || response.getData().getTaskId() == null || StrUtil.isBlank(response.getData().getTaskCode())) {
-            throw new CheckedException("APS批次[" + batch.getBatchNo() + "]推送MES失败");
-        }
+        var candidates = sealMesCandidates(receive, "PLAN_APS_BATCH:" + batch.getId(), legacyOrderQuantity);
+        R<MesTaskIssueReceiptDTO> response = sendMesIssueRequest(candidates, false);
+        var receipt = requireMesReceipt(receive, response);
+        return mesOrderReceipt(receive, receipt.getTaskId(), receipt.getTaskCode(), receipt.getAcceptedTime());
     }
 
     private List<WmsMaterialReservationLinkDTO> reservationLinksForIssue(List<PlanMatMrpEntity> demandMrpList) {
@@ -1582,9 +1592,10 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                 .setComplianceValidEnd(source.getComplianceValidEnd()).setInspectionLevel(source.getInspectionLevel());
     }
 
-    private void saveMesPlan(PlnIssueEntity plnIssueEntity, String workshopName, String workshopCode,
-                             PlanMatMrpEntity matMrpEntity, List<PlanMatMrpEntity> demandMrpList,
-                             PlnApsFormalContractResolver.Resolution formalResolution) {
+    /** 按原计划请求接单。已下达计划仅能依据完整本地回执或 MES 原回执恢复。 */
+    private MesOrderReceipt saveMesPlan(PlnIssueEntity plnIssueEntity, String workshopName, String workshopCode,
+                                        PlanMatMrpEntity matMrpEntity, List<PlanMatMrpEntity> demandMrpList,
+                                        PlnApsFormalContractResolver.Resolution formalResolution, boolean recoverOnly) {
         MesTaskReceiveDTO receive = new MesTaskReceiveDTO();
         receive.setPlanNo(plnIssueEntity.getIssueNo());
         receive.setMatCode(plnIssueEntity.getProductCode());
@@ -1633,15 +1644,27 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         // 路线只能来自计划已绑定工程版本，MES会再向MDM精确取包并覆盖其他可编辑配置。
         receive.setProcessRouteCode(plnIssueEntity.getEngineeringRouteCode());
 
-        R<MesTaskIssueReceiptDTO> response = sendMesIssueRequest(receive, "PLAN_ISSUE:" + plnIssueEntity.getId(), legacyOrderQuantity);
-        MesTaskIssueReceiptDTO receipt = response == null ? null : response.getData();
-        if (response == null || !ObjUtil.equals(CommonConstants.SUCCESS, response.getCode()) || receipt == null
-                || !Objects.equals(receive.getSourceRequestId(), receipt.getRequestId())
-                || !Objects.equals(receive.getSourceRequestFingerprint(), receipt.getRequestFingerprint())
-                || !Objects.equals(receive.getPlanNo(), receipt.getPlanNo())
-                || receipt.getTaskId() == null || StrUtil.isBlank(receipt.getTaskCode())
-                || receipt.getAcceptedTime() == null) {
-            throw new CheckedException("生产模块推送失败");
+        var candidates = sealMesCandidates(receive, "PLAN_ISSUE:" + plnIssueEntity.getId(), legacyOrderQuantity);
+        if (recoverOnly && plnIssueEntity.getMesTaskId() != null && plnIssueEntity.getMesTaskId() > 0
+                && StrUtil.isNotBlank(plnIssueEntity.getMesTaskCode()) && plnIssueEntity.getMesIssueTime() != null) {
+            // 历史合同可能采用旧数量口径，必须使用与原回执指纹匹配的那份载荷。
+            for (var candidate : candidates) {
+                if (Objects.equals(candidate.getSourceRequestId(), plnIssueEntity.getMesIssueRequestId())
+                        && Objects.equals(candidate.getSourceRequestFingerprint(), plnIssueEntity.getMesIssueFingerprint())) {
+                    return mesOrderReceipt(candidate, plnIssueEntity.getMesTaskId(),
+                            plnIssueEntity.getMesTaskCode(), plnIssueEntity.getMesIssueTime());
+                }
+            }
+        }
+        R<MesTaskIssueReceiptDTO> response = sendMesIssueRequest(candidates, recoverOnly);
+        var receipt = requireMesReceipt(receive, response);
+        // 旧计划的任何已有回执字段都不能被不同的接单结果覆盖。
+        if (recoverOnly && (conflicts(plnIssueEntity.getMesIssueRequestId(), receipt.getRequestId())
+                || conflicts(plnIssueEntity.getMesIssueFingerprint(), receipt.getRequestFingerprint())
+                || conflicts(plnIssueEntity.getMesTaskId(), receipt.getTaskId())
+                || conflicts(plnIssueEntity.getMesTaskCode(), receipt.getTaskCode())
+                || conflicts(plnIssueEntity.getMesIssueTime(), receipt.getAcceptedTime()))) {
+            throw new CheckedException("计划[" + plnIssueEntity.getIssueNo() + "]已有回执字段与MES原单不一致");
         }
         plnIssueEntity.setMesIssueRequestId(receipt.getRequestId());
         plnIssueEntity.setMesIssueFingerprint(receipt.getRequestFingerprint());
@@ -1651,6 +1674,40 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
         if (plnIssueMapper.updateById(plnIssueEntity) != 1) {
             throw new CheckedException("MES接收成功，但生产计划回执保存失败；请使用原计划重新下达以幂等取回回执");
         }
+        return mesOrderReceipt(receive, receipt.getTaskId(), receipt.getTaskCode(), receipt.getAcceptedTime());
+    }
+
+    /** 普通计划和执行批次共用同一接单合同，每张工单必须与当前请求、载荷和主计划相符。 */
+    private MesTaskIssueReceiptDTO requireMesReceipt(MesTaskReceiveDTO receive, R<MesTaskIssueReceiptDTO> response) {
+        var receipt = response == null ? null : response.getData();
+        if (receipt == null || !response.isOk()
+                || !Objects.equals(receive.getSourceRequestId(), receipt.getRequestId())
+                || !Objects.equals(receive.getSourceRequestFingerprint(), receipt.getRequestFingerprint())
+                || !Objects.equals(receive.getPlanNo(), receipt.getPlanNo())
+                || receipt.getTaskId() == null || receipt.getTaskId() <= 0 || StrUtil.isBlank(receipt.getTaskCode())
+                || receipt.getAcceptedTime() == null) {
+            throw new CheckedException("生产计划[" + receive.getPlanNo() + "]未取得匹配的MES工单回执");
+        }
+        return receipt;
+    }
+
+    /** 数量来自 MES 已确认指纹的工单应产量。合批仅计一次，拆批按各自载荷取数。 */
+    private MesOrderReceipt mesOrderReceipt(MesTaskReceiveDTO accepted, Long taskId, String taskCode,
+                                            LocalDateTime acceptedTime) {
+        if (accepted.getNoticeNum() == null || accepted.getNoticeNum().signum() <= 0) {
+            throw new CheckedException("MES接单载荷缺少有效的工单应产量");
+        }
+        return new MesOrderReceipt()
+                .setRequestId(accepted.getSourceRequestId())
+                .setTaskId(taskId.toString())
+                .setTaskCode(taskCode)
+                .setApsBatchNo(accepted.getApsBatchNo())
+                .setAcceptedQuantity(accepted.getNoticeNum().toPlainString())
+                .setAcceptedTime(acceptedTime);
+    }
+
+    private boolean conflicts(Object recorded, Object received) {
+        return recorded != null && !Objects.equals(recorded, received);
     }
 
     /**
@@ -1710,21 +1767,33 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
      * 在发送前冻结完整载荷指纹。请求号由业务主键生成，事务重试时保持不变；
      * 任一计划、资源、物料预留或工序快照变化都会形成不同指纹并被MES拒绝复用旧请求。
      */
-    private R<MesTaskIssueReceiptDTO> sendMesIssueRequest(MesTaskReceiveDTO receive, String requestId,
-                                                          BigDecimal legacyOrderQuantity) {
+    private List<MesTaskReceiveDTO> sealMesCandidates(MesTaskReceiveDTO receive, String requestId,
+                                                     BigDecimal legacyOrderQuantity) {
         MesTaskReceiveRequestSigner.seal(receive, requestId);
+        List<MesTaskReceiveDTO> candidates = new ArrayList<>();
+        candidates.add(receive);
         if (legacyOrderQuantity != null && legacyOrderQuantity.compareTo(receive.getProductionOrderQuantity()) != 0) {
             // 旧ERP小桶已被MES接收但PLAN丢失回执时，只续接精确原载荷；不修改旧订单总量。
             MesTaskReceiveDTO legacy = cn.hutool.core.bean.BeanUtil.copyProperties(receive, MesTaskReceiveDTO.class);
             legacy.setProductionOrderQuantity(legacyOrderQuantity);
             MesTaskReceiveRequestSigner.seal(legacy, requestId);
-            R<MesTaskIssueReceiptDTO> recovered = remoteTaskService.recoverReceiveReceipt(List.of(receive, legacy));
+            candidates.add(legacy);
+        }
+        return candidates;
+    }
+
+    /** 已标记下达的旧计划仅可查回执。新计划在原请求未被接收时才允许创建工单。 */
+    private R<MesTaskIssueReceiptDTO> sendMesIssueRequest(List<MesTaskReceiveDTO> candidates, boolean recoverOnly) {
+        MesTaskReceiveDTO receive = candidates.get(0);
+        if (recoverOnly || candidates.size() > 1) {
+            R<MesTaskIssueReceiptDTO> recovered = remoteTaskService.recoverReceiveReceipt(candidates);
             if (recovered == null || !recovered.isOk()) {
                 throw new CheckedException("MES原接单回执无法核验，已停止新下达；请保留原请求重试");
             }
             var receipt = recovered.getData();
             if (receipt != null) {
-                boolean oldPayload = Objects.equals(receipt.getRequestFingerprint(), legacy.getSourceRequestFingerprint());
+                boolean oldPayload = candidates.size() == 2 && Objects.equals(
+                        receipt.getRequestFingerprint(), candidates.get(1).getSourceRequestFingerprint());
                 if (!Objects.equals(receipt.getRequestId(), receive.getSourceRequestId())
                         || !oldPayload && !Objects.equals(receipt.getRequestFingerprint(), receive.getSourceRequestFingerprint())
                         || !Objects.equals(receipt.getPlanNo(), receive.getPlanNo()) || !Boolean.TRUE.equals(receipt.getReplayed())
@@ -1733,10 +1802,13 @@ public class PlnSchedulingEngineServiceImpl implements PlnSchedulingEngineServic
                     throw new CheckedException("MES原接单回执与旧载荷不一致，禁止猜测续接");
                 }
                 if (oldPayload) {
-                    receive.setProductionOrderQuantity(legacyOrderQuantity);
-                    receive.setSourceRequestFingerprint(legacy.getSourceRequestFingerprint());
+                    receive.setProductionOrderQuantity(candidates.get(1).getProductionOrderQuantity());
+                    receive.setSourceRequestFingerprint(receipt.getRequestFingerprint());
                 }
                 return recovered;
+            }
+            if (recoverOnly) {
+                throw new CheckedException("已下达计划[" + receive.getPlanNo() + "]缺少MES原接单回执，请核对历史工单");
             }
         }
         return remoteTaskService.add(receive);

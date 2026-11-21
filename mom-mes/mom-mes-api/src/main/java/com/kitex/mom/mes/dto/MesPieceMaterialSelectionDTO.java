@@ -20,9 +20,13 @@ public final class MesPieceMaterialSelectionDTO {
 	public record Requirement(String materialCode, String unit, String quantity) {
 	}
 
+	/**
+	 * 派工内可选的真实投料来源。主键、指纹及原单位数量以文本传输。
+	 * @param wholePiece 原仓储签收已证明该来源为整件，只能选择原单位数量 1
+	 */
 	@JsonInclude(JsonInclude.Include.ALWAYS)
 	public record Source(String feedId, String birthId, String birthFingerprint, String requirementCode,
-			String actualCode, String batch, String barcode, String unit, String availableQuantity) {
+			String actualCode, String batch, String barcode, String unit, String availableQuantity, boolean wholePiece) {
 	}
 
 	public record Preparation(String arrangeCode, String identifier, List<Requirement> requirements,

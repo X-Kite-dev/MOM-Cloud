@@ -69,6 +69,14 @@ public interface PlnSchedulingEngineService {
     Boolean issueToModule(PlnIssueModuleDTO plnIssueModuleDTO);
 
     /**
+     * 下达生产计划并取得原 MES 接单明细。拆批按实际批次返回工单，合批按工单返回一次。
+     *
+     * @param command 已选择的来源计划及车间
+     * @return 与永久请求及载荷核对后的工单清单；任一接单未确认时抛出业务异常
+     */
+    List<PlnApsMesDispatchDTO.MesOrderReceipt> issueToMesWithReceipts(PlnIssueModuleDTO command);
+
+    /**
      * 根据产品产率和工作日历，计算从指定开始日起的排产结束日期。
      * 无工艺路线或产率为 0 时降级返回 startDate（单日兜底）。
      *

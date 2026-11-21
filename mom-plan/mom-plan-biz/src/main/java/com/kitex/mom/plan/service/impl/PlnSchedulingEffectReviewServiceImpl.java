@@ -3,19 +3,21 @@ package com.kitex.mom.plan.service.impl;
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kitex.common.core.entity.SearchPage;
 import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
-import com.kitex.common.data.tenant.TenantBroker;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.security.service.MomUser;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.mdm.dto.MdmFactoryAccessCheck;
 import com.kitex.mom.mdm.feign.RemoteMdmFactoryAccessService;
 import com.kitex.mom.mes.api.feign.RemoteMesTaskService;
+import com.kitex.mom.mes.api.feign.RemoteMesPlanExecutionService;
+import com.kitex.mom.mes.dto.MesPlanExecutionEvidenceDTO;
 import com.kitex.mom.mes.dto.MesApsLocalScheduleDTO;
 import com.kitex.mom.plan.dto.PlnSchedulingEffectReviewDTO;
 import com.kitex.mom.plan.entity.*;
@@ -59,6 +61,7 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
     private final PlnSchedulingTaskDetailMapper taskDetailMapper;
     private final PlnSchedulingOperationMapper operationMapper;
     private final RemoteMesTaskService mesTaskService;
+    private final RemoteMesPlanExecutionService mesPlanExecution;
     private final RemoteMdmFactoryAccessService factoryAccessService;
     private final PlnSchedulingDurationEvidenceReader durationEvidenceReader;
     private final ObjectMapper objectMapper;
@@ -127,32 +130,54 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
 
         List<PlnSchedulingScenarioEntity> unreviewed = reviewMapper.selectUnreviewedPublishedScenarios(batchSize);
         for (PlnSchedulingScenarioEntity scenario : unreviewed) {
-            if (runScheduled(scenario.getTenantId(), transaction,
-                    scheduledCommand(scenario.getId(), "首次自动采集"))) refreshed++;
+            if (runScheduled(scenario.getTenantId(), scenario.getFactoryCode(), transaction,
+                    scheduledCommand(scenario.getId(), "首次自动采集"))) {
+                refreshed++;
+            }
         }
 
         int remaining = Math.max(0, batchSize - refreshed);
         if (remaining == 0) return refreshed;
         List<PlnSchedulingEffectReviewEntity> due = reviewMapper.selectDueReviews(LocalDateTime.now(), remaining);
         for (PlnSchedulingEffectReviewEntity review : due) {
-            if (runScheduled(review.getTenantId(), transaction,
-                    scheduledCommand(review.getScenarioId(), "到期滚动重评"))) refreshed++;
+            if (runScheduled(review.getTenantId(), review.getFactoryCode(), transaction,
+                    scheduledCommand(review.getScenarioId(), "到期滚动重评"))) {
+                refreshed++;
+            }
         }
         return refreshed;
     }
 
-    private boolean runScheduled(Long tenantId, TransactionTemplate transaction,
+    /** 每项从原发布单恢复查询组织，继承执行器实际身份，退出时归还线程原上下文。 */
+    private boolean runScheduled(Long tenantId, String factory, TransactionTemplate transaction,
                                  PlnSchedulingEffectReviewDTO.CaptureCommand command) {
+        String previousFactory = FactoryContextHolder.getFactoryCode();
+        boolean previousSkip = Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip());
+        Long previousTenant = TenantContextHolder.getTenantId();
+        boolean previousTenantSkip = TenantContextHolder.getTenantSkip();
         try {
-            Boolean result = tenantId == null
-                    ? transaction.execute(status -> captureInternal(command, "SCHEDULED") != null)
-                    : TenantBroker.applyAs(tenantId,
-                    ignored -> transaction.execute(status -> captureInternal(command, "SCHEDULED") != null));
+            require(tenantId != null && tenantId > 0 && StrUtil.isNotBlank(factory), "自动回评缺少原发布组织");
+            TenantContextHolder.clear();
+            TenantContextHolder.setTenantId(tenantId);
+            FactoryContextHolder.clear();
+            FactoryContextHolder.setFactoryCode(factory);
+            Boolean result = transaction.execute(status -> captureInternal(command, "SCHEDULED") != null);
             return Boolean.TRUE.equals(result);
         } catch (RuntimeException ex) {
             log.error("APS候选效果自动回评失败，scenarioId={}，tenantId={}，不阻塞其他情景",
                     command.getScenarioId(), tenantId, ex);
             return false;
+        } finally {
+            TenantContextHolder.clear();
+            TenantContextHolder.setTenantId(previousTenant);
+            if (previousTenantSkip) {
+                TenantContextHolder.setTenantSkip();
+            }
+            FactoryContextHolder.clear();
+            FactoryContextHolder.setFactoryCode(previousFactory);
+            if (previousSkip) {
+                FactoryContextHolder.setFactorySkip();
+            }
         }
     }
 
@@ -231,9 +256,27 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
             evaluation = evaluate(scope, tolerance);
         }
 
-        if (NODE_IDENTITY.equals(scope.identityVersion())) {
+        if (scope.batches() != null && "SCHEDULED".equals(observationType)
+                && "SOURCE_UNAVAILABLE".equals(evaluation.status()) && review.getCurrentObservationId() != null) {
+            // 暂缺实名授权/网络不可用时只登记待重试，不能覆盖最近一次可回看的事实或重开偏差行动。
+            String error = "自动采集待重试：" + evaluation.errorMessage();
+            require(reviewMapper.update(null, new LambdaUpdateWrapper<PlnSchedulingEffectReviewEntity>()
+                    .eq(PlnSchedulingEffectReviewEntity::getId, review.getId())
+                    .eq(PlnSchedulingEffectReviewEntity::getTenantId, scenario.getTenantId())
+                    .eq(PlnSchedulingEffectReviewEntity::getFactoryCode, scenario.getFactoryCode())
+                    .set(PlnSchedulingEffectReviewEntity::getLastError, error)
+                    .set(PlnSchedulingEffectReviewEntity::getNextEvaluationTime, nextEvaluationTime(evaluation.status(), now))) == 1,
+                    "原批次回评的重试时刻登记失败");
+            return detailOf(reviewMapper.selectById(review.getId()));
+        }
+        if (scope.usesNodes()) {
             Map<String, Object> snapshot = new LinkedHashMap<>(evaluation.snapshot());
             snapshot.put("identityContractVersion", scope.identityVersion());
+            if (scope.batches() != null) {
+                // 来源份额与完工交期只在原发布案件和候选内成立，序列化时保留完整主键。
+                snapshot.put("scenarioId", scenario.getId().toString());
+                snapshot.put("selectedTaskId", task.getId().toString());
+            }
             evaluation = evaluation.withStatus(evaluation.status(), evaluation.errorMessage(), snapshot);
         }
         String actualSnapshot = json(evaluation.snapshot());
@@ -268,7 +311,16 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
                 .setLastError(evaluation.errorMessage()).setNextEvaluationTime(nextEvaluationTime(evaluation.status(), now));
         if ("COMPLETED".equals(evaluation.status()) && review.getCompletedTime() == null) review.setCompletedTime(now);
         copyMetrics(evaluation, review);
-        require(reviewMapper.updateById(review) == 1, "效果回评汇总保存失败");
+        // 默认非空更新策略会残留上一轮评分或错误。显式清空本次已失效的可空值。
+        require(reviewMapper.update(review, new LambdaUpdateWrapper<PlnSchedulingEffectReviewEntity>()
+                .eq(PlnSchedulingEffectReviewEntity::getId, review.getId())
+                .eq(PlnSchedulingEffectReviewEntity::getTenantId, scenario.getTenantId())
+                .eq(PlnSchedulingEffectReviewEntity::getFactoryCode, scenario.getFactoryCode())
+                .set(actualScore == null, PlnSchedulingEffectReviewEntity::getActualEffectScore, null)
+                .set(realizationGap == null, PlnSchedulingEffectReviewEntity::getRealizationGap, null)
+                .set(review.getLastError() == null, PlnSchedulingEffectReviewEntity::getLastError, null)
+                .set(review.getNextEvaluationTime() == null, PlnSchedulingEffectReviewEntity::getNextEvaluationTime, null)) == 1,
+                "效果回评汇总保存失败");
         effectActionService.reconcile(review, observation);
         return detailOf(review);
     }
@@ -291,13 +343,15 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
 
     /** 新账显式冻结身份协议；缺少标记的历史账严格保留原工序编码合同。 */
     private String identityVersion(PlnSchedulingEffectReviewEntity review) {
-        if (review == null) return NODE_IDENTITY;
+        if (review == null) {
+            return null; // 新账按实际发布范围确定协议，已有观察始终沿用原标记。
+        }
         try {
             var snapshot = objectMapper.readTree(review.getPlannedScopeSnapshot());
             require(snapshot != null && snapshot.isObject(), "原效果回评计划范围不可读取");
             if (!snapshot.has("identityContractVersion")) return LEGACY_IDENTITY;
             String version = snapshot.path("identityContractVersion").asText();
-            require(NODE_IDENTITY.equals(version), "原效果回评身份协议不受支持，不能改用其他口径");
+            require(NODE_IDENTITY.equals(version) || PlnBatchEffectScope.VERSION.equals(version), "原效果回评身份协议不受支持，不能改用其他口径");
             return version;
         } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
             throw new CheckedException("原效果回评计划范围无法解析，禁止重建历史基线");
@@ -321,10 +375,26 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
                         && item.getScheduledEndTime() != null
                         && item.getScheduledEndTime().isAfter(item.getScheduledStartTime())),
                 "选中候选存在缺少计划号、工序编码或无效计划时间的工序，无法回评");
-        if (NODE_IDENTITY.equals(identityVersion)) {
-            Map<String, List<PlnSchedulingOperationEntity>> byIssue = operations.stream().collect(
-                    Collectors.groupingBy(PlnSchedulingOperationEntity::getIssueNo, LinkedHashMap::new, Collectors.toList()));
-            for (var rows : byIssue.values()) {
+        if (identityVersion == null) {
+            boolean configuredBatches = operations.stream().anyMatch(op -> "MERGED".equals(op.getSchedulingBatchType())
+                    || "SPLIT".equals(op.getSchedulingBatchType()));
+            identityVersion = configuredBatches ? PlnBatchEffectScope.VERSION : NODE_IDENTITY;
+        }
+        boolean byBatch = PlnBatchEffectScope.VERSION.equals(identityVersion);
+        boolean nodes = byBatch || NODE_IDENTITY.equals(identityVersion);
+        PlnBatchEffectScope batches = null;
+        if (byBatch) {
+            // 同一来源不同批次的节点、序号可以完全相同，固定批次顺序以保证重采指纹稳定。
+            operations = operations.stream().sorted(Comparator.comparing(PlnSchedulingOperationEntity::getSchedulingBatchNo,
+                            Comparator.nullsFirst(Comparator.naturalOrder()))
+                    .thenComparing(PlnSchedulingOperationEntity::getOperationSeq, Comparator.nullsFirst(Comparator.naturalOrder()))
+                    .thenComparing(PlnSchedulingOperationEntity::getId)).toList();
+            batches = new PlnBatchEffectScope(operations, details, task.getId(), scenario.getFactoryCode(), objectMapper);
+        }
+        Map<String, List<PlnSchedulingOperationEntity>> groups = operations.stream().collect(Collectors.groupingBy(
+                op -> byBatch ? op.getSchedulingBatchNo() : op.getIssueNo(), LinkedHashMap::new, Collectors.toList()));
+        if (nodes) {
+            for (var rows : groups.values()) {
                 PlnFrozenRouteNodeIdentity.index(rows);
                 require(rows.stream().allMatch(row -> row.getOperationSeq() != null), "冻结工序序号缺失，无法核对真实节点");
             }
@@ -362,7 +432,11 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
             row.put("plannedQuantity", operation.getPlannedQuantity());
             row.put("scheduledStartTime", operation.getScheduledStartTime());
             row.put("scheduledEndTime", operation.getScheduledEndTime());
-            if (NODE_IDENTITY.equals(identityVersion)) {
+            if (byBatch) {
+                row.put("schedulingBatchNo", operation.getSchedulingBatchNo());
+                row.put("schedulingBatchId", operation.getSchedulingBatchId().toString());
+            }
+            if (nodes) {
                 row.put("schedulingOperationId", operation.getId().toString());
                 row.put("sourceRouteNodeCode", operation.getSourceRouteNodeCode());
                 row.put("routeCode", operation.getRouteCode());
@@ -379,7 +453,13 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
         scopeSnapshot.put("sourceFingerprint", scenario.getSourceFingerprint());
         scopeSnapshot.put("candidateMetrics", jsonValue(task.getCandidateMetricsSnapshot()));
         scopeSnapshot.put("operations", snapshotRows);
-        if (NODE_IDENTITY.equals(identityVersion)) scopeSnapshot.put("identityContractVersion", identityVersion);
+        if (nodes) {
+            scopeSnapshot.put("identityContractVersion", identityVersion);
+        }
+        if (byBatch) {
+            scopeSnapshot.put("batches", batches.batches.values());
+            scopeSnapshot.put("sourceDemands", batches.demands);
+        }
         String snapshot = json(scopeSnapshot);
         String fingerprint = hash(snapshot);
         Map<String, LocalDate> demandByIssueNo = new LinkedHashMap<>();
@@ -387,53 +467,58 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
             if (StrUtil.isNotBlank(detail.getIssueNo()))
                 demandByIssueNo.put(detail.getIssueNo(), detail.getDemandTime());
         }
-        return new PlannedScope(operations, operations.stream().map(PlnSchedulingOperationEntity::getIssueNo)
-                .collect(Collectors.toCollection(LinkedHashSet::new)), demandByIssueNo,
-                scenario.getFactoryCode(), snapshot, fingerprint, identityVersion);
+        return new PlannedScope(operations, byBatch ? batches.demands.keySet() : groups.keySet(), demandByIssueNo,
+                scenario.getFactoryCode(), snapshot, fingerprint, identityVersion, task.getId(), groups, batches);
     }
 
     private Evaluation evaluate(PlannedScope scope, int tolerance) {
         Map<String, MesApsLocalScheduleDTO.StateBundle> bundles = new LinkedHashMap<>();
         List<String> errors = new ArrayList<>();
-        for (String issueNo : scope.issueNos()) {
+        List<String> mappingGaps = new ArrayList<>();
+        PlnBatchEffectObservation batchFacts = null;
+        if (scope.batches() == null) {
+            readPlanStates(scope, bundles, errors);
+        } else {
+            MesPlanExecutionEvidenceDTO.Evidence facts = null;
             try {
-                R<MesApsLocalScheduleDTO.StateBundle> response = mesTaskService.apsOperationStates(
-                        issueNo, scope.factoryCode());
-                if (response == null || !response.isOk() || response.getData() == null
-                        || response.getData().getExecutionFingerprint() == null
-                        || response.getData().getExecutionFingerprint().length() != 64) {
-                    errors.add("计划[" + issueNo + "]MES执行事实不可用");
+                var response = mesPlanExecution.query(new MesPlanExecutionEvidenceDTO.Query()
+                        .setSchedulingTaskId(scope.taskId()).setFactoryCode(scope.factoryCode())
+                        .setPlanNos(new ArrayList<>(scope.issueNos())));
+                if (response != null && response.isOk() && response.getData() != null) {
+                    facts = response.getData();
                 } else {
-                    MesApsLocalScheduleDTO.StateBundle bundle = response.getData();
-                    if (NODE_IDENTITY.equals(scope.identityVersion()) && (!Objects.equals(issueNo, bundle.getPlanNo())
-                            || !Objects.equals(scope.factoryCode(), bundle.getFactoryCode()) || bundle.getMesTaskPresent() == null)) {
-                        errors.add("计划[" + issueNo + "]MES组织、来源或工单存在性未明确返回");
-                    } else if (StrUtil.isNotBlank(bundle.getPlanNo()) && !Objects.equals(issueNo, bundle.getPlanNo())) {
-                        errors.add("计划[" + issueNo + "]MES返回了其他计划的执行事实");
-                    } else if (StrUtil.isNotBlank(bundle.getFactoryCode())
-                            && !Objects.equals(scope.factoryCode(), bundle.getFactoryCode())) {
-                        errors.add("计划[" + issueNo + "]MES返回了其他工厂的执行事实");
-                    } else {
-                        bundles.put(issueNo, bundle);
-                    }
+                    errors.add("MES 候选批次取证失败，请核对原工单和当前账号权限");
                 }
             } catch (RuntimeException ex) {
-                errors.add("计划[" + issueNo + "]MES执行事实读取失败：" + safeMessage(ex));
+                errors.add("MES 候选批次取证不可用：" + safeMessage(ex));
+            }
+            if (facts != null) {
+                try {
+                    batchFacts = new PlnBatchEffectObservation(scope.batches(), facts, scope.taskId(),
+                            TenantContextHolder.getTenantId(), scope.factoryCode());
+                    bundles.putAll(batchFacts.bundles);
+                    mappingGaps.addAll(batchFacts.gaps);
+                } catch (RuntimeException ex) {
+                    mappingGaps.add("MES 候选批次与发布依据无法核对：" + safeMessage(ex));
+                }
             }
         }
 
         List<PlnSchedulingEffectReviewDTO.OperationEvidence> evidences = new ArrayList<>();
-        List<String> mappingGaps = new ArrayList<>();
+        Set<String> unmappedSources = new HashSet<>();
         int mesTaskCount = 0;
-        for (String issueNo : scope.issueNos()) {
-            MesApsLocalScheduleDTO.StateBundle bundle = bundles.get(issueNo);
-            if (bundle != null && Boolean.TRUE.equals(bundle.getMesTaskPresent())) mesTaskCount++;
-            List<PlnSchedulingOperationEntity> issueOperations = scope.operations().stream()
-                    .filter(row -> Objects.equals(issueNo, row.getIssueNo())).toList();
+        for (var group : scope.groups().entrySet()) {
+            List<PlnSchedulingOperationEntity> issueOperations = group.getValue();
+            int gapsBeforeGroup = mappingGaps.size();
+            String issueNo = issueOperations.get(0).getIssueNo();
+            MesApsLocalScheduleDTO.StateBundle bundle = bundles.get(group.getKey());
+            if (bundle != null && Boolean.TRUE.equals(bundle.getMesTaskPresent())) {
+                mesTaskCount++;
+            }
             Map<String, MesApsLocalScheduleDTO.OperationState> mesByIdentity = executionIndex(
-                    scope, issueNo, issueOperations, bundle, mappingGaps);
+                    scope, group.getKey(), issueOperations, bundle, mappingGaps);
             for (PlnSchedulingOperationEntity operation : issueOperations) {
-                String key = NODE_IDENTITY.equals(scope.identityVersion())
+                String key = scope.usesNodes()
                         ? PlnFrozenRouteNodeIdentity.key(operation) : operation.getProcessCode();
                 MesApsLocalScheduleDTO.OperationState actual = mesByIdentity.get(key);
                 PlnSchedulingEffectReviewDTO.OperationEvidence evidence = new PlnSchedulingEffectReviewDTO.OperationEvidence()
@@ -443,7 +528,11 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
                         .setPlannedStartTime(operation.getScheduledStartTime()).setPlannedEndTime(operation.getScheduledEndTime())
                         .setMesTaskPresent(bundle != null && Boolean.TRUE.equals(bundle.getMesTaskPresent()))
                         .setMatched(actual != null);
-                if (NODE_IDENTITY.equals(scope.identityVersion())) {
+                if (scope.batches() != null) {
+                    evidence.setSchedulingBatchNo(operation.getSchedulingBatchNo())
+                            .setSchedulingBatchId(operation.getSchedulingBatchId().toString());
+                }
+                if (scope.usesNodes()) {
                     evidence.setSchedulingOperationId(operation.getId().toString())
                             .setSourceRouteNodeCode(operation.getSourceRouteNodeCode())
                             .setMesSourceRouteNodeCode(actual == null ? null : actual.getSourceRouteNodeCode());
@@ -451,7 +540,7 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
                 if (actual == null) {
                     evidence.setGapReason(bundle == null ? "MES权威事实不可用"
                             : Boolean.TRUE.equals(bundle.getMesTaskPresent())
-                            ? NODE_IDENTITY.equals(scope.identityVersion()) ? "MES未能对应原冻结工序" : "MES缺少同编码工序"
+                            ? scope.usesNodes() ? "MES未能对应原冻结工序" : "MES缺少同编码工序"
                             : "MES生产任务尚未建立");
                     if (bundle != null && Boolean.TRUE.equals(bundle.getMesTaskPresent())) {
                         mappingGaps.add("计划[" + issueNo + "]MES缺少工序[" + operation.getProcessCode() + "]");
@@ -459,7 +548,7 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
                 } else {
                     LocalDateTime actualStart = actual.getActualStartTime();
                     LocalDateTime actualFinish = actual.getActualFinishTime();
-                    if (NODE_IDENTITY.equals(scope.identityVersion())) {
+                    if (scope.usesNodes()) {
                         try {
                             actualStart = exactTime(actual.getActualStartTimeText(), actualStart);
                             actualFinish = exactTime(actual.getActualFinishTimeText(), actualFinish);
@@ -470,7 +559,7 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
                         }
                     }
                     if (actualFinish != null && (actualStart == null || actualFinish.isBefore(actualStart))) {
-                        if (NODE_IDENTITY.equals(scope.identityVersion())) {
+                        if (scope.usesNodes()) {
                             evidence.setGapReason("MES实际开完工时间不完整或倒置");
                         } else {
                             mappingGaps.add("计划[" + issueNo + "]MES工序[" + operation.getProcessCode()
@@ -498,10 +587,15 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
                 }
                 evidences.add(evidence);
             }
+            if (scope.batches() != null && mappingGaps.size() != gapsBeforeGroup) {
+                scope.batches().batches.get(group.getKey()).shares().forEach(share -> unmappedSources.add(share.issueNo()));
+            }
         }
 
         durationEvidenceReader.enrich(scope.operations(), evidences, scope.factoryCode());
-        Evaluation result = metrics(scope, evidences, mesTaskCount);
+        List<PlnBatchEffectObservation.SourceResult> sources = batchFacts == null ? List.of() : batchFacts.sources.stream()
+                .map(row -> unmappedSources.contains(row.issueNo()) ? row.withoutDeliveryEvidence() : row).toList();
+        Evaluation result = metrics(scope, evidences, mesTaskCount, sources);
         String status;
         String error = null;
         if (!errors.isEmpty()) {
@@ -515,7 +609,8 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
         } else if (result.startedOperationCount() == 0 && result.completedOperationCount() == 0
                 && evidences.stream().noneMatch(item -> positive(item.getCompleteQuantity()))) {
             status = "WAITING_EXECUTION";
-        } else if (result.completedOperationCount() == scope.operations().size()) {
+        } else if (result.completedOperationCount() == scope.operations().size()
+                && (scope.batches() == null || result.completedIssueCount() == scope.issueNos().size())) {
             status = "COMPLETED";
         } else {
             status = "IN_PROGRESS";
@@ -528,10 +623,48 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
         snapshot.put("status", status);
         snapshot.put("sourceErrors", errors);
         snapshot.put("mappingGaps", mappingGaps);
-        snapshot.put("mesExecutionFingerprints", bundles.entrySet().stream().collect(Collectors.toMap(
-                Map.Entry::getKey, item -> item.getValue().getExecutionFingerprint(), (a, b) -> a, LinkedHashMap::new)));
+        if (scope.batches() == null) {
+            snapshot.put("mesExecutionFingerprints", bundles.entrySet().stream().collect(Collectors.toMap(
+                    Map.Entry::getKey, item -> item.getValue().getExecutionFingerprint(), (a, b) -> a, LinkedHashMap::new)));
+        } else {
+            snapshot.put("sourceFulfillment", sources);
+            if (batchFacts != null) {
+                snapshot.put("batchFacts", batchFacts.receipts);
+            }
+        }
         snapshot.put("operations", evidences);
         return result.withStatus(status, error, snapshot);
+    }
+
+    /** 普通计划及历史基线继续调用原 MES 计划号取证接口。 */
+    private void readPlanStates(PlannedScope scope, Map<String, MesApsLocalScheduleDTO.StateBundle> bundles,
+                                List<String> errors) {
+        for (String issueNo : scope.issueNos()) {
+            try {
+                R<MesApsLocalScheduleDTO.StateBundle> response = mesTaskService.apsOperationStates(
+                        issueNo, scope.factoryCode());
+                if (response == null || !response.isOk() || response.getData() == null
+                        || response.getData().getExecutionFingerprint() == null
+                        || response.getData().getExecutionFingerprint().length() != 64) {
+                    errors.add("计划[" + issueNo + "]MES执行事实不可用");
+                } else {
+                    MesApsLocalScheduleDTO.StateBundle bundle = response.getData();
+                    if (scope.usesNodes() && (!Objects.equals(issueNo, bundle.getPlanNo())
+                            || !Objects.equals(scope.factoryCode(), bundle.getFactoryCode()) || bundle.getMesTaskPresent() == null)) {
+                        errors.add("计划[" + issueNo + "]MES组织、来源或工单存在性未明确返回");
+                    } else if (StrUtil.isNotBlank(bundle.getPlanNo()) && !Objects.equals(issueNo, bundle.getPlanNo())) {
+                        errors.add("计划[" + issueNo + "]MES返回了其他计划的执行事实");
+                    } else if (StrUtil.isNotBlank(bundle.getFactoryCode())
+                            && !Objects.equals(scope.factoryCode(), bundle.getFactoryCode())) {
+                        errors.add("计划[" + issueNo + "]MES返回了其他工厂的执行事实");
+                    } else {
+                        bundles.put(issueNo, bundle);
+                    }
+                }
+            } catch (RuntimeException ex) {
+                errors.add("计划[" + issueNo + "]MES执行事实读取失败：" + safeMessage(ex));
+            }
+        }
     }
 
     /**
@@ -542,7 +675,7 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
             PlannedScope scope, String issueNo, List<PlnSchedulingOperationEntity> operations,
             MesApsLocalScheduleDTO.StateBundle bundle, List<String> gaps) {
         if (bundle == null) return Map.of();
-        if (NODE_IDENTITY.equals(scope.identityVersion())) {
+        if (scope.usesNodes()) {
             try {
                 return PlnFrozenRouteNodeIdentity.correspondence(operations, bundle);
             } catch (CheckedException ex) {
@@ -565,7 +698,8 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
     }
 
     private Evaluation metrics(PlannedScope scope,
-                               List<PlnSchedulingEffectReviewDTO.OperationEvidence> evidences, int mesTaskCount) {
+                               List<PlnSchedulingEffectReviewDTO.OperationEvidence> evidences, int mesTaskCount,
+                               List<PlnBatchEffectObservation.SourceResult> sources) {
         int matched = (int) evidences.stream().filter(item -> Boolean.TRUE.equals(item.getMatched())).count();
         List<Long> startDeviations = evidences.stream().map(PlnSchedulingEffectReviewDTO.OperationEvidence::getStartDeviationMinutes)
                 .filter(Objects::nonNull).toList();
@@ -584,16 +718,22 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
         int completedIssues = 0;
         int onTimeIssues = 0;
         int lateIssues = 0;
-        for (Map.Entry<String, List<PlnSchedulingEffectReviewDTO.OperationEvidence>> entry : byIssue.entrySet()) {
-            if (entry.getValue().isEmpty() || entry.getValue().stream().anyMatch(item -> item.getActualFinishTime() == null))
-                continue;
-            completedIssues++;
-            LocalDate demand = scope.demandByIssueNo().get(entry.getKey());
-            if (demand == null) continue;
-            LocalDateTime actualFinish = entry.getValue().stream().map(PlnSchedulingEffectReviewDTO.OperationEvidence::getActualFinishTime)
-                    .max(Comparator.naturalOrder()).orElse(null);
-            if (actualFinish != null && !actualFinish.isAfter(demand.atTime(LocalTime.MAX))) onTimeIssues++;
-            else lateIssues++;
+        if (scope.batches() != null) {
+            onTimeIssues = (int) sources.stream().filter(row -> "ON_TIME".equals(row.status())).count();
+            lateIssues = (int) sources.stream().filter(row -> "LATE".equals(row.status())).count();
+            completedIssues = (int) sources.stream().filter(row -> row.finishedAt() != null).count();
+        } else {
+            for (Map.Entry<String, List<PlnSchedulingEffectReviewDTO.OperationEvidence>> entry : byIssue.entrySet()) {
+                if (entry.getValue().isEmpty() || entry.getValue().stream().anyMatch(item -> item.getActualFinishTime() == null))
+                    continue;
+                completedIssues++;
+                LocalDate demand = scope.demandByIssueNo().get(entry.getKey());
+                if (demand == null) continue;
+                LocalDateTime actualFinish = entry.getValue().stream().map(PlnSchedulingEffectReviewDTO.OperationEvidence::getActualFinishTime)
+                        .max(Comparator.naturalOrder()).orElse(null);
+                if (actualFinish != null && !actualFinish.isAfter(demand.atTime(LocalTime.MAX))) onTimeIssues++;
+                else lateIssues++;
+            }
         }
         return new Evaluation(null, null, Map.of(), mesTaskCount, matched, started, completed,
                 rate(completed, scope.operations().size()), rate(startAdherent, started), rate(finishAdherent, completed),
@@ -826,7 +966,11 @@ public class PlnSchedulingEffectReviewServiceImpl implements PlnSchedulingEffect
 
     private record PlannedScope(List<PlnSchedulingOperationEntity> operations, Set<String> issueNos,
                                 Map<String, LocalDate> demandByIssueNo, String factoryCode,
-                                String snapshot, String fingerprint, String identityVersion) {
+                                String snapshot, String fingerprint, String identityVersion, Long taskId,
+                                Map<String, List<PlnSchedulingOperationEntity>> groups, PlnBatchEffectScope batches) {
+        boolean usesNodes() {
+            return !LEGACY_IDENTITY.equals(identityVersion);
+        }
     }
 
     private record Evaluation(String status, String errorMessage, Map<String, Object> snapshot,

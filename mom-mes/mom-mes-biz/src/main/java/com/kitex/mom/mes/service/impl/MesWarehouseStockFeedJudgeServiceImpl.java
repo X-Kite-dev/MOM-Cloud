@@ -191,16 +191,35 @@ public class MesWarehouseStockFeedJudgeServiceImpl
     @Transactional(readOnly = true)
     public IPage<MesWarehouseStockFeedJudgeEntity> pageRequests(Page<MesWarehouseStockFeedJudgeEntity> page,
                                                                 MesWarehouseStockFeedJudgeEntity query) {
+        return pageRequests(page, query, false);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    @Transactional(readOnly = true)
+    public IPage<MesWarehouseStockFeedJudgeEntity> pageForWorkOrder(Page<MesWarehouseStockFeedJudgeEntity> page,
+                                                                    MesWarehouseStockFeedJudgeEntity query) {
+        require(query != null && StrUtil.isNotBlank(query.getTaskCode()), "请提供退料原单所属的完整生产工单号");
+        return pageRequests(page, query, true);
+    }
+
+    /** 审核台支持模糊检索。工单详情按原号等值检索，分页与总数使用相同条件。 */
+    private IPage<MesWarehouseStockFeedJudgeEntity> pageRequests(Page<MesWarehouseStockFeedJudgeEntity> page,
+                                                                 MesWarehouseStockFeedJudgeEntity query,
+                                                                 boolean exactOrder) {
         String factory = factoryAccess.require("read");
         page.setCurrent(Math.max(1, page.getCurrent()));
         page.setSize(Math.min(100, Math.max(1, page.getSize())));
         LambdaQueryWrapper<MesWarehouseStockFeedJudgeEntity> wrapper = new LambdaQueryWrapper<MesWarehouseStockFeedJudgeEntity>()
                 // 列表不读取逐库存行冻结快照；原申请详情仍完整提供。
                 .select(MesWarehouseStockFeedJudgeEntity.class, field -> !"evidence_snapshot".equals(field.getColumn()))
+                .eq(MesWarehouseStockFeedJudgeEntity::getTenantId, TenantContextHolder.getTenantId())
                 .eq(MesWarehouseStockFeedJudgeEntity::getFactoryCode, factory)
                 .eq(StrUtil.isNotBlank(query.getStatus()), MesWarehouseStockFeedJudgeEntity::getStatus, query.getStatus())
                 .like(StrUtil.isNotBlank(query.getCode()), MesWarehouseStockFeedJudgeEntity::getCode, query.getCode())
-                .like(StrUtil.isNotBlank(query.getTaskCode()), MesWarehouseStockFeedJudgeEntity::getTaskCode, query.getTaskCode())
+                .eq(exactOrder, MesWarehouseStockFeedJudgeEntity::getTaskCode, query.getTaskCode())
+                .like(!exactOrder && StrUtil.isNotBlank(query.getTaskCode()),
+                        MesWarehouseStockFeedJudgeEntity::getTaskCode, query.getTaskCode())
                 .like(StrUtil.isNotBlank(query.getBillNo()), MesWarehouseStockFeedJudgeEntity::getBillNo, query.getBillNo())
                 .like(StrUtil.isNotBlank(query.getMatCode()), MesWarehouseStockFeedJudgeEntity::getMatCode, query.getMatCode())
                 .like(StrUtil.isNotBlank(query.getApplicantName()), MesWarehouseStockFeedJudgeEntity::getApplicantName,

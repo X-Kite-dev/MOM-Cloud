@@ -226,25 +226,35 @@ public class OmsDeliveryPromiseQueryService {
                 .filter(row -> value(row.getDeliveredNum()).compareTo(value(row.getDeliverNum())) < 0)
                 .map(OmsLifeWmsDeliverVO::getPlanDeliverTime).filter(Objects::nonNull)
                 .max(LocalDate::compareTo).orElse(null);
-        LocalDate candidate = null;
-        String confidence = "LOW";
-        if (internalReady != null && dispatchPlan != null && !dispatchPlan.isBefore(internalReady)) {
-            candidate = dispatchPlan;
-            confidence = Stream.of(summary.getPlanDataStatus(), summary.getMesDataStatus(),
-                            summary.getPmsDataStatus(), summary.getWmsDataStatus())
-                    .allMatch(status -> "AVAILABLE".equals(status) || "NOT_APPLICABLE".equals(status))
-                    ? "HIGH" : "MEDIUM";
-        } else if (internalReady != null && dispatchLeadDays != null) {
-            candidate = internalReady.plusDays(dispatchLeadDays);
-            confidence = "MEDIUM";
-            if (dispatchPlan != null && dispatchPlan.isBefore(internalReady)) {
-                blockers.add("WMS当前计划发运日期早于内部就绪日期，候选已改按内部就绪日和明确提前期计算，原发运计划须调整");
-            }
-        } else if (dispatchPlan != null && internalReady == null) {
-            blockers.add("WMS虽有计划发运日期，但内部就绪日期不可核验，不能把发运计划直接当作可承诺日期");
-        } else if (dispatchPlan != null && internalReady != null && dispatchPlan.isBefore(internalReady)) {
-            blockers.add("WMS当前计划发运日期早于内部就绪日期，且未提供发运提前期，不能形成客户候选日期");
-        }
+		LocalDate candidate = null;
+		String confidence = "LOW";
+		// 日期和依据在同一分支确定，过早的发运计划不能成为回退候选日期的来源。
+		String candidateBasis;
+		if (internalReady == null) {
+			candidateBasis = "内部就绪日期待核，客户候选日期待定";
+			if (dispatchPlan != null) {
+				blockers.add("WMS虽有计划发运日期，但内部就绪日期不可核验，不能把发运计划直接当作可承诺日期");
+			}
+		} else if (dispatchPlan != null && !dispatchPlan.isBefore(internalReady)) {
+			candidate = dispatchPlan;
+			candidateBasis = "客户候选日期取WMS当前正式计划发运日期";
+			confidence = Stream.of(summary.getPlanDataStatus(), summary.getMesDataStatus(),
+							summary.getPmsDataStatus(), summary.getWmsDataStatus())
+					.allMatch(source -> "AVAILABLE".equals(source) || "NOT_APPLICABLE".equals(source))
+					? "HIGH" : "MEDIUM";
+		} else if (dispatchLeadDays != null) {
+			candidate = internalReady.plusDays(dispatchLeadDays);
+			candidateBasis = "客户候选日期=内部就绪日+明确发运提前期" + dispatchLeadDays + "天";
+			confidence = "MEDIUM";
+			if (dispatchPlan != null) {
+				blockers.add("WMS当前计划发运日期早于内部就绪日期，候选已改按内部就绪日和明确提前期计算，原发运计划须调整");
+			}
+		} else if (dispatchPlan != null) {
+			candidateBasis = "WMS当前计划发运日期早于内部就绪日期，且未提供发运提前期，不能形成客户候选日期";
+			blockers.add(candidateBasis);
+		} else {
+			candidateBasis = "缺少正式发运计划和明确发运提前期，仅能形成内部就绪日期";
+		}
         boolean unavailable = Stream.of(summary.getPlanDataStatus(), summary.getMesDataStatus(),
                         summary.getPmsDataStatus(), summary.getWmsDataStatus(), summary.getQualityDeliverabilityStatus())
                 .anyMatch("UNAVAILABLE"::equals);
@@ -257,11 +267,11 @@ public class OmsDeliveryPromiseQueryService {
 				: candidate == null ? "INTERNAL_DATE_ONLY"
 				: detail.getDeliverTime() != null && candidate.isAfter(detail.getDeliverTime())
 				? "LATE_RISK" : "ON_TIME_SUPPORTED";
-        if ("ON_TIME_SUPPORTED".equals(status) && confidence.equals("MEDIUM")) {
+        if ("ON_TIME_SUPPORTED".equals(status) && (dispatchPlan == null || dispatchPlan.isBefore(internalReady))) {
             blockers.add("候选客户日期使用调用方明确提供的发运提前期，仍须销售/PMC确认并核对物流资源");
         }
         List<OmsDeliveryPromiseDTO.Scenario> scenarios = scenarios(detail, summary, internalReady,
-                dispatchPlan, candidate, dispatchLeadDays, status);
+                candidate, candidateBasis, dispatchLeadDays, status);
         return new OmsDeliveryPromiseDTO.LineAssessment().setOrderDetailId(detail.getId())
                 .setProductCode(detail.getProductCode()).setProductName(detail.getProductName())
                 .setProductUnit(detail.getProductUnit()).setCurrentPromisedDate(detail.getDeliverTime())
@@ -307,31 +317,35 @@ public class OmsDeliveryPromiseQueryService {
                 : "已核对供应计划不晚于MES成品任务最晚计划结束日");
     }
 
-    private List<OmsDeliveryPromiseDTO.Scenario> scenarios(OmsOrderDetailsEntity detail,
-                                                           OmsFulfillmentSummaryVO summary, LocalDate internalReady, LocalDate dispatchPlan,
-                                                           LocalDate candidate, Integer leadDays, String status) {
-        List<OmsDeliveryPromiseDTO.Scenario> rows = new ArrayList<>();
-        rows.add(new OmsDeliveryPromiseDTO.Scenario().setScenarioCode("CURRENT_COMMITMENT")
-                .setScenarioName("当前客户承诺").setInternalReadyDate(internalReady)
-                .setCustomerPromiseDate(detail.getDeliverTime()).setSupportQuantity(summary.getRemainingQuantity())
-                .setStatus(status).setAssumptions(List.of("沿用OMS当前交付日期，不自动改写订单")));
-        List<String> baselineAssumptions = new ArrayList<>();
-        if (dispatchPlan != null) baselineAssumptions.add("客户候选日期取WMS当前正式计划发运日期");
-        else if (leadDays != null) baselineAssumptions.add("客户候选日期=内部就绪日+明确发运提前期" + leadDays + "天");
-        else baselineAssumptions.add("缺少正式发运计划和明确发运提前期，仅能形成内部就绪日期");
-        rows.add(new OmsDeliveryPromiseDTO.Scenario().setScenarioCode("CURRENT_EXECUTION")
-                .setScenarioName("当前执行事实").setInternalReadyDate(internalReady).setCustomerPromiseDate(candidate)
-                .setSupportQuantity(summary.getRemainingQuantity()).setStatus(status).setAssumptions(baselineAssumptions));
-        BigDecimal deliverable = value(summary.getNetDeliverableQuantity()).min(value(summary.getRemainingQuantity()));
-        if (deliverable.signum() > 0 && deliverable.compareTo(value(summary.getRemainingQuantity())) < 0) {
-            rows.add(new OmsDeliveryPromiseDTO.Scenario().setScenarioCode("PARTIAL_SHIPMENT")
-                    .setScenarioName("现有合格库存先行分批").setInternalReadyDate(LocalDate.now())
-                    .setCustomerPromiseDate(leadDays == null ? null : LocalDate.now().plusDays(leadDays))
-                    .setSupportQuantity(deliverable).setStatus("PARTIAL_ONLY")
-                    .setAssumptions(List.of("仅覆盖当前WMS质量净可交量，不代表剩余量承诺", "分批发运须销售、PMC和客户确认")));
-        }
-        return rows;
-    }
+	/**
+	 * 订单行的原承诺、当前执行推算和可选分批情景。分批只取本行 WMS 已核实的质量净可交量，
+	 * 不改客户交期，不代表后续尾量已有承诺。
+	 */
+	private List<OmsDeliveryPromiseDTO.Scenario> scenarios(OmsOrderDetailsEntity detail,
+			OmsFulfillmentSummaryVO summary, LocalDate internalReady, LocalDate candidate,
+			String candidateBasis, Integer leadDays, String status) {
+		List<OmsDeliveryPromiseDTO.Scenario> rows = new ArrayList<>();
+		rows.add(new OmsDeliveryPromiseDTO.Scenario().setScenarioCode("CURRENT_COMMITMENT")
+				.setScenarioName("当前客户承诺").setInternalReadyDate(internalReady)
+				.setCustomerPromiseDate(detail.getDeliverTime()).setSupportQuantity(summary.getRemainingQuantity())
+				.setStatus(status).setAssumptions(List.of("沿用OMS当前交付日期，不自动改写订单")));
+		rows.add(new OmsDeliveryPromiseDTO.Scenario().setScenarioCode("CURRENT_EXECUTION")
+				.setScenarioName("当前执行事实").setInternalReadyDate(internalReady).setCustomerPromiseDate(candidate)
+				.setSupportQuantity(summary.getRemainingQuantity()).setStatus(status).setAssumptions(List.of(candidateBasis)));
+
+		BigDecimal net = summary.getNetDeliverableQuantity();
+		BigDecimal remaining = summary.getRemainingQuantity();
+		if ("AVAILABLE".equals(summary.getWmsDataStatus()) && "AVAILABLE".equals(summary.getQualityDeliverabilityStatus())
+				&& net != null && remaining != null && net.signum() > 0 && net.compareTo(remaining) < 0) {
+			LocalDate ready = LocalDate.now();
+			rows.add(new OmsDeliveryPromiseDTO.Scenario().setScenarioCode("PARTIAL_SHIPMENT")
+					.setScenarioName("现有合格库存先行分批").setInternalReadyDate(ready)
+					.setCustomerPromiseDate(leadDays == null ? null : ready.plusDays(leadDays))
+					.setSupportQuantity(net).setStatus("PARTIAL_ONLY")
+					.setAssumptions(List.of("仅覆盖当前WMS质量净可交量，不代表剩余量承诺", "分批发运须销售、PMC和客户确认")));
+		}
+		return rows;
+	}
 
     private OmsDeliveryPromiseDTO.LineAssessment unavailable(OmsOrderDetailsEntity detail, Exception exception) {
         return new OmsDeliveryPromiseDTO.LineAssessment().setOrderDetailId(detail.getId())

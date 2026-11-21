@@ -31,6 +31,8 @@ public final class PmsProcurementRiskRow {
     public static class RiskLine {
         private Long orderId;
         private Long orderDetailId;
+        /** 订单行关联的采购计划号，供采购员区分同物料的采购需求。 */
+        private String purchasePlanNo;
         private String orderNo;
         private String orderStatus;
         private String supplierCode;

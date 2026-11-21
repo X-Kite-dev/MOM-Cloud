@@ -14,6 +14,8 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.kitex.common.core.exception.CheckedException;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.common.query.enums.CommonQuery;
 import com.kitex.common.security.util.SecurityUtils;
 import com.kitex.mom.qms.dto.req.QualityStandardQueryReq;
@@ -64,19 +66,26 @@ public class QualityStandardServiceImpl extends ServiceImpl<QualityStandardMappe
 
     private final QualityStandardItemService itemService;
 
-    /**
-     * 新增
-     */
+    /** 保存当前组织的标准及完整项目，项目继承主标准的组织归属。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveOrUpdate(QualityStandardReq param) {
-        if (CollectionUtil.isEmpty(param.getItems())) {
+        if (param == null || param.getStandard() == null || CollectionUtil.isEmpty(param.getItems())) {
             throw new CheckedException("请添加质检项");
         }
-        // 保存质检标准
         QmsQualityStandardEntity saveTemplate = param.getStandard();
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        requireStandardScope(tenant, factory);
+        if (saveTemplate.getId() != null) {
+            requireOwnedStandard(saveTemplate.getId(), tenant, factory);
+        }
+        saveTemplate.setTenantId(tenant);
+        saveTemplate.setFactoryCode(factory);
         QmsQualityStandardEntity existCodeTemplate = this.getOne(new LambdaQueryWrapper<QmsQualityStandardEntity>()
                 .ne(Objects.nonNull(saveTemplate.getId()), QmsQualityStandardEntity::getId, saveTemplate.getId())
+                .eq(QmsQualityStandardEntity::getTenantId, tenant)
+                .eq(QmsQualityStandardEntity::getFactoryCode, factory)
                 .eq(QmsQualityStandardEntity::getStandardName, saveTemplate.getStandardName()));
         if (Objects.nonNull(existCodeTemplate)) {
             throw new CheckedException("该模板编码已存在，请勿重复添加");
@@ -84,6 +93,8 @@ public class QualityStandardServiceImpl extends ServiceImpl<QualityStandardMappe
         // 确认唯一标准
         QmsQualityStandardEntity existTemplate = this.getOne(new LambdaQueryWrapper<QmsQualityStandardEntity>()
                 .ne(Objects.nonNull(saveTemplate.getId()), QmsQualityStandardEntity::getId, saveTemplate.getId())
+                .eq(QmsQualityStandardEntity::getTenantId, tenant)
+                .eq(QmsQualityStandardEntity::getFactoryCode, factory)
                 .eq(QmsQualityStandardEntity::getMatCode, saveTemplate.getMatCode())
                 .eq(QmsQualityStandardEntity::getInspectionType, saveTemplate.getInspectionType())
                 .eq(QmsQualityStandardEntity::getPublished, 1));
@@ -96,17 +107,11 @@ public class QualityStandardServiceImpl extends ServiceImpl<QualityStandardMappe
                 throw new RuntimeException("质检数量必须填写");
             }
         }
-        this.saveOrUpdate(saveTemplate);
-
-        // 保存质检项
-        param.getItems().forEach(item -> {
-            item.setId(null);
-            item.setStandardId(saveTemplate.getId());
-            item.setStandardName(saveTemplate.getStandardName());
-        });
-        itemService.remove(new LambdaQueryWrapper<QmsQualityStandardItemEntity>()
-                .eq(QmsQualityStandardItemEntity::getStandardId, saveTemplate.getId()));
-        itemService.saveBatch(param.getItems());
+        if (!this.saveOrUpdate(saveTemplate) || saveTemplate.getId() == null) {
+            throw new CheckedException("质检标准保存失败");
+        }
+        itemService.remove(ownedItems(saveTemplate));
+        saveItems(saveTemplate, param.getItems());
     }
 
 
@@ -153,20 +158,15 @@ public class QualityStandardServiceImpl extends ServiceImpl<QualityStandardMappe
                 .set(QmsQualityStandardEntity::getPublished, req.getPublished()));
     }
 
-    /**
-     * 复制
-     *
-     * @param id
-     */
+    /** 在同租户同工厂复制标准和项目，副本以停用状态保存。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void copy(Long id) {
-        QmsQualityStandardEntity standard = this.getById(id);
-        if (Objects.isNull(standard)) {
-            throw new RuntimeException("未找到质检标准");
-        }
-        List<QmsQualityStandardItemEntity> items = itemService.list(new LambdaQueryWrapper<QmsQualityStandardItemEntity>()
-                .eq(QmsQualityStandardItemEntity::getStandardId, standard.getId()));
+        Long tenant = TenantContextHolder.getTenantId();
+        String factory = FactoryContextHolder.getFactoryCode();
+        requireStandardScope(tenant, factory);
+        QmsQualityStandardEntity standard = requireOwnedStandard(id, tenant, factory);
+        List<QmsQualityStandardItemEntity> items = itemService.list(ownedItems(standard));
 
         QmsQualityStandardEntity newStandard = new QmsQualityStandardEntity();
         BeanUtil.copyProperties(standard, newStandard);
@@ -175,14 +175,53 @@ public class QualityStandardServiceImpl extends ServiceImpl<QualityStandardMappe
         newStandard.setStandardName(standard.getStandardName() + "-复制");
         newStandard.setCreateTime(LocalDateTime.now());
         newStandard.setCreateBy(SecurityUtils.getUser().getUsername());
-        this.save(newStandard);
+        if (!this.save(newStandard) || newStandard.getId() == null) {
+            throw new CheckedException("质检标准副本保存失败");
+        }
+        if (!items.isEmpty()) {
+            saveItems(newStandard, items);
+        }
+    }
 
-        List<QmsQualityStandardItemEntity> newItems = new ArrayList<>(items);
-        newItems.forEach(item -> {
+    private void requireStandardScope(Long tenant, String factory) {
+        if (tenant == null || tenant <= 0 || TenantContextHolder.getTenantSkip()
+                || StrUtil.isBlank(factory) || Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip())) {
+            throw new CheckedException("维护质检标准须指定实际租户和工厂");
+        }
+    }
+
+    private QmsQualityStandardEntity requireOwnedStandard(Long id, Long tenant, String factory) {
+        QmsQualityStandardEntity standard = this.getOne(new LambdaQueryWrapper<QmsQualityStandardEntity>()
+                .eq(QmsQualityStandardEntity::getId, id)
+                .eq(QmsQualityStandardEntity::getTenantId, tenant)
+                .eq(QmsQualityStandardEntity::getFactoryCode, factory));
+        if (standard == null) {
+            throw new CheckedException("当前租户和工厂下未找到质检标准");
+        }
+        return standard;
+    }
+
+    /** 兼容归属尚未补齐的旧项目。只读写当前已核对的主标准下、当前工厂的项目。 */
+    private LambdaQueryWrapper<QmsQualityStandardItemEntity> ownedItems(QmsQualityStandardEntity standard) {
+        return new LambdaQueryWrapper<QmsQualityStandardItemEntity>()
+                .eq(QmsQualityStandardItemEntity::getStandardId, standard.getId())
+                .eq(QmsQualityStandardItemEntity::getFactoryCode, standard.getFactoryCode())
+                .and(scope -> scope.eq(QmsQualityStandardItemEntity::getTenantId, standard.getTenantId())
+                        .or().isNull(QmsQualityStandardItemEntity::getTenantId));
+    }
+
+    /** 租户和工厂取已保存的主标准，防止表单漏填或传入其他组织导致检验无法冻结。 */
+    private void saveItems(QmsQualityStandardEntity standard, List<QmsQualityStandardItemEntity> items) {
+        for (var item : items) {
             item.setId(null);
-            item.setStandardId(newStandard.getId());
-        });
-        itemService.saveBatch(newItems);
+            item.setStandardId(standard.getId());
+            item.setStandardName(standard.getStandardName());
+            item.setTenantId(standard.getTenantId());
+            item.setFactoryCode(standard.getFactoryCode());
+        }
+        if (!itemService.saveBatch(items)) {
+            throw new CheckedException("质检标准项目保存失败");
+        }
     }
 
     /**

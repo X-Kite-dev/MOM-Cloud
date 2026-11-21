@@ -26,8 +26,12 @@ public class MesStartPreparationController {
     @GetMapping("/mesTask/arrange/start-preparation/candidates")
     public R<Map<String, Object>> candidates(@RequestParam(defaultValue = "1") long current,
                                              @RequestParam(defaultValue = "20") long size,
-                                             @RequestParam(required = false) String keyword) {
-        return R.ok(service.candidates(current, size, keyword));
+                                             @RequestParam(required = false) String keyword,
+                                             @RequestParam(required = false) String taskCode,
+                                             @RequestParam(required = false) String dispatchStatus,
+                                             @RequestParam(required = false) String lastStatus,
+                                             @RequestParam(defaultValue = "false") boolean includeLastCheck) {
+        return R.ok(service.candidates(current, size, keyword, taskCode, dispatchStatus, lastStatus, includeLastCheck));
     }
 
     @PostMapping("/mesTask/arrange/start-preparation")

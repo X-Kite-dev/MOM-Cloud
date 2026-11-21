@@ -14,6 +14,15 @@ import java.util.List;
 @Data
 @Schema(description = "采购订单VO")
 public class PmsOrderVO {
+
+    /** 当前工厂所选采购订单的原单主键，用于核对预览回执。 */
+    @Schema(description = "采购订单主键")
+    private Long id;
+
+    /** 该采购订单的租户身份，与工厂共同限定收料原件。 */
+    @Schema(description = "采购订单租户")
+    private Long tenantId;
+
     /**
      * 采购订单号
      */

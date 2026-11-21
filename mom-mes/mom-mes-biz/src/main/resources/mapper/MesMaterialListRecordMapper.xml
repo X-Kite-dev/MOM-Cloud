@@ -44,13 +44,14 @@
                    END    as operation_type_name,
                mld.material_name,
                mld.material_spec,
-               u.username as operator_name
+               coalesce(nullif(mlr.operator, ''), mlr.create_by) AS operator_name
         FROM mes_material_list_record mlr
                  LEFT JOIN mes_material_list_detail mld ON mlr.material_list_detail_id = mld.id
-                 LEFT JOIN sys_user u ON mlr.create_by = u.id
+            AND mlr.tenant_id = mld.tenant_id AND mlr.factory_code = mld.factory_code AND mlr.task_id = mld.task_id
         WHERE mlr.del_flag = '0'
+          AND mlr.tenant_id = #{tenantId} AND mlr.factory_code = #{factoryCode}
           AND mlr.material_list_detail_id = #{materialListDetailId}
-        ORDER BY mlr.operation_time DESC
+        ORDER BY mlr.operation_time DESC, mlr.id DESC
     </select>
 
     <!-- 根据工单ID查询领退料记录 -->
@@ -63,13 +64,14 @@
                    END    as operation_type_name,
                mld.material_name,
                mld.material_spec,
-               u.username as operator_name
+               coalesce(nullif(mlr.operator, ''), mlr.create_by) AS operator_name
         FROM mes_material_list_record mlr
                  LEFT JOIN mes_material_list_detail mld ON mlr.material_list_detail_id = mld.id
-                 LEFT JOIN sys_user u ON mlr.create_by = u.id
+            AND mlr.tenant_id = mld.tenant_id AND mlr.factory_code = mld.factory_code AND mlr.task_id = mld.task_id
         WHERE mlr.del_flag = '0'
+          AND mlr.tenant_id = #{tenantId} AND mlr.factory_code = #{factoryCode}
           AND mlr.task_id = #{taskId}
-        ORDER BY mlr.operation_time DESC
+        ORDER BY mlr.operation_time DESC, mlr.id DESC
     </select>
 
     <!-- 根据物料编码查询领退料记录 -->
@@ -83,31 +85,33 @@
         END as operation_type_name,
         mld.material_name,
         mld.material_spec,
-        u.username as operator_name
+        coalesce(nullif(mlr.operator, ''), mlr.create_by) AS operator_name
         FROM mes_material_list_record mlr
         LEFT JOIN mes_material_list_detail mld ON mlr.material_list_detail_id = mld.id
-        LEFT JOIN sys_user u ON mlr.create_by = u.id
+            AND mlr.tenant_id = mld.tenant_id AND mlr.factory_code = mld.factory_code AND mlr.task_id = mld.task_id
         WHERE mlr.del_flag = '0' AND mlr.material_code = #{materialCode}
         <if test="factoryCode != null and factoryCode != ''">
             AND mlr.factory_code = #{factoryCode}
         </if>
-        ORDER BY mlr.operation_time DESC
+        ORDER BY mlr.operation_time DESC, mlr.id DESC
     </select>
 
     <!-- 统计工单的领退料汇总信息 -->
     <select id="selectPickReturnSummaryByTaskId" resultType="java.util.Map">
-        SELECT material_code,
-               material_name,
+        SELECT mlr.material_code,
+               mld.material_name,
                SUM(CASE WHEN operation_type = 'PICK' THEN quantity ELSE 0 END)     as total_pick_quantity,
                SUM(CASE WHEN operation_type = 'RETURN' THEN quantity ELSE 0 END)   as total_return_quantity,
                (SUM(CASE WHEN operation_type = 'PICK' THEN quantity ELSE 0 END) -
                 SUM(CASE WHEN operation_type = 'RETURN' THEN quantity ELSE 0 END)) as actual_consume_quantity
         FROM mes_material_list_record mlr
                  LEFT JOIN mes_material_list_detail mld ON mlr.material_list_detail_id = mld.id
+            AND mlr.tenant_id = mld.tenant_id AND mlr.factory_code = mld.factory_code AND mlr.task_id = mld.task_id
         WHERE mlr.del_flag = '0'
+          AND mlr.tenant_id = #{tenantId} AND mlr.factory_code = #{factoryCode}
           AND mlr.task_id = #{taskId}
-        GROUP BY material_code, material_name
-        ORDER BY material_code
+        GROUP BY mlr.material_code, mld.material_name
+        ORDER BY mlr.material_code
     </select>
 
 </mapper>

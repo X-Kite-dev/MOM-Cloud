@@ -648,6 +648,7 @@ public class PlanMatMrpServiceImpl extends ServiceImpl<PlanMatMrpMapper, PlanMat
             line.setInventoryPeggedNum(row.getInventoryPeggedNum());
             line.setInventoryPeggingStatus(row.getInventoryPeggingStatus());
             line.setInventoryPeggingFingerprint(row.getInventoryPeggingFingerprint());
+            line.setRecordedRemainingDemandNum(row.getRemainingDemandNum());
             line.setShortageNum(Optional.ofNullable(row.getRemainingDemandNum()).orElse(BigDecimal.ZERO));
             line.setReadinessStatus(row.getReadinessStatus());
             line.setSubstituteStatus(row.getSubstituteStatus());

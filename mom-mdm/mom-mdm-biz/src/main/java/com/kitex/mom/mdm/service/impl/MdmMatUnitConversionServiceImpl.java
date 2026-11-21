@@ -16,7 +16,6 @@ import com.kitex.mom.mdm.service.MdmMatUnitConversionService;
 import com.kitex.mom.mdm.vo.excel.MdmMatUnitConversionExcelVO;
 import lombok.AllArgsConstructor;
 import org.springframework.beans.BeanUtils;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,13 +36,13 @@ public class MdmMatUnitConversionServiceImpl extends ServiceImpl<MdmMatUnitConve
 
     private final MdmMaterialMapper materials;
     private final MdmPhysicalTransformStandardMapper standards;
-    private final JdbcTemplate jdbc;
+    private final MdmUnitMaintenanceLock unitLock;
 
     /** {@inheritDoc} */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean saveMaintained(MdmMatUnitConversionEntity row) {
-        lockScope();
+        unitLock.acquire();
         return saveChecked(row);
     }
 
@@ -51,7 +50,7 @@ public class MdmMatUnitConversionServiceImpl extends ServiceImpl<MdmMatUnitConve
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean updateMaintained(MdmMatUnitConversionEntity row) {
-        lockScope();
+        unitLock.acquire();
         require(row != null && row.getId() != null, "请选择原换算记录");
         MdmMatUnitConversionEntity original = getOne(Wrappers.<MdmMatUnitConversionEntity>lambdaQuery()
                 .eq(MdmMatUnitConversionEntity::getId, row.getId())
@@ -78,7 +77,7 @@ public class MdmMatUnitConversionServiceImpl extends ServiceImpl<MdmMatUnitConve
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean importMaintained(List<MdmMatUnitConversionEntity> rows) {
-        lockScope();
+        unitLock.acquire();
         require(rows != null && !rows.isEmpty(), "导入内容不能为空");
         for (int index = 0; index < rows.size(); index++) {
             try {
@@ -94,7 +93,7 @@ public class MdmMatUnitConversionServiceImpl extends ServiceImpl<MdmMatUnitConve
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean deleteMaintained(List<Long> ids) {
-        lockScope();
+        unitLock.acquire();
         require(ids != null && !ids.isEmpty(), "请选择待删除换算");
         for (Long id : ids.stream().distinct().toList()) {
             require(id != null, "换算ID不能为空");
@@ -114,16 +113,6 @@ public class MdmMatUnitConversionServiceImpl extends ServiceImpl<MdmMatUnitConve
                     .eq(MdmMatUnitConversionEntity::getFactoryCode, row.getFactoryCode())), "换算删除失败");
         }
         return true;
-    }
-
-    /** 同组织维护在PostgreSQL事务内串行，包含批内重复检查；不代替绕过正式接口的数据库治理。 */
-    private void lockScope() {
-        Long tenant = TenantContextHolder.getTenantId();
-        String factory = FactoryContextHolder.getFactoryCode();
-        require(tenant != null && tenant > 0 && factory != null && !factory.isBlank()
-                && !Boolean.TRUE.equals(TenantContextHolder.getTenantSkip())
-                && !Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip()), "单位维护需要明确租户和实际工厂");
-        jdbc.queryForList("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "MDM_UNIT:" + tenant + ":" + factory);
     }
 
     /** 在同一事务中校验并新增，不接受导入表格指定历史主键。 */

@@ -43,6 +43,7 @@ public class MesStationPassService {
     private final MesTaskReportMapper reportMapper;
     private final MesToolingExecutionMapper toolingMapper;
     private final MesReportNodeGate reportNodeGate;
+    private final MesTravelerQuantityService travelerQuantities;
     private final RemoteCustomerPartService customerPartService;
     private final MesStationPassAttemptWriter attemptWriter;
 
@@ -131,6 +132,17 @@ public class MesStationPassService {
                 || mode == ReportModeEnum.TRANSFER_CARD) {
             validateTravelerAndRoute(command, arrange, task, mode, fingerprint, operatorCode, operatorName);
         }
+        BigDecimal travelerAvailable = null;
+        if (mode == ReportModeEnum.TRANSFER_CARD
+                && !MesIdentifierRouteReturnCoordinator.ROUTE_RETURN.equals(command.getExecutionKind())) {
+            try {
+                travelerAvailable = travelerQuantities.requireAvailable(arrange, nodeContext.predecessors(), command.getTransferCode(),
+                        command.getPassNum());
+            } catch (CheckedException exception) {
+                reject(command, arrange, mode, fingerprint, operatorCode, operatorName,
+                        "TRAVELER_QUANTITY", exception.getMessage());
+            }
+        }
 
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("version", command.getIdentifierBindingId() == null ? "MES_STATION_PASS_V2" : "MES_STATION_PASS_BINDING_V3");
@@ -155,6 +167,9 @@ public class MesStationPassService {
         snapshot.put("toolingCodes", plannedToolings);
         snapshot.put("transferCode", command.getTransferCode());
         snapshot.put("quantity", command.getPassNum());
+        if (travelerAvailable != null) {
+            snapshot.put("travelerAvailableBefore", travelerAvailable.stripTrailingZeros().toPlainString());
+        }
         snapshot.put("executionKind", command.getExecutionKind());
         snapshot.put("routeReturnId", command.getRouteReturnId());
         snapshot.put("identifierRouteVersion", command.getIdentifierRouteVersion());
@@ -183,6 +198,7 @@ public class MesStationPassService {
             return;
         }
         MesTravelerEntity traveler = travelerMapper.selectOne(new LambdaQueryWrapper<MesTravelerEntity>()
+                .eq(MesTravelerEntity::getTenantId, arrange.getTenantId())
                 .eq(MesTravelerEntity::getFactoryCode, arrange.getFactoryCode())
                 .eq(MesTravelerEntity::getTravelerCode, command.getTransferCode()).last("FOR UPDATE"));
         if (traveler == null) {
@@ -200,6 +216,7 @@ public class MesStationPassService {
                     .setCompleteTime(Boolean.TRUE.equals(arrange.getLastRoute()) ? LocalDateTime.now() : null)
                     .setFactoryCode(arrange.getFactoryCode());
             traveler.setId(IdWorker.getId());
+            traveler.setTenantId(arrange.getTenantId());
             travelerMapper.insert(traveler);
         } else {
             traveler.setLatestRouteCode(arrange.getRouteCode());
@@ -248,7 +265,9 @@ public class MesStationPassService {
         command.setTransferCode(identifier);
 
         LambdaQueryWrapper<MesTaskReportEntity> duplicateWrapper = new LambdaQueryWrapper<MesTaskReportEntity>()
+                .eq(MesTaskReportEntity::getTenantId, arrange.getTenantId())
                 .eq(MesTaskReportEntity::getFactoryCode, arrange.getFactoryCode())
+                .eq(MesTaskReportEntity::getTaskCode, arrange.getTaskCode())
                 .eq(MesTaskReportEntity::getProduceTaskCode, arrange.getProduceTaskCode())
                 .eq(MesTaskReportEntity::getTransferCode, identifier)
                 .and(item -> item.isNull(MesTaskReportEntity::getStatus)
@@ -267,6 +286,7 @@ public class MesStationPassService {
 
         if (mode == ReportModeEnum.TRANSFER_CARD) {
             MesTravelerEntity traveler = travelerMapper.selectOne(new LambdaQueryWrapper<MesTravelerEntity>()
+                    .eq(MesTravelerEntity::getTenantId, arrange.getTenantId())
                     .eq(MesTravelerEntity::getFactoryCode, arrange.getFactoryCode())
                     .eq(MesTravelerEntity::getTravelerCode, identifier).last("FOR UPDATE"));
             if (traveler != null && (!Objects.equals(traveler.getTaskCode(), task.getCode())

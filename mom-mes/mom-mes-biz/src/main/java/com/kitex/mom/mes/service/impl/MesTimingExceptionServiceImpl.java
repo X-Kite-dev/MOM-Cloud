@@ -60,13 +60,17 @@ public class MesTimingExceptionServiceImpl extends ServiceImpl<MesTimingExceptio
     }
 
     @Override
-    public IPage<MesTimingExceptionEntity> pageCases(long current, long size, String status, String taskCode) {
+    public IPage<MesTimingExceptionEntity> pageCases(long current, long size, String status, String taskCode,
+                                                    String reportRequestId) {
         String factory = factoryAccess.require("read");
         require(permissions.hasPermission("mesTimingException:view"), "没有超时观察查看权限");
         require(current >= 1 && current <= 1_000_000 && size >= 1 && size <= 100, "超时观察分页范围无效");
         require(status == null || status.isBlank() || STATES.contains(status), "超时观察状态无效");
         require(taskCode == null || taskCode.length() <= 100, "工单号过长");
+        String originalRequest = reportRequestId == null ? "" : reportRequestId.strip();
+        require(originalRequest.length() <= 64, "报工原号不能超过64个字符");
         return page(new Page<>(current, size), scoped(factory)
+                .eq(!originalRequest.isEmpty(), MesTimingExceptionEntity::getReportRequestId, originalRequest)
                 .eq(status != null && !status.isBlank(), MesTimingExceptionEntity::getStatus, status)
                 .eq(taskCode != null && !taskCode.isBlank(), MesTimingExceptionEntity::getTaskCode, taskCode)
                 .orderByDesc(MesTimingExceptionEntity::getObservedAt, MesTimingExceptionEntity::getId));

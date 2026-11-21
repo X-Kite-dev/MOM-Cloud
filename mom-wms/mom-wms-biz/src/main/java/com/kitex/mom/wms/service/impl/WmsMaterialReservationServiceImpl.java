@@ -864,7 +864,7 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                         continue;
                     }
                     WmsLiveStockEntity stock = stocks.get(candidate.getLiveStockId());
-                    if (!WmsStockAvailability.isUsable(stock)
+                    if (!WmsStockAvailability.isUsable(stock) || !matchesIssueBarcode(out, stock)
                             || !complianceIntegrityIssues(reservation, candidate, stock).isEmpty()) {
                         continue;
                     }
@@ -874,6 +874,7 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                     if (take.compareTo(BigDecimal.ZERO) <= 0) {
                         continue;
                     }
+                    WmsSerialStockGuard.requireWhole(stock, take);
                     balances.put(candidate.getId(), balance.subtract(take));
                     physicalBalances.put(candidate.getLiveStockId(), physicalBalance.subtract(take));
                     required = required.subtract(take);
@@ -901,6 +902,14 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                 && (StrUtil.isBlank(out.getMatBatch()) || Objects.equals(out.getMatBatch(), candidate.getMatBatch()))
                 && (StrUtil.isBlank(out.getSupplierCode())
                 || Objects.equals(out.getSupplierCode(), candidate.getSupplierCode()));
+    }
+
+    /** 从实际预留库存选取所扫实物。单件须指定库存原行或序列号，填写的条码不能被同批其它行替换。 */
+    private boolean matchesIssueBarcode(WmsOutBillDetailEntity out, WmsLiveStockEntity stock) {
+        if (StrUtil.isNotBlank(out.getMatBarcode())) {
+            return Objects.equals(out.getMatBarcode(), stock.getMatBarcode());
+        }
+        return !Boolean.TRUE.equals(stock.getSerialManaged()) || Objects.equals(out.getSourceStockId(), stock.getId());
     }
 
     @Override
@@ -958,6 +967,9 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
             }
             WmsLiveStockEntity stock = liveStockMapper.selectOne(new LambdaQueryWrapper<WmsLiveStockEntity>()
                     .eq(WmsLiveStockEntity::getId, detail.getLiveStockId()).last("FOR UPDATE"), false);
+            if (stock != null && !matchesIssueBarcode(out, stock)) {
+                continue;
+            }
             if (!WmsStockAvailability.isUsable(stock) || stockNum(stock).compareTo(take) < 0) {
                 throw new CheckedException("预留库存行[" + detail.getLiveStockId() + "]实物数量不足，禁止出库");
             }
@@ -989,6 +1001,9 @@ public class WmsMaterialReservationServiceImpl implements WmsMaterialReservation
                 throw new CheckedException("生产预留明细消费记账未确认，消费整体回滚");
             }
             remainingOut = remainingOut.subtract(take);
+        }
+        if (remainingOut.signum() > 0) {
+            throw new CheckedException("所选预留库存与实物条码或数量不符，请选择原库存或扫描对应序列号");
         }
         long activeDetails = detailMapper.selectCount(new LambdaQueryWrapper<WmsMaterialReservationDetailEntity>()
                 .eq(WmsMaterialReservationDetailEntity::getReservationId, reservation.getId())

@@ -43,20 +43,32 @@ public class MesPieceMaterialSelectionService {
 		var requirements = MesTaskUtils.getCurrentProcess(context.task().getProcessRouteSnapshot(),
 						context.arrange().getRouteCode(), context.arrange().getSourceRouteNodeCode())
 				.getMdmProcessProcedureMatList();
+		requirements = MesMaterialConsumptionModeResolver.partition(modes.resolve(context.arrange()), requirements,
+				MesMaterialConsumptionModeResolver.Mode.FEED);
 		require(requirements != null && !requirements.isEmpty() && requirements.size() <= 100,
 				"当前工序没有明确用料需求，或需求超过单件选料范围");
 		var required = requirements.stream().map(row -> new Requirement(row.getMaterialCode(), row.getUnit(),
 				physical.amount(row.getQuantity()))).toList();
 		var candidates = new ArrayList<Source>();
+		var requiredCodes = new HashSet<String>();
+		required.forEach(row -> requiredCodes.add(row.materialCode()));
+		var pieceIds = issuedPieces(context.arrange(), context.feeds().stream().map(MesWarehouseFeedEntity::getId).toList());
 		int unavailable = 0;
 		for (var feed : context.feeds()) {
+			if (!requiredCodes.contains(feed.getRequirementMatCode())) {
+				continue;
+			}
 			try {
+				boolean wholePiece = pieceIds.contains(feed.getId());
+				if (wholePiece) {
+					requireUnusedPiece(feed);
+				}
 				var proof = sources.source(context.arrange().getTenantId(), context.arrange().getFactoryCode(),
 						context.arrange(), context.task(), feed, true);
 				candidates.add(new Source(proof.feedId(), proof.birthId(), proof.birthFingerprint(),
 						proof.requirementMaterialCode(),
 						proof.actualMaterialCode(), proof.batchNo(), proof.barcode(), proof.unit(),
-						physical.amount(feed.getFeedNum().subtract(feed.getUsedNum()))));
+						physical.amount(feed.getFeedNum().subtract(feed.getUsedNum())), wholePiece));
 			} catch (CheckedException rejected) {
 				unavailable++;
 			}
@@ -86,9 +98,14 @@ public class MesPieceMaterialSelectionService {
 		var byId = new HashMap<Long, MesWarehouseFeedEntity>();
 		locked.forEach(feed -> require(byId.put(feed.getId(), feed) == null, "实际来源ID重复"));
 		var quantities = new LinkedHashMap<Long, BigDecimal>();
+		var pieceIds = issuedPieces(arrange, selected.stream().map(MesPieceMaterialSelectionCodec.Selection::feedId).toList());
 		for (var selection : selected) {
 			var feed = byId.get(selection.feedId());
 			require(feed != null, "所选来源已不可用或不属于当前派工许可集合");
+			if (pieceIds.contains(feed.getId())) {
+				requireUnusedPiece(feed);
+				require(BigDecimal.ONE.compareTo(selection.quantity()) == 0, "原料 " + feed.getMatBarcode() + " 须整件用于本件产品");
+			}
 			var proof = sources.source(arrange.getTenantId(), arrange.getFactoryCode(), arrange, task, feed, true);
 			require(Objects.equals(proof.birthId(), selection.birthId().toString())
 							&& Objects.equals(proof.birthFingerprint(), selection.birthFingerprint()),
@@ -106,6 +123,19 @@ public class MesPieceMaterialSelectionService {
 						MesProductionFeedAllocationPlanner.OutputKind.GOOD, BigDecimal.ONE, outputUnit)),
 				requirements, task.getBomSnapshot(), locked,
 				code -> sources.measure(arrange.getTenantId(), arrange.getFactoryCode(), code), quantities);
+	}
+
+	/** 无候选时直接返回；整件身份只取本组织该投料的原签收。 */
+	private Set<Long> issuedPieces(MesTaskArrangeEntity arrange, List<Long> feedIds) {
+		return feedIds.isEmpty() ? Set.of() : deployment.issuedPieceIds(arrange.getTenantId(), arrange.getFactoryCode(), feedIds);
+	}
+
+	/** 整件须保有原码和完整的可用余额，半耗的历史原件不能显示为可选的整件。 */
+	private void requireUnusedPiece(MesWarehouseFeedEntity feed) {
+		require(feed.getMatBarcode() != null && !feed.getMatBarcode().isBlank()
+						&& feed.getFeedNum() != null && BigDecimal.ONE.compareTo(feed.getFeedNum()) == 0
+						&& feed.getUsedNum() != null && feed.getUsedNum().signum() == 0,
+				"原料单件条码或可用量与原签收不一致，请核对投料 " + feed.getId());
 	}
 
 	private Context context(String arrangeCode, String identifier) {
@@ -136,7 +166,7 @@ public class MesPieceMaterialSelectionService {
 	}
 
 	private void assertScope(MesTaskArrangeEntity arrange, MesTaskEntity task) {
-		require(Boolean.TRUE.equals(deployment.ready()), "本件用料功能尚未完成数据库升级，请联系管理员");
+		require(Boolean.TRUE.equals(deployment.ready()), "本件用料缺少原号保护或整件耗用保护，请核对选料升级和 V4 第 423 节");
 		require("PRODUCT".equals(arrange.getStatus()) && !"REWORK".equals(task.getResourceType())
 						&& ReportModeEnum.fromCodes(arrange.getReportMode(), arrange.getRouteType()) == ReportModeEnum.ONE_CODE,
 				"请在普通单件任务开工后选择本件用料");

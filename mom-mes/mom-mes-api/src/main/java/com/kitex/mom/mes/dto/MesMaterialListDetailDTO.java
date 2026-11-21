@@ -28,9 +28,9 @@ public class MesMaterialListDetailDTO extends MesMaterialListDetailEntity {
     private List<MesMaterialListRecordDTO> pickRecords;
 
     /**
-     * 剩余需求数量（需求数量-已领料数量+已退料数量）
+     * 待领数量。普通工单扣净领用，批准返工单扣累计领用
      */
-    @Schema(description = "剩余需求数量（需求数量-已领料数量+已退料数量）")
+    @Schema(description = "待领数量。普通工单扣净领用，批准返工单扣累计领用")
     private BigDecimal remainingQuantity;
 
     /**
@@ -40,9 +40,9 @@ public class MesMaterialListDetailDTO extends MesMaterialListDetailEntity {
     private String pickStatusName;
 
     /**
-     * 物料库存数量
+     * 同工厂同冻结单位的线边账面量，异常或混合单位待核
      */
-    @Schema(description = "物料库存数量")
+    @Schema(description = "同工厂同冻结单位的线边账面量，异常或混合单位待核")
     private BigDecimal stockQuantity;
 
     /**

@@ -27,8 +27,9 @@ public class PmsDeliveryCommitmentController {
     @GetMapping("/order/{orderId}")
     @Operation(summary = "查询采购订单交期承诺版本")
     @PreAuthorize("@pms.hasPermission('pms_deliveryCommitment_view')")
-    public R<List<PmsDeliveryCommitmentEntity>> listByOrder(@PathVariable Long orderId) {
-        return R.ok(service.listByOrder(orderId));
+    public R<List<PmsDeliveryCommitmentEntity>> listByOrder(@PathVariable Long orderId,
+                                                            @RequestParam(required = false) Long orderDetailId) {
+        return R.ok(service.listByOrder(orderId, orderDetailId));
     }
 
     @PostMapping("/replace")

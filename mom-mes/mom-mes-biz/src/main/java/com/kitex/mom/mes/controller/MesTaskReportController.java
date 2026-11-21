@@ -100,14 +100,20 @@ public class MesTaskReportController {
 		return R.ok();
 	}
 
-    @Operation(summary = "系统集成报工",
-            description = "使用独立权限并按执行模板的API触发来源校验；必须提供派工指定的operatorCode和operatorName")
-    @PostMapping("/report-integration")
-    @PreAuthorize("@pms.hasPermission('mesTaskReport:integration')")
-    public R<Void> reportIntegration(@RequestBody MesTaskReportVO params) {
-        service.reportIntegration(params);
-        return R.ok();
-    }
+	/**
+	 * 按派工冻结的 API 触发权限和指定人员报工。响应丢失时，集成方可用原请求号查回执。
+	 *
+	 * @param params 含实际人员的集成原命令，动态换码节点还需提供来源事件号与发生时刻
+	 * @return 原命令已受理或已成功重放
+	 */
+	@Operation(summary = "系统集成报工",
+			description = "按派工指定的 operatorCode、operatorName 执行。来源事件号与发生时刻成对提交，动态换码必填。")
+	@PostMapping("/report-integration")
+	@PreAuthorize("@pms.hasPermission('mesTaskReport:integration')")
+	public R<Void> reportIntegration(@RequestBody MesIntegrationReportVO params) {
+		service.reportIntegration(params.toCommand());
+		return R.ok();
+	}
 
     @Operation(summary = "旧报工冲销入口（已停用）", description = "冲销已升级为申请、异岗复核和事实重采流程")
     @PostMapping("/reverse")

@@ -6,11 +6,14 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.kitex.common.core.entity.BaseCore;
 import com.kitex.common.core.entity.SearchPage;
+import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.core.util.R;
+import com.kitex.common.data.orgFilter.FactoryContextHolder;
 import com.kitex.common.excel.annotation.ResponseExcel;
 import com.kitex.mom.tpm.dto.DeviceChangeMoldDto;
 import com.kitex.mom.tpm.dto.DeviceCheckTaskStartDto;
 import com.kitex.mom.tpm.dto.TpmCheckTaskDTO;
+import com.kitex.mom.tpm.agent.service.TpmAgentFactoryAccessService;
 import com.kitex.mom.tpm.entity.TpmCheckTaskEntity;
 import com.kitex.mom.tpm.service.TpmCheckTaskService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -40,18 +43,33 @@ import java.util.stream.Collectors;
 public class TpmCheckTaskController {
 
     private final TpmCheckTaskService tpmCheckTaskService;
+    private final TpmAgentFactoryAccessService factoryAccess;
 
     /**
      * 分页查询
      *
      * @param page         分页对象
      * @param tpmCheckTask 点/巡检任务
+     * @param agentTaskId 设备调查下钻的原任务主键，普通列表不传
      * @return
      */
     @Operation(summary = "点/巡检任务分页查询", description = "分页查询点/巡检任务列表")
     @GetMapping("/page")
     @PreAuthorize("@pms.hasPermission('tpm_tpmCheckTask_view')")
-    public R getTpmCheckTaskPage(@ParameterObject SearchPage page, @ParameterObject TpmCheckTaskEntity tpmCheckTask) {
+    public R getTpmCheckTaskPage(@ParameterObject SearchPage page, @ParameterObject TpmCheckTaskEntity tpmCheckTask,
+            @RequestParam(required = false) Long agentTaskId) {
+        if (agentTaskId != null) {
+            if (agentTaskId <= 0 || StrUtil.isBlank(tpmCheckTask.getTaskCode()) || StrUtil.isBlank(tpmCheckTask.getDeviceCode())) {
+                throw new CheckedException("设备调查定位需要原任务主键、任务号和设备编码");
+            }
+            // 台账精确定位以实名工厂和原任务身份为准，不走普通模糊筛选。
+            String factory = factoryAccess.requireRead(FactoryContextHolder.getFactoryCode());
+            return R.ok(tpmCheckTaskService.page(page.toMpPage(), Wrappers.<TpmCheckTaskEntity>lambdaQuery()
+                    .eq(TpmCheckTaskEntity::getId, agentTaskId)
+                    .eq(TpmCheckTaskEntity::getFactoryCode, factory)
+                    .eq(TpmCheckTaskEntity::getTaskCode, tpmCheckTask.getTaskCode())
+                    .eq(TpmCheckTaskEntity::getDeviceCode, tpmCheckTask.getDeviceCode())));
+        }
         LambdaQueryWrapper<TpmCheckTaskEntity> wrapper = Wrappers.lambdaQuery();
         wrapper.like(StrUtil.isNotBlank(tpmCheckTask.getTaskCode()), TpmCheckTaskEntity::getTaskCode, tpmCheckTask.getTaskCode());
         wrapper.eq(StrUtil.isNotBlank(tpmCheckTask.getType()), TpmCheckTaskEntity::getType, tpmCheckTask.getType());

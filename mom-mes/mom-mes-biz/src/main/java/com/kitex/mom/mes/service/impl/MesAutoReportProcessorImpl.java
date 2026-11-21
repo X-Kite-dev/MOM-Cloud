@@ -13,7 +13,6 @@ import com.kitex.mom.mes.entity.MesTaskReportEntity;
 import com.kitex.mom.mes.enums.AutoReportEventStatusEnum;
 import com.kitex.mom.mes.enums.AutoReportQuantityModeEnum;
 import com.kitex.mom.mes.enums.MesProduceTaskStatusEnum;
-import com.kitex.mom.mes.enums.WorksiteTypeEnum;
 import com.kitex.mom.mes.mapper.MesAutoReportEventMapper;
 import com.kitex.mom.mes.mapper.MesAutoReportRuleMapper;
 import com.kitex.mom.mes.service.*;
@@ -25,7 +24,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -151,7 +149,7 @@ public class MesAutoReportProcessorImpl implements MesAutoReportProcessor {
         if (captured) report.setWorksiteCode(rule.getWorksiteCode());
         report.setOperatorCode("DEVICE:" + event.getDeviceCode());
         report.setOperatorName("设备自动报工[" + event.getDeviceCode() + "]");
-        reportService.reportAuto(report);
+        reportService.reportAuto(report, rule);
 
         MesTaskReportEntity savedReport = reportService.getOne(new LambdaQueryWrapper<MesTaskReportEntity>()
                 .eq(MesTaskReportEntity::getTenantId, event.getTenantId())
@@ -246,7 +244,7 @@ public class MesAutoReportProcessorImpl implements MesAutoReportProcessor {
                         .eq(MesTaskArrangeEntity::getFactoryCode, event.getFactoryCode())
                         .eq(MesTaskArrangeEntity::getPlannedDeviceCode, event.getDeviceCode())
                         .eq(MesTaskArrangeEntity::getStatus, MesProduceTaskStatusEnum.PRODUCT.name()))
-                .stream().filter(item -> matchesRuleScope(item, rule)).toList();
+                .stream().filter(item -> MesWorksiteTriggerProjection.allowsDeviceRule(item, rule)).toList();
         if (matches.isEmpty()) {
             throw new CheckedException("设备没有匹配到生产中的自动报工派工任务");
         }
@@ -271,26 +269,9 @@ public class MesAutoReportProcessorImpl implements MesAutoReportProcessor {
         if (!Objects.equals(event.getDeviceCode(), arrange.getPlannedDeviceCode())) {
             throw new CheckedException("事件设备与派工任务的APS锁定设备不一致");
         }
-        if (MesWorksiteTriggerProjection.forExecution(null, arrange) != WorksiteTypeEnum.AUTO) {
-            throw new CheckedException("派工任务不是自动报工工位，禁止设备事件驱动报工");
+        if (!MesWorksiteTriggerProjection.allowsDeviceRule(arrange, rule)) {
+            throw new CheckedException("请核对实际开工工位的自动报工方式，以及规则限定的工序和工位");
         }
-        if (!matchesRuleScope(arrange, rule)) {
-            throw new CheckedException("派工任务不在自动报工规则限定的工序或工位范围内");
-        }
-    }
-
-    private boolean matchesRuleScope(MesTaskArrangeEntity arrange, MesAutoReportRuleEntity rule) {
-        if (StrUtil.isNotBlank(rule.getRouteCode()) && !Objects.equals(rule.getRouteCode(), arrange.getRouteCode())) {
-            return false;
-        }
-        return StrUtil.isBlank(rule.getWorksiteCode()) || splitCodes(arrange.getWorksiteCodes()).contains(rule.getWorksiteCode());
-    }
-
-    private List<String> splitCodes(String value) {
-        if (StrUtil.isBlank(value)) {
-            return List.of();
-        }
-        return Arrays.stream(value.split(",")).map(String::trim).filter(StrUtil::isNotBlank).distinct().toList();
     }
 
     private void updateRuleState(MesAutoReportRuleEntity rule, MesAutoReportEventEntity event) {
@@ -307,7 +288,10 @@ public class MesAutoReportProcessorImpl implements MesAutoReportProcessor {
         event.setStatus(AutoReportEventStatusEnum.IGNORED.name());
         event.setProcessMessage(message);
         event.setLastProcessTime(LocalDateTime.now());
-        eventMapper.updateById(event);
+        // 累计读数即使没有产生数量也可能推进基线，必须与本事件的忽略回执一起提交。
+        if (eventMapper.updateById(event) != 1) {
+            throw new CheckedException("设备事件忽略回执保存失败，本次计数边界已回滚");
+        }
     }
 
     private record QuantityResolution(BigDecimal quantity, boolean ignored, String message) {

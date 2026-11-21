@@ -6,6 +6,7 @@ import com.kitex.common.core.exception.CheckedException;
 import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.plan.agent.dto.PlanIncomingAvailabilityImpactDTO;
 import com.kitex.mom.plan.dto.PlanMrpShortageAnalysisDTO;
+import com.kitex.mom.plan.dto.PlanMrpShortageLineDTO;
 import com.kitex.mom.plan.dto.PlanMrpShortageQueryDTO;
 import com.kitex.mom.plan.entity.PlanMatMrpEntity;
 import com.kitex.mom.plan.entity.PlnIssueMonthEntity;
@@ -17,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
@@ -87,7 +89,7 @@ public class PlanIncomingAvailabilityImpactQueryService {
                 shortageQuery.setSaleOrderCode(demand.getSaleOrderCode());
                 shortageQuery.setSupplyEvidenceVersion(9);
                 PlanMrpShortageAnalysisDTO shortage = mrpService.shortageAnalysis(shortageQuery);
-                impacts.add(impact(shortage, resolvedDemand));
+                impacts.add(impact(shortage, resolvedDemand, gaps));
                 refs.add("PLAN:pln_product_demand:" + demand.getId());
                 shortage.getLines().forEach(line -> refs.add("PLAN:plan_mat_mrp:" + line.getMrpId()));
             } catch (RuntimeException failure) {
@@ -108,23 +110,65 @@ public class PlanIncomingAvailabilityImpactQueryService {
         return evidence;
     }
 
+    /** 需求级齐套沿用 MRP。缺少原始余量时保留已知欠料，但不能证明整单已齐套或齐套时间。 */
     private PlanIncomingAvailabilityImpactDTO.DemandImpact impact(PlanMrpShortageAnalysisDTO source,
-                                                                  ResolvedDemand lineage) {
+                                                                  ResolvedDemand lineage, List<String> gaps) {
+        List<PlanMrpShortageLineDTO> lines = source.getLines();
+        Set<String> missingMaterials = new LinkedHashSet<>(lineage.materialCodes);
+        lines.forEach(line -> missingMaterials.remove(line.getMaterialCode()));
+        if (!missingMaterials.isEmpty()) {
+            gaps.add("PLAN需求" + lineage.demandNo() + "未找到收料物料的MRP行：" + String.join("、", missingMaterials));
+        }
+        boolean incomplete = lines.isEmpty() || lines.stream().anyMatch(line ->
+                line.getRecordedRemainingDemandNum() == null || line.getRecordedRemainingDemandNum().signum() < 0);
+        String readiness = source.getMaterialAvailabilityStatus();
+        if (incomplete) {
+            gaps.add("PLAN需求" + lineage.demandNo() + "缺少可核对的MRP行或剩余需求量");
+            if (!"BLOCKED".equals(readiness)) {
+                readiness = "UNKNOWN";
+            }
+        }
+        List<PlanMrpShortageLineDTO> relevant = lines.stream()
+                .filter(line -> lineage.materialCodes.contains(line.getMaterialCode())
+                        || line.getRecordedRemainingDemandNum() == null
+                        || line.getRecordedRemainingDemandNum().signum() != 0)
+                .sorted(Comparator.comparing((PlanMrpShortageLineDTO line) ->
+                                !lineage.materialCodes.contains(line.getMaterialCode()))
+                        .thenComparing(PlanMrpShortageLineDTO::getMrpId))
+                .toList();
         return new PlanIncomingAvailabilityImpactDTO.DemandImpact()
                 .setPlanDemandId(String.valueOf(source.getPlanDemandId()))
                 .setPlanDemandNo(source.getPlanDemandNo()).setSaleOrderCode(source.getSaleOrderCode())
                 .setPurchaseOrderDetailIds(List.copyOf(lineage.orderDetailIds))
                 .setPurchasePlanNos(List.copyOf(lineage.purchasePlanNos))
-                .setMaterialAvailabilityStatus(source.getMaterialAvailabilityStatus())
-                .setMaterialAvailableTime(source.getMaterialAvailableTime())
-                .setMaterialCount(source.getMaterialCount()).setShortageCount(source.getShortageCount())
+                .setMaterialAvailabilityStatus(readiness)
+                .setMaterialAvailableTime(incomplete ? null : source.getMaterialAvailableTime())
+                .setMaterialCount(source.getMaterialCount())
+                .setShortageCount(incomplete ? null : source.getShortageCount())
                 .setReservationRiskCount(source.getReservationRiskCount())
                 .setActionRequiredCount(source.getActionRequiredCount())
                 .setSupplyEvidenceGapCount(source.getSupplyEvidenceGapCount())
                 .setShortageFactFingerprint(source.getFactFingerprint())
+                .setMaterialBalanceCount(relevant.size())
+                .setMaterialBalances(relevant.stream().limit(100)
+                        .map(line -> materialBalance(line, lineage.materialCodes.contains(line.getMaterialCode())))
+                        .toList())
                 .setShortageLines(source.getLines().stream()
                         .filter(line -> line.getShortageNum() != null && line.getShortageNum().signum() > 0)
                         .limit(100).toList());
+    }
+
+    /** 同物料可以属于不同库仓或 MRP 行。逐行使用 PLAN 原量，不从采购实收量推算分配。 */
+    private PlanIncomingAvailabilityImpactDTO.MaterialBalance materialBalance(PlanMrpShortageLineDTO line,
+                                                                             boolean receiptMaterial) {
+        return new PlanIncomingAvailabilityImpactDTO.MaterialBalance(line.getMrpId().toString(), receiptMaterial,
+                line.getMaterialCode(), line.getMaterialName(), line.getMaterialUnit(), line.getDemandWarehouseCode(),
+                quantityText(line.getGrossDemandNum()), quantityText(line.getAllocatedNum()),
+                quantityText(line.getRecordedRemainingDemandNum()));
+    }
+
+    private String quantityText(BigDecimal quantity) {
+        return quantity == null ? null : quantity.toPlainString();
     }
 
     private String fingerprint(PlanIncomingAvailabilityImpactDTO.Evidence evidence) {
@@ -225,6 +269,8 @@ public class PlanIncomingAvailabilityImpactQueryService {
         private final String demandNo;
         private final LinkedHashSet<String> orderDetailIds = new LinkedHashSet<>();
         private final LinkedHashSet<String> purchasePlanNos = new LinkedHashSet<>();
+        /** 已按采购行回执或月计划来源核验归属本需求的收料物料。 */
+        private final Set<String> materialCodes = new LinkedHashSet<>();
 
         private ResolvedDemand(String demandNo) {
             this.demandNo = demandNo;
@@ -237,6 +283,7 @@ public class PlanIncomingAvailabilityImpactQueryService {
         private ResolvedDemand add(PlanIncomingAvailabilityImpactDTO.SourceReference source) {
             orderDetailIds.add(source.getPurchaseOrderDetailId());
             purchasePlanNos.add(source.getPurchasePlanNo());
+            materialCodes.add(source.getMaterialCode());
             return this;
         }
     }

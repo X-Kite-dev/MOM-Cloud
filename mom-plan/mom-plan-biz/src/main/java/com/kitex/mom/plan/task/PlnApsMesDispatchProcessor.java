@@ -3,7 +3,7 @@ package com.kitex.mom.plan.task;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.kitex.common.data.orgFilter.FactoryContextHolder;
-import com.kitex.common.data.tenant.TenantBroker;
+import com.kitex.common.data.tenant.TenantContextHolder;
 import com.kitex.mom.plan.entity.PlnApsMesDispatchOutboxEntity;
 import com.kitex.mom.plan.mapper.PlnApsMesDispatchOutboxMapper;
 import lombok.RequiredArgsConstructor;
@@ -12,7 +12,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.function.Supplier;
 
 /**
  * APS 初始排程下达 MES 的跨租户批处理器。
@@ -34,12 +33,13 @@ public class PlnApsMesDispatchProcessor {
     public int processDue(int limit) {
         int batchSize = Math.max(1, Math.min(limit, 200));
         LocalDateTime now = LocalDateTime.now();
-        List<PlnApsMesDispatchOutboxEntity> due = outboxMapper.selectPage(new Page<>(1, batchSize),
+        List<PlnApsMesDispatchOutboxEntity> due = outboxMapper.selectPage(new Page<>(1, batchSize, false),
                 new LambdaQueryWrapper<PlnApsMesDispatchOutboxEntity>()
-                        .in(PlnApsMesDispatchOutboxEntity::getStatus,
-                                List.of("PENDING", "PARTIAL", "RETRY_WAIT"))
-                        .and(query -> query.isNull(PlnApsMesDispatchOutboxEntity::getNextRetryTime)
-                                .or().le(PlnApsMesDispatchOutboxEntity::getNextRetryTime, now))
+                        .and(eligible -> eligible.nested(waiting -> waiting
+                                        .in(PlnApsMesDispatchOutboxEntity::getStatus, List.of("PENDING", "PARTIAL", "RETRY_WAIT"))
+                                        .and(dueTime -> dueTime.isNull(PlnApsMesDispatchOutboxEntity::getNextRetryTime)
+                                                .or().le(PlnApsMesDispatchOutboxEntity::getNextRetryTime, now)))
+                                .or().eq(PlnApsMesDispatchOutboxEntity::getStatus, "PROCESSING"))
                         .and(query -> query.isNull(PlnApsMesDispatchOutboxEntity::getLeaseUntil)
                                 .or().le(PlnApsMesDispatchOutboxEntity::getLeaseUntil, now))
                         .orderByAsc(PlnApsMesDispatchOutboxEntity::getNextRetryTime)
@@ -48,9 +48,9 @@ public class PlnApsMesDispatchProcessor {
         int processed = 0;
         for (PlnApsMesDispatchOutboxEntity candidate : due) {
             try {
-                Boolean result = TenantBroker.applyAs(candidate.getTenantId(), ignored ->
-                        inFactory(candidate.getFactoryCode(), () -> worker.processScheduled(candidate.getId())));
-                if (Boolean.TRUE.equals(result)) processed++;
+                if (processInOrganization(candidate)) {
+                    processed++;
+                }
             } catch (RuntimeException ex) {
                 log.warn("APS到MES异步下达本轮处理失败，outboxId={}，tenantId={}，factoryCode={}，原因={}",
                         candidate.getId(), candidate.getTenantId(), candidate.getFactoryCode(), ex.getMessage());
@@ -59,17 +59,29 @@ public class PlnApsMesDispatchProcessor {
         return processed;
     }
 
-    private <T> T inFactory(String factoryCode, Supplier<T> work) {
+    /** 扫描可以跨组织，执行只能进入原单的租户和工厂；线程复用时恢复原过滤状态。 */
+    private boolean processInOrganization(PlnApsMesDispatchOutboxEntity candidate) {
+        Long previousTenant = TenantContextHolder.getTenantId();
+        boolean previousTenantSkip = TenantContextHolder.getTenantSkip();
         String previousFactory = FactoryContextHolder.getFactoryCode();
-        boolean previousSkip = Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip());
+        boolean previousFactorySkip = Boolean.TRUE.equals(FactoryContextHolder.getFactorySkip());
         try {
+            TenantContextHolder.clear();
             FactoryContextHolder.clear();
-            FactoryContextHolder.setFactoryCode(factoryCode);
-            return work.get();
+            TenantContextHolder.setTenantId(candidate.getTenantId());
+            FactoryContextHolder.setFactoryCode(candidate.getFactoryCode());
+            return worker.processScheduled(candidate.getId());
         } finally {
+            TenantContextHolder.clear();
+            TenantContextHolder.setTenantId(previousTenant);
+            if (previousTenantSkip) {
+                TenantContextHolder.setTenantSkip();
+            }
             FactoryContextHolder.clear();
             FactoryContextHolder.setFactoryCode(previousFactory);
-            if (previousSkip) FactoryContextHolder.setFactorySkip();
+            if (previousFactorySkip) {
+                FactoryContextHolder.setFactorySkip();
+            }
         }
     }
 }

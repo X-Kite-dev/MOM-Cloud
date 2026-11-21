@@ -23,6 +23,7 @@
     <select id="getOmsOrderBaseTrackPage" resultType="com.kitex.mom.oms.dto.OmsOrderBaseTrackPageDto">
         SELECT
         base.id as main_id,
+        <if test="query.projectOrderCode != null">base.tenant_id,</if>
         base.factory_code,
         base.order_code,
         base.order_review_code,
@@ -46,6 +47,10 @@
         INNER JOIN oms_order_details as details ON base.order_code = details.order_code
         <where>
             AND base.del_flag = '0'
+            <if test="query.projectOrderCode != null">
+                AND base.order_code = #{query.projectOrderCode}
+                AND details.factory_code = base.factory_code
+            </if>
             <if test="query.orderCode != null and query.orderCode != '' ">
                 AND base.order_code LIKE CONCAT('%',#{query.orderCode},'%')
             </if>
@@ -83,6 +88,7 @@
         ELSE 8
         END ASC,
         base.create_time DESC
+        <if test="query.projectOrderCode != null">, base.id, details.id</if>
     </select>
     <select id="getOmsOrderBaseTrackCount" resultType="java.lang.String">
         SELECT
@@ -91,6 +97,10 @@
         INNER JOIN oms_order_details as details ON base.order_code = details.order_code
         <where>
             AND base.del_flag = '0'
+            <if test="query.projectOrderCode != null">
+                AND base.order_code = #{query.projectOrderCode}
+                AND details.factory_code = base.factory_code
+            </if>
             <if test="query.orderCode != null and query.orderCode != '' ">
                 AND base.order_code LIKE CONCAT('%',#{query.orderCode},'%')
             </if>
